@@ -30,11 +30,18 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Write google-services.json
+      - name: Write google-services.json (only if secret is set)
         working-directory: mobile/android/app
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-        run: echo "$GOOGLE_SERVICES_JSON" | base64 -d > google-services.json
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            echo "$GOOGLE_SERVICES_JSON" | base64 -d > google-services.json
+            echo "Wrote google-services.json — Firebase/FCM enabled."
+          else
+            echo "GOOGLE_SERVICES_JSON secret not set — skipping. APK builds without"
+            echo "Firebase config; push notifications disabled until the secret is added."
+          fi
 
       - name: Write app config
         working-directory: mobile
