@@ -520,21 +520,43 @@ The finance/accounting cockpit.
 
 ---
 
-## Suggested Additional Admin / Platform Features
+## Confirmed Additional Modules (approved)
 
-Pick any you want folded into the plan (asked via follow-up):
-- **RBAC & Admin Users** — roles (superadmin, finance, support, risk, game-manager), per-role permissions, immutable audit log, 2FA for admins
-- **Promotions & Bonus Engine** — deposit-match, cashback, first-game bonus, coupon codes, wagering requirements, scheduled campaigns
+### 5) RBAC & Admin Users + 2FA  — *Phase: Week 2 (early)*
+- Roles: `superadmin`, `finance`, `support`, `risk_analyst`, `game_manager`
+- Per-role route/action permissions enforced in `admin-service`
+- Immutable audit log of every admin action (who/what/when/before→after)
+- 2FA (TOTP) login for admin accounts; admin IP allow-list; session management
+- **Backend:** `admin_users.role`, `admin_permissions`, `admin_audit_log` (audit log already partly present); TOTP secret per admin
+
+### 6) Promotions & Bonus Engine  — *Phase: Week 2*
+- Campaign types: deposit-match, cashback, first-game bonus, coupon codes, signup bonus
+- Wagering requirement tracker (bonus locked until X× wagered), bonus expiry
+- Scheduling (start/end), targeting by user segment, usage caps
+- Separate `bonus_balance` already in wallet schema; engine consumes it
+- **Backend:** `bonuses`, `bonus_campaigns`, `coupons` tables; `rewards-service`; admin CRUD + report
+
+### 7) Anti-Cheat / Risk Center  — *Phase: Week 2–3*
+- Flagged-user queue with 0–100 suspicion score
+- Collusion detection (win/loss pairs across sessions), win-rate 3σ anomaly, bot-timing patterns, chip-dumping
+- Device-fingerprint linking (same device across accounts), same-KYC hard block
+- Auto-rules: >60 monitor, >80 auto-suspend pending review, >95 ban
+- **Backend:** `anti-cheat` service consuming game-event stream → writes flags; admin review UI
+
+### 8) Support Helpdesk + CMS  — *Phase: Week 2*
+- **Helpdesk:** in-app ticket queue, live chat, canned replies, agent assignment, SLA timers
+- **CMS:** live-editable banners, popups, FAQ, T&C / privacy pages, "what's new" — served to the app via `/app/content`
+- **Backend:** `support_tickets`, `cms_content` (Mongo or PG JSONB); `support-service`; admin pages + Flutter screens
+
+---
+
+## Suggested Additional Features (still optional)
+
 - **Referral / Affiliate Console** — multi-tier referrals, affiliate payouts, attribution dashboard
-- **Support / Helpdesk** — in-app ticket queue, live chat, canned replies, SLA tracking
-- **CMS / Content** — banners, popups, T&C/privacy pages, FAQ, what's-new — all editable live
-- **Anti-Cheat / Risk Center** — flagged-user queue, collusion graph, win-rate anomalies, device-fingerprint linking, auto-suspend rules
 - **Reports & Analytics** — retention cohorts (D1/D7/D30), DAU/MAU, ARPU, funnel, game-wise GGR
-- **Game/Table Config** — stakes, rake, bot ratio, table limits per game (partly built)
 - **Notification Center** — segmented push/SMS/email, templates, scheduling (broadcast built)
 - **Responsible Gaming** — deposit/loss limits, self-exclusion, cool-off, age-gate (compliance)
 - **Localization & Multi-currency** — languages, ₹/other currencies
-- **Security** — admin IP allow-list, session management, audit export, secrets rotation
 
 ---
 
