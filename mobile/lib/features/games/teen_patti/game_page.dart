@@ -166,6 +166,13 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     });
   }
 
+  String? _chipsOf(Map<String, dynamic> p) {
+    final v = p['chips'] ?? p['balance'] ?? p['stack'];
+    if (v == null) return null;
+    final n = num.tryParse(v.toString());
+    return n == null ? null : n.toStringAsFixed(0);
+  }
+
   void _exit() {
     SystemChrome.setPreferredOrientations(
         [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
@@ -191,7 +198,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         if (!didPop) _exit();
       },
       child: Scaffold(
-        backgroundColor: const Color(0xFF0B3D17),
+        backgroundColor: const Color(0xFF1A1033),
         body: SafeArea(
           child: _resultMessage != null
               ? _buildResult()
@@ -212,30 +219,46 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     );
   }
 
-  // Green felt with a radial highlight
+  // Royal Gold: navy-purple room, ornate gold-ringed teal-green felt
   Widget _buildFelt() => Positioned.fill(
         child: Container(
           decoration: const BoxDecoration(
             gradient: RadialGradient(
               center: Alignment.center,
-              radius: 0.9,
-              colors: [Color(0xFF1B7A33), Color(0xFF0B3D17)],
+              radius: 1.1,
+              colors: [Color(0xFF2A1A4A), Color(0xFF1A1033)],
             ),
           ),
           child: Center(
             child: FractionallySizedBox(
-              widthFactor: 0.78,
-              heightFactor: 0.72,
+              widthFactor: 0.80,
+              heightFactor: 0.74,
               child: Container(
+                // outer ornate gold ring
+                padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(400),
-                  border: Border.all(color: AppColors.gold.withOpacity(0.55), width: 4),
-                  gradient: const RadialGradient(
-                    colors: [Color(0xFF2E9D4B), Color(0xFF14642A)],
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFFFFE082), Color(0xFFD4AF37), Color(0xFF8A6D1E)],
                   ),
                   boxShadow: [
-                    BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 24, spreadRadius: 4),
+                    BoxShadow(color: AppColors.gold.withOpacity(0.35), blurRadius: 28, spreadRadius: 2),
+                    BoxShadow(color: Colors.black.withOpacity(0.55), blurRadius: 24, spreadRadius: 4),
                   ],
+                ),
+                child: Container(
+                  // inner felt
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(400),
+                    border: Border.all(color: const Color(0xFF0B3D17), width: 3),
+                    gradient: const RadialGradient(
+                      center: Alignment.center,
+                      radius: 0.85,
+                      colors: [Color(0xFF1B7A33), Color(0xFF0E5C2F)],
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -324,30 +347,58 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Stack(
-              alignment: Alignment.center,
-              children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor: isActive ? (isMe ? AppColors.gold : Colors.white24) : Colors.grey,
-                  child: Text(player['username']?[0]?.toUpperCase() ?? '?',
-                      style: TextStyle(color: isMe ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
-                ),
-                if (isTurn)
-                  Positioned(
-                    bottom: -2,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 5),
-                      decoration: BoxDecoration(color: AppColors.red, borderRadius: BorderRadius.circular(8)),
-                      child: Text('${_turnSecondsLeft}s',
-                          style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+            SizedBox(
+              width: 48,
+              height: 48,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // gold ring (timer arc when it's this player's turn)
+                  SizedBox(
+                    width: 46,
+                    height: 46,
+                    child: CircularProgressIndicator(
+                      value: isTurn ? (_turnSecondsLeft / 30).clamp(0.0, 1.0) : 1.0,
+                      strokeWidth: 3,
+                      backgroundColor: Colors.black26,
+                      valueColor: AlwaysStoppedAnimation(
+                          isTurn ? AppColors.gold : Colors.white24),
                     ),
                   ),
-              ],
+                  CircleAvatar(
+                    radius: 17,
+                    backgroundColor: isActive ? (isMe ? AppColors.gold : Colors.white24) : Colors.grey,
+                    child: Text(player['username']?[0]?.toUpperCase() ?? '?',
+                        style: TextStyle(color: isMe ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                  if (isTurn)
+                    Positioned(
+                      bottom: -4,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5),
+                        decoration: BoxDecoration(color: AppColors.red, borderRadius: BorderRadius.circular(8)),
+                        child: Text('${_turnSecondsLeft}s',
+                            style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                ],
+              ),
             ),
             const SizedBox(height: 3),
             Text(isMe ? 'You' : (player['username'] ?? 'Bot'),
                 style: const TextStyle(color: Colors.white, fontSize: 11), overflow: TextOverflow.ellipsis),
+            if (_chipsOf(player) != null)
+              Container(
+                margin: const EdgeInsets.only(top: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.black45,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.gold.withOpacity(0.4)),
+                ),
+                child: Text('💰 ${_chipsOf(player)}',
+                    style: const TextStyle(color: AppColors.goldLight, fontSize: 9, fontWeight: FontWeight.bold)),
+              ),
             Text(
               isFolded ? 'FOLDED' : (player['is_bot'] == true ? 'BOT' : '${player['cards']?.length ?? 0}🂠'),
               style: TextStyle(
@@ -463,13 +514,30 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
       GestureDetector(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 18),
           decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6, offset: Offset(0, 2))],
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color.lerp(color, Colors.white, 0.25)!,
+                color,
+                Color.lerp(color, Colors.black, 0.25)!,
+              ],
+            ),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.white.withOpacity(0.25)),
+            boxShadow: [
+              BoxShadow(color: color.withOpacity(0.55), blurRadius: 14, spreadRadius: 1),
+              const BoxShadow(color: Colors.black45, blurRadius: 4, offset: Offset(0, 2)),
+            ],
           ),
-          child: Text(label, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 13)),
+          child: Text(label,
+              style: TextStyle(
+                  color: textColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  shadows: const [Shadow(color: Colors.black38, blurRadius: 2)])),
         ),
       );
 
