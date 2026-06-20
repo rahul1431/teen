@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import '@fastify/jwt'
 import Fastify from 'fastify'
 import { createServer } from 'http'
 import { Server } from 'socket.io'

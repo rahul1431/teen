@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+**/dist/
+build/
+*.tsbuildinfo
+
+# Go binaries
+services/game-engines/teen-patti/teen-patti-engine
+
+# Env / secrets
+.env
+**/.env
+*.env.local
+google-services.json
+**/google-services.json
+
+# Flutter
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/build/
+mobile/.pub-cache/
+mobile/android/.gradle/
+mobile/android/app/google-services.json
+*.apk
+
+# Logs / OS
+*.log
+.DS_Store
+npm-debug.log*
+
+# IDE
+.idea/
+.vscode/
