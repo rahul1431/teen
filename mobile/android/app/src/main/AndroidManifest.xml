@@ -25,8 +25,9 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="myonlinejoker"/>
             </intent-filter>
+            <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme"/>
         </activity>
-        <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme"/>
+        <meta-data android:name="flutterEmbedding" android:value="2"/>
         <service android:name="com.google.firebase.messaging.FirebaseMessagingService" android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT"/>

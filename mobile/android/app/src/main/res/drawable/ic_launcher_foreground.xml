@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Gold "J" monogram centered within the adaptive icon safe zone -->
+    <path
+        android:fillColor="#D4AF37"
+        android:pathData="M62,34 h10 v28 a16,16 0 0 1 -16,16 a16,16 0 0 1 -16,-16 h10 a6,6 0 0 0 12,0 z" />
+</vector>
