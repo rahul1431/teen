@@ -474,6 +474,70 @@ RAZORPAY_KEY_ID=rzp_test_xxxxx
 
 ---
 
+## Admin Panel — Feature Modules (Requested)
+
+These modules are managed entirely from the Admin Panel. Each lists what it
+includes, the backend it needs, and the target phase.
+
+### 1) User Management  — *Phase: Day 2 (core) → Week 2 (advanced)*
+Full control over every player account.
+- Search / filter by phone, username, status, KYC state, balance range
+- Profile drawer: game history, wallet ledger, devices, login history, referrals
+- Actions: suspend, ban, unban, force-logout, reset password/PIN
+- Wallet ops: manual credit / debit with reason + audit trail
+- KYC review: view PAN/Aadhaar docs (`uploads/kyc/`), approve / reject
+- Flags: mark VIP, mark suspicious (feeds anti-cheat), tag/segment users
+- Bulk actions: export CSV, bulk notify, bulk bonus
+- **Backend:** `admin-service` `/api/admin/users/*` (most endpoints exist; add devices, login-history, KYC review)
+
+### 2) API Management  — *Phase: Week 2*
+Govern the platform's own API surface and third-party keys.
+- **API keys / tokens:** issue, rotate, revoke keys for partner/affiliate access; per-key scopes & rate limits
+- **Third-party credentials vault:** Razorpay, MSG91/SMS, Firebase, KYC provider — store, rotate, test-connection (encrypted at rest)
+- **Rate-limit & throttle config:** per-route limits editable from the panel
+- **Webhook manager:** register/inspect inbound (Razorpay) + outbound webhooks, retry failed deliveries
+- **API health & logs:** live status of each microservice, latency, error rate; request log viewer
+- **Backend:** new `admin-service` routes `/api/admin/api-keys/*`, `/api/admin/integrations/*`; new `api_keys` + `integration_credentials` tables
+
+### 3) In-App Update  — *Phase: Week 2*
+Force or recommend app updates without an app-store round-trip.
+- Admin sets: latest version, min-supported version, APK URL / store link, changelog, force-vs-optional flag
+- Mobile checks a `/app/version` endpoint on launch; shows **"Update required"** (blocking) or **"Update available"** (dismissable) dialog
+- Staged rollout % and per-platform (Android/iOS) control
+- Maintenance-mode toggle (shows a friendly "be right back" screen app-wide)
+- **Backend:** `/app/config` + `/app/version` endpoints; `app_versions` table; **Flutter:** version-gate on splash, in-app update dialog
+
+### 4) Payment Management — Accounts Section  — *Phase: Day 2 → Week 2*
+The finance/accounting cockpit.
+- **Deposits:** all gateway orders, status, reconciliation vs Razorpay settlement reports
+- **Withdrawals:** approval queue, KYC gate, payout batch, rejection reasons, payout-gateway status
+- **Ledger / Accounts:** double-entry view, per-user statements, platform P&L, rake/commission report, GST/TDS report (India)
+- **Reconciliation:** auto-match gateway settlements to internal transactions; flag mismatches
+- **Refunds & adjustments:** issue refunds, manual adjustments with reason + audit
+- **Dashboards:** daily/weekly/monthly revenue, deposit success rate, withdrawal SLA, top depositors
+- **Exports:** CSV/Excel for accountant; date-range financial statements
+- **Backend:** extends `wallet-service` + `admin-service` `/api/admin/finance/*` (queue exists; add reconciliation, refunds, statements, tax reports)
+
+---
+
+## Suggested Additional Admin / Platform Features
+
+Pick any you want folded into the plan (asked via follow-up):
+- **RBAC & Admin Users** — roles (superadmin, finance, support, risk, game-manager), per-role permissions, immutable audit log, 2FA for admins
+- **Promotions & Bonus Engine** — deposit-match, cashback, first-game bonus, coupon codes, wagering requirements, scheduled campaigns
+- **Referral / Affiliate Console** — multi-tier referrals, affiliate payouts, attribution dashboard
+- **Support / Helpdesk** — in-app ticket queue, live chat, canned replies, SLA tracking
+- **CMS / Content** — banners, popups, T&C/privacy pages, FAQ, what's-new — all editable live
+- **Anti-Cheat / Risk Center** — flagged-user queue, collusion graph, win-rate anomalies, device-fingerprint linking, auto-suspend rules
+- **Reports & Analytics** — retention cohorts (D1/D7/D30), DAU/MAU, ARPU, funnel, game-wise GGR
+- **Game/Table Config** — stakes, rake, bot ratio, table limits per game (partly built)
+- **Notification Center** — segmented push/SMS/email, templates, scheduling (broadcast built)
+- **Responsible Gaming** — deposit/loss limits, self-exclusion, cool-off, age-gate (compliance)
+- **Localization & Multi-currency** — languages, ₹/other currencies
+- **Security** — admin IP allow-list, session management, audit export, secrets rotation
+
+---
+
 ## What Happens After Day 3 (Week 2 Plan)
 
 | Week 2 Task | Priority |
