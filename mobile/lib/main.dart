@@ -26,24 +26,38 @@ void main() async {
     statusBarIconBrightness: Brightness.light,
   ));
 
-  // Firebase
+  // Firebase — optional. If google-services.json isn't bundled, every
+  // Firebase call (including FirebaseMessaging.instance) throws, so guard all
+  // of it behind a single flag and never let it crash startup.
+  bool firebaseReady = false;
   try {
     await Firebase.initializeApp();
-    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    firebaseReady = true;
   } catch (_) {
-    // Firebase not configured yet — continue without it
+    // Firebase not configured — continue without push notifications.
   }
 
-  // Local notifications
-  await localNotifications.initialize(
-    const InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-      iOS: DarwinInitializationSettings(),
-    ),
-  );
+  if (firebaseReady) {
+    try {
+      FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+      await FirebaseMessaging.instance
+          .requestPermission(alert: true, badge: true, sound: true);
+    } catch (_) {
+      // Messaging unavailable — ignore.
+    }
+  }
 
-  // Request notification permission
-  await FirebaseMessaging.instance.requestPermission(alert: true, badge: true, sound: true);
+  // Local notifications (independent of Firebase)
+  try {
+    await localNotifications.initialize(
+      const InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        iOS: DarwinInitializationSettings(),
+      ),
+    );
+  } catch (_) {
+    // Non-fatal.
+  }
 
   runApp(const MyOnlineJokerApp());
 }
