@@ -31,6 +31,12 @@ mobile/android/.gradle/
 mobile/android/app/google-services.json
 *.apk
 
+# Runtime user uploads — keep the directory layout, ignore the content
+uploads/**/*
+!uploads/**/.gitkeep
+!uploads/**/README.md
+!uploads/README.md
+
 # Logs / OS
 *.log
 .DS_Store

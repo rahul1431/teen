@@ -1,0 +1,24 @@
+{
+  "id": "teen-patti",
+  "displayName": "Teen Patti",
+  "enabled": true,
+  "rakePercent": 5,
+  "stakes": [10, 50, 100, 500, 1000],
+  "table": {
+    "minPlayers": 2,
+    "maxPlayers": 6,
+    "turnTimeoutSeconds": 30
+  },
+  "bots": {
+    "enabled": true,
+    "fillAfterSeconds": 10,
+    "maxBotsPerTable": 4,
+    "difficulty": "medium",
+    "actionDelaySecondsRange": [2, 8]
+  },
+  "betting": {
+    "bootAmount": 1,
+    "maxChaalMultiplier": 4,
+    "maxPotLimitMultiplier": 1024
+  }
+}

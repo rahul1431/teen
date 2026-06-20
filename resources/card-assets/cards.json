@@ -1,0 +1,10 @@
+{
+  "suits": [
+    { "id": "S", "name": "Spades", "symbol": "♠", "color": "#E6EDF3" },
+    { "id": "H", "name": "Hearts", "symbol": "♥", "color": "#FF5252" },
+    { "id": "D", "name": "Diamonds", "symbol": "♦", "color": "#FF5252" },
+    { "id": "C", "name": "Clubs", "symbol": "♣", "color": "#E6EDF3" }
+  ],
+  "ranks": ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"],
+  "note": "Card rendering metadata shared by Teen Patti and Rummy clients. The server deals by rank+suit id; the client maps to symbol/color here."
+}
