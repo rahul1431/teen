@@ -19,8 +19,10 @@ final _router = GoRouter(
   redirect: (context, state) async {
     final token = await SecureStorage.getAccessToken();
     final isAuth = token != null;
-    final isOnAuth = state.matchedLocation.startsWith('/auth') || state.matchedLocation == '/splash';
-    if (!isAuth && !isOnAuth) return '/auth/login';
+    final isPublic = state.matchedLocation.startsWith('/auth') ||
+        state.matchedLocation == '/splash' ||
+        state.matchedLocation.endsWith('/demo');
+    if (!isAuth && !isPublic) return '/auth/login';
     return null;
   },
   routes: [
@@ -32,6 +34,7 @@ final _router = GoRouter(
     GoRoute(path: '/wallet', builder: (_, __) => const WalletPage()),
     GoRoute(path: '/games/teen-patti', builder: (_, __) => const TeenPattiLobbyPage()),
     GoRoute(path: '/games/teen-patti/play/:roomId', builder: (_, s) => TeenPattiGamePage(roomId: s.pathParameters['roomId']!)),
+    GoRoute(path: '/games/teen-patti/demo', builder: (_, __) => const TeenPattiGamePage(roomId: 'DEMO', demo: true)),
     GoRoute(path: '/games/aviator', builder: (_, __) => const AviatorPage()),
     GoRoute(path: '/leaderboard', builder: (_, __) => const LeaderboardPage()),
     GoRoute(path: '/profile', builder: (_, __) => const ProfilePage()),

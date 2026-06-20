@@ -10,7 +10,11 @@ import '../../../shared/theme/app_theme.dart';
 /// Landscape Teen Patti table with live chat, emoji reactions and gifts.
 class TeenPattiGamePage extends StatefulWidget {
   final String roomId;
-  const TeenPattiGamePage({super.key, required this.roomId});
+
+  /// When true, the table renders with mock players/cards offline — no socket,
+  /// no login, no backend. Used for UI preview.
+  final bool demo;
+  const TeenPattiGamePage({super.key, required this.roomId, this.demo = false});
   @override
   State<TeenPattiGamePage> createState() => _TeenPattiGamePageState();
 }
@@ -50,7 +54,38 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     SystemChrome.setPreferredOrientations(
         [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    _init();
+    if (widget.demo) {
+      _initDemo();
+    } else {
+      _init();
+    }
+  }
+
+  // Offline preview: mock table, no socket / login / backend.
+  void _initDemo() {
+    _myUserId = 'me';
+    _gameState = {
+      'pot': 1240,
+      'min_bet': 100,
+      'current_turn_user_id': 'me',
+      'players': [
+        {'user_id': 'me', 'username': 'You', 'status': 'active', 'chips': 28400, 'cards': [
+          {'value': 'A', 'suit': 'C'}, {'value': '2', 'suit': 'C'}, {'value': '3', 'suit': 'C'}
+        ]},
+        {'user_id': 'b1', 'username': 'Steven P.', 'status': 'active', 'chips': 45199, 'is_bot': true, 'cards': [1, 2, 3]},
+        {'user_id': 'b2', 'username': 'Nairobi B.', 'status': 'folded', 'chips': 53884, 'is_bot': true, 'cards': [1, 2, 3]},
+        {'user_id': 'b3', 'username': 'Smith J.', 'status': 'active', 'chips': 68121, 'is_bot': true, 'cards': [1, 2, 3]},
+      ],
+    };
+    _isMyTurn = true;
+    _isSeen = true;
+    _startTurnTimer();
+    // a couple of demo chat lines + a reaction
+    _chat.addAll([
+      _ChatMsg(userId: 'b1', username: 'Steven P.', text: 'Good luck! 🍀', type: 'text'),
+      _ChatMsg(userId: 'b3', username: 'Smith J.', text: 'All in 😎', type: 'text'),
+    ]);
+    Timer(const Duration(seconds: 1), () => _spawnReaction('b1', '🔥'));
   }
 
   Future<void> _init() async {
@@ -137,8 +172,12 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
   void _sendChat(String text) {
     final t = text.trim();
     if (t.isEmpty) return;
-    _socket.emit(SocketEvents.roomChat,
-        {'room_id': widget.roomId, 'message': t, 'type': 'text'});
+    if (widget.demo) {
+      setState(() => _chat.add(_ChatMsg(userId: 'me', username: 'You', text: t, type: 'text')));
+    } else {
+      _socket.emit(SocketEvents.roomChat,
+          {'room_id': widget.roomId, 'message': t, 'type': 'text'});
+    }
     _chatInput.clear();
   }
 

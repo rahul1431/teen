@@ -97,6 +97,29 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 24),
+                const Divider(color: AppColors.border),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => context.push('/games/teen-patti/demo'),
+                    icon: const Icon(Icons.visibility, color: AppColors.gold),
+                    label: const Text('Preview Teen Patti Table (Demo)',
+                        style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold)),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppColors.gold),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
+                ),
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.only(top: 6),
+                    child: Text('No login needed — UI preview with sample players',
+                        style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+                  ),
+                ),
               ],
             ),
           ),
