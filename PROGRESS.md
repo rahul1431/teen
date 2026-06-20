@@ -1,7 +1,8 @@
 # Progress & Resume Checkpoint
 
-> Living status doc. Read this first when resuming. Last updated: 2026-06-20.
+> Living status doc. Read this first when resuming. Last updated: 2026-06-20 (session 2).
 > Branch: `claude/confident-archimedes-e2dd1k` · PR: #1 (draft) · Base: `main`
+> Latest APK commit: `9480aff` · Admin preview: https://rahul1431.github.io/teen/
 
 ---
 
@@ -27,7 +28,18 @@
 ### Mobile (Flutter)
 - Full app: splash, login/OTP/register, home, Teen Patti (lobby+game),
   Aviator, wallet (Razorpay), leaderboard, profile
-- **APK** builds via GitHub Actions (arm64 + armeabi artifacts)
+- **APK** builds via GitHub Actions (arm64 + armeabi artifacts) — GREEN ✅
+- **Teen Patti landscape table** redesigned (session 2):
+  - Oval table, players around an ellipse (you at bottom), turn-timer arc,
+    chip badges, fanned hole cards
+  - Live chat panel + emoji reaction bar + gift tray (float/fade over seats);
+    emoji/gift piggyback `room:chat` with a `type` field (gateway forwards it)
+  - Theme matched to user's Behance reference: **red felt + ornate gold
+    border + navy room + "TEEN PATTI" watermark**
+  - **Demo preview**: "Preview Teen Patti Table (Demo)" button on login →
+    `/games/teen-patti/demo` opens the table offline with mock players (no
+    login/backend). Auth guard whitelists `*/demo`.
+- Black-screen-on-launch bug fixed (Firebase calls guarded in main.dart)
 
 ### Infra / Structure
 - `games/` (registry), `resources/` (configs, email templates, card meta),
@@ -50,12 +62,25 @@
 ---
 
 ## ⏳ In progress / pending
-- [ ] APK build #4 (black-screen fix) — confirm green, share fresh link
+- [ ] **Awaiting user review** of Teen Patti table (via Demo button) before
+      applying further reference-matching refinements (see list below)
+- [ ] APK build for `9480aff` (demo preview) — confirm green, share link
 - [ ] **You:** add GitHub secrets for real builds — `GOOGLE_SERVICES_JSON`,
       `API_BASE_URL`, `SOCKET_URL`, `RAZORPAY_KEY_ID`, `VPS_*`
 - [ ] **You:** VPS deploy — clone to `/opt/teen`, run deploy scripts
 - [ ] **You:** SSL — `v-add-web-domain <user> game.myonlinejoker.com` then LetsEncrypt
 - [ ] Change admin password after first real login
+
+## 🎨 Teen Patti UI — reference-match TODO (await user OK)
+Reference: Behance "Teen Patti Game UI/UX" (gallery 185793255) — screenshots
+shared by user. Still to match:
+1. Action buttons → **Pack · Side Show · Chaal** with +/- bet stepper + pot coin
+2. **Status pills** on seats (Chaal/Pack/Blind) + red **"D"** dealer button
+3. **Gift badge** on each avatar; **green glow** ring on active player
+4. **Card backs** (blue patterned) for opponents
+5. **Top bar** gold-circle icons (exit/info/chat/add-friend); optional hostess
+6. **Lobby** redesign (menu cards: Join/Create Private, Play Variation,
+   Premium Table; bottom nav; coin balance; Spin & Win wheel)
 
 ---
 
