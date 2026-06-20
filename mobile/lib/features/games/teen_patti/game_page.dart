@@ -219,44 +219,55 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     );
   }
 
-  // Royal Gold: navy-purple room, ornate gold-ringed teal-green felt
+  // Reference look: navy room, ornate gold-bordered RED felt with watermark
   Widget _buildFelt() => Positioned.fill(
         child: Container(
           decoration: const BoxDecoration(
             gradient: RadialGradient(
-              center: Alignment.center,
-              radius: 1.1,
-              colors: [Color(0xFF2A1A4A), Color(0xFF1A1033)],
+              center: Alignment(0, -0.5),
+              radius: 1.2,
+              colors: [Color(0xFF1C2C57), Color(0xFF0A1428)],
             ),
           ),
           child: Center(
             child: FractionallySizedBox(
-              widthFactor: 0.80,
-              heightFactor: 0.74,
+              widthFactor: 0.82,
+              heightFactor: 0.76,
               child: Container(
                 // outer ornate gold ring
-                padding: const EdgeInsets.all(6),
+                padding: const EdgeInsets.all(7),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(400),
                   gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
                     colors: [Color(0xFFFFE082), Color(0xFFD4AF37), Color(0xFF8A6D1E)],
                   ),
                   boxShadow: [
-                    BoxShadow(color: AppColors.gold.withOpacity(0.35), blurRadius: 28, spreadRadius: 2),
-                    BoxShadow(color: Colors.black.withOpacity(0.55), blurRadius: 24, spreadRadius: 4),
+                    BoxShadow(color: AppColors.gold.withOpacity(0.30), blurRadius: 26, spreadRadius: 2),
+                    BoxShadow(color: Colors.black.withOpacity(0.55), blurRadius: 22, spreadRadius: 4),
                   ],
                 ),
                 child: Container(
-                  // inner felt
+                  // inner red felt
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(400),
-                    border: Border.all(color: const Color(0xFF0B3D17), width: 3),
+                    border: Border.all(color: const Color(0xFF5A0E14), width: 3),
                     gradient: const RadialGradient(
                       center: Alignment.center,
-                      radius: 0.85,
-                      colors: [Color(0xFF1B7A33), Color(0xFF0E5C2F)],
+                      radius: 0.9,
+                      colors: [Color(0xFFB11226), Color(0xFF7A0C1A)],
+                    ),
+                  ),
+                  child: Center(
+                    child: Text(
+                      'TEEN PATTI',
+                      style: TextStyle(
+                        color: Colors.black.withOpacity(0.18),
+                        fontSize: 34,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 6,
+                      ),
                     ),
                   ),
                 ),
