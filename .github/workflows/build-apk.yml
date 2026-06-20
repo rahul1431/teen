@@ -1,0 +1,76 @@
+name: Build Flutter APK
+
+on:
+  push:
+    branches: [main, claude/confident-archimedes-e2dd1k]
+    paths:
+      - 'mobile/**'
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: Build Release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: stable
+          cache: true
+
+      - name: Write google-services.json
+        working-directory: mobile/android/app
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: echo "$GOOGLE_SERVICES_JSON" | base64 -d > google-services.json
+
+      - name: Write app config
+        working-directory: mobile
+        run: |
+          cat > lib/core/constants/app_config.dart << 'EOF'
+          class AppConfig {
+            static const String apiBaseUrl = '${{ secrets.API_BASE_URL }}';
+            static const String socketUrl = '${{ secrets.SOCKET_URL }}';
+            static const String razorpayKeyId = '${{ secrets.RAZORPAY_KEY_ID }}';
+            static const String appName = 'MyOnlineJoker';
+          }
+          EOF
+
+      - name: Get dependencies
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Build release APK
+        working-directory: mobile
+        run: flutter build apk --release --split-per-abi
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apks-${{ github.sha }}
+          path: |
+            mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            mobile/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+          retention-days: 30
+
+      - name: Create APK summary
+        run: |
+          echo "## APK Build Complete ✅" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Download the APK from the **Artifacts** section above." >> $GITHUB_STEP_SUMMARY
+          echo "- **arm64-v8a** — modern phones (recommended)" >> $GITHUB_STEP_SUMMARY
+          echo "- **armeabi-v7a** — older 32-bit phones" >> $GITHUB_STEP_SUMMARY

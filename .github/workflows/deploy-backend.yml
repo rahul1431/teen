@@ -1,0 +1,39 @@
+name: Deploy Backend to VPS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/**'
+      - 'infra/**'
+      - 'ecosystem.config.js'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to game.myonlinejoker.com
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          script: |
+            cd /opt/teen
+            git pull origin main
+            chmod +x infra/deploy/deploy-services.sh
+            bash infra/deploy/deploy-services.sh
+            pm2 status
+
+      - name: Health check
+        run: |
+          sleep 15
+          curl -f http://${{ secrets.VPS_HOST }}/health || exit 1
+          echo "Health check passed ✅"
