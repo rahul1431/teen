@@ -1,0 +1,62 @@
+name: Deploy Admin Panel to GitHub Pages
+
+on:
+  push:
+    branches: [claude/confident-archimedes-e2dd1k, main]
+    paths:
+      - 'admin-panel/**'
+      - '.github/workflows/deploy-admin-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build admin panel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install & build
+        working-directory: admin-panel
+        env:
+          # GitHub Pages serves project sites under /<repo>/
+          ADMIN_BASE: /teen/
+          VITE_ROUTER_BASE: /teen
+        run: |
+          npm install
+          npm run build
+          # SPA fallback so deep links / refresh work on Pages
+          cp dist/index.html dist/404.html
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: admin-panel/dist
+
+  deploy:
+    name: Deploy to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
