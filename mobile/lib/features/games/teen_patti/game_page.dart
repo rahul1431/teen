@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
+import 'dart:math' as math;
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../shared/theme/app_theme.dart';
 
+/// Landscape Teen Patti table with live chat, emoji reactions and gifts.
 class TeenPattiGamePage extends StatefulWidget {
   final String roomId;
   const TeenPattiGamePage({super.key, required this.roomId});
@@ -24,9 +26,30 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
   bool _isSeen = false;
   String? _resultMessage;
 
+  // Social
+  bool _showChat = false;
+  bool _showGiftTray = false;
+  final _chatInput = TextEditingController();
+  final List<_ChatMsg> _chat = [];
+  final List<_Reaction> _reactions = [];
+  int _reactionId = 0;
+
+  static const _quickEmojis = ['😀', '😂', '😎', '😮', '😭', '🔥', '👏', '🤔'];
+  static const _gifts = [
+    {'icon': '🌹', 'name': 'Rose'},
+    {'icon': '🎁', 'name': 'Gift'},
+    {'icon': '💎', 'name': 'Diamond'},
+    {'icon': '🍺', 'name': 'Beer'},
+    {'icon': '👑', 'name': 'Crown'},
+    {'icon': '💣', 'name': 'Bomb'},
+  ];
+
   @override
   void initState() {
     super.initState();
+    SystemChrome.setPreferredOrientations(
+        [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _init();
   }
 
@@ -38,8 +61,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
       if (!mounted) return;
       setState(() {
         _gameState = data;
-        final myPlayer = (data['players'] as List?)?.firstWhere((p) => p['user_id'] == _myUserId, orElse: () => null);
-        _isMyTurn = myPlayer != null && data['current_turn_user_id'] == _myUserId;
+        final myPlayer = (data['players'] as List?)
+            ?.firstWhere((p) => p['user_id'] == _myUserId, orElse: () => null);
+        _isMyTurn =
+            myPlayer != null && data['current_turn_user_id'] == _myUserId;
         if (_isMyTurn) _startTurnTimer();
       });
     });
@@ -54,13 +79,37 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
       });
       HapticFeedback.heavyImpact();
     });
+
+    _socket.on(SocketEvents.roomChatMsg).listen((data) {
+      if (!mounted || data is! Map) return;
+      final type = (data['type'] ?? 'text').toString();
+      final msg = _ChatMsg(
+        userId: data['user_id']?.toString() ?? '',
+        username: data['username']?.toString() ?? 'Player',
+        text: data['message']?.toString() ?? '',
+        type: type,
+      );
+      setState(() {
+        if (type == 'text') {
+          _chat.add(msg);
+          if (_chat.length > 50) _chat.removeAt(0);
+        } else if (msg.userId != _myUserId) {
+          // emoji / gift float over the sender's seat
+          // (own reactions are already shown optimistically)
+          _spawnReaction(msg.userId, msg.text, isGift: type == 'gift');
+        }
+      });
+    });
   }
 
   void _startTurnTimer() {
     _turnTimer?.cancel();
     setState(() => _turnSecondsLeft = 30);
     _turnTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) { t.cancel(); return; }
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
       setState(() {
         _turnSecondsLeft--;
         if (_turnSecondsLeft <= 0) {
@@ -84,110 +133,281 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     HapticFeedback.mediumImpact();
   }
 
+  // ---- Social senders (piggyback on room:chat with a `type`) ----
+  void _sendChat(String text) {
+    final t = text.trim();
+    if (t.isEmpty) return;
+    _socket.emit(SocketEvents.roomChat,
+        {'room_id': widget.roomId, 'message': t, 'type': 'text'});
+    _chatInput.clear();
+  }
+
+  void _sendEmoji(String emoji) {
+    _socket.emit(SocketEvents.roomChat,
+        {'room_id': widget.roomId, 'message': emoji, 'type': 'emoji'});
+    _spawnReaction(_myUserId ?? '', emoji); // optimistic
+    HapticFeedback.selectionClick();
+  }
+
+  void _sendGift(String icon) {
+    _socket.emit(SocketEvents.roomChat,
+        {'room_id': widget.roomId, 'message': icon, 'type': 'gift'});
+    _spawnReaction(_myUserId ?? '', icon, isGift: true);
+    setState(() => _showGiftTray = false);
+    HapticFeedback.mediumImpact();
+  }
+
+  void _spawnReaction(String userId, String emoji, {bool isGift = false}) {
+    final r = _Reaction(id: ++_reactionId, userId: userId, emoji: emoji, isGift: isGift);
+    setState(() => _reactions.add(r));
+    Timer(const Duration(milliseconds: 2600), () {
+      if (!mounted) return;
+      setState(() => _reactions.removeWhere((x) => x.id == r.id));
+    });
+  }
+
+  void _exit() {
+    SystemChrome.setPreferredOrientations(
+        [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    Navigator.pop(context);
+  }
+
   @override
   void dispose() {
     _turnTimer?.cancel();
+    _chatInput.dispose();
+    SystemChrome.setPreferredOrientations(
+        [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.teenPattiGreen,
-      body: SafeArea(
-        child: _resultMessage != null
-            ? _buildResult()
-            : Stack(
-                children: [
-                  _buildTable(),
-                  if (_isMyTurn) _buildActionBar(),
-                ],
-              ),
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) {
+        if (!didPop) _exit();
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0B3D17),
+        body: SafeArea(
+          child: _resultMessage != null
+              ? _buildResult()
+              : Stack(
+                  children: [
+                    _buildFelt(),
+                    _buildSeatsAndCenter(),
+                    _buildTopBar(),
+                    _buildMyHand(),
+                    if (_isMyTurn) _buildActionBar(),
+                    _buildSocialButtons(),
+                    if (_showGiftTray) _buildGiftTray(),
+                    if (_showChat) _buildChatPanel(),
+                  ],
+                ),
+        ),
       ),
     );
   }
 
-  Widget _buildTable() {
-    final players = (_gameState?['players'] as List?) ?? [];
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              const BackButton(color: Colors.white),
-              const Spacer(),
-              _potChip(),
-              const Spacer(),
-              if (_isMyTurn)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(color: AppColors.red, borderRadius: BorderRadius.circular(20)),
-                  child: Text('$_turnSecondsLeft s', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                ),
-            ],
+  // Green felt with a radial highlight
+  Widget _buildFelt() => Positioned.fill(
+        child: Container(
+          decoration: const BoxDecoration(
+            gradient: RadialGradient(
+              center: Alignment.center,
+              radius: 0.9,
+              colors: [Color(0xFF1B7A33), Color(0xFF0B3D17)],
+            ),
           ),
-        ),
-        Expanded(
           child: Center(
-            child: Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              alignment: WrapAlignment.center,
-              children: players.map<Widget>((p) => _buildPlayerSeat(p)).toList(),
+            child: FractionallySizedBox(
+              widthFactor: 0.78,
+              heightFactor: 0.72,
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(400),
+                  border: Border.all(color: AppColors.gold.withOpacity(0.55), width: 4),
+                  gradient: const RadialGradient(
+                    colors: [Color(0xFF2E9D4B), Color(0xFF14642A)],
+                  ),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 24, spreadRadius: 4),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
-        _buildMyCards(),
-      ],
-    );
+      );
+
+  Widget _buildSeatsAndCenter() {
+    return LayoutBuilder(builder: (context, c) {
+      final players = (_gameState?['players'] as List?) ?? [];
+      final w = c.maxWidth, h = c.maxHeight;
+      final cx = w / 2, cy = h / 2 - 6;
+      final rx = w * 0.36, ry = h * 0.33;
+
+      // order players so "me" sits at the bottom-center
+      final ordered = List<Map<String, dynamic>>.from(
+          players.map((e) => Map<String, dynamic>.from(e as Map)));
+      final myIdx = ordered.indexWhere((p) => p['user_id'] == _myUserId);
+      if (myIdx > 0) {
+        final rotated = [...ordered.sublist(myIdx), ...ordered.sublist(0, myIdx)];
+        ordered
+          ..clear()
+          ..addAll(rotated);
+      }
+      final n = ordered.isEmpty ? 1 : ordered.length;
+
+      final seats = <Widget>[];
+      for (var i = 0; i < ordered.length; i++) {
+        final theta = (math.pi / 2) + (2 * math.pi * i / n); // i=0 → bottom
+        final sx = cx + rx * math.cos(theta);
+        final sy = cy + ry * math.sin(theta);
+        seats.add(Positioned(
+          left: sx - 46,
+          top: sy - 40,
+          child: _buildPlayerSeat(ordered[i]),
+        ));
+        // reactions floating above this seat
+        for (final r in _reactions.where((x) => x.userId == ordered[i]['user_id'])) {
+          seats.add(Positioned(
+            left: sx - 16,
+            top: sy - 78,
+            child: _ReactionBubble(key: ValueKey(r.id), emoji: r.emoji, isGift: r.isGift),
+          ));
+        }
+      }
+
+      // center pot
+      seats.add(Positioned(
+        left: cx - 70,
+        top: cy - 22,
+        child: SizedBox(width: 140, child: Center(child: _potChip())),
+      ));
+      return Stack(children: seats);
+    });
   }
 
   Widget _potChip() => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-    decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(20)),
-    child: Text('Pot: ₹${_gameState?['pot'] ?? 0}', style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold)),
-  );
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: AppColors.gold.withOpacity(0.6)),
+        ),
+        child: Text('💰 ₹${_gameState?['pot'] ?? 0}',
+            style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 14)),
+      );
 
   Widget _buildPlayerSeat(Map<String, dynamic> player) {
     final isMe = player['user_id'] == _myUserId;
     final isActive = player['status'] == 'active';
+    final isFolded = player['status'] == 'folded';
     final isTurn = _gameState?['current_turn_user_id'] == player['user_id'];
-    return Container(
-      width: 90,
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: isMe ? AppColors.gold.withOpacity(0.2) : Colors.black45,
-        borderRadius: BorderRadius.circular(12),
-        border: isTurn ? Border.all(color: AppColors.gold, width: 2) : null,
-      ),
-      child: Column(
-        children: [
-          CircleAvatar(
-            radius: 20,
-            backgroundColor: isActive ? (isMe ? AppColors.gold : Colors.white24) : Colors.grey,
-            child: Text(player['username']?[0]?.toUpperCase() ?? '?', style: TextStyle(color: isMe ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
+    return Opacity(
+      opacity: isFolded ? 0.45 : 1,
+      child: Container(
+        width: 92,
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        decoration: BoxDecoration(
+          color: isMe ? AppColors.gold.withOpacity(0.18) : Colors.black38,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isTurn ? AppColors.gold : Colors.white12,
+            width: isTurn ? 2.5 : 1,
           ),
-          const SizedBox(height: 4),
-          Text(isMe ? 'You' : (player['username'] ?? 'Bot'), style: const TextStyle(color: Colors.white, fontSize: 11), overflow: TextOverflow.ellipsis),
-          Text(player['status'] == 'folded' ? 'FOLD' : '${player['cards']?.length ?? 0} cards', style: TextStyle(color: isActive ? AppColors.gold : Colors.grey, fontSize: 10)),
-          if (player['is_bot'] == true)
-            const Text('BOT', style: TextStyle(color: Colors.orange, fontSize: 9)),
-        ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor: isActive ? (isMe ? AppColors.gold : Colors.white24) : Colors.grey,
+                  child: Text(player['username']?[0]?.toUpperCase() ?? '?',
+                      style: TextStyle(color: isMe ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
+                ),
+                if (isTurn)
+                  Positioned(
+                    bottom: -2,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5),
+                      decoration: BoxDecoration(color: AppColors.red, borderRadius: BorderRadius.circular(8)),
+                      child: Text('${_turnSecondsLeft}s',
+                          style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 3),
+            Text(isMe ? 'You' : (player['username'] ?? 'Bot'),
+                style: const TextStyle(color: Colors.white, fontSize: 11), overflow: TextOverflow.ellipsis),
+            Text(
+              isFolded ? 'FOLDED' : (player['is_bot'] == true ? 'BOT' : '${player['cards']?.length ?? 0}🂠'),
+              style: TextStyle(
+                  color: isFolded ? Colors.redAccent : (player['is_bot'] == true ? Colors.orange : AppColors.gold),
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildMyCards() {
-    final me = (_gameState?['players'] as List?)?.where((p) => p['user_id'] == _myUserId).firstOrNull;
+  Widget _buildTopBar() => Positioned(
+        top: 6,
+        left: 8,
+        right: 8,
+        child: Row(
+          children: [
+            _circleBtn(Icons.arrow_back, _exit),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(20)),
+              child: Text('Teen Patti • Table ${widget.roomId.substring(0, math.min(4, widget.roomId.length))}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            ),
+            const Spacer(),
+            if (_isMyTurn)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(color: AppColors.red, borderRadius: BorderRadius.circular(20)),
+                child: Text('Your turn • ${_turnSecondsLeft}s',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+              ),
+          ],
+        ),
+      );
+
+  Widget _buildMyHand() {
+    final me = (_gameState?['players'] as List?)
+        ?.where((p) => p['user_id'] == _myUserId)
+        .firstOrNull;
     final cards = (me?['cards'] as List?) ?? [];
-    if (cards.isEmpty) return const SizedBox(height: 120);
-    return Container(
-      height: 120,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: cards.map<Widget>((card) => _buildCard(card['value'], card['suit'])).toList(),
+    if (cards.isEmpty) return const SizedBox.shrink();
+    return Positioned(
+      bottom: _isMyTurn ? 64 : 8,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < cards.length; i++)
+              Transform.rotate(
+                angle: (i - (cards.length - 1) / 2) * 0.12,
+                child: _buildCard(cards[i]['value'].toString(), cards[i]['suit'].toString()),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -196,18 +416,19 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     final color = (suit == 'H' || suit == 'D') ? AppColors.red : Colors.black;
     final suitSymbol = {'S': '♠', 'H': '♥', 'D': '♦', 'C': '♣'}[suit] ?? suit;
     return Container(
-      width: 70, height: 100,
-      margin: const EdgeInsets.symmetric(horizontal: 4),
+      width: 52,
+      height: 74,
+      margin: const EdgeInsets.symmetric(horizontal: 3),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        boxShadow: [const BoxShadow(color: Colors.black38, blurRadius: 8, offset: Offset(2, 4))],
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(1, 3))],
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(value, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: color)),
-          Text(suitSymbol, style: TextStyle(fontSize: 20, color: color)),
+          Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
+          Text(suitSymbol, style: TextStyle(fontSize: 16, color: color)),
         ],
       ),
     );
@@ -217,53 +438,267 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     final stake = (_gameState?['min_bet'] as num?)?.toDouble() ?? 10;
     final callAmount = _isSeen ? stake * 2 : stake;
     return Positioned(
-      bottom: 0, left: 0, right: 0,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: const BoxDecoration(
-          color: Colors.black87,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Row(
-          children: [
-            Expanded(child: _actionBtn('FOLD', AppColors.red, () => _sendAction('fold'))),
+      bottom: 6,
+      left: 12,
+      right: 12,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _actionBtn('FOLD', AppColors.red, () => _sendAction('fold')),
+          const SizedBox(width: 8),
+          _actionBtn('CALL ₹${callAmount.toInt()}', AppColors.gold, () => _sendAction('call'),
+              textColor: Colors.black),
+          const SizedBox(width: 8),
+          _actionBtn('RAISE', Colors.blue, () => _sendAction('raise', amount: stake * 4)),
+          if (!_isSeen) ...[
             const SizedBox(width: 8),
-            Expanded(child: _actionBtn('CALL\n₹${callAmount.toInt()}', AppColors.gold, () => _sendAction('call'), textColor: Colors.black)),
-            const SizedBox(width: 8),
-            Expanded(child: _actionBtn('RAISE', Colors.blue, () => _sendAction('raise', amount: stake * 4))),
-            if (!_isSeen) ...[
-              const SizedBox(width: 8),
-              Expanded(child: _actionBtn('SEE', Colors.purple, () => _sendAction('show'))),
-            ],
+            _actionBtn('SEE', Colors.purple, () => _sendAction('show')),
           ],
-        ),
+        ],
       ),
     );
   }
 
-  Widget _actionBtn(String label, Color color, VoidCallback onTap, {Color textColor = Colors.white}) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
-      child: Text(label, textAlign: TextAlign.center, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 12)),
-    ),
-  );
+  Widget _actionBtn(String label, Color color, VoidCallback onTap, {Color textColor = Colors.white}) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6, offset: Offset(0, 2))],
+          ),
+          child: Text(label, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 13)),
+        ),
+      );
+
+  // Right-edge vertical buttons: emoji bar toggler, gift, chat
+  Widget _buildSocialButtons() => Positioned(
+        right: 8,
+        top: 44,
+        child: Column(
+          children: [
+            _circleBtn(Icons.chat_bubble_outline, () => setState(() {
+                  _showChat = !_showChat;
+                  _showGiftTray = false;
+                })),
+            const SizedBox(height: 8),
+            _circleBtn(Icons.card_giftcard, () => setState(() {
+                  _showGiftTray = !_showGiftTray;
+                  _showChat = false;
+                })),
+            const SizedBox(height: 8),
+            _emojiQuickBar(),
+          ],
+        ),
+      );
+
+  Widget _emojiQuickBar() => Container(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+        decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(20)),
+        child: Column(
+          children: _quickEmojis.take(5).map((e) {
+            return GestureDetector(
+              onTap: () => _sendEmoji(e),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Text(e, style: const TextStyle(fontSize: 20)),
+              ),
+            );
+          }).toList(),
+        ),
+      );
+
+  Widget _circleBtn(IconData icon, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 38,
+          height: 38,
+          decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+          child: Icon(icon, color: Colors.white, size: 20),
+        ),
+      );
+
+  Widget _buildGiftTray() => Positioned(
+        right: 54,
+        top: 44,
+        child: Container(
+          width: 180,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.black87,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.gold.withOpacity(0.5)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Send a gift', style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _gifts.map((g) {
+                  return GestureDetector(
+                    onTap: () => _sendGift(g['icon']!),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white10,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Column(
+                        children: [
+                          Text(g['icon']!, style: const TextStyle(fontSize: 22)),
+                          Text(g['name']!, style: const TextStyle(color: Colors.white70, fontSize: 9)),
+                        ],
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _buildChatPanel() => Positioned(
+        right: 54,
+        top: 44,
+        bottom: 8,
+        child: Container(
+          width: 240,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.black87,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.gold.withOpacity(0.4)),
+          ),
+          child: Column(
+            children: [
+              const Text('Table Chat', style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold)),
+              const Divider(color: Colors.white24, height: 12),
+              Expanded(
+                child: _chat.isEmpty
+                    ? const Center(child: Text('Say hi 👋', style: TextStyle(color: Colors.white38, fontSize: 12)))
+                    : ListView.builder(
+                        reverse: true,
+                        itemCount: _chat.length,
+                        itemBuilder: (_, i) {
+                          final m = _chat[_chat.length - 1 - i];
+                          final mine = m.userId == _myUserId;
+                          return Align(
+                            alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(vertical: 2),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: mine ? AppColors.gold.withOpacity(0.85) : Colors.white12,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                mine ? m.text : '${m.username}: ${m.text}',
+                                style: TextStyle(color: mine ? Colors.black : Colors.white, fontSize: 12),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _chatInput,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: _sendChat,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        hintText: 'Message…',
+                        hintStyle: TextStyle(color: Colors.white38, fontSize: 12),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.send, color: AppColors.gold, size: 20),
+                    onPressed: () => _sendChat(_chatInput.text),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
 
   Widget _buildResult() => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(_resultMessage ?? '', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white), textAlign: TextAlign.center),
-          const SizedBox(height: 32),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Back to Lobby'),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_resultMessage ?? '',
+                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 24),
+              ElevatedButton(onPressed: _exit, child: const Text('Back to Lobby')),
+            ],
           ),
-        ],
-      ),
-    ),
-  );
+        ),
+      );
+}
+
+class _ChatMsg {
+  final String userId, username, text, type;
+  _ChatMsg({required this.userId, required this.username, required this.text, required this.type});
+}
+
+class _Reaction {
+  final int id;
+  final String userId, emoji;
+  final bool isGift;
+  _Reaction({required this.id, required this.userId, required this.emoji, this.isGift = false});
+}
+
+/// Floating emoji/gift that rises and fades over a seat.
+class _ReactionBubble extends StatefulWidget {
+  final String emoji;
+  final bool isGift;
+  const _ReactionBubble({super.key, required this.emoji, this.isGift = false});
+  @override
+  State<_ReactionBubble> createState() => _ReactionBubbleState();
+}
+
+class _ReactionBubbleState extends State<_ReactionBubble> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 2400))..forward();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, __) {
+        final t = _c.value;
+        return Transform.translate(
+          offset: Offset(math.sin(t * math.pi * 2) * 6, -36 * t),
+          child: Opacity(
+            opacity: (1 - t).clamp(0.0, 1.0),
+            child: Transform.scale(
+              scale: widget.isGift ? 1.0 + t * 0.6 : 1.0,
+              child: Text(widget.emoji, style: const TextStyle(fontSize: 30)),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }

@@ -91,12 +91,14 @@ async function start() {
       socket.join(room_id)
     })
 
-    socket.on('room:chat', ({ room_id, message }: any) => {
+    socket.on('room:chat', ({ room_id, message, type }: any) => {
       if (!message || message.length > 200) return
+      const msgType = ['text', 'emoji', 'gift'].includes(type) ? type : 'text'
       io.to(room_id).emit('room:chat', {
         user_id: socket.data.userId,
         username: socket.data.username,
         message: message.substring(0, 200),
+        type: msgType,
         timestamp: Date.now(),
       })
     })
