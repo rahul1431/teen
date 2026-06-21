@@ -1,8 +1,73 @@
 # Progress & Resume Checkpoint
 
-> Living status doc. Read this first when resuming. Last updated: 2026-06-21 (session 3).
+> Living status doc. Read this first when resuming. Last updated: 2026-06-21 (session 4 — VPS deployment).
 > Branch: `claude/confident-archimedes-e2dd1k` · PR: #1 (draft) · Base: `main`
 > Latest APK commit: `b28a50c` (hostess + haptics) · Admin preview: https://rahul1431.github.io/teen/
+
+## 🚀 Session 4 — LIVE VPS deployment (game.myonlinejoker.com)
+
+**Server:** HestiaCP on `64.204.130.181` (Ubuntu 24.04). Repo at `/opt/teen`.
+SSH is from the user's own machine (port 22 blocked from Claude's sandbox).
+
+### Live now ✅
+- **PostgreSQL** in Docker (`teen_postgres`, port 5432, healthy). 18 tables.
+  - Compose trimmed to Postgres only (system Redis already on :6379 → reused).
+  - Migrations 001–006 applied (005 risk_status skipped: `user_status` is a CHECK
+    constraint not an ENUM — non-blocking, patch later).
+  - Postgres password: stored in `/opt/teen/.env` on the VPS (not committed).
+- **Adminer** DB GUI at `https://game.myonlinejoker.com/adminer.php`
+  (System=PostgreSQL, Server=`127.0.0.1:5432`, user `teen`, db `teen_db`).
+  ⚠️ Publicly exposed — delete or password-protect when done.
+- **admin-service** running via PM2 (`teen-admin-svc`, port 3008), `.env` at
+  `services/admin-service/.env`. Needed `npm install dotenv` (not in deps).
+- **Admin Panel** built + served at `https://game.myonlinejoker.com/admin/`
+  — **login works end-to-end over HTTPS** 🎉
+  - Built with `VITE_API_BASE_URL=""` + `ADMIN_BASE="/admin/"`, **no**
+    `VITE_ROUTER_BASE` (routes already include `/admin`, basename doubled it).
+  - Admin user: `admin` (temp pw set during deploy — CHANGE THIS) + seeded
+    `superadmin`. Both role=superadmin.
+- **Nginx** (HestiaCP) custom includes (survive rebuilds):
+  - `nginx.conf_api` + `nginx.ssl.conf_api` → `location /api/ → 127.0.0.1:3008`
+  - `nginx.conf_admin` + `nginx.ssl.conf_admin` → SPA fallback for `/admin/`
+  - PHP fix: domain pool is php8.1; installed `php8.1-pgsql` for Adminer.
+- **PM2** persisted (`pm2 save` + systemd startup).
+
+### VPS secrets (in service `.env` files)
+- JWT_SECRET=`e62b472a7217249ecf6e6234c78de41dd6c23d9fbe23ba33410c56042e1e4d66`
+- JWT_REFRESH_SECRET=`b8ec306406260803f401b34afa9da1c44b261473cded0bb1b911261db2c5b882`
+- INTERNAL_SERVICE_KEY=`f4172a2b9d5ee350c471632a3b82c688`
+- POSTGRES_PASSWORD=`4f27e37a4251d17033741c22`
+- DATABASE_URL=`postgresql://teen:<pw>@127.0.0.1:5432/teen_db`
+- REDIS_URL=`redis://127.0.0.1:6379`
+
+### Service port map
+auth 3001 · user 3002 · wallet 3003 · gateway 3004 · aviator 3005 ·
+leaderboard 3006 · notification 3007 · **admin 3008 (live)**
+
+### Pending VPS steps ⏳
+- [ ] Build + start the other 6 services (auth/user/wallet/gateway/aviator/
+      leaderboard/notification) with PM2. **All import `dotenv` but none list it
+      → `npm install dotenv` in each before starting.** OTP runs in console mode
+      (prints to PM2 logs) when `OTP_PROVIDER` unset — good for testing.
+- [ ] Split nginx `/api/` routes per service (currently all `/api/` → 3008;
+      need `/api/auth`→3001, `/api/wallet`→3003, socket.io→3004, etc.)
+- [ ] Point mobile APK at `https://game.myonlinejoker.com` + rebuild.
+- [ ] Optional: GitHub Actions auto-deploy — add `VPS_HOST`/`VPS_USER`/
+      `VPS_PASSWORD` secrets (workflow `.github/workflows/deploy-backend.yml`).
+- [ ] Change admin password; secure/remove Adminer.
+
+## 🆕 Session 3.5 additions (admin modules + mobile push)
+- **Anti-Cheat / Risk Center** — `admin-panel/src/pages/RiskCenter.tsx` (5 tabs:
+  Overview, Flagged Users, Device Links, Win-Rate Anomalies, Collusion Pairs) +
+  6 `/api/admin/risk/*` endpoints. Migration `005_risk_status.sql`.
+- **Support Helpdesk + CMS** — `admin-panel/src/pages/Support.tsx` (Tickets,
+  CMS Pages, Banners) + endpoints. Migration `006_support_cms.sql` (support_tickets,
+  support_messages, cms_pages, cms_banners).
+- **Mobile Push Notifications** — `push_notification_service.dart` (FCM token reg,
+  foreground local notifications, deep-link routing) + `notifications_page.dart`
+  notification center. `PUT /auth/fcm-token` endpoint. Wired in `app.dart`.
+- **Role-gate fixes** — added missing `requireRole()` on 6 finance/config/
+  notification endpoints.
 
 ## ❓ How to log in to the admin panel
 The Pages preview at `rahul1431.github.io/teen/` is **UI-only — login requires
