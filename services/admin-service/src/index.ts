@@ -554,6 +554,89 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // ---- Payment methods (manual deposit destinations: UPI / bank / QR) ----
+
+  // GET /api/admin/payment-methods — list all (active + inactive)
+  app.get('/api/admin/payment-methods', { onRequest: [authenticate, requireRole('finance')] }, async (_req, reply) => {
+    const res = await db.query(`SELECT * FROM payment_methods ORDER BY sort_order ASC, created_at ASC`)
+    return reply.send(res.rows)
+  })
+
+  // POST /api/admin/payment-methods — create
+  app.post('/api/admin/payment-methods', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const admin = req.user as any
+    const b = z.object({
+      method_type: z.enum(['upi', 'bank', 'qr']),
+      label: z.string().min(1),
+      upi_id: z.string().optional(),
+      account_name: z.string().optional(),
+      account_number: z.string().optional(),
+      ifsc: z.string().optional(),
+      bank_name: z.string().optional(),
+      qr_image_url: z.string().optional(),
+      instructions: z.string().optional(),
+      min_amount: z.number().optional(),
+      max_amount: z.number().optional(),
+      is_active: z.boolean().optional(),
+      sort_order: z.number().optional(),
+    }).parse(req.body)
+    const res = await db.query(
+      `INSERT INTO payment_methods
+         (method_type, label, upi_id, account_name, account_number, ifsc, bank_name,
+          qr_image_url, instructions, min_amount, max_amount, is_active, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [b.method_type, b.label, b.upi_id, b.account_name, b.account_number, b.ifsc, b.bank_name,
+       b.qr_image_url, b.instructions, b.min_amount ?? 100, b.max_amount ?? 100000,
+       b.is_active ?? true, b.sort_order ?? 0]
+    )
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'payment_method_create', 'payment_method', $2)`,
+      [admin.sub, res.rows[0].id])
+    return reply.send(res.rows[0])
+  })
+
+  // PATCH /api/admin/payment-methods/:id — update any field
+  app.patch('/api/admin/payment-methods/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as any
+    const b = z.object({
+      label: z.string().optional(),
+      upi_id: z.string().optional(),
+      account_name: z.string().optional(),
+      account_number: z.string().optional(),
+      ifsc: z.string().optional(),
+      bank_name: z.string().optional(),
+      qr_image_url: z.string().optional(),
+      instructions: z.string().optional(),
+      min_amount: z.number().optional(),
+      max_amount: z.number().optional(),
+      is_active: z.boolean().optional(),
+      sort_order: z.number().optional(),
+    }).parse(req.body)
+    const updates: string[] = []
+    const params: any[] = []
+    let idx = 1
+    for (const [k, v] of Object.entries(b)) {
+      if (v !== undefined) { updates.push(`${k} = $${idx}`); params.push(v); idx++ }
+    }
+    if (!updates.length) return reply.code(400).send({ error: 'No fields to update' })
+    updates.push(`updated_at = NOW()`)
+    params.push(id)
+    await db.query(`UPDATE payment_methods SET ${updates.join(', ')} WHERE id = $${idx}`, params)
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'payment_method_update', 'payment_method', $2)`,
+      [admin.sub, id])
+    return reply.send({ success: true })
+  })
+
+  // DELETE /api/admin/payment-methods/:id
+  app.delete('/api/admin/payment-methods/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as any
+    await db.query(`DELETE FROM payment_methods WHERE id = $1`, [id])
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'payment_method_delete', 'payment_method', $2)`,
+      [admin.sub, id])
+    return reply.send({ success: true })
+  })
+
   // GET /api/admin/finance/ledger — global ledger view with filters
   app.get('/api/admin/finance/ledger', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const { type, wallet_type, user_id, from, to, page = '1', limit = '50' } = req.query as any

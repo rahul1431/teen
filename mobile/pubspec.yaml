@@ -20,6 +20,9 @@ dependencies:
   dio: ^5.4.3+1
   retrofit: ^4.1.0
 
+  # Image picking (deposit payment-proof screenshots)
+  image_picker: ^1.1.2
+
   # WebSocket / Socket.IO
   socket_io_client: ^2.0.3+1
 

@@ -3,11 +3,18 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import jwt from '@fastify/jwt'
+import multipart from '@fastify/multipart'
 import { Pool } from 'pg'
 import Razorpay from 'razorpay'
 import crypto from 'crypto'
 import { z } from 'zod'
+import fs from 'fs'
+import path from 'path'
+import { pipeline } from 'stream/promises'
 import { WalletService } from './wallet.service'
+
+// Where uploaded deposit screenshots are stored (served by nginx at /uploads/).
+const UPLOAD_DIR = process.env.UPLOAD_DIR || '/opt/teen/uploads/deposits'
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
@@ -24,9 +31,11 @@ const razorpay: Razorpay | null = process.env.RAZORPAY_KEY_ID
   : null
 
 async function start() {
-  await app.register(helmet)
+  await app.register(helmet, { crossOriginResourcePolicy: false })
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.JWT_SECRET! })
+  await app.register(multipart, { limits: { fileSize: 8 * 1024 * 1024 } }) // 8MB screenshots
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true })
 
   const authenticate = async (req: any, reply: any) => {
     try { await req.jwtVerify() } catch { reply.code(401).send({ error: 'Unauthorized' }) }
@@ -146,6 +155,73 @@ async function start() {
     })
     const balance = await walletSvc.getBalance(body.user_id)
     return reply.send({ success: true, balance })
+  })
+
+  // ---- Manual deposit (UPI / bank / QR) — user-facing ----
+
+  // GET /wallet/deposit/methods — active payment destinations the user can pay to
+  app.get('/wallet/deposit/methods', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query(
+      `SELECT id, method_type, label, upi_id, account_name, account_number, ifsc,
+              bank_name, qr_image_url, instructions, min_amount, max_amount
+       FROM payment_methods WHERE is_active = true ORDER BY sort_order ASC, created_at ASC`
+    )
+    return reply.send(res.rows)
+  })
+
+  // POST /wallet/deposit/submit — multipart: amount, payment_method_id, reference_number, screenshot
+  // Creates a PENDING deposit order with proof. Admin approves it to credit the wallet.
+  app.post('/wallet/deposit/submit', { onRequest: [authenticate] }, async (req, reply) => {
+    const user = req.user as any
+    let amount = 0
+    let methodId: string | null = null
+    let referenceNumber = ''
+    let screenshotUrl: string | null = null
+
+    const parts = (req as any).parts()
+    for await (const part of parts) {
+      if (part.type === 'file') {
+        const ext = path.extname(part.filename || '').toLowerCase().slice(0, 8) || '.jpg'
+        if (!['.jpg', '.jpeg', '.png', '.webp', '.pdf'].includes(ext)) {
+          return reply.code(400).send({ error: 'Unsupported file type' })
+        }
+        const fname = `${user.sub}_${crypto.randomUUID()}${ext}`
+        await pipeline(part.file, fs.createWriteStream(path.join(UPLOAD_DIR, fname)))
+        screenshotUrl = `/uploads/deposits/${fname}`
+      } else {
+        if (part.fieldname === 'amount') amount = parseFloat(part.value as string)
+        if (part.fieldname === 'payment_method_id') methodId = part.value as string
+        if (part.fieldname === 'reference_number') referenceNumber = (part.value as string).trim()
+      }
+    }
+
+    if (!amount || amount < 1) return reply.code(400).send({ error: 'Invalid amount' })
+    if (!referenceNumber) return reply.code(400).send({ error: 'Reference / UTR number required' })
+
+    // Validate against the chosen method's limits (if provided).
+    if (methodId) {
+      const m = await db.query(`SELECT min_amount, max_amount FROM payment_methods WHERE id = $1 AND is_active = true`, [methodId])
+      if (!m.rows.length) return reply.code(400).send({ error: 'Payment method unavailable' })
+      const { min_amount, max_amount } = m.rows[0]
+      if (amount < parseFloat(min_amount) || amount > parseFloat(max_amount)) {
+        return reply.code(400).send({ error: `Amount must be between ₹${min_amount} and ₹${max_amount}` })
+      }
+    }
+
+    const ins = await db.query(
+      `INSERT INTO payment_orders
+         (user_id, gateway, amount, type, status, reference_number, screenshot_url, payment_method_id, metadata)
+       VALUES ($1, 'manual', $2, 'deposit', 'created', $3, $4, $5, $6)
+       RETURNING id`,
+      [user.sub, amount, referenceNumber, screenshotUrl, methodId,
+       JSON.stringify({ submitted_at: new Date().toISOString() })]
+    )
+
+    return reply.send({
+      success: true,
+      order_id: ins.rows[0].id,
+      message: 'Deposit submitted for review. Your balance updates once an admin approves it.',
+    })
   })
 
   // POST /wallet/debit/manual (admin only — identified by internal key)

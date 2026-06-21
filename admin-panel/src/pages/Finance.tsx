@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import {
   Table, Tag, Button, Space, message, Select, Statistic, Row, Col, Card, Tabs,
-  Modal, Input, Descriptions, Empty, Tooltip,
+  Modal, Input, Descriptions, Empty, Tooltip, Switch, InputNumber, Form, Popconfirm,
 } from 'antd'
-import { CheckOutlined, CloseOutlined, DollarOutlined, ReloadOutlined } from '@ant-design/icons'
+import { CheckOutlined, CloseOutlined, DollarOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { adminApi } from '../api/client'
 
 export default function Finance() {
@@ -24,6 +24,7 @@ export default function Finance() {
         items={[
           { key: 'withdrawals', label: 'Withdrawals', children: <Withdrawals /> },
           { key: 'deposits', label: 'Deposits', children: <Deposits /> },
+          { key: 'methods', label: 'Payment Methods', children: <PaymentMethods /> },
           { key: 'ledger', label: 'Ledger', children: <Ledger /> },
           { key: 'reconciliation', label: 'Reconciliation', children: <Reconciliation /> },
         ]}
@@ -197,7 +198,9 @@ function Deposits() {
           { title: 'User', dataIndex: 'username' },
           { title: 'Amount (₹)', dataIndex: 'amount', align: 'right' as const, render: (v: any) => parseFloat(v).toFixed(2) },
           { title: 'Gateway', dataIndex: 'gateway' },
-          { title: 'Gateway Ref', dataIndex: 'gateway_payment_id', render: (v: string) => v ? <Tooltip title={v}><code>{v.slice(0, 14)}…</code></Tooltip> : '-' },
+          { title: 'User Ref / UTR', dataIndex: 'reference_number', render: (v: string) => v ? <Tooltip title={v}><code>{v.slice(0, 18)}{v.length > 18 ? '…' : ''}</code></Tooltip> : '-' },
+          { title: 'Proof', dataIndex: 'screenshot_url', render: (v: string) => v
+            ? <a href={v} target="_blank" rel="noreferrer">View</a> : '-' },
           { title: 'Status', dataIndex: 'status', render: (s: string) => (
             <Tag color={{ created: 'orange', paid: 'green', failed: 'red', refunded: 'purple' }[s] || 'default'}>{s}</Tag>
           )},
@@ -231,8 +234,17 @@ function Deposits() {
               <Descriptions.Item label="User">{recon.row.username}</Descriptions.Item>
               <Descriptions.Item label="Amount">₹{parseFloat(recon.row.amount).toFixed(2)}</Descriptions.Item>
               <Descriptions.Item label="Gateway">{recon.row.gateway}</Descriptions.Item>
-              <Descriptions.Item label="Gateway Ref">{recon.row.gateway_payment_id || '-'}</Descriptions.Item>
+              <Descriptions.Item label="User Ref / UTR">{recon.row.reference_number || '-'}</Descriptions.Item>
             </Descriptions>
+            {recon.row.screenshot_url && (
+              <div style={{ marginBottom: 12 }}>
+                <p style={{ marginBottom: 4 }}>Payment proof:</p>
+                <a href={recon.row.screenshot_url} target="_blank" rel="noreferrer">
+                  <img src={recon.row.screenshot_url} alt="payment proof"
+                    style={{ maxWidth: '100%', maxHeight: 220, border: '1px solid #eee', borderRadius: 6 }} />
+                </a>
+              </div>
+            )}
             <p>Reference (gateway TXN ID / UTR — for the audit trail):</p>
             <Input value={reference} onChange={(e) => setReference(e.target.value)}
               placeholder="Bank UTR or gateway payment ID" />
@@ -365,6 +377,120 @@ function Reconciliation() {
           </Col>
         </Row>
       )}
+    </>
+  )
+}
+
+// ---- Payment Methods (manual deposit destinations) ----
+function PaymentMethods() {
+  const [rows, setRows] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [editing, setEditing] = useState<any | null>(null)
+  const [form] = Form.useForm()
+
+  const load = async () => {
+    setLoading(true)
+    try { setRows((await adminApi.get('/payment-methods')).data) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [])
+
+  const openNew = () => { setEditing({}); form.resetFields(); form.setFieldsValue({ method_type: 'upi', is_active: true, min_amount: 100, max_amount: 100000, sort_order: 0 }) }
+  const openEdit = (r: any) => { setEditing(r); form.setFieldsValue(r) }
+
+  const save = async () => {
+    const vals = await form.validateFields()
+    try {
+      if (editing?.id) await adminApi.patch(`/payment-methods/${editing.id}`, vals)
+      else await adminApi.post('/payment-methods', vals)
+      message.success('Saved'); setEditing(null); load()
+    } catch (e: any) { message.error(e.response?.data?.error || 'Failed') }
+  }
+
+  const remove = async (id: string) => {
+    try { await adminApi.delete(`/payment-methods/${id}`); message.success('Deleted'); load() }
+    catch (e: any) { message.error(e.response?.data?.error || 'Failed') }
+  }
+
+  const toggleActive = async (r: any, v: boolean) => {
+    try { await adminApi.patch(`/payment-methods/${r.id}`, { is_active: v }); load() }
+    catch { message.error('Failed') }
+  }
+
+  return (
+    <>
+      <Space style={{ marginBottom: 16 }}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openNew}>Add Method</Button>
+        <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
+      </Space>
+      <Table dataSource={rows} rowKey="id" loading={loading} size="small" pagination={false}
+        columns={[
+          { title: 'Type', dataIndex: 'method_type', render: (t: string) => <Tag color={{ upi: 'blue', bank: 'green', qr: 'purple' }[t]}>{t?.toUpperCase()}</Tag> },
+          { title: 'Label', dataIndex: 'label' },
+          { title: 'Details', render: (r: any) => r.method_type === 'upi'
+              ? <code>{r.upi_id}</code>
+              : r.method_type === 'bank'
+                ? <span>{r.bank_name} · {r.account_number} · {r.ifsc}</span>
+                : (r.qr_image_url ? <a href={r.qr_image_url} target="_blank" rel="noreferrer">QR image</a> : '-') },
+          { title: 'Limits (₹)', render: (r: any) => `${parseFloat(r.min_amount).toFixed(0)} – ${parseFloat(r.max_amount).toFixed(0)}` },
+          { title: 'Active', dataIndex: 'is_active', render: (v: boolean, r: any) => <Switch checked={v} onChange={(c) => toggleActive(r, c)} /> },
+          { title: 'Actions', render: (r: any) => (
+            <Space>
+              <Button size="small" onClick={() => openEdit(r)}>Edit</Button>
+              <Popconfirm title="Delete this method?" onConfirm={() => remove(r.id)}>
+                <Button size="small" danger icon={<DeleteOutlined />} />
+              </Popconfirm>
+            </Space>
+          )},
+        ]} />
+
+      <Modal open={!!editing} title={editing?.id ? 'Edit Payment Method' : 'Add Payment Method'}
+        onCancel={() => setEditing(null)} onOk={save} width={560}>
+        <Form form={form} layout="vertical">
+          <Form.Item name="method_type" label="Type" rules={[{ required: true }]}>
+            <Select disabled={!!editing?.id}>
+              <Select.Option value="upi">UPI</Select.Option>
+              <Select.Option value="bank">Bank Transfer</Select.Option>
+              <Select.Option value="qr">QR Code</Select.Option>
+            </Select>
+          </Form.Item>
+          <Form.Item name="label" label="Label" rules={[{ required: true }]}>
+            <Input placeholder="e.g. Primary UPI / HDFC Current A/c" />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(p, c) => p.method_type !== c.method_type}>
+            {({ getFieldValue }) => {
+              const t = getFieldValue('method_type')
+              if (t === 'upi') return (
+                <Form.Item name="upi_id" label="UPI ID" rules={[{ required: true }]}>
+                  <Input placeholder="name@bank" />
+                </Form.Item>
+              )
+              if (t === 'bank') return (
+                <>
+                  <Form.Item name="account_name" label="Account Holder Name"><Input /></Form.Item>
+                  <Form.Item name="account_number" label="Account Number" rules={[{ required: true }]}><Input /></Form.Item>
+                  <Form.Item name="ifsc" label="IFSC" rules={[{ required: true }]}><Input /></Form.Item>
+                  <Form.Item name="bank_name" label="Bank Name"><Input /></Form.Item>
+                </>
+              )
+              return (
+                <Form.Item name="qr_image_url" label="QR Image URL" rules={[{ required: true }]}>
+                  <Input placeholder="https://… (upload the QR to the server and paste its URL)" />
+                </Form.Item>
+              )
+            }}
+          </Form.Item>
+          <Form.Item name="instructions" label="Instructions (optional)">
+            <Input.TextArea rows={2} placeholder="Any note shown to the user (e.g. add your phone number in the remarks)" />
+          </Form.Item>
+          <Row gutter={12}>
+            <Col span={8}><Form.Item name="min_amount" label="Min ₹"><InputNumber style={{ width: '100%' }} min={1} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="max_amount" label="Max ₹"><InputNumber style={{ width: '100%' }} min={1} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="sort_order" label="Sort"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+          </Row>
+          <Form.Item name="is_active" label="Active" valuePropName="checked"><Switch /></Form.Item>
+        </Form>
+      </Modal>
     </>
   )
 }
