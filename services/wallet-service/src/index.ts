@@ -140,6 +140,31 @@ async function start() {
     return reply.send({ success: true, balance })
   })
 
+  // POST /wallet/debit/manual (admin only — identified by internal key)
+  app.post('/wallet/debit/manual', { onRequest: [authenticateInternal] }, async (req, reply) => {
+    const body = z.object({
+      user_id: z.string().uuid(),
+      amount: z.number().min(1),
+      description: z.string().optional(),
+    }).parse(req.body)
+
+    const bal = await walletSvc.getBalance(body.user_id)
+    if (parseFloat(bal.real_balance) < body.amount) {
+      return reply.code(400).send({ error: 'Insufficient balance' })
+    }
+
+    await walletSvc.debit({
+      userId: body.user_id,
+      amount: body.amount,
+      type: 'manual_debit',
+      walletType: 'real',
+      idempotencyKey: `manual_debit_${body.user_id}_${Date.now()}`,
+      description: body.description || 'Manual debit by admin',
+    })
+    const balance = await walletSvc.getBalance(body.user_id)
+    return reply.send({ success: true, balance })
+  })
+
   // POST /wallet/withdraw/request
   app.post('/wallet/withdraw/request', { onRequest: [authenticate] }, async (req, reply) => {
     const user = req.user as any

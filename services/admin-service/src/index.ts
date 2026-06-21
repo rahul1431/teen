@@ -99,14 +99,134 @@ async function start() {
 
   // POST /api/admin/users/:id/credit
   app.post('/api/admin/users/:id/credit', { onRequest: [authenticate] }, async (req, reply) => {
+    const admin = req.user as any
     const { id } = req.params as any
-    const { amount } = z.object({ amount: z.number().min(1) }).parse(req.body)
-    await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/deposit/manual`, {
+    const { amount, description } = z.object({
+      amount: z.number().min(1),
+      description: z.string().optional(),
+    }).parse(req.body)
+    const res = await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/deposit/manual`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-      body: JSON.stringify({ user_id: id, amount, description: 'Manual credit by admin' }),
+      body: JSON.stringify({ user_id: id, amount, description: description || 'Manual credit by admin' }),
     })
+    if (!res.ok) return reply.code(res.status).send(await res.json().catch(() => ({ error: 'Wallet service error' })))
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'credit_wallet', 'user', $2, $3)`,
+      [admin.sub, id, JSON.stringify({ amount, description })])
     return reply.send({ success: true })
+  })
+
+  // POST /api/admin/users/:id/debit
+  app.post('/api/admin/users/:id/debit', { onRequest: [authenticate] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as any
+    const { amount, description } = z.object({
+      amount: z.number().min(1),
+      description: z.string().optional(),
+    }).parse(req.body)
+    const res = await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/debit/manual`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+      body: JSON.stringify({ user_id: id, amount, description: description || 'Manual debit by admin' }),
+    })
+    if (!res.ok) return reply.code(res.status).send(await res.json().catch(() => ({ error: 'Wallet service error' })))
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'debit_wallet', 'user', $2, $3)`,
+      [admin.sub, id, JSON.stringify({ amount, description })])
+    return reply.send({ success: true })
+  })
+
+  // GET /api/admin/users/:id/transactions — ledger entries
+  app.get('/api/admin/users/:id/transactions', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const { limit = '50' } = req.query as any
+    const res = await db.query(
+      `SELECT id, type, wallet_type, amount, balance_before, balance_after, reference_id, status, description, created_at
+       FROM wallet_transactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [id, parseInt(limit)]
+    )
+    return reply.send(res.rows)
+  })
+
+  // GET /api/admin/users/:id/games — recent rooms played
+  app.get('/api/admin/users/:id/games', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT gr.id, gr.game_type, gr.status, gr.entry_fee, gr.pot_amount, gr.started_at, gr.ended_at,
+              gp.seat_number, gp.prize_won, gp.left_at
+       FROM game_participants gp
+       JOIN game_rooms gr ON gr.id = gp.room_id
+       WHERE gp.user_id = $1 ORDER BY gr.created_at DESC LIMIT 50`,
+      [id]
+    )
+    return reply.send(res.rows)
+  })
+
+  // GET /api/admin/users/:id/kyc — kyc docs
+  app.get('/api/admin/users/:id/kyc', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT id, doc_type, doc_number, s3_front_key, s3_back_key, verified_name, verified_dob,
+              status, rejection_reason, created_at, reviewed_at
+       FROM kyc_documents WHERE user_id = $1 ORDER BY created_at DESC`,
+      [id]
+    )
+    return reply.send(res.rows)
+  })
+
+  // PATCH /api/admin/users/:id/kyc — set overall kyc_status; optionally reject reason
+  app.patch('/api/admin/users/:id/kyc', { onRequest: [authenticate] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as any
+    const { status, reason } = z.object({
+      status: z.enum(['pending', 'under_review', 'approved', 'rejected']),
+      reason: z.string().optional(),
+    }).parse(req.body)
+    await db.query('UPDATE users SET kyc_status = $1 WHERE id = $2', [status, id])
+    await db.query(`UPDATE kyc_documents SET status = $1, rejection_reason = $2, reviewed_at = NOW(), reviewed_by = $3 WHERE user_id = $4`,
+      [status, reason || null, admin.sub, id])
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'user', $3, $4)`,
+      [admin.sub, `kyc_${status}`, id, JSON.stringify({ status, reason })])
+    return reply.send({ success: true })
+  })
+
+  // GET /api/admin/users/:id/notes
+  app.get('/api/admin/users/:id/notes', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT n.id, n.note, n.is_flag, n.created_at, a.username AS admin_username
+       FROM user_notes n LEFT JOIN admin_users a ON a.id = n.admin_id
+       WHERE n.user_id = $1 ORDER BY n.created_at DESC`,
+      [id]
+    )
+    return reply.send(res.rows)
+  })
+
+  // POST /api/admin/users/:id/notes
+  app.post('/api/admin/users/:id/notes', { onRequest: [authenticate] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as any
+    const { note, is_flag } = z.object({
+      note: z.string().min(1).max(2000),
+      is_flag: z.boolean().optional(),
+    }).parse(req.body)
+    const res = await db.query(
+      `INSERT INTO user_notes (user_id, admin_id, note, is_flag) VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
+      [id, admin.sub, note, is_flag || false]
+    )
+    return reply.send({ success: true, id: res.rows[0].id, created_at: res.rows[0].created_at })
+  })
+
+  // GET /api/admin/users/:id/audit — admin actions targeting this user
+  app.get('/api/admin/users/:id/audit', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT al.id, al.action, al.details, al.created_at, a.username AS admin_username
+       FROM admin_audit_log al LEFT JOIN admin_users a ON a.id = al.admin_id
+       WHERE al.target_type = 'user' AND al.target_id = $1
+       ORDER BY al.created_at DESC LIMIT 100`,
+      [id]
+    )
+    return reply.send(res.rows)
   })
 
   // GET /api/admin/game-rooms
