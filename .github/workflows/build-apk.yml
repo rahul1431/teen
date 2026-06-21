@@ -45,13 +45,22 @@ jobs:
 
       - name: Write app config
         working-directory: mobile
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          SOCKET_URL: ${{ secrets.SOCKET_URL }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
         run: |
-          cat > lib/core/constants/app_config.dart << 'EOF'
+          # Fall back to the production HTTPS host when the secret is unset/empty
+          API_BASE_URL="${API_BASE_URL:-https://game.myonlinejoker.com}"
+          SOCKET_URL="${SOCKET_URL:-https://game.myonlinejoker.com}"
+          RAZORPAY_KEY_ID="${RAZORPAY_KEY_ID:-rzp_test_placeholder}"
+          cat > lib/core/constants/app_config.dart << EOF
           class AppConfig {
-            static const String apiBaseUrl = '${{ secrets.API_BASE_URL }}';
-            static const String socketUrl = '${{ secrets.SOCKET_URL }}';
-            static const String razorpayKeyId = '${{ secrets.RAZORPAY_KEY_ID }}';
+            static const String apiBaseUrl = '${API_BASE_URL}';
+            static const String socketUrl = '${SOCKET_URL}';
+            static const String razorpayKeyId = '${RAZORPAY_KEY_ID}';
             static const String appName = 'MyOnlineJoker';
+            static const String appVersion = '1.0.0';
           }
           EOF
 
