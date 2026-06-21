@@ -425,9 +425,18 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
           color: isMe ? AppColors.gold.withOpacity(0.18) : Colors.black38,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isTurn ? AppColors.gold : Colors.white12,
+            color: isTurn ? AppColors.green : Colors.white12,
             width: isTurn ? 2.5 : 1,
           ),
+          boxShadow: isTurn
+              ? [
+                  BoxShadow(
+                    color: AppColors.green.withOpacity(0.65),
+                    blurRadius: 14,
+                    spreadRadius: 1,
+                  ),
+                ]
+              : null,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -442,7 +451,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
                 clipBehavior: Clip.none,
                 alignment: Alignment.center,
                 children: [
-                  // gold ring (timer arc when it's this player's turn)
+                  // ring: green countdown arc on the active turn, gold idle
                   SizedBox(
                     width: 46,
                     height: 46,
@@ -451,7 +460,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
                       strokeWidth: 3,
                       backgroundColor: Colors.black26,
                       valueColor: AlwaysStoppedAnimation(
-                          isTurn ? AppColors.gold : Colors.white24),
+                          isTurn ? AppColors.green : AppColors.gold.withOpacity(0.6)),
                     ),
                   ),
                   CircleAvatar(
@@ -468,6 +477,34 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
                         decoration: BoxDecoration(color: AppColors.red, borderRadius: BorderRadius.circular(8)),
                         child: Text('${_turnSecondsLeft}s',
                             style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  // Gift badge — top-left of avatar; tap opens the gift tray
+                  if (!isMe)
+                    Positioned(
+                      left: -4,
+                      top: -4,
+                      child: GestureDetector(
+                        onTap: () => setState(() {
+                          _showGiftTray = true;
+                          _showChat = false;
+                        }),
+                        child: Container(
+                          width: 20,
+                          height: 20,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                            ),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 1),
+                            boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 3)],
+                          ),
+                          child: const Text('🎁', style: TextStyle(fontSize: 10)),
+                        ),
                       ),
                     ),
                   // Dealer "D" badge — top-right of avatar
