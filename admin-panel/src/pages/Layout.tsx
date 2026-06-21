@@ -2,7 +2,7 @@ import { Layout, Menu, Typography, Avatar, Dropdown, Button } from 'antd'
 import {
   DashboardOutlined, UserOutlined, PlayCircleOutlined, DollarOutlined,
   BellOutlined, SettingOutlined, LogoutOutlined, TrophyOutlined, SafetyOutlined,
-  TeamOutlined, ProfileOutlined, WarningOutlined,
+  TeamOutlined, ProfileOutlined, WarningOutlined, CustomerServiceOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
@@ -18,6 +18,7 @@ const menuItems = [
   { key: '/admin/game-config', icon: <SettingOutlined />, label: 'Game Config' },
   { key: '/admin/admin-users', icon: <TeamOutlined />, label: 'Admin Users' },
   { key: '/admin/risk-center', icon: <WarningOutlined />, label: 'Risk Center' },
+  { key: '/admin/support', icon: <CustomerServiceOutlined />, label: 'Support & CMS' },
   { key: '/admin/leaderboard', icon: <TrophyOutlined />, label: 'Leaderboard' },
   { key: '/admin/security', icon: <SafetyOutlined />, label: 'Security' },
 ]

@@ -489,7 +489,7 @@ async function start() {
   })
 
   // GET /api/admin/finance/deposits — list deposit orders with filters
-  app.get('/api/admin/finance/deposits', { onRequest: [authenticate] }, async (req, reply) => {
+  app.get('/api/admin/finance/deposits', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const { status, gateway, page = '1', limit = '50' } = req.query as any
     const conditions = [`po.type = 'deposit'`]
     const params: any[] = []
@@ -510,7 +510,7 @@ async function start() {
 
   // PATCH /api/admin/finance/deposits/:id — manual reconciliation of failed/stuck deposits
   // Used when a payment landed in the gateway but didn't credit the wallet (webhook failed, etc.)
-  app.patch('/api/admin/finance/deposits/:id', { onRequest: [authenticate] }, async (req, reply) => {
+  app.patch('/api/admin/finance/deposits/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
     const { action, reference, reason } = z.object({
@@ -555,7 +555,7 @@ async function start() {
   })
 
   // GET /api/admin/finance/ledger — global ledger view with filters
-  app.get('/api/admin/finance/ledger', { onRequest: [authenticate] }, async (req, reply) => {
+  app.get('/api/admin/finance/ledger', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const { type, wallet_type, user_id, from, to, page = '1', limit = '50' } = req.query as any
     const conditions: string[] = []
     const params: any[] = []
@@ -627,7 +627,7 @@ async function start() {
   })
 
   // PATCH /api/admin/game-configs/:gameType
-  app.patch('/api/admin/game-configs/:gameType', { onRequest: [authenticate] }, async (req, reply) => {
+  app.patch('/api/admin/game-configs/:gameType', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const admin = req.user as any
     const { gameType } = req.params as any
     const body = req.body as any
@@ -640,7 +640,7 @@ async function start() {
   })
 
   // POST /api/admin/notifications/broadcast
-  app.post('/api/admin/notifications/broadcast', { onRequest: [authenticate] }, async (req, reply) => {
+  app.post('/api/admin/notifications/broadcast', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const body = req.body as any
     const res = await fetch(`${process.env.NOTIFICATION_SERVICE_URL}/internal/notifications/broadcast`, {
       method: 'POST',
@@ -652,7 +652,7 @@ async function start() {
   })
 
   // POST /api/admin/notifications/send
-  app.post('/api/admin/notifications/send', { onRequest: [authenticate] }, async (req, reply) => {
+  app.post('/api/admin/notifications/send', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const body = req.body as any
     const res = await fetch(`${process.env.NOTIFICATION_SERVICE_URL}/internal/notifications/send`, {
       method: 'POST',
@@ -817,6 +817,234 @@ async function start() {
       `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'risk_flag', 'user', $2, $3)`,
       [admin.sub, userId, JSON.stringify({ status: 'suspicious' })]
     )
+    return reply.send({ success: true })
+  })
+
+  // ---- Support Helpdesk ----
+
+  // GET /api/admin/support/tickets — list with optional status filter
+  app.get('/api/admin/support/tickets', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { status, page = '1', limit = '20' } = req.query as any
+    const conditions: string[] = []
+    const params: any[] = []
+    let idx = 1
+    if (status) { conditions.push(`t.status = $${idx}`); params.push(status); idx++ }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+    const offset = (parseInt(page) - 1) * parseInt(limit)
+    const [rows, count] = await Promise.all([
+      db.query(`
+        SELECT t.id, t.subject, t.category, t.status, t.priority, t.created_at, t.updated_at,
+               u.username, u.phone, a.username AS assigned_to_username,
+               (SELECT COUNT(*) FROM support_messages WHERE ticket_id = t.id) AS message_count
+        FROM support_tickets t
+        LEFT JOIN users u ON u.id = t.user_id
+        LEFT JOIN admin_users a ON a.id = t.assigned_to
+        ${where}
+        ORDER BY
+          CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+          t.created_at DESC
+        LIMIT $${idx} OFFSET $${idx + 1}`,
+        [...params, parseInt(limit), offset]),
+      db.query(`SELECT COUNT(*) FROM support_tickets t ${where}`, params),
+    ])
+    return reply.send({ tickets: rows.rows, total: parseInt(count.rows[0].count) })
+  })
+
+  // GET /api/admin/support/tickets/:id — detail + messages
+  app.get('/api/admin/support/tickets/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const [ticket, messages] = await Promise.all([
+      db.query(`
+        SELECT t.*, u.username, u.phone, u.email, a.username AS assigned_to_username
+        FROM support_tickets t
+        LEFT JOIN users u ON u.id = t.user_id
+        LEFT JOIN admin_users a ON a.id = t.assigned_to
+        WHERE t.id = $1`, [id]),
+      db.query(`
+        SELECT m.id, m.sender_type, m.sender_id, m.body, m.is_internal, m.created_at,
+               COALESCE(u.username, a.username) AS sender_username
+        FROM support_messages m
+        LEFT JOIN users u ON u.id = m.sender_id AND m.sender_type = 'user'
+        LEFT JOIN admin_users a ON a.id = m.sender_id AND m.sender_type = 'admin'
+        WHERE m.ticket_id = $1 ORDER BY m.created_at`, [id]),
+    ])
+    if (!ticket.rows.length) return reply.code(404).send({ error: 'Ticket not found' })
+    return reply.send({ ticket: ticket.rows[0], messages: messages.rows })
+  })
+
+  // POST /api/admin/support/tickets/:id/messages — admin reply
+  app.post('/api/admin/support/tickets/:id/messages', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const me = req.user as any
+    const { id } = req.params as any
+    const { body, is_internal } = z.object({
+      body: z.string().min(1).max(5000),
+      is_internal: z.boolean().optional(),
+    }).parse(req.body)
+    const res = await db.query(
+      `INSERT INTO support_messages (ticket_id, sender_type, sender_id, body, is_internal) VALUES ($1, 'admin', $2, $3, $4) RETURNING id, created_at`,
+      [id, me.sub, body, is_internal || false]
+    )
+    await db.query(`UPDATE support_tickets SET updated_at = NOW(), status = CASE WHEN status = 'open' THEN 'in_progress'::ticket_status ELSE status END WHERE id = $1`, [id])
+    return reply.send({ success: true, id: res.rows[0].id, created_at: res.rows[0].created_at })
+  })
+
+  // PATCH /api/admin/support/tickets/:id — update status/priority/assigned_to
+  app.patch('/api/admin/support/tickets/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const me = req.user as any
+    const { id } = req.params as any
+    const body = z.object({
+      status: z.enum(['open', 'in_progress', 'resolved', 'closed']).optional(),
+      priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
+      assigned_to: z.string().uuid().nullable().optional(),
+    }).parse(req.body)
+    const updates: string[] = []
+    const params: any[] = []
+    let idx = 1
+    if (body.status !== undefined) {
+      updates.push(`status = $${idx}::ticket_status`); params.push(body.status); idx++
+      if (body.status === 'closed' || body.status === 'resolved') {
+        updates.push(`closed_at = NOW()`)
+      }
+    }
+    if (body.priority !== undefined) { updates.push(`priority = $${idx}::ticket_priority`); params.push(body.priority); idx++ }
+    if (body.assigned_to !== undefined) { updates.push(`assigned_to = $${idx}`); params.push(body.assigned_to); idx++ }
+    if (!updates.length) return reply.code(400).send({ error: 'Nothing to update' })
+    updates.push(`updated_at = NOW()`)
+    params.push(id)
+    await db.query(`UPDATE support_tickets SET ${updates.join(', ')} WHERE id = $${idx}`, params)
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'ticket_update', 'support_ticket', $2, $3)`,
+      [me.sub, id, JSON.stringify(body)])
+    return reply.send({ success: true })
+  })
+
+  // ---- CMS Pages ----
+
+  app.get('/api/admin/cms/pages', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
+    const res = await db.query(`
+      SELECT p.slug, p.title, p.is_published, p.created_at, p.updated_at, a.username AS updated_by_username
+      FROM cms_pages p LEFT JOIN admin_users a ON a.id = p.updated_by
+      ORDER BY p.updated_at DESC`)
+    return reply.send(res.rows)
+  })
+
+  app.get('/api/admin/cms/pages/:slug', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { slug } = req.params as any
+    const res = await db.query(`SELECT * FROM cms_pages WHERE slug = $1`, [slug])
+    if (!res.rows.length) return reply.code(404).send({ error: 'Page not found' })
+    return reply.send(res.rows[0])
+  })
+
+  app.post('/api/admin/cms/pages', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const me = req.user as any
+    const body = z.object({
+      slug: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/),
+      title: z.string().min(1).max(200),
+      body_md: z.string().max(100000),
+      is_published: z.boolean().optional(),
+    }).parse(req.body)
+    try {
+      await db.query(
+        `INSERT INTO cms_pages (slug, title, body_md, is_published, updated_by) VALUES ($1, $2, $3, $4, $5)`,
+        [body.slug, body.title, body.body_md, body.is_published ?? true, me.sub]
+      )
+      return reply.send({ success: true })
+    } catch (e: any) {
+      if (e.code === '23505') return reply.code(400).send({ error: 'Slug already exists' })
+      throw e
+    }
+  })
+
+  app.patch('/api/admin/cms/pages/:slug', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const me = req.user as any
+    const { slug } = req.params as any
+    const body = z.object({
+      title: z.string().min(1).max(200).optional(),
+      body_md: z.string().max(100000).optional(),
+      is_published: z.boolean().optional(),
+    }).parse(req.body)
+    const updates: string[] = []
+    const params: any[] = []
+    let idx = 1
+    if (body.title !== undefined) { updates.push(`title = $${idx}`); params.push(body.title); idx++ }
+    if (body.body_md !== undefined) { updates.push(`body_md = $${idx}`); params.push(body.body_md); idx++ }
+    if (body.is_published !== undefined) { updates.push(`is_published = $${idx}`); params.push(body.is_published); idx++ }
+    if (!updates.length) return reply.code(400).send({ error: 'Nothing to update' })
+    updates.push(`updated_by = $${idx}`); params.push(me.sub); idx++
+    updates.push(`updated_at = NOW()`)
+    params.push(slug)
+    await db.query(`UPDATE cms_pages SET ${updates.join(', ')} WHERE slug = $${idx}`, params)
+    return reply.send({ success: true })
+  })
+
+  app.delete('/api/admin/cms/pages/:slug', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { slug } = req.params as any
+    await db.query(`DELETE FROM cms_pages WHERE slug = $1`, [slug])
+    return reply.send({ success: true })
+  })
+
+  // ---- CMS Banners ----
+
+  app.get('/api/admin/cms/banners', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
+    const res = await db.query(`
+      SELECT b.*, a.username AS created_by_username
+      FROM cms_banners b LEFT JOIN admin_users a ON a.id = b.created_by
+      ORDER BY b.priority DESC, b.created_at DESC`)
+    return reply.send(res.rows)
+  })
+
+  app.post('/api/admin/cms/banners', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const me = req.user as any
+    const body = z.object({
+      title: z.string().min(1).max(200),
+      body: z.string().max(2000).optional(),
+      image_url: z.string().url().optional().or(z.literal('')),
+      cta_label: z.string().max(50).optional(),
+      cta_url: z.string().max(500).optional(),
+      placement: z.string().default('home'),
+      is_active: z.boolean().default(true),
+      starts_at: z.string().nullable().optional(),
+      ends_at: z.string().nullable().optional(),
+      priority: z.number().int().default(0),
+    }).parse(req.body)
+    const res = await db.query(
+      `INSERT INTO cms_banners (title, body, image_url, cta_label, cta_url, placement, is_active, starts_at, ends_at, priority, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+      [body.title, body.body || null, body.image_url || null, body.cta_label || null, body.cta_url || null,
+       body.placement, body.is_active, body.starts_at || null, body.ends_at || null, body.priority, me.sub]
+    )
+    return reply.send({ success: true, id: res.rows[0].id })
+  })
+
+  app.patch('/api/admin/cms/banners/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const body = z.object({
+      title: z.string().min(1).max(200).optional(),
+      body: z.string().max(2000).nullable().optional(),
+      image_url: z.string().nullable().optional(),
+      cta_label: z.string().max(50).nullable().optional(),
+      cta_url: z.string().max(500).nullable().optional(),
+      placement: z.string().optional(),
+      is_active: z.boolean().optional(),
+      starts_at: z.string().nullable().optional(),
+      ends_at: z.string().nullable().optional(),
+      priority: z.number().int().optional(),
+    }).parse(req.body)
+    const updates: string[] = []
+    const params: any[] = []
+    let idx = 1
+    for (const [k, v] of Object.entries(body)) {
+      if (v !== undefined) { updates.push(`${k} = $${idx}`); params.push(v); idx++ }
+    }
+    if (!updates.length) return reply.code(400).send({ error: 'Nothing to update' })
+    updates.push(`updated_at = NOW()`)
+    params.push(id)
+    await db.query(`UPDATE cms_banners SET ${updates.join(', ')} WHERE id = $${idx}`, params)
+    return reply.send({ success: true })
+  })
+
+  app.delete('/api/admin/cms/banners/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    await db.query(`DELETE FROM cms_banners WHERE id = $1`, [id])
     return reply.send({ success: true })
   })
 
