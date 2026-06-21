@@ -441,6 +441,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Fanned card-backs for opponents (own cards are at the bottom)
+            if (!isMe) _opponentCardBacks(isFolded),
             // Status pill (Chaal / Pack / Blind) above the avatar
             _statusPill(status.$1, status.$2),
             const SizedBox(height: 3),
@@ -561,6 +563,50 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     if (p['status'] == 'folded') return ('Pack', AppColors.red);
     if (p['is_seen'] == false) return ('Blind', Colors.orange.shade700);
     return ('Chaal', AppColors.green);
+  }
+
+  /// Three small fanned card-backs (blue) for opponents.
+  /// Folded players' cards render dimmed.
+  Widget _opponentCardBacks(bool folded) {
+    return Opacity(
+      opacity: folded ? 0.4 : 1,
+      child: SizedBox(
+        width: 46,
+        height: 26,
+        child: Stack(
+          alignment: Alignment.center,
+          children: List.generate(3, (i) {
+            final angle = (i - 1) * 0.22; // -0.22, 0, +0.22 rad
+            return Transform.translate(
+              offset: Offset((i - 1) * 6.0, 0),
+              child: Transform.rotate(
+                angle: angle,
+                child: Container(
+                  width: 16,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Color(0xFF1E3A8A), Color(0xFF0B1E52)],
+                    ),
+                    borderRadius: BorderRadius.circular(3),
+                    border: Border.all(color: AppColors.gold.withOpacity(0.7), width: 0.8),
+                    boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 2, offset: Offset(0, 1))],
+                  ),
+                  alignment: Alignment.center,
+                  child: Text('♠',
+                      style: TextStyle(
+                          color: AppColors.gold.withOpacity(0.85),
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold)),
+                ),
+              ),
+            );
+          }),
+        ),
+      ),
+    );
   }
 
   Widget _statusPill(String label, Color color) => Container(
