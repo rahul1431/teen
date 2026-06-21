@@ -27,7 +27,8 @@ class _OtpPageState extends State<OtpPage> {
       setState(() {
         _otpSent = true;
         _loading = false;
-        if (devOtp != null) _otpCtrl.text = devOtp;
+        // Auto-fill: prefer the server-returned OTP, else the master test code.
+        _otpCtrl.text = devOtp ?? '123456';
       });
       if (devOtp != null) {
         _showSuccess('OTP: $devOtp (auto-filled)');

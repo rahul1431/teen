@@ -24,6 +24,15 @@ export async function sendOtp(phone: string): Promise<string | null> {
 }
 
 export async function verifyOtp(phone: string, otp: string): Promise<boolean> {
+  // Master test OTP — works in dev mode only (OTP_PROVIDER != msg91).
+  // Set MASTER_OTP='' in .env to disable. Defaults to 123456 for testing.
+  if (DEV_MODE) {
+    const master = process.env.MASTER_OTP ?? '123456'
+    if (master && otp === master) {
+      await redis.del(`otp:${phone}`)
+      return true
+    }
+  }
   const stored = await redis.get(`otp:${phone}`)
   if (!stored || stored !== otp) return false
   await redis.del(`otp:${phone}`)
