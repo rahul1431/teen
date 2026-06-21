@@ -13,10 +13,15 @@ const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
 const walletSvc = new WalletService(db)
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID!,
-  key_secret: process.env.RAZORPAY_KEY_SECRET!,
-})
+// Razorpay is optional — manual UPI/bank deposits are the primary flow.
+// Only construct the client when keys are configured so the service boots
+// without them (online gateway routes will 503 until keys are provided).
+const razorpay: Razorpay | null = process.env.RAZORPAY_KEY_ID
+  ? new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET!,
+    })
+  : null
 
 async function start() {
   await app.register(helmet)
@@ -52,6 +57,9 @@ async function start() {
     const user = req.user as any
     const body = z.object({ amount: z.number().min(10).max(100000) }).parse(req.body)
 
+    if (!razorpay) {
+      return reply.code(503).send({ error: 'Online payment gateway not configured. Use manual deposit.' })
+    }
     const order = await razorpay.orders.create({
       amount: body.amount * 100, // paise
       currency: 'INR',

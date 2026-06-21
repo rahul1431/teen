@@ -11,7 +11,7 @@ import { v4 as uuid } from 'uuid'
 
 const app = Fastify({ logger: false })
 const db = new Pool({ connectionString: process.env.DATABASE_URL!, max: 10 })
-const pubClient = new Redis(process.env.REDIS_URL!)
+const pubClient = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
 const subClient = pubClient.duplicate()
 
 interface RoundState {

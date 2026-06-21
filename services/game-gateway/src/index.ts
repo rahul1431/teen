@@ -11,7 +11,7 @@ import { MatchmakingService } from './matchmaking'
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
-const pubClient = new Redis(process.env.REDIS_URL!)
+const pubClient = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
 const subClient = pubClient.duplicate()
 
 async function start() {
