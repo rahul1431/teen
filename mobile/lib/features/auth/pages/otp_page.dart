@@ -22,9 +22,18 @@ class _OtpPageState extends State<OtpPage> {
     if (phone.length != 10) return _showError('Enter valid 10-digit number');
     setState(() => _loading = true);
     try {
-      await Dio().post('${AppConfig.apiBaseUrl}/api/auth/send-otp', data: {'phone': phone});
-      setState(() { _otpSent = true; _loading = false; });
-      _showSuccess('OTP sent to +91$phone');
+      final res = await Dio().post('${AppConfig.apiBaseUrl}/api/auth/send-otp', data: {'phone': phone});
+      final devOtp = res.data?['otp'] as String?;
+      setState(() {
+        _otpSent = true;
+        _loading = false;
+        if (devOtp != null) _otpCtrl.text = devOtp;
+      });
+      if (devOtp != null) {
+        _showSuccess('OTP: $devOtp (auto-filled)');
+      } else {
+        _showSuccess('OTP sent to +91$phone');
+      }
     } on DioException catch (e) {
       _showError(e.response?.data?['error'] ?? 'Failed to send OTP');
       setState(() => _loading = false);

@@ -307,6 +307,22 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // Alias used by game-gateway: POST /internal/wallet/credit-game-win
+  app.post('/internal/wallet/credit-game-win', { onRequest: [authenticateInternal] }, async (req, reply) => {
+    const { user_id, amount, room_id } = req.body as any
+    if (!user_id || !amount) return reply.code(400).send({ error: 'user_id and amount required' })
+    await walletSvc.credit({
+      userId: user_id,
+      amount: Number(amount),
+      type: 'game_credit',
+      walletType: 'real',
+      referenceId: room_id,
+      idempotencyKey: `win:${room_id}:${user_id}`,
+      description: `Teen Patti win: room ${room_id}`,
+    })
+    return reply.send({ success: true })
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'wallet' }))
 
   const port = parseInt(process.env.PORT || '3003')

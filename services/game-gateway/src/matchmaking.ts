@@ -130,34 +130,161 @@ export class MatchmakingService {
       client.release()
     }
 
-    // Store game state in Redis
-    const gameState = {
+    // Build initial state for gateway Redis (engine keeps its own state)
+    const gatewayPlayers = allPlayers.map((p, i) => ({
+      userId: p.userId,
+      username: p.username,
+      seat: i + 1,
+      isBot: bots.some(b => b.userId === p.userId),
+      status: 'active',
+    }))
+
+    const fallbackState = {
       roomId,
       gameType,
       stake,
-      players: allPlayers.map((p, i) => ({
-        userId: p.userId,
-        username: p.username,
-        seat: i + 1,
-        isBot: bots.some(b => b.userId === p.userId),
-        status: 'active',
-      })),
+      players: gatewayPlayers,
       status: 'active',
       currentTurn: 0,
       pot: allPlayers.filter(p => !bots.some(b => b.userId === p.userId)).length * stake,
       round: 1,
       createdAt: Date.now(),
     }
-    await this.redis.setex(`game:room:${roomId}`, 3600, JSON.stringify(gameState))
 
-    // Notify real players
+    let engineState: any = null
+
+    // Call Teen Patti Go engine to deal cards
+    if (gameType === 'teen_patti') {
+      const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
+      try {
+        const res = await fetch(`${engineUrl}/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            room_id: roomId,
+            stake,
+            players: gatewayPlayers.map(p => ({ user_id: p.userId, username: p.username, seat: p.seat, is_bot: p.isBot, status: 'active', bet: 0, is_seen: false })),
+          }),
+        })
+        if (res.ok) engineState = await res.json()
+      } catch (e) {
+        console.error('Teen Patti engine unavailable, using fallback state', e)
+      }
+    }
+
+    const gameState = engineState || fallbackState
+    // Always cache in gateway key so game:action handler can find the room
+    await this.redis.setex(`game:room:${roomId}`, 3600, JSON.stringify({
+      ...fallbackState,
+      // Include engine players (with cards) if available, but strip private cards from shared state
+      players: engineState ? engineState.players.map((p: any) => ({
+        ...p,
+        userId: p.user_id ?? p.userId,
+        cards: undefined, // don't leak cards into shared Redis key
+      })) : fallbackState.players,
+      currentTurn: engineState?.current_turn ?? 0,
+    }))
+
+    // Notify real players — send each player their own private cards
     for (const p of realPlayers) {
+      const myPlayerData = engineState?.players?.find((ep: any) => (ep.user_id ?? ep.userId) === p.userId)
       this.io.to(p.socketId).emit('room:joined', {
         room_id: roomId,
-        players: gameState.players,
-        your_seat: gameState.players.find(pl => pl.userId === p.userId)?.seat,
+        players: (engineState?.players ?? gatewayPlayers).map((ep: any) => ({
+          ...ep,
+          userId: ep.user_id ?? ep.userId,
+          cards: undefined, // opponents' cards hidden
+        })),
+        my_cards: myPlayerData?.cards ?? [],
+        your_seat: gatewayPlayers.find(pl => pl.userId === p.userId)?.seat,
         game_type: gameType,
         stake,
+        pot: gameState.pot ?? gameState.Pot,
+        current_turn: gameState.current_turn ?? gameState.CurrentTurn ?? 0,
+        min_bet: engineState?.min_bet ?? stake,
+      })
+    }
+
+    // Auto-play bot turns if it's a bot's turn first
+    if (engineState && gameType === 'teen_patti') {
+      this.scheduleBotTurn(roomId, engineState, realPlayers, bots)
+    }
+  }
+
+  async scheduleBotTurn(roomId: string, state: any, realPlayers: MatchmakingEntry[], bots: MatchmakingEntry[]): Promise<void> {
+    const currentIdx = state.current_turn ?? state.CurrentTurn ?? 0
+    const currentPlayer = state.players?.[currentIdx]
+    if (!currentPlayer) return
+
+    const isBot = bots.some(b => b.userId === (currentPlayer.user_id ?? currentPlayer.userId))
+    if (!isBot) return
+
+    // Bot acts after a short delay
+    setTimeout(async () => {
+      const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
+      try {
+        const action = Math.random() > 0.3 ? 'call' : 'fold'
+        const res = await fetch(`${engineUrl}/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            room_id: roomId,
+            user_id: currentPlayer.user_id ?? currentPlayer.userId,
+            action,
+            amount: state.min_bet ?? state.MinBet ?? state.stake,
+            sequence_num: 0,
+          }),
+        })
+        if (!res.ok) return
+        const data = await res.json()
+        const newState = data.state ?? data
+
+        // Broadcast updated state to real players
+        for (const p of realPlayers) {
+          this.io.to(p.socketId).emit('game:state_update', {
+            room_id: roomId,
+            state: { ...newState, players: newState.players?.map((ep: any) => ({ ...ep, cards: undefined })) },
+            last_action: { user_id: currentPlayer.user_id ?? currentPlayer.userId, action },
+            result: data.result ?? null,
+          })
+        }
+
+        if (newState.status !== 'completed') {
+          await this.redis.setex(`game:room:${roomId}`, 3600, JSON.stringify(newState))
+          this.scheduleBotTurn(roomId, newState, realPlayers, bots)
+        } else {
+          await this.handleGameEnd(roomId, data.result, realPlayers, newState)
+        }
+      } catch (e) {
+        console.error('Bot turn error', e)
+      }
+    }, 1500 + Math.random() * 1500)
+  }
+
+  async handleGameEnd(roomId: string, result: any, realPlayers: MatchmakingEntry[], state: any): Promise<void> {
+    if (!result) return
+
+    // Credit winner via wallet service
+    if (result.winner_id) {
+      try {
+        await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit-game-win`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+          body: JSON.stringify({ user_id: result.winner_id, amount: result.prize, room_id: roomId }),
+        })
+      } catch (e) {
+        console.error('Failed to credit game win', e)
+      }
+    }
+
+    // Notify all real players of result
+    for (const p of realPlayers) {
+      this.io.to(p.socketId).emit('game:result', {
+        room_id: roomId,
+        winner_id: result.winner_id,
+        prize: result.prize,
+        hand_rank: result.hand_rank,
+        all_hands: result.all_hands ?? [],
       })
     }
   }

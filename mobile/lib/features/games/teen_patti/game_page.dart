@@ -92,19 +92,54 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     Timer(const Duration(seconds: 1), () => _spawnReaction('b1', '🔥'));
   }
 
+  List<Map<String, dynamic>> _myCards = [];
+
   Future<void> _init() async {
     _myUserId = await SecureStorage.getUserId();
     _socket.emit(SocketEvents.joinRoom, {'room_id': widget.roomId});
 
-    _socket.on(SocketEvents.gameStateUpdate).listen((data) {
+    // Server sends room:joined with private cards for this player
+    _socket.on(SocketEvents.roomJoined).listen((data) {
       if (!mounted) return;
       setState(() {
-        _gameState = data;
-        final myPlayer = (data['players'] as List?)
-            ?.firstWhere((p) => p['user_id'] == _myUserId, orElse: () => null);
-        _isMyTurn =
-            myPlayer != null && data['current_turn_user_id'] == _myUserId;
+        final rawCards = data['my_cards'] as List?;
+        _myCards = rawCards?.cast<Map<String, dynamic>>() ?? [];
+        final rawState = data['state'] as Map<String, dynamic>? ?? data;
+        _gameState = {
+          ...rawState,
+          'pot': data['pot'] ?? rawState['pot'] ?? 0,
+          'min_bet': data['min_bet'] ?? rawState['min_bet'] ?? 0,
+          'current_turn': data['current_turn'] ?? rawState['current_turn'] ?? 0,
+          'players': data['players'] ?? rawState['players'] ?? [],
+        };
+        _betAmount = (data['min_bet'] as num?)?.toDouble() ?? 0;
+        final idx = (data['current_turn'] ?? 0) as int;
+        final players = _gameState!['players'] as List? ?? [];
+        final currentPlayer = idx < players.length ? players[idx] : null;
+        _isMyTurn = (currentPlayer?['userId'] ?? currentPlayer?['user_id']) == _myUserId;
         if (_isMyTurn) _startTurnTimer();
+      });
+    });
+
+    _socket.on(SocketEvents.gameStateUpdate).listen((data) {
+      if (!mounted) return;
+      final innerState = data['state'] as Map<String, dynamic>? ?? data;
+      setState(() {
+        _gameState = innerState;
+        final idx = (innerState['current_turn'] ?? innerState['CurrentTurn'] ?? 0) as int;
+        final players = innerState['players'] as List? ?? [];
+        final currentPlayer = idx < players.length ? players[idx] : null;
+        _isMyTurn = (currentPlayer?['userId'] ?? currentPlayer?['user_id']) == _myUserId;
+        if (_isMyTurn) _startTurnTimer();
+        // Show last action in chat
+        final la = data['last_action'] as Map?;
+        if (la != null) {
+          final actorId = la['user_id']?.toString() ?? '';
+          final actor = players.firstWhere((p) => (p['userId'] ?? p['user_id']) == actorId, orElse: () => null);
+          final actorName = actor?['username'] ?? 'Player';
+          _chat.add(_ChatMsg(userId: actorId, username: actorName, text: '${la['action']?.toString().toUpperCase()}', type: 'text'));
+          if (_chat.length > 50) _chat.removeAt(0);
+        }
       });
     });
 

@@ -74,17 +74,60 @@ async function start() {
       if (!rawState) return socket.emit('error', { message: 'Room not found' })
 
       const state = JSON.parse(rawState)
-      const playerIdx = state.players.findIndex((p: any) => p.userId === socket.data.userId)
+      const playerIdx = state.players.findIndex((p: any) => (p.userId ?? p.user_id) === socket.data.userId)
       if (playerIdx === -1) return socket.emit('error', { message: 'Not in this room' })
-      if (state.currentTurn !== playerIdx) return socket.emit('error', { message: 'Not your turn' })
+      if ((state.currentTurn ?? state.current_turn) !== playerIdx) return socket.emit('error', { message: 'Not your turn' })
 
-      // Broadcast action to room (game-specific logic handled by Teen Patti engine)
-      io.to(room_id).emit('game:action_received', {
-        user_id: socket.data.userId,
-        action,
-        amount,
-        sequence_num,
-      })
+      const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
+      try {
+        const res = await fetch(`${engineUrl}/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ room_id, user_id: socket.data.userId, action, amount: amount ?? 0, sequence_num: sequence_num ?? 0 }),
+        })
+        if (!res.ok) {
+          const msg = await res.text()
+          return socket.emit('error', { message: msg || 'Engine error' })
+        }
+        const data = await res.json()
+        const newState = data.state ?? data
+
+        // Update cached state (without private cards)
+        await pubClient.setex(`game:room:${room_id}`, 3600, JSON.stringify({
+          ...newState,
+          players: newState.players?.map((p: any) => ({ ...p, cards: undefined })),
+        }))
+
+        // Broadcast to all in room (cards hidden)
+        io.to(room_id).emit('game:state_update', {
+          room_id,
+          state: { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) },
+          last_action: { user_id: socket.data.userId, action, amount },
+          result: data.result ?? null,
+        })
+
+        if (newState.status === 'completed' && data.result) {
+          // Credit winner
+          if (data.result.winner_id) {
+            fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit-game-win`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+              body: JSON.stringify({ user_id: data.result.winner_id, amount: data.result.prize, room_id }),
+            }).catch(e => console.error('credit-game-win failed', e))
+          }
+          io.to(room_id).emit('game:result', {
+            room_id,
+            winner_id: data.result.winner_id,
+            prize: data.result.prize,
+            hand_rank: data.result.hand_rank,
+            all_hands: data.result.all_hands ?? [],
+          })
+        }
+      } catch (e) {
+        console.error('Engine call failed', e)
+        // Fallback: just broadcast so game doesn't freeze
+        io.to(room_id).emit('game:action_received', { user_id: socket.data.userId, action, amount, sequence_num })
+      }
     })
 
     socket.on('join_room', async ({ room_id }: any) => {

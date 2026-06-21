@@ -1,6 +1,6 @@
 # Progress & Resume Checkpoint
 
-> Living status doc. Read this first when resuming. Last updated: 2026-06-21 (session 4 — VPS deployment).
+> Living status doc. Read this first when resuming. Last updated: 2026-06-21 (session 5 — Teen Patti engine + notifications plan).
 > Branch: `claude/confident-archimedes-e2dd1k` · PR: #1 (draft) · Base: `main`
 > Latest APK commit: `b28a50c` (hostess + haptics) · Admin preview: https://rahul1431.github.io/teen/
 
@@ -55,6 +55,100 @@ leaderboard 3006 · notification 3007 · **admin 3008 (live)**
 - [ ] Optional: GitHub Actions auto-deploy — add `VPS_HOST`/`VPS_USER`/
       `VPS_PASSWORD` secrets (workflow `.github/workflows/deploy-backend.yml`).
 - [ ] Change admin password; secure/remove Adminer.
+
+## 🆕 Session 5 additions (Teen Patti engine wiring + OTP)
+
+### Teen Patti — fully wired ✅
+- **Go engine** (`services/game-engines/teen-patti/main.go`, port 3010) provides:
+  `POST /start` → deals 3 cards per player, stores state in Redis `tp:game:{room_id}`
+  `POST /action` → processes fold/call/raise/show, advances turn, determines winner
+  `GET /state` → fetch current game state
+- **game-gateway matchmaking** now calls `/start` after creating a room; sends each
+  player their own private cards via `room:joined` event `my_cards` field
+- **game-gateway game:action** handler now forwards to `/action`; broadcasts
+  `game:state_update` with cards hidden; emits `game:result` on game end
+- **Bot AI**: after each state update, if it's a bot's turn, gateway schedules an
+  auto-play (call 70% / fold 30%) after 1.5–3s delay
+- **Winner payout**: on game end, gateway calls
+  `POST /internal/wallet/credit-game-win` (new wallet alias)
+- **wallet-service**: added `/internal/wallet/credit-game-win` alias
+- **Mobile game_page.dart**: handles `room:joined` (private cards), `game:state_update`
+  (new state + last action in chat), `game:result` (win/loss banner + haptics)
+
+### In-app OTP (free) ✅
+- **auth-service otp.ts**: `sendOtp()` returns the OTP string in dev mode
+  (`OTP_PROVIDER` != `msg91`)
+- **auth-service routes.ts**: `POST /auth/send-otp` includes `{ otp: "123456" }` in
+  response when in dev mode
+- **Mobile otp_page.dart**: auto-fills OTP field when response contains `otp`; shows
+  snackbar "OTP: 123456 (auto-filled)". Zero SMS cost. Switch to production by setting
+  `OTP_PROVIDER=msg91` in the VPS .env — OTP will no longer appear in responses.
+
+### VPS commands to deploy session 5 changes
+```bash
+cd /opt/teen && git pull origin claude/confident-archimedes-e2dd1k
+
+# Build + start Go engine
+cd services/game-engines/teen-patti
+/usr/local/go/bin/go mod tidy && /usr/local/go/bin/go build -o teen-patti-engine .
+pm2 start ./teen-patti-engine --name teen-tp-engine -- --port 3010
+# Add to ecosystem.config.js:
+# { name: 'teen-tp-engine', script: './services/game-engines/teen-patti/teen-patti-engine', env: { PORT: 3010, DATABASE_URL: '...', REDIS_URL: 'redis://127.0.0.1:6379' } }
+
+# Restart gateway + wallet
+pm2 restart teen-gateway teen-wallet
+
+# Add to gateway's .env:
+# TEEN_PATTI_ENGINE_URL=http://127.0.0.1:3010
+```
+
+---
+
+## 🔔 Notification Service — Plan & Status
+
+### Current status
+The notification service is **fully coded** (`services/notification-service/src/index.ts`, port 3007).
+It just needs **Firebase credentials** on the VPS to send real push notifications.
+
+### What's already built
+| Feature | Status |
+|---|---|
+| `GET /notifications/me` — list user notifications | ✅ Built |
+| `PUT /notifications/read/:id` — mark read | ✅ Built |
+| `POST /internal/notifications/send` — send to one user | ✅ Built |
+| `POST /internal/notifications/broadcast` — send to all active users | ✅ Built |
+| DB storage (notifications table) | ✅ Migration 003 |
+| FCM token registration (`PUT /auth/fcm-token`) | ✅ Built |
+| Mobile: FCM setup, foreground local notifications | ✅ Built |
+| Mobile: Notification center page | ✅ Built |
+
+### Auto-trigger notifications needed (still TODO)
+These need to be wired into other services by calling `/internal/notifications/send`:
+
+| Event | Service to edit | Trigger point |
+|---|---|---|
+| Deposit approved | admin-service | `PATCH /api/admin/deposits/:id/approve` |
+| Deposit rejected | admin-service | `PATCH /api/admin/deposits/:id/reject` |
+| Withdrawal approved | admin-service | `PATCH /api/admin/withdrawals/:id/approve` |
+| Withdrawal rejected | admin-service | `PATCH /api/admin/withdrawals/:id/reject` |
+| Game win | game-gateway / wallet-service | After `credit-game-win` |
+| Game loss | game-gateway | After `game:result` with `winner_id != user_id` |
+| Bonus credited | wallet-service | After bonus/referral credit |
+| KYC approved/rejected | admin-service | KYC review endpoint |
+
+### Firebase setup (FREE — 5 min)
+1. Go to https://console.firebase.google.com → New Project (free Spark plan)
+2. Settings → Service Accounts → Generate New Private Key → download JSON
+3. On VPS: `nano /opt/teen/services/notification-service/.env`
+   Add: `FIREBASE_SERVICE_ACCOUNT_JSON='<paste entire JSON on one line>'`
+4. Android: Project Settings → Add Android app → package `com.myonlinejoker.app`
+   → download `google-services.json`
+5. Add `GOOGLE_SERVICES_JSON` GitHub secret (base64 of the file) for APK builds
+6. `pm2 restart teen-notification`
+
+Until Firebase is configured, the service logs `[PUSH DEV] To: ... | Title: Body` instead of sending real pushes. All notifications are still stored in the DB and show in the mobile notification center.
+
+---
 
 ## 🆕 Session 3.5 additions (admin modules + mobile push)
 - **Anti-Cheat / Risk Center** — `admin-panel/src/pages/RiskCenter.tsx` (5 tabs:

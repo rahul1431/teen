@@ -14,8 +14,9 @@ export async function authRoutes(app: FastifyInstance) {
   // POST /auth/send-otp
   app.post('/auth/send-otp', async (req, reply) => {
     const body = z.object({ phone: z.string().regex(/^\d{10}$/) }).parse(req.body)
-    await sendOtp(body.phone)
-    return reply.send({ success: true, message: 'OTP sent' })
+    const devOtp = await sendOtp(body.phone)
+    // devOtp is only non-null in dev mode (OTP_PROVIDER != msg91)
+    return reply.send({ success: true, message: 'OTP sent', ...(devOtp ? { otp: devOtp } : {}) })
   })
 
   // POST /auth/register
