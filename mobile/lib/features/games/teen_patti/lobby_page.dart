@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../../../core/network/api_client.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../shared/theme/app_theme.dart';
@@ -14,12 +15,14 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   final _socket = SocketService();
   double _selectedStake = 10;
   bool _searching = false;
+  String? _balance;
   final _stakes = [10.0, 50.0, 100.0, 500.0, 1000.0];
 
   @override
   void initState() {
     super.initState();
     _socket.connect();
+    _loadBalance();
     _socket.on(SocketEvents.roomJoined).listen((data) {
       if (!mounted) return;
       setState(() => _searching = false);
@@ -30,6 +33,15 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       setState(() => _searching = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(data['message'] ?? 'Error'), backgroundColor: AppColors.red));
     });
+  }
+
+  Future<void> _loadBalance() async {
+    try {
+      final res = await ApiClient().dio.get('/api/wallet/balance');
+      if (!mounted) return;
+      setState(() => _balance =
+          double.parse(res.data['real_balance'].toString()).toStringAsFixed(0));
+    } catch (_) {/* offline / no auth — leave as '—' */}
   }
 
   void _joinMatchmaking() {
@@ -45,12 +57,47 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Teen Patti')),
+      appBar: AppBar(
+        title: const Text('Teen Patti'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: AppColors.gold.withOpacity(0.6)),
+                ),
+                child: Text('🪙 ₹${_balance ?? '—'}',
+                    style: const TextStyle(
+                        color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
+              ),
+            ),
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Quick Match hero — quickest path to the table at the chosen stake
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _searching ? null : _joinMatchmaking,
+                icon: const Icon(Icons.flash_on, color: Colors.black),
+                label: Text('Quick Match — ₹${_selectedStake.toInt()}',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.gold,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
             const Text('Select Stake', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
             Wrap(
@@ -61,17 +108,33 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                 return GestureDetector(
                   onTap: _searching ? null : () => setState(() => _selectedStake = stake),
                   child: Container(
-                    width: 80, height: 60,
+                    width: 88,
+                    height: 50,
+                    alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: selected ? AppColors.gold : AppColors.cardBg,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: selected ? AppColors.gold : AppColors.border, width: 2),
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: selected
+                            ? const [Color(0xFFE6213A), Color(0xFFB11226), Color(0xFF7A0C1A)]
+                            : const [Color(0xFF3A2230), Color(0xFF24121C)],
+                      ),
+                      borderRadius: BorderRadius.circular(28),
+                      border: Border.all(
+                        color: selected ? AppColors.gold : AppColors.gold.withOpacity(0.35),
+                        width: selected ? 2.5 : 1.5,
+                      ),
+                      boxShadow: selected
+                          ? [BoxShadow(color: AppColors.gold.withOpacity(0.45), blurRadius: 12, spreadRadius: 1)]
+                          : null,
                     ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text('₹${stake.toInt()}', style: TextStyle(color: selected ? Colors.black : AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 16)),
-                      ],
+                    child: Text(
+                      '₹${stake.toInt()}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          shadows: [Shadow(color: Colors.black54, blurRadius: 3)]),
                     ),
                   ),
                 );
@@ -111,14 +174,6 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                     ),
                   ),
                 ],
-              )
-            else
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _joinMatchmaking,
-                  child: Text('Join Table — ₹${_selectedStake.toInt()}'),
-                ),
               ),
           ],
         ),

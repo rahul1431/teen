@@ -12,16 +12,27 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
   int _selectedIndex = 0;
   Map<String, dynamic>? _user;
   String _realBalance = '0.00';
   String _bonusBalance = '0.00';
+  late final AnimationController _wheelCtrl;
 
   @override
   void initState() {
     super.initState();
+    _wheelCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 8),
+    )..repeat();
     _loadUserData();
+  }
+
+  @override
+  void dispose() {
+    _wheelCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadUserData() async {
@@ -42,11 +53,16 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: CustomScrollView(
-          slivers: [
-            SliverToBoxAdapter(child: _buildHeader()),
-            SliverToBoxAdapter(child: _buildBalanceCard()),
-            SliverToBoxAdapter(child: _buildGamesSection()),
+        child: Stack(
+          children: [
+            CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(child: _buildHeader()),
+                SliverToBoxAdapter(child: _buildBalanceCard()),
+                SliverToBoxAdapter(child: _buildGamesGrid()),
+              ],
+            ),
+            Positioned(bottom: 16, left: 16, child: _buildSpinWinWheel()),
           ],
         ),
       ),
@@ -113,51 +129,120 @@ class _HomePageState extends State<HomePage> {
     child: Text('$label: $value', style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
   );
 
-  Widget _buildGamesSection() => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 20),
+  Widget _buildGamesGrid() => Padding(
+    padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Games', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         const SizedBox(height: 16),
-        _gameCard('🃏 Teen Patti', 'Multiplayer card game', 'Live tables available', AppColors.teenPattiGreen, () => context.push('/games/teen-patti')),
-        const SizedBox(height: 12),
-        _gameCard('✈️ Aviator', 'Crash game - cash out before it crashes!', 'Round starting soon...', AppColors.aviatorBlue, () => context.push('/games/aviator')),
-        const SizedBox(height: 80),
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 14,
+          crossAxisSpacing: 14,
+          childAspectRatio: 0.95,
+          children: [
+            _menuCard('Teen Patti', '🃏', const [Color(0xFFB11226), Color(0xFF7A0C1A)],
+                () => context.push('/games/teen-patti')),
+            _menuCard('Aviator', '✈️', const [Color(0xFF1E3A8A), Color(0xFF0B1E52)],
+                () => context.push('/games/aviator')),
+            _menuCard('Premium Table', '👑', const [Color(0xFFD4AF37), Color(0xFF8A6D1E)],
+                () => context.push('/games/teen-patti?premium=1')),
+            _menuCard('Variations', '🎲', const [Color(0xFF0E5C2F), Color(0xFF08401F)],
+                () => _comingSoon('Variations')),
+          ],
+        ),
       ],
     ),
   );
 
-  Widget _gameCard(String title, String subtitle, String badge, Color color, VoidCallback onTap) => GestureDetector(
+  Widget _menuCard(String title, String icon, List<Color> gradient, VoidCallback onTap) => GestureDetector(
     onTap: onTap,
     child: Container(
-      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.cardBg,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 56, height: 56,
-            decoration: BoxDecoration(color: color.withOpacity(0.2), borderRadius: BorderRadius.circular(14)),
-            child: Center(child: Text(title.split(' ')[0], style: const TextStyle(fontSize: 28))),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title.split(' ').skip(1).join(' '), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-              Text(subtitle, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-            ]),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(color: AppColors.green.withOpacity(0.15), borderRadius: BorderRadius.circular(10)),
-            child: const Text('PLAY', style: TextStyle(color: AppColors.green, fontSize: 11, fontWeight: FontWeight.bold)),
-          ),
+        gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: gradient),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.gold.withOpacity(0.6), width: 2),
+        boxShadow: [
+          BoxShadow(color: gradient.last.withOpacity(0.55), blurRadius: 16, offset: const Offset(0, 6)),
         ],
       ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title,
+                style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                    shadows: [Shadow(color: Colors.black54, blurRadius: 4)])),
+            Align(
+              alignment: Alignment.bottomRight,
+              child: Container(
+                width: 64,
+                height: 64,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.black26,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(icon, style: const TextStyle(fontSize: 38)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  void _comingSoon(String feature) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$feature — coming soon'), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  /// Decorative Spin & Win wheel — animates, taps to "coming soon".
+  Widget _buildSpinWinWheel() => GestureDetector(
+    onTap: () => _comingSoon('Spin & Win'),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        RotationTransition(
+          turns: _wheelCtrl,
+          child: Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const SweepGradient(
+                colors: [
+                  Color(0xFFB11226),
+                  Color(0xFFD4AF37),
+                  Color(0xFF0E5C2F),
+                  Color(0xFF1E3A8A),
+                  Color(0xFFD4AF37),
+                  Color(0xFFB11226),
+                ],
+              ),
+              border: Border.all(color: AppColors.gold, width: 3),
+              boxShadow: [
+                BoxShadow(color: AppColors.gold.withOpacity(0.5), blurRadius: 12, spreadRadius: 1),
+              ],
+            ),
+            child: const Center(
+              child: Text('🎯', style: TextStyle(fontSize: 22)),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        const Text('Spin & Win',
+            style: TextStyle(color: AppColors.gold, fontSize: 10, fontWeight: FontWeight.bold)),
+      ],
     ),
   );
 
