@@ -2,10 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'app.dart';
-
-final FlutterLocalNotificationsPlugin localNotifications = FlutterLocalNotificationsPlugin();
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -45,18 +42,6 @@ void main() async {
     } catch (_) {
       // Messaging unavailable — ignore.
     }
-  }
-
-  // Local notifications (independent of Firebase)
-  try {
-    await localNotifications.initialize(
-      const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-        iOS: DarwinInitializationSettings(),
-      ),
-    );
-  } catch (_) {
-    // Non-fatal.
   }
 
   runApp(const MyOnlineJokerApp());

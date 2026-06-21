@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'core/storage/secure_storage.dart';
+import 'core/services/push_notification_service.dart';
 import 'shared/theme/app_theme.dart';
 import 'features/auth/pages/splash_page.dart';
 import 'features/auth/pages/login_page.dart';
@@ -13,6 +14,7 @@ import 'features/games/teen_patti/game_page.dart';
 import 'features/games/aviator/aviator_page.dart';
 import 'features/leaderboard/leaderboard_page.dart';
 import 'features/profile/profile_page.dart';
+import 'features/notifications/notifications_page.dart';
 
 final _router = GoRouter(
   initialLocation: '/splash',
@@ -23,6 +25,10 @@ final _router = GoRouter(
         state.matchedLocation == '/splash' ||
         state.matchedLocation.endsWith('/demo');
     if (!isAuth && !isPublic) return '/auth/login';
+    // Register/refresh FCM push token on every authenticated navigation
+    if (isAuth && !isPublic) {
+      PushNotificationService.instance.init(_router);
+    }
     return null;
   },
   routes: [
@@ -32,6 +38,7 @@ final _router = GoRouter(
     GoRoute(path: '/auth/otp', builder: (_, state) => OtpPage(phone: state.uri.queryParameters['phone'] ?? '')),
     GoRoute(path: '/home', builder: (_, __) => const HomePage()),
     GoRoute(path: '/wallet', builder: (_, __) => const WalletPage()),
+    GoRoute(path: '/notifications', builder: (_, __) => const NotificationsPage()),
     GoRoute(path: '/games/teen-patti', builder: (_, __) => const TeenPattiLobbyPage()),
     GoRoute(path: '/games/teen-patti/play/:roomId', builder: (_, s) => TeenPattiGamePage(roomId: s.pathParameters['roomId']!)),
     GoRoute(path: '/games/teen-patti/demo', builder: (_, __) => const TeenPattiGamePage(roomId: 'DEMO', demo: true)),

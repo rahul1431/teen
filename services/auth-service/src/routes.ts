@@ -137,4 +137,12 @@ export async function authRoutes(app: FastifyInstance) {
     await redis.del(`session:${user.sub}`)
     return reply.send({ success: true })
   })
+
+  // PUT /auth/fcm-token — register or refresh FCM push token
+  app.put('/auth/fcm-token', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as any
+    const { token } = z.object({ token: z.string().min(1) }).parse(req.body)
+    await db.query('UPDATE users SET fcm_token = $1, updated_at = NOW() WHERE id = $2', [token, user.sub])
+    return reply.send({ success: true })
+  })
 }

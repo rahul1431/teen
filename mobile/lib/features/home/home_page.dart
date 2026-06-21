@@ -79,6 +79,12 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
           const Text('Ready to play?', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
         ]),
         const Spacer(),
+        IconButton(
+          icon: const Icon(Icons.notifications_outlined, color: AppColors.gold),
+          onPressed: () => context.push('/notifications'),
+          tooltip: 'Notifications',
+        ),
+        const SizedBox(width: 4),
         GestureDetector(
           onTap: () => context.push('/profile'),
           child: CircleAvatar(
