@@ -2,7 +2,7 @@
 
 > Living status doc. Read this first when resuming. Last updated: 2026-06-20 (session 2).
 > Branch: `claude/confident-archimedes-e2dd1k` · PR: #1 (draft) · Base: `main`
-> Latest APK commit: `9480aff` · Admin preview: https://rahul1431.github.io/teen/
+> Latest APK commit: `5350ea6` · Admin preview: https://rahul1431.github.io/teen/
 
 ---
 
@@ -71,16 +71,21 @@
 - [ ] **You:** SSL — `v-add-web-domain <user> game.myonlinejoker.com` then LetsEncrypt
 - [ ] Change admin password after first real login
 
-## 🎨 Teen Patti UI — reference-match TODO (await user OK)
-Reference: Behance "Teen Patti Game UI/UX" (gallery 185793255) — screenshots
-shared by user. Still to match:
-1. Action buttons → **Pack · Side Show · Chaal** with +/- bet stepper + pot coin
-2. **Status pills** on seats (Chaal/Pack/Blind) + red **"D"** dealer button
-3. **Gift badge** on each avatar; **green glow** ring on active player
-4. **Card backs** (blue patterned) for opponents
-5. **Top bar** gold-circle icons (exit/info/chat/add-friend); optional hostess
-6. **Lobby** redesign (menu cards: Join/Create Private, Play Variation,
-   Premium Table; bottom nav; coin balance; Spin & Win wheel)
+## 🎨 Teen Patti UI — reference-match (session 3 — DONE ✅)
+Reference: Behance "Teen Patti Game UI/UX" (gallery 185793255). All 6
+shipped as separate commits:
+1. ✅ Pack · Side Show · Chaal action buttons + −/+ bet stepper + coin chip
+2. ✅ Seat status pills (Chaal/Pack/Blind) + red dealer 'D' badge
+3. ✅ Gold gift-badge on opponent avatars + green-glow active turn ring
+4. ✅ Fanned blue card-backs over opponent seats (40% opacity when folded)
+5. ✅ Top bar gold-circle icons (exit / info / chat / invite / settings);
+      duplicate chat removed from right edge
+6. ✅ Home → 2x2 menu-card grid (Teen Patti / Aviator / Premium / Variations)
+      + decorative rotating Spin & Win wheel; Lobby → AppBar balance chip,
+      Quick Match hero button, gold-trimmed red pill stakes
+
+Demo path (`/games/teen-patti/demo`) exercises every visual. Backend
+untouched. Targeted gifting (recipient-aware) is future scope.
 
 ---
 
