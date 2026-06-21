@@ -16,7 +16,7 @@ import 'features/leaderboard/leaderboard_page.dart';
 import 'features/profile/profile_page.dart';
 import 'features/notifications/notifications_page.dart';
 
-final _router = GoRouter(
+final GoRouter _router = GoRouter(
   initialLocation: '/splash',
   redirect: (context, state) async {
     final token = await SecureStorage.getAccessToken();
