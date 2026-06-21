@@ -663,6 +663,163 @@ async function start() {
     return reply.send(data)
   })
 
+  // ---- Risk Center / Anti-Cheat ----
+
+  // GET /api/admin/risk/overview — KPI summary for Risk Center dashboard
+  app.get('/api/admin/risk/overview', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
+    const [flagged, suspendedToday, winRateAlerts, manualCredits] = await Promise.all([
+      db.query(`SELECT COUNT(*) FROM users WHERE status = 'suspicious' AND is_bot = false`),
+      db.query(`SELECT COUNT(*) FROM users WHERE status = 'suspended' AND updated_at >= NOW() - INTERVAL '1 day' AND is_bot = false`),
+      db.query(`
+        SELECT COUNT(DISTINCT wt.user_id) FROM wallet_transactions wt
+        WHERE wt.type IN ('game_credit','game_debit') AND wt.created_at > NOW() - INTERVAL '30 days'
+        AND wt.user_id IN (
+          SELECT user_id FROM wallet_transactions
+          WHERE type IN ('game_credit','game_debit') AND created_at > NOW() - INTERVAL '30 days'
+          GROUP BY user_id
+          HAVING SUM(CASE WHEN type='game_credit' THEN amount ELSE 0 END)
+               > 3 * NULLIF(SUM(CASE WHEN type='game_debit' THEN amount ELSE 0 END), 0)
+          AND SUM(CASE WHEN type='game_debit' THEN amount ELSE 0 END) > 500
+        )
+      `),
+      db.query(`SELECT COUNT(*) FROM wallet_transactions WHERE type = 'manual_credit' AND created_at >= NOW() - INTERVAL '1 day'`),
+    ])
+    return reply.send({
+      flagged_users: parseInt(flagged.rows[0].count),
+      suspended_today: parseInt(suspendedToday.rows[0].count),
+      win_rate_alerts: parseInt(winRateAlerts.rows[0].count),
+      manual_credits_24h: parseInt(manualCredits.rows[0].count),
+    })
+  })
+
+  // GET /api/admin/risk/flagged-users — paginated list with computed risk signals
+  app.get('/api/admin/risk/flagged-users', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { page = '1', limit = '20' } = req.query as any
+    const offset = (parseInt(page) - 1) * parseInt(limit)
+    const res = await db.query(`
+      SELECT u.id, u.username, u.phone, u.status,
+        w.total_won, w.total_deposited,
+        COUNT(DISTINCT gp.room_id) AS games_played,
+        ROUND(w.total_won::numeric / NULLIF(w.total_deposited, 0), 2) AS roi,
+        COALESCE((
+          SELECT COUNT(*) FROM wallet_transactions wt
+          WHERE wt.user_id = u.id AND wt.type = 'manual_credit'
+          AND wt.created_at > NOW() - INTERVAL '7 days'
+        ), 0) AS manual_credits_7d,
+        COALESCE((
+          SELECT COUNT(*) FROM users u2
+          WHERE u2.device_fingerprint = u.device_fingerprint
+          AND u2.id != u.id AND u.device_fingerprint IS NOT NULL
+        ), 0) AS shared_device_count
+      FROM users u
+      JOIN wallets w ON w.user_id = u.id
+      LEFT JOIN game_participants gp ON gp.user_id = u.id AND gp.is_bot = false
+      WHERE u.is_bot = false
+      GROUP BY u.id, u.username, u.phone, u.status, w.total_won, w.total_deposited
+      HAVING
+        (w.total_won::numeric / NULLIF(w.total_deposited, 0)) > 3
+        OR COALESCE((
+          SELECT COUNT(*) FROM users u2
+          WHERE u2.device_fingerprint = u.device_fingerprint AND u2.id != u.id AND u.device_fingerprint IS NOT NULL
+        ), 0) > 0
+        OR COALESCE((
+          SELECT COUNT(*) FROM wallet_transactions wt
+          WHERE wt.user_id = u.id AND wt.type = 'manual_credit' AND wt.created_at > NOW() - INTERVAL '7 days'
+        ), 0) > 0
+      ORDER BY roi DESC NULLS LAST
+      LIMIT $1 OFFSET $2
+    `, [parseInt(limit), offset])
+    const countRes = await db.query(`
+      SELECT COUNT(*) FROM (
+        SELECT u.id FROM users u JOIN wallets w ON w.user_id = u.id WHERE u.is_bot = false
+        GROUP BY u.id, w.total_won, w.total_deposited, u.device_fingerprint
+        HAVING (w.total_won::numeric / NULLIF(w.total_deposited, 0)) > 3
+          OR EXISTS (SELECT 1 FROM users u2 WHERE u2.device_fingerprint = u.device_fingerprint AND u2.id != u.id AND u.device_fingerprint IS NOT NULL)
+      ) sub
+    `)
+    return reply.send({ users: res.rows, total: parseInt(countRes.rows[0].count) })
+  })
+
+  // GET /api/admin/risk/device-links — users sharing device fingerprints
+  app.get('/api/admin/risk/device-links', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
+    const res = await db.query(`
+      SELECT device_fingerprint,
+        COUNT(*) AS account_count,
+        JSON_AGG(JSON_BUILD_OBJECT('id', id, 'username', username, 'status', status, 'created_at', created_at)
+                 ORDER BY created_at) AS accounts
+      FROM users
+      WHERE device_fingerprint IS NOT NULL AND is_bot = false
+      GROUP BY device_fingerprint
+      HAVING COUNT(*) > 1
+      ORDER BY COUNT(*) DESC
+      LIMIT 50
+    `)
+    return reply.send(res.rows)
+  })
+
+  // GET /api/admin/risk/win-rate-anomalies — users with >1.5x win rate vs wagered in last 30d
+  app.get('/api/admin/risk/win-rate-anomalies', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
+    const res = await db.query(`
+      WITH stats AS (
+        SELECT user_id,
+          SUM(CASE WHEN type='game_credit' THEN amount ELSE 0 END) AS total_won,
+          SUM(CASE WHEN type='game_debit'  THEN amount ELSE 0 END) AS total_wagered,
+          COUNT(CASE WHEN type='game_credit' THEN 1 END) AS win_txns,
+          COUNT(CASE WHEN type='game_debit'  THEN 1 END) AS loss_txns
+        FROM wallet_transactions
+        WHERE type IN ('game_credit','game_debit') AND created_at > NOW() - INTERVAL '30 days'
+        GROUP BY user_id
+      )
+      SELECT s.user_id, u.username, u.status,
+        ROUND(s.total_won::numeric, 2) AS total_won,
+        ROUND(s.total_wagered::numeric, 2) AS total_wagered,
+        ROUND(s.total_won::numeric / NULLIF(s.total_wagered, 0), 3) AS win_rate,
+        s.win_txns, s.loss_txns
+      FROM stats s JOIN users u ON u.id = s.user_id
+      WHERE s.total_wagered > 500
+        AND (s.total_won::numeric / NULLIF(s.total_wagered, 0)) > 1.5
+        AND u.is_bot = false
+      ORDER BY win_rate DESC
+      LIMIT 100
+    `)
+    return reply.send(res.rows)
+  })
+
+  // GET /api/admin/risk/colluding-pairs — real players sharing 3+ game rooms
+  app.get('/api/admin/risk/colluding-pairs', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
+    const res = await db.query(`
+      SELECT a.user_id AS user_a_id, ua.username AS user_a,
+             b.user_id AS user_b_id, ub.username AS user_b,
+             COUNT(DISTINCT a.room_id) AS shared_rooms
+      FROM game_participants a
+      JOIN game_participants b ON b.room_id = a.room_id AND b.user_id > a.user_id
+      JOIN users ua ON ua.id = a.user_id
+      JOIN users ub ON ub.id = b.user_id
+      WHERE a.is_bot = false AND b.is_bot = false
+      GROUP BY a.user_id, ua.username, b.user_id, ub.username
+      HAVING COUNT(DISTINCT a.room_id) >= 3
+      ORDER BY shared_rooms DESC
+      LIMIT 100
+    `)
+    return reply.send(res.rows)
+  })
+
+  // POST /api/admin/risk/flag/:userId — mark user status as 'suspicious' + auto-note
+  app.post('/api/admin/risk/flag/:userId', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { userId } = req.params as any
+    await db.query(`UPDATE users SET status = 'suspicious' WHERE id = $1`, [userId])
+    await db.query(
+      `INSERT INTO user_notes (user_id, admin_id, note, is_flag) VALUES ($1, $2, $3, true)`,
+      [userId, admin.sub, 'Flagged as suspicious by Risk Center automated review']
+    )
+    await db.query(
+      `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'risk_flag', 'user', $2, $3)`,
+      [admin.sub, userId, JSON.stringify({ status: 'suspicious' })]
+    )
+    return reply.send({ success: true })
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))
 
   const port = parseInt(process.env.PORT || '3008')

@@ -12,6 +12,7 @@ import Notifications from './pages/Notifications'
 import GameConfig from './pages/GameConfig'
 import AdminUsers from './pages/AdminUsers'
 import Profile from './pages/Profile'
+import RiskCenter from './pages/RiskCenter'
 import { useAuthStore } from './store/auth'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -34,6 +35,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="game-config" element={<GameConfig />} />
           <Route path="admin-users" element={<AdminUsers />} />
           <Route path="profile" element={<Profile />} />
+          <Route path="risk-center" element={<RiskCenter />} />
         </Route>
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>
