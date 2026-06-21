@@ -70,13 +70,14 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
       'pot': 1240,
       'min_bet': 100,
       'current_turn_user_id': 'me',
+      'dealer_id': 'b1',
       'players': [
-        {'user_id': 'me', 'username': 'You', 'status': 'active', 'chips': 28400, 'cards': [
+        {'user_id': 'me', 'username': 'You', 'status': 'active', 'is_seen': true, 'chips': 28400, 'cards': [
           {'value': 'A', 'suit': 'C'}, {'value': '2', 'suit': 'C'}, {'value': '3', 'suit': 'C'}
         ]},
-        {'user_id': 'b1', 'username': 'Steven P.', 'status': 'active', 'chips': 45199, 'is_bot': true, 'cards': [1, 2, 3]},
-        {'user_id': 'b2', 'username': 'Nairobi B.', 'status': 'folded', 'chips': 53884, 'is_bot': true, 'cards': [1, 2, 3]},
-        {'user_id': 'b3', 'username': 'Smith J.', 'status': 'active', 'chips': 68121, 'is_bot': true, 'cards': [1, 2, 3]},
+        {'user_id': 'b1', 'username': 'Steven P.', 'status': 'active', 'is_seen': true, 'chips': 45199, 'is_bot': true, 'cards': [1, 2, 3]},
+        {'user_id': 'b2', 'username': 'Nairobi B.', 'status': 'folded', 'is_seen': false, 'chips': 53884, 'is_bot': true, 'cards': [1, 2, 3]},
+        {'user_id': 'b3', 'username': 'Smith J.', 'status': 'active', 'is_seen': false, 'chips': 68121, 'is_bot': true, 'cards': [1, 2, 3]},
       ],
     };
     _isMyTurn = true;
@@ -413,10 +414,12 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     final isActive = player['status'] == 'active';
     final isFolded = player['status'] == 'folded';
     final isTurn = _gameState?['current_turn_user_id'] == player['user_id'];
+    final isDealer = _gameState?['dealer_id'] == player['user_id'];
+    final status = _statusOf(player); // (label, color)
     return Opacity(
-      opacity: isFolded ? 0.45 : 1,
+      opacity: isFolded ? 0.55 : 1,
       child: Container(
-        width: 92,
+        width: 96,
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
         decoration: BoxDecoration(
           color: isMe ? AppColors.gold.withOpacity(0.18) : Colors.black38,
@@ -429,10 +432,14 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Status pill (Chaal / Pack / Blind) above the avatar
+            _statusPill(status.$1, status.$2),
+            const SizedBox(height: 3),
             SizedBox(
-              width: 48,
-              height: 48,
+              width: 54,
+              height: 50,
               child: Stack(
+                clipBehavior: Clip.none,
                 alignment: Alignment.center,
                 children: [
                   // gold ring (timer arc when it's this player's turn)
@@ -463,6 +470,25 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
                             style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
                       ),
                     ),
+                  // Dealer "D" badge — top-right of avatar
+                  if (isDealer)
+                    Positioned(
+                      right: -2,
+                      top: -2,
+                      child: Container(
+                        width: 18,
+                        height: 18,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: AppColors.red,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1.5),
+                          boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 3)],
+                        ),
+                        child: const Text('D',
+                            style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -481,18 +507,36 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
                 child: Text('💰 ${_chipsOf(player)}',
                     style: const TextStyle(color: AppColors.goldLight, fontSize: 9, fontWeight: FontWeight.bold)),
               ),
-            Text(
-              isFolded ? 'FOLDED' : (player['is_bot'] == true ? 'BOT' : '${player['cards']?.length ?? 0}🂠'),
-              style: TextStyle(
-                  color: isFolded ? Colors.redAccent : (player['is_bot'] == true ? Colors.orange : AppColors.gold),
-                  fontSize: 9,
-                  fontWeight: FontWeight.bold),
-            ),
+            if (player['is_bot'] == true)
+              const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: Text('BOT',
+                    style: TextStyle(color: Colors.orange, fontSize: 8, fontWeight: FontWeight.bold)),
+              ),
           ],
         ),
       ),
     );
   }
+
+  /// (label, background-colour) for the seat status pill.
+  (String, Color) _statusOf(Map<String, dynamic> p) {
+    if (p['status'] == 'folded') return ('Pack', AppColors.red);
+    if (p['is_seen'] == false) return ('Blind', Colors.orange.shade700);
+    return ('Chaal', AppColors.green);
+  }
+
+  Widget _statusPill(String label, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white.withOpacity(0.3)),
+          boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 3, offset: Offset(0, 1))],
+        ),
+        child: Text(label,
+            style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+      );
 
   Widget _buildTopBar() => Positioned(
         top: 6,
