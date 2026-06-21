@@ -29,6 +29,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
   Timer? _turnTimer;
   bool _isSeen = false;
   String? _resultMessage;
+  /// Current chaal/raise amount the user is about to commit. Stepped by stake.
+  double _betAmount = 0;
 
   // Social
   bool _showChat = false;
@@ -159,6 +161,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     _turnTimer?.cancel();
     setState(() => _isMyTurn = false);
     if (action == 'show') setState(() => _isSeen = true);
+    if (widget.demo) {
+      _applyDemoAction(action, amount);
+      return;
+    }
     _socket.emit(SocketEvents.gameAction, {
       'room_id': widget.roomId,
       'action': action,
@@ -166,6 +172,32 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
       'sequence_num': ++_turnSeq,
     });
     HapticFeedback.mediumImpact();
+  }
+
+  /// Local-only demo: bump pot, mark fold, hand turn back after 1.2s so the
+  /// preview keeps feeling alive without a server.
+  void _applyDemoAction(String action, double? amount) {
+    HapticFeedback.mediumImpact();
+    final players = (_gameState?['players'] as List?)
+            ?.cast<Map<String, dynamic>>() ??
+        [];
+    final me = players.firstWhere((p) => p['user_id'] == 'me', orElse: () => {});
+    setState(() {
+      if (action == 'fold' && me.isNotEmpty) me['status'] = 'folded';
+      if ((action == 'call' || action == 'raise') && amount != null) {
+        _gameState!['pot'] = (_gameState!['pot'] as num).toInt() + amount.toInt();
+      }
+      _gameState!['current_turn_user_id'] = 'b1';
+    });
+    Timer(const Duration(milliseconds: 1200), () {
+      if (!mounted) return;
+      setState(() {
+        if (me.isNotEmpty && me['status'] != 'folded') me['status'] = 'active';
+        _gameState!['current_turn_user_id'] = 'me';
+        _isMyTurn = me['status'] != 'folded';
+      });
+      if (_isMyTurn) _startTurnTimer();
+    });
   }
 
   // ---- Social senders (piggyback on room:chat with a `type`) ----
@@ -537,28 +569,90 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
 
   Widget _buildActionBar() {
     final stake = (_gameState?['min_bet'] as num?)?.toDouble() ?? 10;
-    final callAmount = _isSeen ? stake * 2 : stake;
+    final minBet = _isSeen ? stake * 2 : stake;
+    final maxBet = minBet * 4; // standard Teen Patti chaal cap
+    if (_betAmount < minBet) _betAmount = minBet;
+    if (_betAmount > maxBet) _betAmount = maxBet;
+
     return Positioned(
       bottom: 6,
       left: 12,
       right: 12,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          _actionBtn('FOLD', AppColors.red, () => _sendAction('fold')),
-          const SizedBox(width: 8),
-          _actionBtn('CALL ₹${callAmount.toInt()}', AppColors.gold, () => _sendAction('call'),
-              textColor: Colors.black),
-          const SizedBox(width: 8),
-          _actionBtn('RAISE', Colors.blue, () => _sendAction('raise', amount: stake * 4)),
-          if (!_isSeen) ...[
-            const SizedBox(width: 8),
-            _actionBtn('SEE', Colors.purple, () => _sendAction('show')),
-          ],
+          // Centre coin chip showing the current bet amount
+          _coinChip(_betAmount.toInt()),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _actionBtn('Pack', AppColors.red, () => _sendAction('fold')),
+              const SizedBox(width: 10),
+              _actionBtn('Side Show', Colors.deepPurple, () => _sendAction('side_show')),
+              const SizedBox(width: 10),
+              // Bet stepper: −  [Chaal ₹amt]  +
+              _stepperBtn('−', () => _adjustBet(-stake, minBet, maxBet)),
+              const SizedBox(width: 6),
+              _actionBtn('Chaal ₹${_betAmount.toInt()}', AppColors.green,
+                  () => _sendAction('call', amount: _betAmount)),
+              const SizedBox(width: 6),
+              _stepperBtn('+', () => _adjustBet(stake, minBet, maxBet)),
+            ],
+          ),
         ],
       ),
     );
   }
+
+  void _adjustBet(double delta, double minBet, double maxBet) {
+    setState(() {
+      _betAmount = (_betAmount + delta).clamp(minBet, maxBet);
+    });
+    HapticFeedback.selectionClick();
+  }
+
+  Widget _coinChip(int amount) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFFFFE082), Color(0xFFD4AF37), Color(0xFF8A6D1E)],
+          ),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white24),
+          boxShadow: [
+            BoxShadow(color: AppColors.gold.withOpacity(0.5), blurRadius: 10, spreadRadius: 1),
+          ],
+        ),
+        child: Text(
+          '🪙 ₹$amount',
+          style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12),
+        ),
+      );
+
+  Widget _stepperBtn(String label, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 36,
+          height: 36,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFF5B6470), Color(0xFF323844)],
+            ),
+            border: Border.all(color: AppColors.gold.withOpacity(0.6), width: 1.5),
+            shape: BoxShape.circle,
+            boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 2))],
+          ),
+          child: Text(label,
+              style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold, height: 1)),
+        ),
+      );
 
   Widget _actionBtn(String label, Color color, VoidCallback onTap, {Color textColor = Colors.white}) =>
       GestureDetector(
