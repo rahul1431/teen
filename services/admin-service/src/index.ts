@@ -3,11 +3,19 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import jwt from '@fastify/jwt'
+import multipart from '@fastify/multipart'
 import { Pool } from 'pg'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { generateSecret, generateURI, verifySync } from 'otplib'
 import QRCode from 'qrcode'
+import fs from 'fs'
+import path from 'path'
+import crypto from 'crypto'
+import { pipeline } from 'stream/promises'
+
+// QR images for payment methods are stored here, served by nginx at /uploads/qr/.
+const QR_UPLOAD_DIR = process.env.QR_UPLOAD_DIR || '/opt/teen/uploads/qr'
 
 // Thin wrapper to keep the call sites readable (matches the old `authenticator` API)
 const totp = {
@@ -31,9 +39,11 @@ const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL!, max: 20 })
 
 async function start() {
-  await app.register(helmet)
+  await app.register(helmet, { crossOriginResourcePolicy: false })
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.ADMIN_JWT_SECRET! })
+  await app.register(multipart, { limits: { fileSize: 5 * 1024 * 1024 } }) // 5MB QR images
+  fs.mkdirSync(QR_UPLOAD_DIR, { recursive: true })
 
   const authenticate = async (req: any, reply: any) => {
     try { await req.jwtVerify() } catch { reply.code(401).send({ error: 'Unauthorized' }) }
@@ -555,6 +565,19 @@ async function start() {
   })
 
   // ---- Payment methods (manual deposit destinations: UPI / bank / QR) ----
+
+  // POST /api/admin/uploads/qr — upload a QR image, returns its public URL
+  app.post('/api/admin/uploads/qr', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const file = await (req as any).file()
+    if (!file) return reply.code(400).send({ error: 'No file uploaded' })
+    const ext = path.extname(file.filename || '').toLowerCase().slice(0, 8) || '.png'
+    if (!['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
+      return reply.code(400).send({ error: 'Unsupported image type' })
+    }
+    const fname = `qr_${crypto.randomUUID()}${ext}`
+    await pipeline(file.file, fs.createWriteStream(path.join(QR_UPLOAD_DIR, fname)))
+    return reply.send({ url: `/uploads/qr/${fname}` })
+  })
 
   // GET /api/admin/payment-methods — list all (active + inactive)
   app.get('/api/admin/payment-methods', { onRequest: [authenticate, requireRole('finance')] }, async (_req, reply) => {

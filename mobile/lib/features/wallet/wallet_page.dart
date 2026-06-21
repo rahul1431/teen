@@ -4,7 +4,15 @@ import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/network/api_client.dart';
+import '../../core/constants/app_config.dart';
 import '../../shared/theme/app_theme.dart';
+
+// Resolve a possibly-relative server path (e.g. /uploads/qr/x.png) to a full URL.
+String _resolveUrl(String? p) {
+  if (p == null || p.isEmpty) return '';
+  if (p.startsWith('http')) return p;
+  return '${AppConfig.apiBaseUrl}$p';
+}
 
 class WalletPage extends StatefulWidget {
   const WalletPage({super.key});
@@ -237,7 +245,16 @@ class _DepositSheetState extends State<_DepositSheet> {
   Widget _methodDetails(Map<String, dynamic> m) {
     switch (m['method_type']) {
       case 'upi':
-        return _detailRow('UPI ID', m['upi_id']?.toString() ?? '-');
+        return Column(children: [
+          _detailRow('UPI ID', m['upi_id']?.toString() ?? '-'),
+          if (m['qr_image_url'] != null) ...[
+            const SizedBox(height: 8),
+            const Text('Scan to pay:', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+            const SizedBox(height: 6),
+            Image.network(_resolveUrl(m['qr_image_url']?.toString()), height: 180,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+          ],
+        ]);
       case 'bank':
         return Column(children: [
           if (m['account_name'] != null) _detailRow('Name', m['account_name'].toString()),
@@ -248,7 +265,7 @@ class _DepositSheetState extends State<_DepositSheet> {
       case 'qr':
         return Center(
           child: m['qr_image_url'] != null
-              ? Image.network(m['qr_image_url'].toString(), height: 200,
+              ? Image.network(_resolveUrl(m['qr_image_url']?.toString()), height: 200,
                   errorBuilder: (_, __, ___) => const Text('QR image unavailable'))
               : const Text('No QR configured'),
         );

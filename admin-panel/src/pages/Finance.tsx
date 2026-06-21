@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import {
   Table, Tag, Button, Space, message, Select, Statistic, Row, Col, Card, Tabs,
-  Modal, Input, Descriptions, Empty, Tooltip, Switch, InputNumber, Form, Popconfirm,
+  Modal, Input, Descriptions, Empty, Tooltip, Switch, InputNumber, Form, Popconfirm, Upload,
 } from 'antd'
-import { CheckOutlined, CloseOutlined, DollarOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons'
+import { CheckOutlined, CloseOutlined, DollarOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons'
 import { adminApi } from '../api/client'
 
 export default function Finance() {
@@ -381,6 +381,40 @@ function Reconciliation() {
   )
 }
 
+// ---- QR image uploader used inside the payment-method form ----
+function QrUploadField({ form, required, label }: { form: any; required: boolean; label: string }) {
+  const [uploading, setUploading] = useState(false)
+  const url: string | undefined = form.getFieldValue('qr_image_url')
+
+  const upload = async (file: File) => {
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await adminApi.post('/uploads/qr', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      form.setFieldsValue({ qr_image_url: res.data.url })
+      message.success('QR uploaded')
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Upload failed')
+    } finally { setUploading(false) }
+  }
+
+  return (
+    <Form.Item label={label} required={required}>
+      <Form.Item name="qr_image_url" noStyle rules={required ? [{ required: true, message: 'Upload a QR image' }] : []}>
+        <Input type="hidden" />
+      </Form.Item>
+      <Space direction="vertical">
+        <Upload showUploadList={false} accept="image/*" maxCount={1}
+          beforeUpload={(file) => { upload(file as File); return false }}>
+          <Button icon={<UploadOutlined />} loading={uploading}>{url ? 'Replace QR Image' : 'Upload QR Image'}</Button>
+        </Upload>
+        {url && <img src={url} alt="QR" style={{ width: 150, height: 150, objectFit: 'contain', border: '1px solid #eee', borderRadius: 6 }} />}
+      </Space>
+    </Form.Item>
+  )
+}
+
 // ---- Payment Methods (manual deposit destinations) ----
 function PaymentMethods() {
   const [rows, setRows] = useState<any[]>([])
@@ -457,13 +491,16 @@ function PaymentMethods() {
           <Form.Item name="label" label="Label" rules={[{ required: true }]}>
             <Input placeholder="e.g. Primary UPI / HDFC Current A/c" />
           </Form.Item>
-          <Form.Item noStyle shouldUpdate={(p, c) => p.method_type !== c.method_type}>
+          <Form.Item noStyle shouldUpdate={(p, c) => p.method_type !== c.method_type || p.qr_image_url !== c.qr_image_url}>
             {({ getFieldValue }) => {
               const t = getFieldValue('method_type')
               if (t === 'upi') return (
-                <Form.Item name="upi_id" label="UPI ID" rules={[{ required: true }]}>
-                  <Input placeholder="name@bank" />
-                </Form.Item>
+                <>
+                  <Form.Item name="upi_id" label="UPI ID" rules={[{ required: true }]}>
+                    <Input placeholder="name@bank" />
+                  </Form.Item>
+                  <QrUploadField form={form} required={false} label="UPI QR Code (optional — users can scan to pay)" />
+                </>
               )
               if (t === 'bank') return (
                 <>
@@ -473,11 +510,7 @@ function PaymentMethods() {
                   <Form.Item name="bank_name" label="Bank Name"><Input /></Form.Item>
                 </>
               )
-              return (
-                <Form.Item name="qr_image_url" label="QR Image URL" rules={[{ required: true }]}>
-                  <Input placeholder="https://… (upload the QR to the server and paste its URL)" />
-                </Form.Item>
-              )
+              return <QrUploadField form={form} required={true} label="QR Code Image" />
             }}
           </Form.Item>
           <Form.Item name="instructions" label="Instructions (optional)">
