@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import '../../../core/socket/socket_service.dart';
@@ -394,6 +395,14 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         top: cy - 22,
         child: SizedBox(width: 140, child: Center(child: _potChip())),
       ));
+
+      // animated hostess at top-center of the oval
+      seats.add(Positioned(
+        left: cx - 40,
+        top: cy - ry - 82,
+        child: _buildHostess(),
+      ));
+
       return Stack(children: seats);
     });
   }
@@ -408,6 +417,89 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         child: Text('💰 ₹${_gameState?['pot'] ?? 0}',
             style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 14)),
       );
+
+  /// Decorative animated hostess/dealer figure at the top of the oval table.
+  Widget _buildHostess() {
+    return SizedBox(
+      width: 80,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Glow halo behind the figure
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.gold.withOpacity(0.35),
+                  blurRadius: 22,
+                  spreadRadius: 6,
+                ),
+              ],
+            ),
+            alignment: Alignment.center,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // decorative gold ring
+                Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Color(0xFFFFE082), Color(0xFFD4AF37), Color(0xFF8A6D1E)],
+                    ),
+                  ),
+                ),
+                // inner navy circle
+                Container(
+                  width: 54,
+                  height: 54,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Color(0xFF0E1830),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Text('💃', style: TextStyle(fontSize: 32)),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          // "DEALER" pill label
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFFB11226), Color(0xFF7A0C1A)],
+              ),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.gold.withOpacity(0.8), width: 1),
+              boxShadow: [
+                BoxShadow(color: AppColors.gold.withOpacity(0.3), blurRadius: 6),
+              ],
+            ),
+            child: const Text(
+              '🎁 DEALER',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1,
+              ),
+            ),
+          ),
+        ],
+      )
+          .animate(onPlay: (c) => c.repeat(reverse: true))
+          .moveY(begin: 0, end: -7, duration: 1400.ms, curve: Curves.easeInOut),
+    );
+  }
 
   Widget _buildPlayerSeat(Map<String, dynamic> player) {
     final isMe = player['user_id'] == _myUserId;
