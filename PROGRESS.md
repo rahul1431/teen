@@ -1,8 +1,24 @@
 # Progress & Resume Checkpoint
 
-> Living status doc. Read this first when resuming. Last updated: 2026-06-20 (session 2).
+> Living status doc. Read this first when resuming. Last updated: 2026-06-21 (session 3).
 > Branch: `claude/confident-archimedes-e2dd1k` · PR: #1 (draft) · Base: `main`
-> Latest APK commit: `5350ea6` · Admin preview: https://rahul1431.github.io/teen/
+> Latest APK commit: `b28a50c` (hostess + haptics) · Admin preview: https://rahul1431.github.io/teen/
+
+## ❓ How to log in to the admin panel
+The Pages preview at `rahul1431.github.io/teen/` is **UI-only — login requires
+a backend**. If you see "Invalid credentials" or "Backend not reachable":
+- **Local dev:** start admin-service (`cd services/admin-service && npm run dev`),
+  run all migrations (001-004), then in `admin-panel/.env.local` set
+  `VITE_API_BASE_URL=http://localhost:3008` and `npm run dev`.
+- **VPS:** deploy admin-service + add a `VITE_API_BASE_URL` GitHub secret
+  pointing at the public URL, then push to redeploy Pages.
+- **Seed login:** `superadmin` / `Admin@123456` (created by migration 001).
+  Change it immediately on first real login.
+
+## 🆕 Session 3 additions (admin modules)
+- **User Management** (commit `c280f8e`): 6-tab user detail (Profile, Transactions, KYC, Games, Notes, Audit). Debit endpoint + KYC review with reasons.
+- **Payment Management** (commit `69e7b92`): 4-tab Finance page (Withdrawals with UTR, Deposits with manual reconcile, global Ledger, Reconciliation report). Reject-withdrawal refunds the user.
+- **RBAC + 2FA** (new): roles (readonly/support/finance/superadmin), per-route gates, TOTP 2FA setup/verify, Admin Users page (CRUD + role + password reset), Profile page (2FA + change password). Migration `004_admin_rbac.sql`.
 
 ---
 

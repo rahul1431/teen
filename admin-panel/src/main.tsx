@@ -10,6 +10,8 @@ import GameRooms from './pages/GameRooms'
 import Finance from './pages/Finance'
 import Notifications from './pages/Notifications'
 import GameConfig from './pages/GameConfig'
+import AdminUsers from './pages/AdminUsers'
+import Profile from './pages/Profile'
 import { useAuthStore } from './store/auth'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -30,6 +32,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="finance" element={<Finance />} />
           <Route path="notifications" element={<Notifications />} />
           <Route path="game-config" element={<GameConfig />} />
+          <Route path="admin-users" element={<AdminUsers />} />
+          <Route path="profile" element={<Profile />} />
         </Route>
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>

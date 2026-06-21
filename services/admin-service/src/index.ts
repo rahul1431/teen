@@ -6,6 +6,26 @@ import jwt from '@fastify/jwt'
 import { Pool } from 'pg'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
+import { generateSecret, generateURI, verifySync } from 'otplib'
+import QRCode from 'qrcode'
+
+// Thin wrapper to keep the call sites readable (matches the old `authenticator` API)
+const totp = {
+  generateSecret: () => generateSecret(),
+  keyuri: (user: string, issuer: string, secret: string) =>
+    generateURI({ label: `${issuer}:${user}`, issuer, secret, strategy: 'totp' }),
+  verify: ({ token, secret }: { token: string; secret: string }) =>
+    verifySync({ token, secret, strategy: 'totp', epochTolerance: 30 }),
+}
+
+// RBAC: role hierarchy. Higher index = more privileged.
+const ROLES = ['readonly', 'support', 'finance', 'superadmin'] as const
+type Role = typeof ROLES[number]
+const ROLE_INDEX: Record<Role, number> = { readonly: 0, support: 1, finance: 2, superadmin: 3 }
+function hasRole(actual: string | undefined, required: Role): boolean {
+  if (!actual || !(actual in ROLE_INDEX)) return false
+  return ROLE_INDEX[actual as Role] >= ROLE_INDEX[required]
+}
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL!, max: 20 })
@@ -19,17 +39,184 @@ async function start() {
     try { await req.jwtVerify() } catch { reply.code(401).send({ error: 'Unauthorized' }) }
   }
 
+  // Role-gate factory. Use as: { onRequest: [authenticate, requireRole('finance')] }
+  const requireRole = (role: Role) => async (req: any, reply: any) => {
+    const r = (req.user as any)?.role
+    if (!hasRole(r, role)) return reply.code(403).send({ error: `Forbidden — requires ${role} role` })
+  }
+
   // POST /api/admin/auth/login
+  // If the admin has 2FA enabled, the call must include `totp_code`. If it's
+  // missing on a 2FA-enabled account, we respond with 401 + a `require_2fa`
+  // flag so the UI knows to prompt for the code.
   app.post('/api/admin/auth/login', async (req, reply) => {
-    const { username, password } = z.object({ username: z.string(), password: z.string() }).parse(req.body)
+    const { username, password, totp_code } = z.object({
+      username: z.string(),
+      password: z.string(),
+      totp_code: z.string().optional(),
+    }).parse(req.body)
     const res = await db.query('SELECT * FROM admin_users WHERE username = $1 AND is_active = true', [username])
     if (!res.rows.length) return reply.code(401).send({ error: 'Invalid credentials' })
     const admin = res.rows[0]
     const valid = await bcrypt.compare(password, admin.password_hash)
     if (!valid) return reply.code(401).send({ error: 'Invalid credentials' })
+
+    if (admin.totp_enabled) {
+      if (!totp_code) return reply.code(401).send({ error: '2FA code required', require_2fa: true })
+      const ok = totp.verify({ token: totp_code, secret: admin.totp_secret })
+      if (!ok) return reply.code(401).send({ error: 'Invalid 2FA code', require_2fa: true })
+    }
+
     await db.query('UPDATE admin_users SET last_login_at = NOW() WHERE id = $1', [admin.id])
     const token = app.jwt.sign({ sub: admin.id, username: admin.username, role: admin.role }, { expiresIn: '8h' })
-    return reply.send({ token, admin: { id: admin.id, username: admin.username, role: admin.role } })
+    return reply.send({
+      token,
+      admin: { id: admin.id, username: admin.username, role: admin.role, totp_enabled: admin.totp_enabled },
+    })
+  })
+
+  // POST /api/admin/auth/2fa/setup — generate a fresh TOTP secret + QR for the calling admin
+  app.post('/api/admin/auth/2fa/setup', { onRequest: [authenticate] }, async (req, reply) => {
+    const me = req.user as any
+    const secret = totp.generateSecret()
+    // Stash provisionally; not enabled until /verify succeeds with a code
+    await db.query('UPDATE admin_users SET totp_secret = $1, totp_enabled = false WHERE id = $2', [secret, me.sub])
+    const issuer = process.env.ADMIN_2FA_ISSUER || 'MyOnlineJoker Admin'
+    const otpauth = totp.keyuri(me.username, issuer, secret)
+    const qr_data_url = await QRCode.toDataURL(otpauth)
+    return reply.send({ secret, otpauth, qr_data_url })
+  })
+
+  // POST /api/admin/auth/2fa/verify — confirm the generated secret with a live code; flips totp_enabled = true
+  app.post('/api/admin/auth/2fa/verify', { onRequest: [authenticate] }, async (req, reply) => {
+    const me = req.user as any
+    const { code } = z.object({ code: z.string().min(6).max(8) }).parse(req.body)
+    const res = await db.query('SELECT totp_secret FROM admin_users WHERE id = $1', [me.sub])
+    const secret = res.rows[0]?.totp_secret
+    if (!secret) return reply.code(400).send({ error: 'Call /2fa/setup first' })
+    if (!totp.verify({ token: code, secret })) {
+      return reply.code(401).send({ error: 'Invalid code — clock skew or wrong app?' })
+    }
+    await db.query('UPDATE admin_users SET totp_enabled = true WHERE id = $1', [me.sub])
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, '2fa_enabled', 'admin_user', $1)`, [me.sub])
+    return reply.send({ success: true })
+  })
+
+  // POST /api/admin/auth/2fa/disable — requires a fresh code so a stolen session alone can't disable it
+  app.post('/api/admin/auth/2fa/disable', { onRequest: [authenticate] }, async (req, reply) => {
+    const me = req.user as any
+    const { code } = z.object({ code: z.string().min(6).max(8) }).parse(req.body)
+    const res = await db.query('SELECT totp_secret, totp_enabled FROM admin_users WHERE id = $1', [me.sub])
+    if (!res.rows[0]?.totp_enabled) return reply.code(400).send({ error: '2FA not enabled' })
+    if (!totp.verify({ token: code, secret: res.rows[0].totp_secret })) {
+      return reply.code(401).send({ error: 'Invalid code' })
+    }
+    await db.query('UPDATE admin_users SET totp_enabled = false, totp_secret = NULL WHERE id = $1', [me.sub])
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, '2fa_disabled', 'admin_user', $1)`, [me.sub])
+    return reply.send({ success: true })
+  })
+
+  // GET /api/admin/auth/me — current admin profile
+  app.get('/api/admin/auth/me', { onRequest: [authenticate] }, async (req, reply) => {
+    const me = req.user as any
+    const res = await db.query(
+      'SELECT id, username, email, role, is_active, totp_enabled, last_login_at, created_at FROM admin_users WHERE id = $1',
+      [me.sub]
+    )
+    return reply.send(res.rows[0])
+  })
+
+  // ---- Admin user management (superadmin only) ----
+
+  // GET /api/admin/admin-users
+  app.get('/api/admin/admin-users', { onRequest: [authenticate, requireRole('superadmin')] }, async (_req, reply) => {
+    const res = await db.query(
+      `SELECT a.id, a.username, a.email, a.role, a.is_active, a.totp_enabled, a.last_login_at, a.created_at,
+              c.username AS created_by_username
+       FROM admin_users a LEFT JOIN admin_users c ON c.id = a.created_by
+       ORDER BY a.created_at DESC`
+    )
+    return reply.send(res.rows)
+  })
+
+  // POST /api/admin/admin-users — create new admin
+  app.post('/api/admin/admin-users', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const me = req.user as any
+    const body = z.object({
+      username: z.string().min(3).max(50),
+      email: z.string().email(),
+      password: z.string().min(10),
+      role: z.enum(['readonly', 'support', 'finance', 'superadmin']),
+    }).parse(req.body)
+    const hash = await bcrypt.hash(body.password, 12)
+    try {
+      const res = await db.query(
+        `INSERT INTO admin_users (username, email, password_hash, role, created_by) VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, username, email, role, is_active, created_at`,
+        [body.username, body.email, hash, body.role, me.sub]
+      )
+      await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'admin_create', 'admin_user', $2, $3)`,
+        [me.sub, res.rows[0].id, JSON.stringify({ username: body.username, role: body.role })])
+      return reply.send(res.rows[0])
+    } catch (e: any) {
+      if (e.code === '23505') return reply.code(400).send({ error: 'Username or email already exists' })
+      throw e
+    }
+  })
+
+  // PATCH /api/admin/admin-users/:id — change role / activate / deactivate
+  app.patch('/api/admin/admin-users/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const me = req.user as any
+    const { id } = req.params as any
+    const body = z.object({
+      role: z.enum(['readonly', 'support', 'finance', 'superadmin']).optional(),
+      is_active: z.boolean().optional(),
+    }).parse(req.body)
+    if (id === me.sub && body.is_active === false) {
+      return reply.code(400).send({ error: 'Cannot deactivate yourself' })
+    }
+    const updates: string[] = []
+    const params: any[] = []
+    let idx = 1
+    if (body.role !== undefined) { updates.push(`role = $${idx}`); params.push(body.role); idx++ }
+    if (body.is_active !== undefined) { updates.push(`is_active = $${idx}`); params.push(body.is_active); idx++ }
+    if (!updates.length) return reply.code(400).send({ error: 'Nothing to update' })
+    updates.push(`updated_at = NOW()`)
+    params.push(id)
+    await db.query(`UPDATE admin_users SET ${updates.join(', ')} WHERE id = $${idx}`, params)
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'admin_update', 'admin_user', $2, $3)`,
+      [me.sub, id, JSON.stringify(body)])
+    return reply.send({ success: true })
+  })
+
+  // POST /api/admin/admin-users/:id/reset-password — superadmin resets another admin's password
+  app.post('/api/admin/admin-users/:id/reset-password', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const me = req.user as any
+    const { id } = req.params as any
+    const { password } = z.object({ password: z.string().min(10) }).parse(req.body)
+    const hash = await bcrypt.hash(password, 12)
+    await db.query('UPDATE admin_users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, id])
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'admin_password_reset', 'admin_user', $2)`,
+      [me.sub, id])
+    return reply.send({ success: true })
+  })
+
+  // POST /api/admin/auth/change-password — any admin changes their own password (requires current pw)
+  app.post('/api/admin/auth/change-password', { onRequest: [authenticate] }, async (req, reply) => {
+    const me = req.user as any
+    const { current_password, new_password } = z.object({
+      current_password: z.string(),
+      new_password: z.string().min(10),
+    }).parse(req.body)
+    const res = await db.query('SELECT password_hash FROM admin_users WHERE id = $1', [me.sub])
+    if (!res.rows.length) return reply.code(404).send({ error: 'Not found' })
+    if (!(await bcrypt.compare(current_password, res.rows[0].password_hash))) {
+      return reply.code(401).send({ error: 'Current password incorrect' })
+    }
+    const hash = await bcrypt.hash(new_password, 12)
+    await db.query('UPDATE admin_users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, me.sub])
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'self_password_change', 'admin_user', $1)`, [me.sub])
+    return reply.send({ success: true })
   })
 
   // GET /api/admin/dashboard/stats
@@ -87,7 +274,7 @@ async function start() {
   })
 
   // PATCH /api/admin/users/:id/status
-  app.patch('/api/admin/users/:id/status', { onRequest: [authenticate] }, async (req, reply) => {
+  app.patch('/api/admin/users/:id/status', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
     const { status } = z.object({ status: z.enum(['active', 'suspended', 'banned']) }).parse(req.body)
@@ -98,7 +285,7 @@ async function start() {
   })
 
   // POST /api/admin/users/:id/credit
-  app.post('/api/admin/users/:id/credit', { onRequest: [authenticate] }, async (req, reply) => {
+  app.post('/api/admin/users/:id/credit', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
     const { amount, description } = z.object({
@@ -117,7 +304,7 @@ async function start() {
   })
 
   // POST /api/admin/users/:id/debit
-  app.post('/api/admin/users/:id/debit', { onRequest: [authenticate] }, async (req, reply) => {
+  app.post('/api/admin/users/:id/debit', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
     const { amount, description } = z.object({
@@ -174,7 +361,7 @@ async function start() {
   })
 
   // PATCH /api/admin/users/:id/kyc — set overall kyc_status; optionally reject reason
-  app.patch('/api/admin/users/:id/kyc', { onRequest: [authenticate] }, async (req, reply) => {
+  app.patch('/api/admin/users/:id/kyc', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
     const { status, reason } = z.object({
@@ -202,7 +389,7 @@ async function start() {
   })
 
   // POST /api/admin/users/:id/notes
-  app.post('/api/admin/users/:id/notes', { onRequest: [authenticate] }, async (req, reply) => {
+  app.post('/api/admin/users/:id/notes', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
     const { note, is_flag } = z.object({
@@ -261,7 +448,7 @@ async function start() {
   // PATCH /api/admin/finance/withdrawals/:id — approve (paid) or reject (refunded)
   // On 'paid', stores the UTR / payment reference in metadata.
   // On 'refunded', returns the held amount to the user's wallet via the wallet service.
-  app.patch('/api/admin/finance/withdrawals/:id', { onRequest: [authenticate] }, async (req, reply) => {
+  app.patch('/api/admin/finance/withdrawals/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
     const { status, reference, reason } = z.object({
