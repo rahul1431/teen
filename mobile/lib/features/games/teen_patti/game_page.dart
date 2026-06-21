@@ -111,12 +111,21 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     _socket.on(SocketEvents.gameResult).listen((data) {
       if (!mounted) return;
       _turnTimer?.cancel();
+      final won = data['winner_id'] == _myUserId;
       setState(() {
-        _resultMessage = data['winner_id'] == _myUserId
+        _resultMessage = won
             ? '🎉 You Won ₹${double.parse(data['prize'].toString()).toStringAsFixed(2)}!'
             : '😔 You Lost. Winner: ${data['winner_username'] ?? 'Unknown'}';
       });
-      HapticFeedback.heavyImpact();
+      // Win fanfare = 3 strong taps; loss = single soft buzz
+      if (won) {
+        HapticFeedback.heavyImpact();
+        Timer(const Duration(milliseconds: 140), HapticFeedback.heavyImpact);
+        Timer(const Duration(milliseconds: 280), HapticFeedback.heavyImpact);
+        SystemSound.play(SystemSoundType.alert);
+      } else {
+        HapticFeedback.mediumImpact();
+      }
     });
 
     _socket.on(SocketEvents.roomChatMsg).listen((data) {
@@ -144,6 +153,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
   void _startTurnTimer() {
     _turnTimer?.cancel();
     setState(() => _turnSecondsLeft = 30);
+    // "your turn" cue: double light tap + click
+    HapticFeedback.lightImpact();
+    Timer(const Duration(milliseconds: 90), HapticFeedback.lightImpact);
+    SystemSound.play(SystemSoundType.click);
     _turnTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) {
         t.cancel();
@@ -151,6 +164,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
       }
       setState(() {
         _turnSecondsLeft--;
+        // urgent ticks in the last 5 seconds
+        if (_turnSecondsLeft > 0 && _turnSecondsLeft <= 5) {
+          HapticFeedback.selectionClick();
+        }
         if (_turnSecondsLeft <= 0) {
           t.cancel();
           _sendAction('fold');
@@ -852,6 +869,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
       _betAmount = (_betAmount + delta).clamp(minBet, maxBet);
     });
     HapticFeedback.selectionClick();
+    SystemSound.play(SystemSoundType.click); // chip-place tick
   }
 
   Widget _coinChip(int amount) => Container(
