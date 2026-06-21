@@ -627,7 +627,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         right: 8,
         child: Row(
           children: [
-            _circleBtn(Icons.arrow_back, _exit),
+            _circleBtn(Icons.arrow_back, _exit, size: 36),
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -636,16 +636,38 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
                   style: const TextStyle(color: Colors.white70, fontSize: 12)),
             ),
             const Spacer(),
-            if (_isMyTurn)
+            if (_isMyTurn) ...[
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(color: AppColors.red, borderRadius: BorderRadius.circular(20)),
                 child: Text('Your turn • ${_turnSecondsLeft}s',
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
               ),
+              const SizedBox(width: 8),
+            ],
+            _circleBtn(Icons.info_outline, () => _showTopBarSnack('Table info')),
+            const SizedBox(width: 6),
+            _circleBtn(Icons.chat_bubble_outline, () => setState(() {
+                  _showChat = !_showChat;
+                  _showGiftTray = false;
+                }), size: 36),
+            const SizedBox(width: 6),
+            _circleBtn(Icons.person_add_alt_1, () => _showTopBarSnack('Invite friend'), size: 36),
+            const SizedBox(width: 6),
+            _circleBtn(Icons.settings, () => _showTopBarSnack('Settings'), size: 36),
           ],
         ),
       );
+
+  void _showTopBarSnack(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
 
   Widget _buildMyHand() {
     final me = (_gameState?['players'] as List?)
@@ -812,17 +834,13 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         ),
       );
 
-  // Right-edge vertical buttons: emoji bar toggler, gift, chat
+  // Right-edge vertical buttons: gift tray + emoji bar
+  // (chat now lives in the top bar)
   Widget _buildSocialButtons() => Positioned(
         right: 8,
-        top: 44,
+        top: 52,
         child: Column(
           children: [
-            _circleBtn(Icons.chat_bubble_outline, () => setState(() {
-                  _showChat = !_showChat;
-                  _showGiftTray = false;
-                })),
-            const SizedBox(height: 8),
             _circleBtn(Icons.card_giftcard, () => setState(() {
                   _showGiftTray = !_showGiftTray;
                   _showChat = false;
@@ -849,13 +867,25 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         ),
       );
 
-  Widget _circleBtn(IconData icon, VoidCallback onTap) => GestureDetector(
+  Widget _circleBtn(IconData icon, VoidCallback onTap, {double size = 38}) => GestureDetector(
         onTap: onTap,
         child: Container(
-          width: 38,
-          height: 38,
-          decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
-          child: Icon(icon, color: Colors.white, size: 20),
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFFFFE082), Color(0xFFD4AF37), Color(0xFF8A6D1E)],
+            ),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white.withOpacity(0.4), width: 1),
+            boxShadow: [
+              BoxShadow(color: AppColors.gold.withOpacity(0.45), blurRadius: 8, spreadRadius: 1),
+              const BoxShadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 2)),
+            ],
+          ),
+          child: Icon(icon, color: Colors.white, size: size * 0.52),
         ),
       );
 
