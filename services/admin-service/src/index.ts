@@ -258,12 +258,168 @@ async function start() {
     return reply.send(res.rows)
   })
 
-  // PATCH /api/admin/finance/withdrawals/:id
+  // PATCH /api/admin/finance/withdrawals/:id — approve (paid) or reject (refunded)
+  // On 'paid', stores the UTR / payment reference in metadata.
+  // On 'refunded', returns the held amount to the user's wallet via the wallet service.
   app.patch('/api/admin/finance/withdrawals/:id', { onRequest: [authenticate] }, async (req, reply) => {
+    const admin = req.user as any
     const { id } = req.params as any
-    const { status } = z.object({ status: z.enum(['paid', 'refunded']) }).parse(req.body)
-    await db.query('UPDATE payment_orders SET status = $1, updated_at = NOW() WHERE id = $2', [status, id])
+    const { status, reference, reason } = z.object({
+      status: z.enum(['paid', 'refunded']),
+      reference: z.string().optional(),
+      reason: z.string().optional(),
+    }).parse(req.body)
+
+    const row = await db.query(`SELECT user_id, amount, status, metadata FROM payment_orders WHERE id = $1 AND type = 'withdrawal'`, [id])
+    if (!row.rows.length) return reply.code(404).send({ error: 'Withdrawal not found' })
+    if (row.rows[0].status !== 'created') {
+      return reply.code(400).send({ error: `Withdrawal already ${row.rows[0].status}` })
+    }
+
+    const meta = { ...(row.rows[0].metadata || {}) }
+    if (status === 'paid' && reference) meta.utr = reference
+    if (status === 'refunded' && reason) meta.refund_reason = reason
+
+    await db.query('UPDATE payment_orders SET status = $1, metadata = $2, updated_at = NOW() WHERE id = $3',
+      [status, JSON.stringify(meta), id])
+
+    // Refund the held amount back to the user's wallet on reject
+    if (status === 'refunded') {
+      await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/deposit/manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+        body: JSON.stringify({
+          user_id: row.rows[0].user_id,
+          amount: parseFloat(row.rows[0].amount),
+          description: `Withdrawal rejected: ${reason || 'no reason given'}`,
+        }),
+      }).catch(() => null)
+    }
+
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'payment_order', $3, $4)`,
+      [admin.sub, `withdrawal_${status}`, id, JSON.stringify({ reference, reason })])
     return reply.send({ success: true })
+  })
+
+  // GET /api/admin/finance/deposits — list deposit orders with filters
+  app.get('/api/admin/finance/deposits', { onRequest: [authenticate] }, async (req, reply) => {
+    const { status, gateway, page = '1', limit = '50' } = req.query as any
+    const conditions = [`po.type = 'deposit'`]
+    const params: any[] = []
+    let idx = 1
+    if (status) { conditions.push(`po.status = $${idx}`); params.push(status); idx++ }
+    if (gateway) { conditions.push(`po.gateway = $${idx}`); params.push(gateway); idx++ }
+    const where = conditions.join(' AND ')
+    const offset = (parseInt(page) - 1) * parseInt(limit)
+    const [rows, count] = await Promise.all([
+      db.query(`SELECT po.*, u.username, u.phone FROM payment_orders po
+                JOIN users u ON u.id = po.user_id
+                WHERE ${where} ORDER BY po.created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
+        [...params, parseInt(limit), offset]),
+      db.query(`SELECT COUNT(*) FROM payment_orders po WHERE ${where}`, params),
+    ])
+    return reply.send({ deposits: rows.rows, total: parseInt(count.rows[0].count) })
+  })
+
+  // PATCH /api/admin/finance/deposits/:id — manual reconciliation of failed/stuck deposits
+  // Used when a payment landed in the gateway but didn't credit the wallet (webhook failed, etc.)
+  app.patch('/api/admin/finance/deposits/:id', { onRequest: [authenticate] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as any
+    const { action, reference, reason } = z.object({
+      action: z.enum(['mark_paid_and_credit', 'mark_failed']),
+      reference: z.string().optional(),
+      reason: z.string().optional(),
+    }).parse(req.body)
+
+    const row = await db.query(`SELECT user_id, amount, status, metadata FROM payment_orders WHERE id = $1 AND type = 'deposit'`, [id])
+    if (!row.rows.length) return reply.code(404).send({ error: 'Deposit not found' })
+
+    const meta = { ...(row.rows[0].metadata || {}) }
+    if (reference) meta.manual_reference = reference
+    if (reason) meta.manual_reason = reason
+    meta.reconciled_by = admin.username
+    meta.reconciled_at = new Date().toISOString()
+
+    if (action === 'mark_paid_and_credit') {
+      if (row.rows[0].status === 'paid') {
+        return reply.code(400).send({ error: 'Already paid' })
+      }
+      await db.query(`UPDATE payment_orders SET status='paid', metadata=$1, updated_at=NOW() WHERE id=$2`,
+        [JSON.stringify(meta), id])
+      // Credit the user's wallet
+      await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/deposit/manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+        body: JSON.stringify({
+          user_id: row.rows[0].user_id,
+          amount: parseFloat(row.rows[0].amount),
+          description: `Manual deposit reconciliation${reference ? ` (ref: ${reference})` : ''}`,
+        }),
+      })
+    } else {
+      await db.query(`UPDATE payment_orders SET status='failed', metadata=$1, updated_at=NOW() WHERE id=$2`,
+        [JSON.stringify(meta), id])
+    }
+
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'payment_order', $3, $4)`,
+      [admin.sub, `deposit_${action}`, id, JSON.stringify({ reference, reason })])
+    return reply.send({ success: true })
+  })
+
+  // GET /api/admin/finance/ledger — global ledger view with filters
+  app.get('/api/admin/finance/ledger', { onRequest: [authenticate] }, async (req, reply) => {
+    const { type, wallet_type, user_id, from, to, page = '1', limit = '50' } = req.query as any
+    const conditions: string[] = []
+    const params: any[] = []
+    let idx = 1
+    if (type) { conditions.push(`wt.type = $${idx}`); params.push(type); idx++ }
+    if (wallet_type) { conditions.push(`wt.wallet_type = $${idx}`); params.push(wallet_type); idx++ }
+    if (user_id) { conditions.push(`wt.user_id = $${idx}`); params.push(user_id); idx++ }
+    if (from) { conditions.push(`wt.created_at >= $${idx}`); params.push(from); idx++ }
+    if (to) { conditions.push(`wt.created_at <= $${idx}`); params.push(to); idx++ }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+    const offset = (parseInt(page) - 1) * parseInt(limit)
+    const [rows, count] = await Promise.all([
+      db.query(`SELECT wt.id, wt.user_id, u.username, wt.type, wt.wallet_type, wt.amount,
+                       wt.balance_after, wt.reference_id, wt.status, wt.description, wt.created_at
+                FROM wallet_transactions wt LEFT JOIN users u ON u.id = wt.user_id
+                ${where} ORDER BY wt.created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
+        [...params, parseInt(limit), offset]),
+      db.query(`SELECT COUNT(*) FROM wallet_transactions wt ${where}`, params),
+    ])
+    return reply.send({ entries: rows.rows, total: parseInt(count.rows[0].count) })
+  })
+
+  // GET /api/admin/finance/reconciliation — daily totals broken out by gateway + type
+  app.get('/api/admin/finance/reconciliation', { onRequest: [authenticate] }, async (req, reply) => {
+    const { days = '7' } = req.query as any
+    const d = Math.min(parseInt(days), 90)
+    const [byDay, byGateway, ggr] = await Promise.all([
+      db.query(`SELECT DATE_TRUNC('day', created_at) AS day,
+                       type,
+                       status,
+                       COUNT(*) AS count,
+                       COALESCE(SUM(amount), 0) AS total
+                FROM payment_orders
+                WHERE created_at >= NOW() - ($1 || ' days')::INTERVAL
+                GROUP BY 1, 2, 3
+                ORDER BY 1 DESC, 2, 3`, [d]),
+      db.query(`SELECT gateway,
+                       status,
+                       COUNT(*) AS count,
+                       COALESCE(SUM(amount), 0) AS total
+                FROM payment_orders
+                WHERE created_at >= NOW() - ($1 || ' days')::INTERVAL
+                GROUP BY 1, 2 ORDER BY 1, 2`, [d]),
+      db.query(`SELECT DATE_TRUNC('day', ended_at) AS day,
+                       COALESCE(SUM(pot_amount), 0) AS pot,
+                       COALESCE(SUM(platform_fee_collected), 0) AS ggr
+                FROM game_rooms
+                WHERE ended_at >= NOW() - ($1 || ' days')::INTERVAL
+                GROUP BY 1 ORDER BY 1 DESC`, [d]),
+    ])
+    return reply.send({ by_day: byDay.rows, by_gateway: byGateway.rows, ggr: ggr.rows })
   })
 
   // GET /api/admin/finance/stats
