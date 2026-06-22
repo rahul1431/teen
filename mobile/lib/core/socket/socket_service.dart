@@ -47,13 +47,12 @@ class SocketService {
       return;
     }
     status.value = 'connecting to $url';
-    // Build options via OptionBuilder so the full Engine.IO option set is
-    // populated. Passing a bare Map leaves internal keys unset and trips a
-    // "Null check operator used on a null value" crash inside the client.
-    // Token is sent as a query param — the gateway reads handshake.query.token.
+    // Send token as Authorization header — the server reads
+    // handshake.headers.authorization (index.ts:39) so no setAuth needed,
+    // which avoids the v2 null-crash that setAuth triggered on Android.
     _socket = io.io(url, io.OptionBuilder()
         .setTransports(['polling', 'websocket'])
-        .setQuery({'token': token})
+        .setExtraHeaders({'Authorization': 'Bearer $token'})
         .enableAutoConnect()
         .enableReconnection()
         .setReconnectionAttempts(10)
