@@ -3,180 +3,210 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import jwt from '@fastify/jwt'
 import { createServer } from 'http'
-import { Server } from 'socket.io'
-import { createAdapter } from '@socket.io/redis-adapter'
-import Redis from 'ioredis'
+import { WebSocketServer, WebSocket } from 'ws'
 import { Pool } from 'pg'
+import Redis from 'ioredis'
 import { MatchmakingService } from './matchmaking'
+import { RealtimeHub, Conn } from './realtime'
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
-const pubClient = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
-const subClient = pubClient.duplicate()
+const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
 
 async function start() {
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.JWT_SECRET! })
+  if (redis.status === 'wait') await redis.connect()
 
   const httpServer = createServer(app.server)
-  const io = new Server(httpServer, {
-    cors: { origin: '*', methods: ['GET', 'POST'] },
-    transports: ['websocket', 'polling'],
-  })
+  const hub = new RealtimeHub()
+  const matchmaking = new MatchmakingService(redis, db, hub)
 
-  await Promise.all([
-    pubClient.status === 'wait' ? pubClient.connect() : Promise.resolve(),
-    subClient.status === 'wait' ? subClient.connect() : Promise.resolve(),
-  ])
-  io.adapter(createAdapter(pubClient, subClient))
+  // Raw WebSocket transport (replaces socket.io). Path /ws; token via the
+  // ?token= query param or the Authorization header.
+  const wss = new WebSocketServer({ server: httpServer, path: '/ws' })
 
-  const matchmaking = new MatchmakingService(pubClient, db, io)
-
-  // Socket.IO auth middleware
-  io.use(async (socket, next) => {
-    console.log(`[socket] handshake attempt from ${socket.handshake.address} transport=${socket.conn.transport.name} hasToken=${!!(socket.handshake.auth.token || socket.handshake.headers.authorization)}`)
+  wss.on('connection', (ws: WebSocket, req) => {
+    // --- Authenticate the handshake ---
+    let userId: string, username: string
     try {
-      const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.split(' ')[1] || socket.handshake.query.token as string
-      if (!token) { console.warn('[socket] rejected: no token'); return next(new Error('No token')) }
+      const url = new URL(req.url || '', 'http://localhost')
+      const token = url.searchParams.get('token') || req.headers.authorization?.split(' ')[1]
+      console.log(`[ws] connection from ${req.socket.remoteAddress} hasToken=${!!token}`)
+      if (!token) { ws.close(4001, 'No token'); return }
       const payload = app.jwt.verify(token) as any
-      socket.data.userId = payload.sub
-      socket.data.username = payload.username
-      // Map socketId → userId in Redis
-      await pubClient.setex(`game:socket:${socket.id}`, 3600, payload.sub)
-      next()
+      userId = payload.sub
+      username = payload.username
     } catch (err) {
-      console.warn('[socket] rejected: invalid token —', (err as Error).message)
-      next(new Error('Invalid token'))
+      console.warn('[ws] rejected: invalid token —', (err as Error).message)
+      ws.close(4001, 'Invalid token')
+      return
     }
-  })
 
-  io.on('connection', (socket) => {
-    console.log(`Socket connected: ${socket.id} user: ${socket.data.userId}`)
-    // Join a persistent user room so matchmaking can target this user even after
-    // a transport reconnect that changes socket.id.
-    socket.join(`user:${socket.data.userId}`)
+    const conn: Conn = { ws, userId, username, rooms: new Set(), isAlive: true }
+    hub.add(conn)
+    console.log(`[ws] connected: user=${userId}`)
 
-    socket.on('join_matchmaking', async ({ game_type, stake }: any) => {
-      console.log(`[matchmaking] join request: user=${socket.data.userId} game=${game_type} stake=${stake} socket=${socket.id}`)
-      if (!game_type || !stake) return socket.emit('error', { message: 'game_type and stake required' })
+    // Heartbeat — mark alive on pong; a sweep below culls dead links.
+    ;(ws as any).isAlive = true
+    ws.on('pong', () => { (ws as any).isAlive = true })
 
-      const configRes = await db.query('SELECT is_active FROM game_configs WHERE game_type = $1', [game_type])
-      if (!configRes.rows.length || !configRes.rows[0].is_active) {
-        console.warn(`[matchmaking] game not available: ${game_type} (rows=${configRes.rows.length})`)
-        return socket.emit('error', { message: 'Game not available' })
-      }
-
+    ws.on('message', async (raw) => {
+      let msg: any
+      try { msg = JSON.parse(raw.toString()) } catch { return }
+      const { event, data } = msg || {}
+      if (!event) return
       try {
-        await matchmaking.joinQueue(game_type, stake, {
-          userId: socket.data.userId,
-          username: socket.data.username,
-          socketId: socket.id,
-        })
-        socket.emit('matchmaking:joined', { game_type, stake })
-        console.log(`[matchmaking] ${socket.data.userId} queued for ${game_type}:${stake}`)
+        await handleEvent(event, data ?? {}, conn)
       } catch (err) {
-        console.error(`[matchmaking] joinQueue failed for ${socket.data.userId}:`, err)
-        socket.emit('error', { message: 'Failed to join matchmaking. Please try again.' })
+        console.error(`[ws] handler error for ${event}:`, err)
+        hub.send(conn, 'error', { message: 'Internal error' })
       }
     })
 
-    socket.on('leave_matchmaking', async ({ game_type, stake }: any) => {
-      await matchmaking.leaveQueue(game_type, stake, socket.data.userId)
-      socket.emit('matchmaking:left', {})
+    ws.on('close', () => {
+      hub.remove(conn)
+      console.log(`[ws] disconnected: user=${userId}`)
     })
 
-    socket.on('game:action', async ({ room_id, action, amount, sequence_num }: any) => {
-      const rawState = await pubClient.get(`game:room:${room_id}`)
-      if (!rawState) return socket.emit('error', { message: 'Room not found' })
-
-      const state = JSON.parse(rawState)
-      const playerIdx = state.players.findIndex((p: any) => (p.userId ?? p.user_id) === socket.data.userId)
-      if (playerIdx === -1) return socket.emit('error', { message: 'Not in this room' })
-      if ((state.currentTurn ?? state.current_turn) !== playerIdx) return socket.emit('error', { message: 'Not your turn' })
-
-      const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
-      try {
-        const res = await fetch(`${engineUrl}/action`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ room_id, user_id: socket.data.userId, action, amount: amount ?? 0, sequence_num: sequence_num ?? 0 }),
-        })
-        if (!res.ok) {
-          const msg = await res.text()
-          return socket.emit('error', { message: msg || 'Engine error' })
-        }
-        const data = await res.json()
-        const newState = data.state ?? data
-
-        // Update cached state (without private cards)
-        await pubClient.setex(`game:room:${room_id}`, 3600, JSON.stringify({
-          ...newState,
-          players: newState.players?.map((p: any) => ({ ...p, cards: undefined })),
-        }))
-
-        // Broadcast to all in room (cards hidden)
-        io.to(room_id).emit('game:state_update', {
-          room_id,
-          state: { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) },
-          last_action: { user_id: socket.data.userId, action, amount },
-          result: data.result ?? null,
-        })
-
-        if (newState.status === 'completed' && data.result) {
-          // Credit winner
-          if (data.result.winner_id) {
-            fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit-game-win`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-              body: JSON.stringify({ user_id: data.result.winner_id, amount: data.result.prize, room_id }),
-            }).catch(e => console.error('credit-game-win failed', e))
-          }
-          io.to(room_id).emit('game:result', {
-            room_id,
-            winner_id: data.result.winner_id,
-            prize: data.result.prize,
-            hand_rank: data.result.hand_rank,
-            all_hands: data.result.all_hands ?? [],
-          })
-        }
-      } catch (e) {
-        console.error('Engine call failed', e)
-        // Fallback: just broadcast so game doesn't freeze
-        io.to(room_id).emit('game:action_received', { user_id: socket.data.userId, action, amount, sequence_num })
-      }
-    })
-
-    socket.on('join_room', async ({ room_id }: any) => {
-      socket.join(room_id)
-    })
-
-    socket.on('room:chat', ({ room_id, message, type }: any) => {
-      if (!message || message.length > 200) return
-      const msgType = ['text', 'emoji', 'gift'].includes(type) ? type : 'text'
-      io.to(room_id).emit('room:chat', {
-        user_id: socket.data.userId,
-        username: socket.data.username,
-        message: message.substring(0, 200),
-        type: msgType,
-        timestamp: Date.now(),
-      })
-    })
-
-    socket.on('ping', ({ timestamp }: any) => {
-      socket.emit('pong', { timestamp, server_time: Date.now() })
-    })
-
-    socket.on('disconnect', async () => {
-      await pubClient.del(`game:socket:${socket.id}`)
-      console.log(`Socket disconnected: ${socket.id}`)
-    })
+    ws.on('error', (e) => console.warn(`[ws] socket error user=${userId}:`, e.message))
   })
+
+  // Drop connections that stopped responding to pings.
+  const heartbeat = setInterval(() => {
+    wss.clients.forEach((ws) => {
+      const anyWs = ws as any
+      if (anyWs.isAlive === false) { ws.terminate(); return }
+      anyWs.isAlive = false
+      ws.ping()
+    })
+  }, 30000)
+  wss.on('close', () => clearInterval(heartbeat))
+
+  // --- Event router (ports the former socket.io handlers) ---
+  async function handleEvent(event: string, data: any, conn: Conn): Promise<void> {
+    switch (event) {
+      case 'join_matchmaking': {
+        const { game_type, stake } = data
+        console.log(`[matchmaking] join request: user=${conn.userId} game=${game_type} stake=${stake}`)
+        if (!game_type || !stake) return hub.send(conn, 'error', { message: 'game_type and stake required' })
+
+        const configRes = await db.query('SELECT is_active FROM game_configs WHERE game_type = $1', [game_type])
+        if (!configRes.rows.length || !configRes.rows[0].is_active) {
+          console.warn(`[matchmaking] game not available: ${game_type} (rows=${configRes.rows.length})`)
+          return hub.send(conn, 'error', { message: 'Game not available' })
+        }
+        try {
+          await matchmaking.joinQueue(game_type, stake, { userId: conn.userId, username: conn.username })
+          hub.send(conn, 'matchmaking:joined', { game_type, stake })
+          console.log(`[matchmaking] ${conn.userId} queued for ${game_type}:${stake}`)
+        } catch (err) {
+          console.error(`[matchmaking] joinQueue failed for ${conn.userId}:`, err)
+          hub.send(conn, 'error', { message: 'Failed to join matchmaking. Please try again.' })
+        }
+        return
+      }
+
+      case 'leave_matchmaking': {
+        const { game_type, stake } = data
+        await matchmaking.leaveQueue(game_type, stake, conn.userId)
+        hub.send(conn, 'matchmaking:left', {})
+        return
+      }
+
+      case 'game:action': {
+        const { room_id, action, amount, sequence_num } = data
+        return handleGameAction(conn, room_id, action, amount, sequence_num)
+      }
+
+      case 'join_room': {
+        if (data.room_id) hub.joinConn(conn, data.room_id)
+        return
+      }
+
+      case 'room:chat': {
+        const { room_id, message, type } = data
+        if (!message || message.length > 200) return
+        const msgType = ['text', 'emoji', 'gift'].includes(type) ? type : 'text'
+        hub.sendToRoom(room_id, 'room:chat', {
+          user_id: conn.userId,
+          username: conn.username,
+          message: message.substring(0, 200),
+          type: msgType,
+          timestamp: Date.now(),
+        })
+        return
+      }
+
+      case 'ping': {
+        hub.send(conn, 'pong', { timestamp: data.timestamp, server_time: Date.now() })
+        return
+      }
+
+      default:
+        console.warn(`[ws] unknown event: ${event}`)
+    }
+  }
+
+  async function handleGameAction(conn: Conn, room_id: string, action: string, amount: number, sequence_num: number): Promise<void> {
+    const rawState = await matchmaking.getRoomState(room_id)
+    if (!rawState) return hub.send(conn, 'error', { message: 'Room not found' })
+
+    const state = rawState
+    const playerIdx = state.players.findIndex((p: any) => (p.userId ?? p.user_id) === conn.userId)
+    if (playerIdx === -1) return hub.send(conn, 'error', { message: 'Not in this room' })
+    if ((state.currentTurn ?? state.current_turn) !== playerIdx) return hub.send(conn, 'error', { message: 'Not your turn' })
+
+    const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
+    try {
+      const res = await fetch(`${engineUrl}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id, user_id: conn.userId, action, amount: amount ?? 0, sequence_num: sequence_num ?? 0 }),
+      })
+      if (!res.ok) {
+        const msg = await res.text()
+        return hub.send(conn, 'error', { message: msg || 'Engine error' })
+      }
+      const data = await res.json() as any
+      const newState = data.state ?? data
+
+      await matchmaking.setRoomState(room_id, { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) })
+
+      hub.sendToRoom(room_id, 'game:state_update', {
+        room_id,
+        state: { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) },
+        last_action: { user_id: conn.userId, action, amount },
+        result: data.result ?? null,
+      })
+
+      if (newState.status === 'completed' && data.result) {
+        if (data.result.winner_id) {
+          fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit-game-win`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+            body: JSON.stringify({ user_id: data.result.winner_id, amount: data.result.prize, room_id }),
+          }).catch(e => console.error('credit-game-win failed', e))
+        }
+        hub.sendToRoom(room_id, 'game:result', {
+          room_id,
+          winner_id: data.result.winner_id,
+          prize: data.result.prize,
+          hand_rank: data.result.hand_rank,
+          all_hands: data.result.all_hands ?? [],
+        })
+      }
+    } catch (e) {
+      console.error('Engine call failed', e)
+      hub.sendToRoom(room_id, 'game:action_received', { user_id: conn.userId, action, amount, sequence_num })
+    }
+  }
 
   app.get('/health', async () => ({ status: 'ok', service: 'game-gateway' }))
 
   const port = parseInt(process.env.PORT || '3004')
   httpServer.listen(port, '0.0.0.0', () => {
-    console.log(`Game gateway running on port ${port}`)
+    console.log(`Game gateway running on port ${port} (raw WebSocket /ws)`)
   })
 }
 

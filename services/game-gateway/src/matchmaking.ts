@@ -1,12 +1,11 @@
 import { Redis } from 'ioredis'
 import { Pool } from 'pg'
-import { Server } from 'socket.io'
 import { v4 as uuid } from 'uuid'
+import { RealtimeHub } from './realtime'
 
 export interface MatchmakingEntry {
   userId: string
   username: string
-  socketId: string
 }
 
 export class MatchmakingService {
@@ -15,8 +14,18 @@ export class MatchmakingService {
   constructor(
     private redis: Redis,
     private db: Pool,
-    private io: Server,
+    private hub: RealtimeHub,
   ) {}
+
+  // Room-state helpers used by the gateway's game:action handler.
+  async getRoomState(roomId: string): Promise<any | null> {
+    const raw = await this.redis.get(`game:room:${roomId}`)
+    return raw ? JSON.parse(raw) : null
+  }
+
+  async setRoomState(roomId: string, state: any): Promise<void> {
+    await this.redis.setex(`game:room:${roomId}`, 3600, JSON.stringify(state))
+  }
 
   async joinQueue(gameType: string, stake: number, entry: MatchmakingEntry): Promise<void> {
     const key = `matchmaking:${gameType}:${stake}`
@@ -85,7 +94,7 @@ export class MatchmakingService {
       console.warn(`[matchmaking] botFillRoom: only ${realPlayers.length} real + ${bots.length} bots — re-queuing (min=${config.min_players})`)
       for (const p of realPlayers) {
         await this.redis.zadd(key, Date.now(), JSON.stringify(p))
-        this.io.to(`user:${p.userId}`).emit('error', { message: 'No opponents available yet. Still searching…' })
+        this.hub.sendToUser(p.userId, 'error', { message: 'No opponents available yet. Still searching…' })
       }
       // Retry bot fill after another delay
       const timer = setTimeout(async () => {
@@ -104,7 +113,7 @@ export class MatchmakingService {
       `SELECT id, username FROM users WHERE is_bot = true AND status = 'active' ORDER BY RANDOM() LIMIT $1`,
       [count]
     )
-    return botRes.rows.map(b => ({ userId: b.id, username: b.username, socketId: `bot_${b.id}` }))
+    return botRes.rows.map(b => ({ userId: b.id, username: b.username }))
   }
 
   private async startGame(gameType: string, stake: number, realPlayers: MatchmakingEntry[], bots: MatchmakingEntry[]): Promise<void> {
@@ -156,7 +165,7 @@ export class MatchmakingService {
       console.error('Failed to start game room', err)
       // Notify real players so they don't wait forever
       for (const p of realPlayers) {
-        this.io.to(`user:${p.userId}`).emit('error', { message: 'Failed to start game. Please try again.' })
+        this.hub.sendToUser(p.userId, 'error', { message: 'Failed to start game. Please try again.' })
       }
       return
     } finally {
@@ -225,7 +234,10 @@ export class MatchmakingService {
     console.log(`[matchmaking] emitting room:joined to ${realPlayers.length} players for room=${roomId} (engine=${engineState ? 'ok' : 'fallback'})`)
     for (const p of realPlayers) {
       const myPlayerData = engineState?.players?.find((ep: any) => (ep.user_id ?? ep.userId) === p.userId)
-      this.io.to(`user:${p.userId}`).emit('room:joined', {
+      // Auto-join the player's connections to the game room BEFORE emitting, so
+      // subsequent sendToRoom(room_id) broadcasts reach them.
+      this.hub.joinRoom(p.userId, roomId)
+      this.hub.sendToUser(p.userId, 'room:joined', {
         room_id: roomId,
         players: (engineState?.players ?? gatewayPlayers).map((ep: any) => ({
           ...ep,
@@ -240,9 +252,6 @@ export class MatchmakingService {
         current_turn: gameState.current_turn ?? gameState.CurrentTurn ?? 0,
         min_bet: engineState?.min_bet ?? stake,
       })
-      // Auto-join the socket to the game room so subsequent io.to(room_id) broadcasts reach it.
-      const sockets = await this.io.in(`user:${p.userId}`).fetchSockets()
-      for (const sock of sockets) { sock.join(roomId) }
     }
 
     // Auto-play bot turns if it's a bot's turn first
@@ -282,7 +291,7 @@ export class MatchmakingService {
 
         // Broadcast updated state to real players
         for (const p of realPlayers) {
-          this.io.to(`user:${p.userId}`).emit('game:state_update', {
+          this.hub.sendToUser(p.userId, 'game:state_update', {
             room_id: roomId,
             state: { ...newState, players: newState.players?.map((ep: any) => ({ ...ep, cards: undefined })) },
             last_action: { user_id: currentPlayer.user_id ?? currentPlayer.userId, action },
@@ -320,7 +329,7 @@ export class MatchmakingService {
 
     // Notify all real players of result
     for (const p of realPlayers) {
-      this.io.to(`user:${p.userId}`).emit('game:result', {
+      this.hub.sendToUser(p.userId, 'game:result', {
         room_id: roomId,
         winner_id: result.winner_id,
         prize: result.prize,
