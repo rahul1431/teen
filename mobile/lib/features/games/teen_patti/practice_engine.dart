@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 
 /// Offline Teen Patti engine for Practice mode (you vs 3 bots). No socket,
 /// no backend, no real money. It owns a `state` map shaped exactly like the
