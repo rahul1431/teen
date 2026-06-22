@@ -52,19 +52,27 @@ async function start() {
     console.log(`Socket connected: ${socket.id} user: ${socket.data.userId}`)
 
     socket.on('join_matchmaking', async ({ game_type, stake }: any) => {
+      console.log(`[matchmaking] join request: user=${socket.data.userId} game=${game_type} stake=${stake} socket=${socket.id}`)
       if (!game_type || !stake) return socket.emit('error', { message: 'game_type and stake required' })
 
       const configRes = await db.query('SELECT is_active FROM game_configs WHERE game_type = $1', [game_type])
       if (!configRes.rows.length || !configRes.rows[0].is_active) {
+        console.warn(`[matchmaking] game not available: ${game_type} (rows=${configRes.rows.length})`)
         return socket.emit('error', { message: 'Game not available' })
       }
 
-      await matchmaking.joinQueue(game_type, stake, {
-        userId: socket.data.userId,
-        username: socket.data.username,
-        socketId: socket.id,
-      })
-      socket.emit('matchmaking:joined', { game_type, stake })
+      try {
+        await matchmaking.joinQueue(game_type, stake, {
+          userId: socket.data.userId,
+          username: socket.data.username,
+          socketId: socket.id,
+        })
+        socket.emit('matchmaking:joined', { game_type, stake })
+        console.log(`[matchmaking] ${socket.data.userId} queued for ${game_type}:${stake}`)
+      } catch (err) {
+        console.error(`[matchmaking] joinQueue failed for ${socket.data.userId}:`, err)
+        socket.emit('error', { message: 'Failed to join matchmaking. Please try again.' })
+      }
     })
 
     socket.on('leave_matchmaking', async ({ game_type, stake }: any) => {

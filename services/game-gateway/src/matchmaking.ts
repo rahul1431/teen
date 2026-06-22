@@ -59,6 +59,7 @@ export class MatchmakingService {
     const members = await this.redis.zrange(key, 0, config.max_players - 1)
     if (members.length < config.min_players) return
 
+    console.log(`[matchmaking] tryCreateRoom: ${members.length} players ready for ${gameType}:${stake} — starting game`)
     const players: MatchmakingEntry[] = members.map(m => JSON.parse(m))
     await this.redis.zrem(key, ...members)
     await this.startGame(gameType, stake, players, [])
@@ -71,6 +72,7 @@ export class MatchmakingService {
 
     const realPlayers: MatchmakingEntry[] = members.map(m => JSON.parse(m))
     await this.redis.zrem(key, ...members)
+    console.log(`[matchmaking] botFillRoom: ${realPlayers.length} real players for ${gameType}:${stake} — filling with bots`)
 
     const maxBots = Math.floor(config.max_players * config.max_bot_ratio)
     // Ensure at least min_players total (fill gap with bots)
@@ -92,6 +94,7 @@ export class MatchmakingService {
   private async startGame(gameType: string, stake: number, realPlayers: MatchmakingEntry[], bots: MatchmakingEntry[]): Promise<void> {
     const roomId = uuid()
     const allPlayers = [...realPlayers, ...bots]
+    console.log(`[matchmaking] startGame room=${roomId} ${gameType}:${stake} real=${realPlayers.length} bots=${bots.length}`)
 
     const client = await this.db.connect()
     try {
@@ -201,6 +204,7 @@ export class MatchmakingService {
     }))
 
     // Notify real players — send each player their own private cards
+    console.log(`[matchmaking] emitting room:joined to ${realPlayers.length} players for room=${roomId} (engine=${engineState ? 'ok' : 'fallback'})`)
     for (const p of realPlayers) {
       const myPlayerData = engineState?.players?.find((ep: any) => (ep.user_id ?? ep.userId) === p.userId)
       this.io.to(p.socketId).emit('room:joined', {
