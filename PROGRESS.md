@@ -83,6 +83,20 @@ Admin panel (`admin-panel/src/pages/GameConfig.tsx`):
 - ⚠️ **Deploy note:** nginx must route `/aviator/` → `127.0.0.1:3005`
   (websocket upgrade) for the APK to reach the engine over HTTPS.
 
+### Phase 8 — VPS deploy DONE ✅ (2026-06-22)
+Deployed live to `game.myonlinejoker.com`:
+- Aviator engine rebuilt + running (admin economics live); fixed a Redis
+  double-connect crash loop (`9b294d8` — `subClient.duplicate()` was already
+  connecting, so the explicit `connect()` threw and pm2 crash-looped). Now
+  guarded to connect only clients in `'wait'` status.
+- Admin-service rebuilt + restarted (special_rules JSONB merge).
+- Admin panel rebuilt under `/admin/` (Aviator Economics UI).
+- Nginx `/aviator/` websocket route verified live over HTTPS — public
+  Socket.IO handshake returns a sid, so the APK reaches the engine.
+- Deploy runbook: `infra/deploy/deploy-session6.sh`.
+- Note: engine `/health` over plain HTTP hangs by design (port served by
+  Socket.IO, not Fastify) — probe via `/aviator/?EIO=4&transport=polling`.
+
 ### Pending for session 6 items ⏳
 - [ ] VPS redeploy: `git pull` + `pm2 restart teen-aviator-engine teen-admin-svc` + rebuild admin panel
 - [ ] Teen Patti rake deduction (Go engine currently credits full pot)
