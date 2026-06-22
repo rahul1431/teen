@@ -34,7 +34,7 @@ final GoRouter _router = GoRouter(
   routes: [
     GoRoute(path: '/splash', builder: (_, __) => const SplashPage()),
     GoRoute(path: '/auth/login', builder: (_, __) => const LoginPage()),
-    GoRoute(path: '/auth/register', builder: (_, state) => RegisterPage(phone: state.uri.queryParameters['phone'] ?? '')),
+    GoRoute(path: '/auth/register', builder: (_, state) => RegisterPage(phone: state.uri.queryParameters['phone'] ?? '', otp: state.uri.queryParameters['otp'] ?? '')),
     GoRoute(path: '/auth/otp', builder: (_, state) => OtpPage(phone: state.uri.queryParameters['phone'] ?? '')),
     GoRoute(path: '/home', builder: (_, __) => const HomePage()),
     GoRoute(path: '/wallet', builder: (_, __) => const WalletPage()),

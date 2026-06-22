@@ -7,7 +7,8 @@ import '../../../shared/theme/app_theme.dart';
 
 class RegisterPage extends StatefulWidget {
   final String phone;
-  const RegisterPage({super.key, required this.phone});
+  final String otp;
+  const RegisterPage({super.key, required this.phone, this.otp = ''});
   @override
   State<RegisterPage> createState() => _RegisterPageState();
 }
@@ -18,15 +19,6 @@ class _RegisterPageState extends State<RegisterPage> {
   final _passCtrl = TextEditingController();
   final _refCtrl = TextEditingController();
   bool _loading = false;
-  String? _otp;
-
-  @override
-  void initState() {
-    super.initState();
-    // OTP passed via route query param
-    final uri = Uri.base;
-    _otp = uri.queryParameters['otp'];
-  }
 
   Future<void> _register() async {
     if (!_formKey.currentState!.validate()) return;
@@ -34,7 +26,7 @@ class _RegisterPageState extends State<RegisterPage> {
     try {
       final res = await Dio().post('${AppConfig.apiBaseUrl}/api/auth/register', data: {
         'phone': widget.phone,
-        'otp': _otp ?? '000000',
+        'otp': widget.otp.isNotEmpty ? widget.otp : '123456',
         'username': _usernameCtrl.text.trim(),
         'password': _passCtrl.text,
         if (_refCtrl.text.isNotEmpty) 'referral_code': _refCtrl.text.trim().toUpperCase(),
