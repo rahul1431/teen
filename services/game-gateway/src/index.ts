@@ -52,6 +52,9 @@ async function start() {
 
   io.on('connection', (socket) => {
     console.log(`Socket connected: ${socket.id} user: ${socket.data.userId}`)
+    // Join a persistent user room so matchmaking can target this user even after
+    // a transport reconnect that changes socket.id.
+    socket.join(`user:${socket.data.userId}`)
 
     socket.on('join_matchmaking', async ({ game_type, stake }: any) => {
       console.log(`[matchmaking] join request: user=${socket.data.userId} game=${game_type} stake=${stake} socket=${socket.id}`)

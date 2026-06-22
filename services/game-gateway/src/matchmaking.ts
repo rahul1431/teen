@@ -80,6 +80,22 @@ export class MatchmakingService {
     const botsNeeded = Math.min(config.max_players - realPlayers.length, Math.max(maxBots, minBotsNeeded))
     const bots = await this.getBots(gameType, botsNeeded)
 
+    // If no bots in DB and real players alone don't meet min_players, re-queue them
+    if (realPlayers.length + bots.length < (config.min_players || 2)) {
+      console.warn(`[matchmaking] botFillRoom: only ${realPlayers.length} real + ${bots.length} bots — re-queuing (min=${config.min_players})`)
+      for (const p of realPlayers) {
+        await this.redis.zadd(key, Date.now(), JSON.stringify(p))
+        this.io.to(`user:${p.userId}`).emit('error', { message: 'No opponents available yet. Still searching…' })
+      }
+      // Retry bot fill after another delay
+      const timer = setTimeout(async () => {
+        this.timers.delete(`${gameType}:${stake}`)
+        await this.botFillRoom(gameType, stake, config)
+      }, (config.bot_fill_delay_seconds || 10) * 1000)
+      this.timers.set(`${gameType}:${stake}`, timer)
+      return
+    }
+
     await this.startGame(gameType, stake, realPlayers, bots)
   }
 
@@ -140,7 +156,7 @@ export class MatchmakingService {
       console.error('Failed to start game room', err)
       // Notify real players so they don't wait forever
       for (const p of realPlayers) {
-        this.io.to(p.socketId).emit('error', { message: 'Failed to start game. Please try again.' })
+        this.io.to(`user:${p.userId}`).emit('error', { message: 'Failed to start game. Please try again.' })
       }
       return
     } finally {
@@ -203,11 +219,13 @@ export class MatchmakingService {
       currentTurn: engineState?.current_turn ?? 0,
     }))
 
-    // Notify real players — send each player their own private cards
+    // Notify real players — send each player their own private cards.
+    // Emit to the persistent user:{userId} room so delivery works even if
+    // the socket reconnected (changing socket.id) since matchmaking started.
     console.log(`[matchmaking] emitting room:joined to ${realPlayers.length} players for room=${roomId} (engine=${engineState ? 'ok' : 'fallback'})`)
     for (const p of realPlayers) {
       const myPlayerData = engineState?.players?.find((ep: any) => (ep.user_id ?? ep.userId) === p.userId)
-      this.io.to(p.socketId).emit('room:joined', {
+      this.io.to(`user:${p.userId}`).emit('room:joined', {
         room_id: roomId,
         players: (engineState?.players ?? gatewayPlayers).map((ep: any) => ({
           ...ep,
@@ -222,6 +240,9 @@ export class MatchmakingService {
         current_turn: gameState.current_turn ?? gameState.CurrentTurn ?? 0,
         min_bet: engineState?.min_bet ?? stake,
       })
+      // Auto-join the socket to the game room so subsequent io.to(room_id) broadcasts reach it.
+      const sockets = await this.io.in(`user:${p.userId}`).fetchSockets()
+      for (const sock of sockets) { sock.join(roomId) }
     }
 
     // Auto-play bot turns if it's a bot's turn first
@@ -261,7 +282,7 @@ export class MatchmakingService {
 
         // Broadcast updated state to real players
         for (const p of realPlayers) {
-          this.io.to(p.socketId).emit('game:state_update', {
+          this.io.to(`user:${p.userId}`).emit('game:state_update', {
             room_id: roomId,
             state: { ...newState, players: newState.players?.map((ep: any) => ({ ...ep, cards: undefined })) },
             last_action: { user_id: currentPlayer.user_id ?? currentPlayer.userId, action },
@@ -299,7 +320,7 @@ export class MatchmakingService {
 
     // Notify all real players of result
     for (const p of realPlayers) {
-      this.io.to(p.socketId).emit('game:result', {
+      this.io.to(`user:${p.userId}`).emit('game:result', {
         room_id: roomId,
         winner_id: result.winner_id,
         prize: result.prize,
