@@ -7,6 +7,7 @@ import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../shared/theme/app_theme.dart';
+import 'practice_engine.dart';
 
 /// Landscape Teen Patti table with live chat, emoji reactions and gifts.
 class TeenPattiGamePage extends StatefulWidget {
@@ -22,6 +23,7 @@ class TeenPattiGamePage extends StatefulWidget {
 
 class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
   final _socket = SocketService();
+  PracticeEngine? _practice; // offline bot game (demo / Practice mode)
   Map<String, dynamic>? _gameState;
   String? _myUserId;
   bool _isMyTurn = false;
@@ -64,32 +66,55 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     }
   }
 
-  // Offline preview: mock table, no socket / login / backend.
+  // Practice mode: a real offline Teen Patti game vs 3 bots (no socket/backend).
   void _initDemo() {
     _myUserId = 'me';
-    _gameState = {
-      'pot': 1240,
-      'min_bet': 100,
-      'current_turn_user_id': 'me',
-      'dealer_id': 'b1',
-      'players': [
-        {'user_id': 'me', 'username': 'You', 'status': 'active', 'is_seen': true, 'chips': 28400, 'cards': [
-          {'value': 'A', 'suit': 'C'}, {'value': '2', 'suit': 'C'}, {'value': '3', 'suit': 'C'}
-        ]},
-        {'user_id': 'b1', 'username': 'Steven P.', 'status': 'active', 'is_seen': true, 'chips': 45199, 'is_bot': true, 'cards': [1, 2, 3]},
-        {'user_id': 'b2', 'username': 'Nairobi B.', 'status': 'folded', 'is_seen': false, 'chips': 53884, 'is_bot': true, 'cards': [1, 2, 3]},
-        {'user_id': 'b3', 'username': 'Smith J.', 'status': 'active', 'is_seen': false, 'chips': 68121, 'is_bot': true, 'cards': [1, 2, 3]},
-      ],
-    };
-    _isMyTurn = true;
     _isSeen = true;
-    _startTurnTimer();
-    // a couple of demo chat lines + a reaction
-    _chat.addAll([
-      _ChatMsg(userId: 'b1', username: 'Steven P.', text: 'Good luck! 🍀', type: 'text'),
-      _ChatMsg(userId: 'b3', username: 'Smith J.', text: 'All in 😎', type: 'text'),
-    ]);
-    Timer(const Duration(seconds: 1), () => _spawnReaction('b1', '🔥'));
+    _practice = PracticeEngine(
+      onChanged: () {
+        if (!mounted) return;
+        setState(() {
+          _gameState = _practice!.state;
+          _isMyTurn = _practice!.isMyTurn;
+          // A live hand always hides any lingering result banner.
+          if (!_practice!.handOver) _resultMessage = null;
+        });
+        if (_isMyTurn) {
+          _startTurnTimer();
+        } else {
+          _turnTimer?.cancel();
+        }
+      },
+      onResult: (msg, won) {
+        if (!mounted) return;
+        _turnTimer?.cancel();
+        setState(() {
+          _resultMessage = msg;
+          _isMyTurn = false;
+        });
+        if (won) {
+          HapticFeedback.heavyImpact();
+          Timer(const Duration(milliseconds: 140), HapticFeedback.heavyImpact);
+          Timer(const Duration(milliseconds: 280), HapticFeedback.heavyImpact);
+          SystemSound.play(SystemSoundType.alert);
+        } else {
+          HapticFeedback.mediumImpact();
+        }
+      },
+      onChat: (uid, name, text) {
+        if (!mounted) return;
+        setState(() {
+          _chat.add(_ChatMsg(userId: uid, username: name, text: text, type: 'text'));
+          if (_chat.length > 50) _chat.removeAt(0);
+        });
+      },
+    );
+    _chat.add(_ChatMsg(userId: 'b1', username: 'Steven P.', text: 'Good luck! 🍀', type: 'text'));
+    // Deal after the first frame — startHand() calls setState via onChanged,
+    // which isn't allowed during initState.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _practice!.startHand();
+    });
   }
 
   List<Map<String, dynamic>> _myCards = [];
@@ -228,30 +253,12 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     HapticFeedback.mediumImpact();
   }
 
-  /// Local-only demo: bump pot, mark fold, hand turn back after 1.2s so the
-  /// preview keeps feeling alive without a server.
+  /// Practice mode: forward the action to the offline engine, which advances
+  /// the bots and re-deals on its own. The engine's onChanged/onResult
+  /// callbacks update the table.
   void _applyDemoAction(String action, double? amount) {
     HapticFeedback.mediumImpact();
-    final players = (_gameState?['players'] as List?)
-            ?.cast<Map<String, dynamic>>() ??
-        [];
-    final me = players.firstWhere((p) => p['user_id'] == 'me', orElse: () => {});
-    setState(() {
-      if (action == 'fold' && me.isNotEmpty) me['status'] = 'folded';
-      if ((action == 'call' || action == 'raise') && amount != null) {
-        _gameState!['pot'] = (_gameState!['pot'] as num).toInt() + amount.toInt();
-      }
-      _gameState!['current_turn_user_id'] = 'b1';
-    });
-    Timer(const Duration(milliseconds: 1200), () {
-      if (!mounted) return;
-      setState(() {
-        if (me.isNotEmpty && me['status'] != 'folded') me['status'] = 'active';
-        _gameState!['current_turn_user_id'] = 'me';
-        _isMyTurn = me['status'] != 'folded';
-      });
-      if (_isMyTurn) _startTurnTimer();
-    });
+    _practice?.playerAction(action, amount);
   }
 
   // ---- Social senders (piggyback on room:chat with a `type`) ----
@@ -308,6 +315,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
   @override
   void dispose() {
     _turnTimer?.cancel();
+    _practice?.dispose();
     _chatInput.dispose();
     SystemChrome.setPreferredOrientations(
         [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
@@ -333,6 +341,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
                     _buildSeatsAndCenter(),
                     _buildTopBar(),
                     _buildMyHand(),
+                    _buildMyChips(),
                     if (_isMyTurn) _buildActionBar(),
                     _buildSocialButtons(),
                     if (_showGiftTray) _buildGiftTray(),
@@ -423,6 +432,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
 
       final seats = <Widget>[];
       for (var i = 0; i < ordered.length; i++) {
+        // "me" (i==0, bottom-center) is represented by the fanned hand and the
+        // action bar — drawing a seat avatar there overlaps both, so skip it.
+        if (ordered[i]['user_id'] == _myUserId) continue;
         final theta = (math.pi / 2) + (2 * math.pi * i / n); // i=0 → bottom
         final sx = cx + rx * math.cos(theta);
         final sy = cy + ry * math.sin(theta);
@@ -820,7 +832,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     final cards = (me?['cards'] as List?) ?? [];
     if (cards.isEmpty) return const SizedBox.shrink();
     return Positioned(
-      bottom: _isMyTurn ? 64 : 8,
+      // Sit above the action bar (≈92px tall) when it's showing, else near the edge.
+      bottom: _isMyTurn ? 104 : 14,
       left: 0,
       right: 0,
       child: Center(
@@ -834,6 +847,33 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Compact "my chips" pill (bottom-left) — the bottom-center seat is dropped
+  /// so the player still sees their own stack without overlapping the cards.
+  Widget _buildMyChips() {
+    final me = (_gameState?['players'] as List?)
+        ?.where((p) => p['user_id'] == _myUserId)
+        .firstOrNull;
+    if (me == null) return const SizedBox.shrink();
+    final chips = me['chips'] ?? me['balance'] ?? 0;
+    return Positioned(
+      left: 12,
+      bottom: 12,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: AppColors.gold.withOpacity(0.7)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Text('You  ', style: TextStyle(color: Colors.white70, fontSize: 11)),
+          Text('💰 $chips',
+              style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
+        ]),
       ),
     );
   }
