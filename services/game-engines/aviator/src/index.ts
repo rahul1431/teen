@@ -28,17 +28,62 @@ interface RoundState {
 let currentRound: RoundState | null = null
 let flyingInterval: NodeJS.Timeout | null = null
 
-// Provably fair crash point using HMAC-SHA256 hash chain
+// ── Admin-configurable economics (loaded from game_configs) ────────────────
+interface AviatorConfig {
+  isActive: boolean
+  houseEdgePercent: number // instant-crash probability → the house margin
+  rakePercent: number      // commission taken from winnings on cashout
+  maxWin: number           // cap on payout per round (0 = unlimited)
+  minBet: number
+  maxBet: number
+  bettingTimeMs: number
+}
+
+const aviatorConfig: AviatorConfig = {
+  isActive: true,
+  houseEdgePercent: 3,
+  rakePercent: 5,
+  maxWin: 0,
+  minBet: 10,
+  maxBet: 5000,
+  bettingTimeMs: 5000,
+}
+
+async function loadConfig(): Promise<void> {
+  try {
+    const res = await db.query(
+      `SELECT is_active, rake_percent, special_rules FROM game_configs WHERE game_type = 'aviator'`
+    )
+    if (res.rows.length === 0) return
+    const row = res.rows[0]
+    const sr = row.special_rules || {}
+    aviatorConfig.isActive = row.is_active
+    aviatorConfig.rakePercent = Number(row.rake_percent ?? aviatorConfig.rakePercent)
+    aviatorConfig.houseEdgePercent = Number(sr.house_edge_percent ?? aviatorConfig.houseEdgePercent)
+    aviatorConfig.maxWin = Number(sr.max_win ?? aviatorConfig.maxWin)
+    aviatorConfig.minBet = Number(sr.min_bet ?? aviatorConfig.minBet)
+    aviatorConfig.maxBet = Number(sr.max_bet ?? aviatorConfig.maxBet)
+    aviatorConfig.bettingTimeMs = Number(sr.betting_time_ms ?? aviatorConfig.bettingTimeMs)
+  } catch (err) {
+    console.error('Failed to load aviator config, using current values', err)
+  }
+}
+
+// Provably fair crash point using HMAC-SHA256 hash chain.
+// The house edge sets the probability of an instant 1.00x crash.
 function generateCrashPoint(serverSeed: string, roundId: string): number {
   const hash = crypto.createHmac('sha256', serverSeed).update(roundId).digest('hex')
   const h = parseInt(hash.slice(0, 8), 16)
-  if (h % 33 === 0) return 1.00 // house edge ~3%
   const e = Math.pow(2, 32)
+  // Instant-crash band sized to the configured house edge (e.g. 3% → 3% of rounds bust at 1.00x).
+  const instantCrashCutoff = Math.floor((e * aviatorConfig.houseEdgePercent) / 100)
+  if (h < instantCrashCutoff) return 1.00
   const crash = Math.floor((100 * e - h) / (e - h)) / 100
   return Math.max(1.00, crash)
 }
 
 async function startBettingPhase(io: Server) {
+  await loadConfig() // pick up live admin changes each round
   const roundId = uuid()
   const serverSeed = crypto.randomBytes(32).toString('hex')
   const crashAt = generateCrashPoint(serverSeed, roundId)
@@ -57,11 +102,11 @@ async function startBettingPhase(io: Server) {
 
   io.emit('aviator:round_start', {
     round_id: roundId,
-    betting_time_ms: 5000,
+    betting_time_ms: aviatorConfig.bettingTimeMs,
     history: currentRound.history,
   })
 
-  setTimeout(() => startFlyingPhase(io), 5000)
+  setTimeout(() => startFlyingPhase(io), aviatorConfig.bettingTimeMs)
 }
 
 async function startFlyingPhase(io: Server) {
@@ -99,9 +144,11 @@ async function crashRound(io: Server, crashAt: number) {
   for (const bet of Object.values(currentRound.bets)) {
     if (bet.cashedOut && bet.cashoutMultiplier) {
       const prize = bet.amount * bet.cashoutMultiplier
-      const rake = prize * 0.05
-      const net = prize - rake - bet.amount // net profit after returning stake
-      await creditWallet(bet.userId, bet.amount + net, currentRound.roundId)
+      const rake = prize * (aviatorConfig.rakePercent / 100)
+      let payout = prize - rake
+      // Apply the admin max-win cap (0 = unlimited) to limit tail-risk payouts.
+      if (aviatorConfig.maxWin > 0) payout = Math.min(payout, aviatorConfig.maxWin)
+      await creditWallet(bet.userId, payout, currentRound.roundId)
     }
   }
 
@@ -185,7 +232,12 @@ async function start() {
       if (!currentRound || currentRound.status !== 'betting') {
         return socket.emit('error', { message: 'Betting phase not active' })
       }
-      if (!amount || amount < 10) return socket.emit('error', { message: 'Min bet is ₹10' })
+      if (!amount || amount < aviatorConfig.minBet) {
+        return socket.emit('error', { message: `Min bet is ₹${aviatorConfig.minBet}` })
+      }
+      if (amount > aviatorConfig.maxBet) {
+        return socket.emit('error', { message: `Max bet is ₹${aviatorConfig.maxBet}` })
+      }
 
       // Deduct from wallet
       try {

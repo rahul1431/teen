@@ -737,10 +737,15 @@ async function start() {
     const admin = req.user as any
     const { gameType } = req.params as any
     const body = req.body as any
+    // Merge any provided economics into special_rules (e.g. Aviator house edge,
+    // max win, bet limits) without clobbering other keys.
+    const existing = await db.query('SELECT special_rules FROM game_configs WHERE game_type=$1', [gameType])
+    const currentRules = existing.rows[0]?.special_rules || {}
+    const specialRules = body.special_rules ? { ...currentRules, ...body.special_rules } : currentRules
     await db.query(
-      `UPDATE game_configs SET is_active=$1, rake_percent=$2, bot_fill_enabled=$3, bot_fill_delay_seconds=$4, max_bot_ratio=$5, bot_difficulty=$6, updated_by=$7, updated_at=NOW()
-       WHERE game_type=$8`,
-      [body.is_active, body.rake_percent, body.bot_fill_enabled, body.bot_fill_delay_seconds, body.max_bot_ratio, body.bot_difficulty, admin.sub, gameType]
+      `UPDATE game_configs SET is_active=$1, rake_percent=$2, bot_fill_enabled=$3, bot_fill_delay_seconds=$4, max_bot_ratio=$5, bot_difficulty=$6, special_rules=$7, updated_by=$8, updated_at=NOW()
+       WHERE game_type=$9`,
+      [body.is_active, body.rake_percent, body.bot_fill_enabled, body.bot_fill_delay_seconds, body.max_bot_ratio, body.bot_difficulty, JSON.stringify(specialRules), admin.sub, gameType]
     )
     return reply.send({ success: true })
   })
