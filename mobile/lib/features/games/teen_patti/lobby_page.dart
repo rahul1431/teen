@@ -42,6 +42,15 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       setState(() => _searching = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(data['message'] ?? 'Error'), backgroundColor: AppColors.red));
     });
+    // Re-join matchmaking queue after socket reconnects (preserves searching state)
+    _socket.onReconnect(() {
+      if (!mounted || !_searching) return;
+      _socket.emit(SocketEvents.joinMatchmaking, {
+        'game_type': 'teen_patti',
+        'stake': _selectedStake,
+        'variation': widget.variation,
+      });
+    });
   }
 
   Future<void> _loadBalance() async {

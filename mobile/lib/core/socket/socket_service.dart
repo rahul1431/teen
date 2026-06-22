@@ -38,6 +38,10 @@ class SocketService {
 
   void emit(String event, [dynamic data]) => _socket?.emit(event, data);
 
+  void onReconnect(void Function() handler) {
+    _socket?.on('reconnect', (_) => handler());
+  }
+
   void disconnect() {
     _socket?.disconnect();
     for (final c in _controllers.values) { c.close(); }

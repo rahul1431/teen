@@ -385,6 +385,19 @@ async function start() {
       [status, reason || null, admin.sub, id])
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'user', $3, $4)`,
       [admin.sub, `kyc_${status}`, id, JSON.stringify({ status, reason })])
+
+    // Push notification to user
+    if (status === 'approved' || status === 'rejected') {
+      const kycNotif = status === 'approved'
+        ? { title: 'KYC Approved ✅', body: 'Your KYC verification has been approved. You can now make withdrawals.', type: 'kyc_approved' }
+        : { title: 'KYC Rejected ❌', body: `Your KYC was rejected.${reason ? ` Reason: ${reason}` : ''} Please re-submit your documents.`, type: 'kyc_rejected' }
+      fetch(`${process.env.NOTIFICATION_SERVICE_URL}/internal/notifications/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+        body: JSON.stringify({ user_id: id, ...kycNotif }),
+      }).catch(() => null)
+    }
+
     return reply.send({ success: true })
   })
 
@@ -497,6 +510,18 @@ async function start() {
 
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'payment_order', $3, $4)`,
       [admin.sub, `withdrawal_${status}`, id, JSON.stringify({ reference, reason })])
+
+    // Push notification to user
+    const amt = parseFloat(row.rows[0].amount)
+    const notifPayload = status === 'paid'
+      ? { title: 'Withdrawal Processed ✅', body: `Your withdrawal of ₹${amt.toFixed(2)} has been paid.${reference ? ` UTR: ${reference}` : ''}`, type: 'withdrawal_paid' }
+      : { title: 'Withdrawal Rejected ❌', body: `Your withdrawal of ₹${amt.toFixed(2)} was rejected.${reason ? ` Reason: ${reason}` : ''} Amount refunded to wallet.`, type: 'withdrawal_rejected' }
+    fetch(`${process.env.NOTIFICATION_SERVICE_URL}/internal/notifications/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+      body: JSON.stringify({ user_id: row.rows[0].user_id, ...notifPayload }),
+    }).catch(() => null)
+
     return reply.send({ success: true })
   })
 
@@ -563,6 +588,18 @@ async function start() {
 
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'payment_order', $3, $4)`,
       [admin.sub, `deposit_${action}`, id, JSON.stringify({ reference, reason })])
+
+    // Push notification to user
+    const dAmt = parseFloat(row.rows[0].amount)
+    const dNotif = action === 'mark_paid_and_credit'
+      ? { title: 'Deposit Approved ✅', body: `Your deposit of ₹${dAmt.toFixed(2)} has been credited to your wallet.`, type: 'deposit_approved' }
+      : { title: 'Deposit Failed ❌', body: `Your deposit of ₹${dAmt.toFixed(2)} could not be processed.${reason ? ` Reason: ${reason}` : ''}`, type: 'deposit_failed' }
+    fetch(`${process.env.NOTIFICATION_SERVICE_URL}/internal/notifications/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+      body: JSON.stringify({ user_id: row.rows[0].user_id, ...dNotif }),
+    }).catch(() => null)
+
     return reply.send({ success: true })
   })
 

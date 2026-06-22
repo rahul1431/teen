@@ -27,7 +27,7 @@ export class MatchmakingService {
       'SELECT min_players, max_players, bot_fill_enabled, bot_fill_delay_seconds, max_bot_ratio FROM game_configs WHERE game_type = $1',
       [gameType]
     )
-    const config = configRes.rows[0] || { min_players: 2, max_players: 6, bot_fill_enabled: true, bot_fill_delay_seconds: 10, max_bot_ratio: 0.6 }
+    const config = configRes.rows[0] || { min_players: 2, max_players: 6, bot_fill_enabled: true, bot_fill_delay_seconds: 5, max_bot_ratio: 0.6 }
 
     await this.tryCreateRoom(gameType, stake, config)
 
@@ -73,7 +73,9 @@ export class MatchmakingService {
     await this.redis.zrem(key, ...members)
 
     const maxBots = Math.floor(config.max_players * config.max_bot_ratio)
-    const botsNeeded = Math.min(config.max_players - realPlayers.length, maxBots)
+    // Ensure at least min_players total (fill gap with bots)
+    const minBotsNeeded = Math.max(0, (config.min_players || 2) - realPlayers.length)
+    const botsNeeded = Math.min(config.max_players - realPlayers.length, Math.max(maxBots, minBotsNeeded))
     const bots = await this.getBots(gameType, botsNeeded)
 
     await this.startGame(gameType, stake, realPlayers, bots)
@@ -106,11 +108,19 @@ export class MatchmakingService {
         const isBot = bots.some(b => b.userId === p.userId)
 
         if (!isBot && stake > 0) {
-          await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-            body: JSON.stringify({ user_id: p.userId, amount: stake, room_id: roomId }),
-          })
+          try {
+            const lockRes = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+              body: JSON.stringify({ user_id: p.userId, amount: stake, room_id: roomId }),
+            })
+            if (!lockRes.ok) {
+              const msg = await lockRes.text()
+              console.warn(`Wallet lock failed for ${p.userId}: ${msg} — continuing`)
+            }
+          } catch (lockErr) {
+            console.warn(`Wallet lock error for ${p.userId}:`, lockErr, '— continuing')
+          }
         }
 
         await client.query(
@@ -125,6 +135,10 @@ export class MatchmakingService {
     } catch (err) {
       await client.query('ROLLBACK')
       console.error('Failed to start game room', err)
+      // Notify real players so they don't wait forever
+      for (const p of realPlayers) {
+        this.io.to(p.socketId).emit('error', { message: 'Failed to start game. Please try again.' })
+      }
       return
     } finally {
       client.release()
