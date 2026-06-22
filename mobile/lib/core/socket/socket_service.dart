@@ -36,14 +36,16 @@ class SocketService {
       return;
     }
     status.value = 'connecting to $url';
-    _socket = io.io(AppConfig.socketUrl, io.OptionBuilder()
-        .setTransports(['polling', 'websocket'])
-        .setAuth({'token': token})
-        .enableAutoConnect()
-        .enableReconnection()
-        .setReconnectionAttempts(10)
-        .setReconnectionDelay(2000)
-        .build());
+    // Pass token as query param — avoids a null-crash bug in OptionBuilder.setAuth()
+    // that causes "Null check operator used on a null value" during polling handshake.
+    final uri = '${AppConfig.socketUrl}?token=${Uri.encodeComponent(token)}';
+    _socket = io.io(uri, <String, dynamic>{
+      'transports': ['polling', 'websocket'],
+      'autoConnect': true,
+      'reconnection': true,
+      'reconnectionAttempts': 10,
+      'reconnectionDelay': 2000,
+    });
 
     // Apply event handlers that were registered via on() before socket existed.
     _pendingHandlers.forEach((event, handler) {

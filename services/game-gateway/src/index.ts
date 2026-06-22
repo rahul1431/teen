@@ -36,7 +36,7 @@ async function start() {
   io.use(async (socket, next) => {
     console.log(`[socket] handshake attempt from ${socket.handshake.address} transport=${socket.conn.transport.name} hasToken=${!!(socket.handshake.auth.token || socket.handshake.headers.authorization)}`)
     try {
-      const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.split(' ')[1]
+      const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.split(' ')[1] || socket.handshake.query.token as string
       if (!token) { console.warn('[socket] rejected: no token'); return next(new Error('No token')) }
       const payload = app.jwt.verify(token) as any
       socket.data.userId = payload.sub
