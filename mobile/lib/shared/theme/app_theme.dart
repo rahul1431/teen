@@ -27,6 +27,10 @@ class AppColors {
   static const feltRed     = Color(0xFFB11226);
   static const feltRedDark = Color(0xFF7A0C1A);
   static const tableNavy   = Color(0xFF1C2C57);
+
+  // Aviator
+  static const aviatorBlue  = Color(0xFF1E3A8A);
+  static const aviatorGreen = Color(0xFF00C853);
 }
 
 class AppTheme {
