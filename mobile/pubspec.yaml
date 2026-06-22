@@ -23,8 +23,9 @@ dependencies:
   # Image picking (deposit payment-proof screenshots)
   image_picker: ^1.1.2
 
-  # WebSocket / Socket.IO
-  socket_io_client: ^2.0.3+1
+  # Realtime transport — raw WebSocket (replaced Socket.IO, whose Dart client
+  # crashed on-device before connecting).
+  web_socket_channel: ^3.0.1
 
   # Storage
   flutter_secure_storage: ^9.2.2

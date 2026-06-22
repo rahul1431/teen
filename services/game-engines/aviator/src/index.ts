@@ -2,8 +2,7 @@ import 'dotenv/config'
 import '@fastify/jwt'
 import Fastify from 'fastify'
 import { createServer } from 'http'
-import { Server } from 'socket.io'
-import { createAdapter } from '@socket.io/redis-adapter'
+import { WebSocketServer, WebSocket } from 'ws'
 import Redis from 'ioredis'
 import { Pool } from 'pg'
 import crypto from 'crypto'
@@ -12,7 +11,25 @@ import { v4 as uuid } from 'uuid'
 const app = Fastify({ logger: false })
 const db = new Pool({ connectionString: process.env.DATABASE_URL!, max: 10 })
 const pubClient = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
-const subClient = pubClient.duplicate()
+
+// ── Raw WebSocket transport (replaced socket.io) ──────────────────────────
+interface AvConn { ws: WebSocket; userId: string; username: string }
+const conns = new Set<AvConn>()
+
+function broadcast(event: string, data: unknown): void {
+  const msg = JSON.stringify({ event, data })
+  for (const c of conns) {
+    if (c.ws.readyState === WebSocket.OPEN) {
+      try { c.ws.send(msg) } catch { /* gone */ }
+    }
+  }
+}
+
+function send(ws: WebSocket, event: string, data: unknown): void {
+  if (ws.readyState === WebSocket.OPEN) {
+    try { ws.send(JSON.stringify({ event, data })) } catch { /* gone */ }
+  }
+}
 
 interface RoundState {
   roundId: string
@@ -82,7 +99,7 @@ function generateCrashPoint(serverSeed: string, roundId: string): number {
   return Math.max(1.00, crash)
 }
 
-async function startBettingPhase(io: Server) {
+async function startBettingPhase() {
   await loadConfig() // pick up live admin changes each round
   const roundId = uuid()
   const serverSeed = crypto.randomBytes(32).toString('hex')
@@ -100,22 +117,22 @@ async function startBettingPhase(io: Server) {
 
   await pubClient.setex(`aviator:round:${roundId}`, 600, JSON.stringify(currentRound))
 
-  io.emit('aviator:round_start', {
+  broadcast('aviator:round_start', {
     round_id: roundId,
     betting_time_ms: aviatorConfig.bettingTimeMs,
     history: currentRound.history,
   })
 
-  setTimeout(() => startFlyingPhase(io), aviatorConfig.bettingTimeMs)
+  setTimeout(() => startFlyingPhase(), aviatorConfig.bettingTimeMs)
 }
 
-async function startFlyingPhase(io: Server) {
+async function startFlyingPhase() {
   if (!currentRound) return
   currentRound.status = 'flying'
   currentRound.startedAt = Date.now()
   const crashAt = currentRound.crashAt
 
-  io.emit('aviator:flying_start', { round_id: currentRound.roundId })
+  broadcast('aviator:flying_start', { round_id: currentRound.roundId })
 
   let multiplier = 1.00
   flyingInterval = setInterval(async () => {
@@ -124,19 +141,19 @@ async function startFlyingPhase(io: Server) {
 
     if (currentRound) currentRound.currentMultiplier = multiplier
 
-    io.emit('aviator:multiplier_tick', {
+    broadcast('aviator:multiplier_tick', {
       round_id: currentRound?.roundId,
       multiplier,
     })
 
     if (multiplier >= crashAt) {
       clearInterval(flyingInterval!)
-      await crashRound(io, crashAt)
+      await crashRound(crashAt)
     }
   }, 100)
 }
 
-async function crashRound(io: Server, crashAt: number) {
+async function crashRound(crashAt: number) {
   if (!currentRound) return
   currentRound.status = 'crashed'
 
@@ -156,7 +173,7 @@ async function crashRound(io: Server, crashAt: number) {
   await pubClient.lpush('aviator:history', crashAt.toString())
   await pubClient.ltrim('aviator:history', 0, 49)
 
-  io.emit('aviator:crashed', {
+  broadcast('aviator:crashed', {
     round_id: currentRound.roundId,
     crash_at: crashAt,
     server_seed: currentRound.serverSeed, // revealed after crash for provable fairness
@@ -165,7 +182,7 @@ async function crashRound(io: Server, crashAt: number) {
   currentRound = null
 
   // Start next round after 3 seconds
-  setTimeout(() => startBettingPhase(io), 3000)
+  setTimeout(() => startBettingPhase(), 3000)
 }
 
 async function creditWallet(userId: string, amount: number, referenceId: string) {
@@ -196,36 +213,30 @@ async function start() {
   await app.register(require('@fastify/cors'), { origin: true })
 
   const httpServer = createServer(app.server)
-  const io = new Server(httpServer, {
-    cors: { origin: '*', methods: ['GET', 'POST'] },
-    path: '/aviator',
-  })
+  if (pubClient.status === 'wait') await pubClient.connect()
 
-  // Connect only clients still waiting. `duplicate()` may already be
-  // connecting, in which case calling connect() again throws
-  // "Redis is already connecting/connected".
-  await Promise.all(
-    [pubClient, subClient].map((c) => (c.status === 'wait' ? c.connect() : Promise.resolve()))
-  )
-  io.adapter(createAdapter(pubClient, subClient))
+  const wss = new WebSocketServer({ server: httpServer, path: '/ws/aviator' })
 
-  io.use(async (socket, next) => {
+  wss.on('connection', (ws: WebSocket, req) => {
+    let userId: string, username: string
     try {
-      const token = socket.handshake.auth.token
-      if (!token) return next(new Error('No token'))
+      const u = new URL(req.url || '', 'http://localhost')
+      const token = u.searchParams.get('token') || req.headers.authorization?.split(' ')[1]
+      if (!token) { ws.close(4001, 'No token'); return }
       const payload = (app.jwt as any).verify(token) as any
-      socket.data.userId = payload.sub
-      socket.data.username = payload.username
-      next()
+      userId = payload.sub
+      username = payload.username
     } catch {
-      next(new Error('Invalid token'))
+      ws.close(4001, 'Invalid token')
+      return
     }
-  })
 
-  io.on('connection', (socket) => {
+    const conn: AvConn = { ws, userId, username }
+    conns.add(conn)
+
     // Send current round state on connect
     if (currentRound) {
-      socket.emit('aviator:round_state', {
+      send(ws, 'aviator:round_state', {
         round_id: currentRound.roundId,
         status: currentRound.status,
         multiplier: currentRound.currentMultiplier,
@@ -233,72 +244,76 @@ async function start() {
       })
     }
 
-    socket.on('aviator:place_bet', async ({ amount }: any) => {
-      if (!currentRound || currentRound.status !== 'betting') {
-        return socket.emit('error', { message: 'Betting phase not active' })
-      }
-      if (!amount || amount < aviatorConfig.minBet) {
-        return socket.emit('error', { message: `Min bet is ₹${aviatorConfig.minBet}` })
-      }
-      if (amount > aviatorConfig.maxBet) {
-        return socket.emit('error', { message: `Max bet is ₹${aviatorConfig.maxBet}` })
-      }
+    ws.on('message', async (raw) => {
+      let msg: any
+      try { msg = JSON.parse(raw.toString()) } catch { return }
+      const { event, data } = msg || {}
 
-      // Deduct from wallet
-      try {
-        const res = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-          body: JSON.stringify({ user_id: socket.data.userId, amount, room_id: currentRound.roundId }),
-        })
-        if (!res.ok) {
-          const err = await res.json() as any
-          return socket.emit('error', { message: err.error || 'Insufficient balance' })
+      if (event === 'aviator:place_bet') {
+        const amount = data?.amount
+        if (!currentRound || currentRound.status !== 'betting') {
+          return send(ws, 'error', { message: 'Betting phase not active' })
         }
-      } catch {
-        return socket.emit('error', { message: 'Wallet service unavailable' })
+        if (!amount || amount < aviatorConfig.minBet) {
+          return send(ws, 'error', { message: `Min bet is ₹${aviatorConfig.minBet}` })
+        }
+        if (amount > aviatorConfig.maxBet) {
+          return send(ws, 'error', { message: `Max bet is ₹${aviatorConfig.maxBet}` })
+        }
+        try {
+          const res = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+            body: JSON.stringify({ user_id: userId, amount, room_id: currentRound.roundId }),
+          })
+          if (!res.ok) {
+            const err = await res.json() as any
+            return send(ws, 'error', { message: err.error || 'Insufficient balance' })
+          }
+        } catch {
+          return send(ws, 'error', { message: 'Wallet service unavailable' })
+        }
+
+        currentRound.bets[userId] = { userId, amount, cashedOut: false }
+        send(ws, 'aviator:bet_placed', { amount, round_id: currentRound.roundId })
+        broadcast('aviator:live_bets', {
+          bets: Object.values(currentRound.bets).map(b => ({
+            username,
+            amount: b.amount,
+            cashed_out: b.cashedOut,
+            cashout_multiplier: b.cashoutMultiplier,
+          })),
+        })
+        return
       }
 
-      currentRound.bets[socket.data.userId] = {
-        userId: socket.data.userId,
-        amount,
-        cashedOut: false,
-      }
+      if (event === 'aviator:cashout') {
+        if (!currentRound || currentRound.status !== 'flying') {
+          return send(ws, 'error', { message: 'Not in flying phase' })
+        }
+        const bet = currentRound.bets[userId]
+        if (!bet || bet.cashedOut) return send(ws, 'error', { message: 'No active bet' })
 
-      socket.emit('aviator:bet_placed', { amount, round_id: currentRound.roundId })
-      io.emit('aviator:live_bets', {
-        bets: Object.values(currentRound.bets).map(b => ({
-          username: socket.data.username,
-          amount: b.amount,
-          cashed_out: b.cashedOut,
-          cashout_multiplier: b.cashoutMultiplier,
-        }))
-      })
+        const multiplier = currentRound.currentMultiplier
+        bet.cashedOut = true
+        bet.cashoutMultiplier = multiplier
+        const prize = bet.amount * multiplier
+        send(ws, 'aviator:cashed_out', { multiplier, prize, amount: bet.amount })
+        return
+      }
     })
 
-    socket.on('aviator:cashout', async () => {
-      if (!currentRound || currentRound.status !== 'flying') {
-        return socket.emit('error', { message: 'Not in flying phase' })
-      }
-      const bet = currentRound.bets[socket.data.userId]
-      if (!bet || bet.cashedOut) return socket.emit('error', { message: 'No active bet' })
-
-      const multiplier = currentRound.currentMultiplier
-      bet.cashedOut = true
-      bet.cashoutMultiplier = multiplier
-
-      const prize = bet.amount * multiplier
-      socket.emit('aviator:cashed_out', { multiplier, prize, amount: bet.amount })
-    })
+    ws.on('close', () => { conns.delete(conn) })
+    ws.on('error', () => { conns.delete(conn) })
   })
 
   app.get('/health', async () => ({ status: 'ok', service: 'aviator-engine' }))
 
   const port = parseInt(process.env.PORT || '3005')
   httpServer.listen(port, '0.0.0.0', () => {
-    console.log(`Aviator engine running on port ${port}`)
+    console.log(`Aviator engine running on port ${port} (raw WebSocket /ws/aviator)`)
     // Start first round
-    setTimeout(() => startBettingPhase(io), 2000)
+    setTimeout(() => startBettingPhase(), 2000)
   })
 }
 

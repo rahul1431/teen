@@ -2,117 +2,203 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:socket_io_client/socket_io_client.dart' as io;
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/status.dart' as ws_status;
 import '../constants/app_config.dart';
 import '../storage/secure_storage.dart';
 
+/// Realtime client over a raw WebSocket (the gateway exposes /ws).
+///
+/// The wire protocol is JSON `{ "event": <name>, "data": <payload> }` in both
+/// directions. The public API (connect / on / emit / onReconnect / status)
+/// matches the previous Socket.IO-based service, so callers are unchanged.
 class SocketService {
   static final SocketService _instance = SocketService._internal();
   factory SocketService() => _instance;
   SocketService._internal();
 
-  io.Socket? _socket;
+  WebSocketChannel? _channel;
+  StreamSubscription? _sub;
   final _controllers = <String, StreamController<dynamic>>{};
-  // Handlers registered via on() before socket was created; applied in connect().
-  final _pendingHandlers = <String, void Function(dynamic)>{};
   void Function()? _reconnectHandler;
 
-  // Observable diagnostics — surfaced in the lobby debug panel so connection
-  // problems are visible on-device without adb/server logs.
+  bool _connecting = false;
+  bool _connected = false;
+  bool _manuallyClosed = false;
+  int _reconnectAttempts = 0;
+  Timer? _reconnectTimer;
+  Timer? _pingTimer;
+
+  // Observable diagnostics — surfaced in the lobby debug panel.
   final ValueNotifier<String> status = ValueNotifier('idle');
   final ValueNotifier<String> lastError = ValueNotifier('');
-  // Trim defensively: a SOCKET_URL build secret with trailing whitespace
-  // compiles fine but makes getaddrinfo fail ("Failed host lookup", errno 7).
-  String get url => AppConfig.socketUrl.trim();
   bool tokenPresent = false;
-  // Guards a single auth-refresh+rebuild attempt per connect cycle so a
-  // rejected handshake (expired token) doesn't loop forever.
-  bool _retriedAuth = false;
 
-  bool get isConnected => _socket?.connected ?? false;
+  // Trim defensively: a SOCKET_URL build secret with trailing whitespace
+  // compiles fine but breaks host resolution.
+  String get url => AppConfig.socketUrl.trim();
+  bool get isConnected => _connected;
+
+  /// WebSocket endpoint: https://host -> wss://host/ws (and ws:// for http).
+  Uri _wsUri(String token) {
+    var base = url;
+    if (base.startsWith('https://')) {
+      base = 'wss://${base.substring('https://'.length)}';
+    } else if (base.startsWith('http://')) {
+      base = 'ws://${base.substring('http://'.length)}';
+    }
+    base = base.replaceAll(RegExp(r'/+$'), '');
+    return Uri.parse('$base/ws?token=${Uri.encodeComponent(token)}');
+  }
 
   Future<void> connect() async {
-    if (_socket?.connected == true) return;
+    if (_connected || _connecting) return;
+    _connecting = true;
+    _manuallyClosed = false;
     status.value = 'reading-token';
+
     // The access token expires in 15m. Unlike Dio, the socket does not
-    // auto-refresh, so a stale token makes the gateway reject every handshake
-    // (surfacing as a "Null check operator" crash inside socket_io_client).
-    // Read a fresh token, refreshing first if it is expired/near-expiry.
+    // auto-refresh, so read a fresh token (refreshing first if expired).
     final token = await _freshToken();
     tokenPresent = token != null && token.isNotEmpty;
     if (token == null || token.isEmpty) {
       status.value = 'no-token';
       lastError.value = 'No auth token — please log in again';
+      _connecting = false;
       print('[Socket] connect() skipped: no auth token');
       return;
     }
-    status.value = 'connecting to $url';
-    // Send token as Authorization header — the server reads
-    // handshake.headers.authorization (index.ts:39) so no setAuth needed,
-    // which avoids the v2 null-crash that setAuth triggered on Android.
-    _socket = io.io(url, io.OptionBuilder()
-        .setTransports(['polling', 'websocket'])
-        .setExtraHeaders({'Authorization': 'Bearer $token'})
-        .enableAutoConnect()
-        .enableReconnection()
-        .setReconnectionAttempts(10)
-        .setReconnectionDelay(2000)
-        .build());
 
-    // Apply event handlers that were registered via on() before socket existed.
-    _pendingHandlers.forEach((event, handler) {
-      _socket!.on(event, handler);
-    });
-    _pendingHandlers.clear();
+    final uri = _wsUri(token);
+    status.value = 'connecting to ${uri.host}';
+    print('[Socket] connecting to $uri');
 
-    if (_reconnectHandler != null) {
-      _socket!.on('reconnect', (_) => _reconnectHandler!());
+    try {
+      _channel = WebSocketChannel.connect(uri);
+      // ready completes once the underlying socket is open (or throws).
+      await _channel!.ready;
+    } catch (e) {
+      _connecting = false;
+      _connected = false;
+      status.value = 'connect-error';
+      lastError.value = e.toString();
+      print('[Socket] connect error: $e');
+      _scheduleReconnect();
+      return;
     }
 
-    _socket!.onConnect((_) {
-      status.value = 'connected';
-      lastError.value = '';
-      _retriedAuth = false;
-      print('[Socket] Connected to ${AppConfig.socketUrl}');
-    });
-    _socket!.onDisconnect((reason) {
-      status.value = 'disconnected: $reason';
-      print('[Socket] Disconnected: $reason');
-    });
-    _socket!.onConnectError((e) {
-      status.value = 'connect-error';
-      lastError.value = e?.toString() ?? 'unknown connect error';
-      print('[Socket] Connect error: $e');
-      _handleAuthRejection();
-    });
-    _socket!.onError((e) {
-      lastError.value = e?.toString() ?? 'unknown error';
-      print('[Socket] error: $e');
-    });
-    _socket!.on('connect_error', (e) {
-      status.value = 'connect-error';
-      lastError.value = e?.toString() ?? 'unknown connect error';
-      print('[Socket] connect_error detail: $e');
-      _handleAuthRejection();
+    _connecting = false;
+    _connected = true;
+    _reconnectAttempts = 0;
+    status.value = 'connected';
+    lastError.value = '';
+    print('[Socket] connected');
+
+    _sub = _channel!.stream.listen(
+      _onFrame,
+      onError: (e) {
+        lastError.value = e.toString();
+        status.value = 'error';
+        print('[Socket] stream error: $e');
+        _onClosed();
+      },
+      onDone: () {
+        print('[Socket] closed (code=${_channel?.closeCode})');
+        _onClosed();
+      },
+      cancelOnError: true,
+    );
+
+    _startPing();
+    _reconnectHandler?.call();
+  }
+
+  void _onFrame(dynamic raw) {
+    if (raw is! String) return;
+    Map<String, dynamic> msg;
+    try {
+      msg = json.decode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return;
+    }
+    final event = msg['event'] as String?;
+    if (event == null) return;
+    _controllers[event]?.add(msg['data']);
+  }
+
+  void _onClosed() {
+    _connected = false;
+    _pingTimer?.cancel();
+    _sub?.cancel();
+    _sub = null;
+    if (_manuallyClosed) {
+      status.value = 'disconnected';
+      return;
+    }
+    status.value = 'disconnected — reconnecting';
+    _scheduleReconnect();
+  }
+
+  void _scheduleReconnect() {
+    if (_manuallyClosed) return;
+    _reconnectTimer?.cancel();
+    if (_reconnectAttempts >= 10) {
+      status.value = 'reconnect-failed';
+      return;
+    }
+    // Exponential backoff capped at 16s.
+    final delaySec = [2, 2, 4, 4, 8, 8, 16][_reconnectAttempts.clamp(0, 6)];
+    _reconnectAttempts++;
+    _reconnectTimer = Timer(Duration(seconds: delaySec), () {
+      _channel = null;
+      connect();
     });
   }
 
-  // A rejected handshake (commonly an expired token) shows up as a connect
-  // error. Refresh the token once and rebuild the socket with the fresh value
-  // (socket_io_client bakes the query in at creation, so we must recreate).
-  Future<void> _handleAuthRejection() async {
-    if (_retriedAuth) return;
-    _retriedAuth = true;
-    final refreshed = await _refreshAccessToken();
-    if (!refreshed) return;
-    status.value = 'auth-refreshed, reconnecting';
-    _socket?.dispose();
-    _socket = null;
-    await connect();
+  void _startPing() {
+    _pingTimer?.cancel();
+    _pingTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+      emit('ping', {'timestamp': DateTime.now().millisecondsSinceEpoch});
+    });
   }
 
-  // Returns a non-expired access token, refreshing via the auth service first
-  // when the stored token is expired or within 30s of expiry.
+  Stream<dynamic> on(String event) {
+    _controllers[event] ??= StreamController<dynamic>.broadcast();
+    return _controllers[event]!.stream;
+  }
+
+  void emit(String event, [dynamic data]) {
+    if (_channel == null || !_connected) {
+      print('[Socket] emit($event) dropped — not connected');
+      return;
+    }
+    _channel!.sink.add(json.encode({'event': event, 'data': data ?? {}}));
+  }
+
+  /// Re-invoked after every successful (re)connect so callers can re-establish
+  /// state (e.g. re-join the matchmaking queue).
+  void onReconnect(void Function() handler) {
+    _reconnectHandler = handler;
+  }
+
+  void disconnect() {
+    _manuallyClosed = true;
+    _reconnectTimer?.cancel();
+    _pingTimer?.cancel();
+    _sub?.cancel();
+    _sub = null;
+    _channel?.sink.close(ws_status.normalClosure);
+    _channel = null;
+    _connected = false;
+    for (final c in _controllers.values) {
+      c.close();
+    }
+    _controllers.clear();
+    _reconnectHandler = null;
+  }
+
+  // --- Token freshness (access token expires in 15m) ---
+
   Future<String?> _freshToken() async {
     final token = await SecureStorage.getAccessToken();
     if (token == null || token.isEmpty) return null;
@@ -155,73 +241,62 @@ class SocketService {
       return false;
     }
   }
-
-  Stream<dynamic> on(String event) {
-    _controllers[event] ??= StreamController<dynamic>.broadcast();
-    final handler = (dynamic data) => _controllers[event]!.add(data);
-    if (_socket != null) {
-      _socket!.on(event, handler);
-    } else {
-      // Socket not created yet; store handler and apply it in connect().
-      _pendingHandlers[event] = handler;
-    }
-    return _controllers[event]!.stream;
-  }
-
-  void emit(String event, [dynamic data]) {
-    if (_socket == null) {
-      print('[Socket] emit($event) dropped — socket not initialized');
-      return;
-    }
-    _socket!.emit(event, data);
-  }
-
-  void onReconnect(void Function() handler) {
-    _reconnectHandler = handler;
-    _socket?.on('reconnect', (_) => handler());
-  }
-
-  void disconnect() {
-    _socket?.disconnect();
-    for (final c in _controllers.values) { c.close(); }
-    _controllers.clear();
-    _pendingHandlers.clear();
-    _reconnectHandler = null;
-  }
 }
 
-// Aviator-specific socket (separate namespace)
+// Aviator-specific realtime client (separate /ws/aviator endpoint).
 class AviatorSocketService {
   static final AviatorSocketService _instance = AviatorSocketService._internal();
   factory AviatorSocketService() => _instance;
   AviatorSocketService._internal();
 
-  io.Socket? _socket;
+  WebSocketChannel? _channel;
+  StreamSubscription? _sub;
   final _controllers = <String, StreamController<dynamic>>{};
 
+  String get _base {
+    var b = AppConfig.socketUrl.trim();
+    if (b.startsWith('https://')) b = 'wss://${b.substring(8)}';
+    else if (b.startsWith('http://')) b = 'ws://${b.substring(7)}';
+    return b.replaceAll(RegExp(r'/+$'), '');
+  }
+
   Future<void> connect() async {
-    if (_socket?.connected == true) return;
+    if (_channel != null) return;
     final token = await SecureStorage.getAccessToken();
-    _socket = io.io(AppConfig.socketUrl.trim(), io.OptionBuilder()
-        .setTransports(['polling', 'websocket'])
-        .setPath('/aviator/')
-        .setAuth({'token': token})
-        .enableAutoConnect()
-        .enableReconnection()
-        .build());
+    final uri = Uri.parse('$_base/ws/aviator?token=${Uri.encodeComponent(token ?? '')}');
+    try {
+      _channel = WebSocketChannel.connect(uri);
+      await _channel!.ready;
+      _sub = _channel!.stream.listen((raw) {
+        if (raw is! String) return;
+        try {
+          final msg = json.decode(raw) as Map<String, dynamic>;
+          final event = msg['event'] as String?;
+          if (event != null) _controllers[event]?.add(msg['data']);
+        } catch (_) {}
+      });
+    } catch (e) {
+      print('[AviatorSocket] connect error: $e');
+      _channel = null;
+    }
   }
 
   Stream<dynamic> on(String event) {
     _controllers[event] ??= StreamController<dynamic>.broadcast();
-    _socket?.on(event, (data) => _controllers[event]!.add(data));
     return _controllers[event]!.stream;
   }
 
-  void emit(String event, [dynamic data]) => _socket?.emit(event, data);
+  void emit(String event, [dynamic data]) {
+    _channel?.sink.add(json.encode({'event': event, 'data': data ?? {}}));
+  }
 
   void disconnect() {
-    _socket?.disconnect();
-    for (final c in _controllers.values) { c.close(); }
+    _sub?.cancel();
+    _channel?.sink.close(ws_status.normalClosure);
+    _channel = null;
+    for (final c in _controllers.values) {
+      c.close();
+    }
     _controllers.clear();
   }
 }
