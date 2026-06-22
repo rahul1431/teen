@@ -24,7 +24,10 @@ async function start() {
     transports: ['websocket', 'polling'],
   })
 
-  await Promise.all([pubClient.connect(), subClient.connect()])
+  await Promise.all([
+    pubClient.status === 'wait' ? pubClient.connect() : Promise.resolve(),
+    subClient.status === 'wait' ? subClient.connect() : Promise.resolve(),
+  ])
   io.adapter(createAdapter(pubClient, subClient))
 
   const matchmaking = new MatchmakingService(pubClient, db, io)
