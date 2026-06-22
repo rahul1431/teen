@@ -1,8 +1,79 @@
 # Progress & Resume Checkpoint
 
-> Living status doc. Read this first when resuming. Last updated: 2026-06-21 (session 5 — Teen Patti engine + notifications plan).
+> Living status doc. Read this first when resuming. Last updated: 2026-06-22 (session 6 — mobile UI/UX redesign, Teen Patti modes, Aviator rebuild, server economics).
 > Branch: `claude/confident-archimedes-e2dd1k` · PR: #1 (draft) · Base: `main`
-> Latest APK commit: `b28a50c` (hostess + haptics) · Admin preview: https://rahul1431.github.io/teen/
+> Latest APK commit: `8a18b69` (coreLibraryDesugaring fix) · Latest backend commit: `dc9f9a2` (Aviator economics) · Admin preview: https://rahul1431.github.io/teen/
+
+## 🆕 Session 6 — Mobile UI/UX redesign + Teen Patti modes + Aviator rebuild
+
+### Mobile UI/UX — full redesign ✅
+All 14 screens audited and fixed. Key changes across the app:
+- Eliminated all hardcoded `Color(0xFF...)` / `Colors.orange` etc. — everything uses `AppColors` constants
+- Added loading/error/retry states to every async screen (Profile, Leaderboard, Wallet, Notifications)
+- `ErrorRetry` shared widget (`mobile/lib/shared/widgets/error_retry.dart`) — wifi_off icon + message + Retry button
+- `AppSnackBar` used for all user feedback (was silent catches or missing feedback)
+- Fixed duplicate `AppTheme` class definition in `app_theme.dart`
+- Added `AppColors.aviatorBlue` + `AppColors.aviatorGreen` constants (were referenced but missing)
+- Leaderboard: icon tabs (replaced emoji text), medal icons for top 3, RefreshIndicator
+- Notifications: uses shared `timeAgo()` (removed duplicate local helper)
+- Wallet: `AppColors.cardBg` replaces hardcoded background, outlinedButtonTheme in AppTheme.dark
+
+### Teen Patti — Mode Selection screen ✅
+- New `TeenPattiModesPage` (`mobile/lib/features/games/teen_patti/modes_page.dart`):
+  - 2×2 grid of mode cards: **Classic** / **AK47** / **Practice** (vs bots) / **Friends** (offline)
+  - Balance chip loaded from `/api/wallet/balance` in AppBar
+  - Classic/AK47 → lobby with `?variation=` param; Practice → demo table; Friends → "Coming soon"
+- Route `app.dart`: `/games/teen-patti` now lands on `TeenPattiModesPage` (was direct lobby)
+- Lobby passes `variation` to `join_matchmaking` socket event
+
+### Low-Balance Gate (Teen Patti lobby) ✅
+- `TeenPattiLobbyPage` now loads `_balanceValue` (numeric) alongside display string
+- `_joinMatchmaking()` guards: if `_balanceValue < _selectedStake` → `_showLowBalanceDialog()`
+- Dialog: gold "Add Money" button → `context.push('/wallet')`, Cancel to dismiss
+- Prevents joining a table with insufficient funds (was silently deducting and failing)
+
+### Aviator — complete single-player rebuild ✅
+- Removed all Socket.IO / multiplayer dependencies from `aviator_page.dart`
+- Self-contained on-device round engine:
+  - `_enterBetting()` → 5 s countdown timer display → flying phase → crash → 2.5 s crash display → new round
+  - `_rollCrash()`: house-edge weighted RNG (`0.97 / (1 - r)`) clamped 1.00–50.00
+  - `_onFrame()` (60 fps via AnimationController): `exp(0.16 * elapsed)` multiplier curve
+- Two AnimationControllers: `_ticker` (game loop), `_pulse` (glow breathing effect)
+- Balance integration: `_placeBet()` locks `amount` via `/api/wallet/lock`; cashout credits via `/api/wallet/credit`; low-balance guard shows dialog
+- `_AviatorPainter` CustomPainter: grid lines, exponential flight path (gradient fill + glowing stroke), animated plane at multiplier tip
+
+### Aviator — Admin-configurable server economics ✅
+Backend (server-side game engine, `services/game-engines/aviator/src/index.ts`):
+- `AviatorConfig` interface: `houseEdgePercent`, `rakePercent`, `maxWin`, `minBet`, `maxBet`, `bettingTimeMs`
+- `loadConfig()` reads `game_configs WHERE game_type='aviator'` + `special_rules` JSONB; called at start of every round (live config changes apply next round, no restart)
+- `generateCrashPoint()` uses `houseEdgePercent` to size instant-crash band (e.g. 3% → 3% of rounds crash at 1.00×)
+- Cashout payout: applies `rakePercent` commission + `maxWin` cap (0 = unlimited)
+- Bet validation enforces `minBet`/`maxBet`
+
+Admin service (`services/admin-service/src/index.ts`):
+- `PATCH /game-configs/:gameType` now merges `special_rules` non-destructively (existing keys preserved)
+
+Admin panel (`admin-panel/src/pages/GameConfig.tsx`):
+- New "Aviator Economics 💰" section visible only for the aviator card
+- 5 configurable fields: House Edge %, Max Win Cap, Min Bet, Max Bet, Betting Window (ms)
+- Form `initialValues` spreads `special_rules` so existing values pre-populate
+
+### Android build fixes (CI) ✅
+| Issue | Fix |
+|---|---|
+| Maven Central 403 (AGP 7.3.0 stale artifacts) | Upgraded Flutter 3.22.0 → 3.27.4 in CI workflow |
+| `compileSdk 34` too low for `androidx.activity:1.10.1` | Bumped `compileSdk`/`targetSdk` to 35 |
+| AGP 8.1.0 incompatible with SDK 35 | Bumped AGP to 8.3.0 |
+| Gradle 8.3 incompatible with AGP 8.3.0 | Bumped Gradle wrapper to 8.4 |
+| `flutter_local_notifications` desugaring error | Added `coreLibraryDesugaringEnabled = true` + `desugar_jdk_libs:2.1.4` |
+
+### Pending for session 6 items ⏳
+- [ ] **Wire mobile Aviator to server engine** (port 3005) for real-money settlement — currently runs local on-device rounds. Admin profit controls (houseEdge/rake/maxWin) only apply to server rounds.
+- [ ] VPS redeploy: `git pull` + `pm2 restart teen-aviator-engine teen-admin-svc` + rebuild admin panel
+- [ ] Teen Patti rake deduction (Go engine currently credits full pot)
+- [ ] APK build status: last mobile commit `8a18b69` — verify green on Actions
+
+---
 
 ## 🚀 Session 4 — LIVE VPS deployment (game.myonlinejoker.com)
 
