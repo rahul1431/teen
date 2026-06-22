@@ -201,7 +201,12 @@ async function start() {
     path: '/aviator',
   })
 
-  await Promise.all([pubClient.connect(), subClient.connect()])
+  // Connect only clients still waiting. `duplicate()` may already be
+  // connecting, in which case calling connect() again throws
+  // "Redis is already connecting/connected".
+  await Promise.all(
+    [pubClient, subClient].map((c) => (c.status === 'wait' ? c.connect() : Promise.resolve()))
+  )
   io.adapter(createAdapter(pubClient, subClient))
 
   io.use(async (socket, next) => {
