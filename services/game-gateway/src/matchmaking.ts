@@ -179,6 +179,7 @@ export class MatchmakingService {
             stake,
             players: gatewayPlayers.map(p => ({ user_id: p.userId, username: p.username, seat: p.seat, is_bot: p.isBot, status: 'active', bet: 0, is_seen: false })),
           }),
+          signal: AbortSignal.timeout(5000),
         })
         if (res.ok) engineState = await res.json()
       } catch (e) {
@@ -248,6 +249,7 @@ export class MatchmakingService {
             amount: state.min_bet ?? state.MinBet ?? state.stake,
             sequence_num: 0,
           }),
+          signal: AbortSignal.timeout(5000),
         })
         if (!res.ok) return
         const data = await res.json()
