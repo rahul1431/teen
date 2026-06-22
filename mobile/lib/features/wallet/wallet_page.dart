@@ -43,11 +43,13 @@ class _WalletPageState extends State<WalletPage> {
         _bonusBalance = double.parse(balRes.data['bonus_balance'].toString()).toStringAsFixed(2);
         _transactions = txnRes.data;
       });
-    } catch (_) {}
+    } catch (_) {
+      if (mounted) AppSnackBar.show(context, 'Could not load wallet data', error: true);
+    }
   }
 
-  void _showError(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: AppColors.red));
-  void _showSuccess(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: AppColors.green));
+  void _showError(String msg) => AppSnackBar.show(context, msg, error: true);
+  void _showSuccess(String msg) => AppSnackBar.show(context, msg, success: true);
 
   Color _txnColor(String type) {
     if (type.contains('credit') || type == 'deposit' || type == 'game_credit' || type == 'bonus' || type == 'referral') return AppColors.green;
@@ -95,7 +97,7 @@ class _WalletPageState extends State<WalletPage> {
             Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(colors: [Color(0xFF1A2035), Color(0xFF0D1117)]),
+                gradient: LinearGradient(colors: [AppColors.cardBg, AppColors.surface]),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: AppColors.gold.withOpacity(0.3)),
               ),
@@ -105,7 +107,7 @@ class _WalletPageState extends State<WalletPage> {
                   const Text('Available Balance', style: TextStyle(color: AppColors.textSecondary)),
                   Text('₹$_realBalance', style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: AppColors.gold)),
                   const SizedBox(height: 8),
-                  Text('Bonus: ₹$_bonusBalance', style: const TextStyle(color: Colors.orange)),
+                  Text('Bonus: ₹$_bonusBalance', style: const TextStyle(color: AppColors.orange)),
                 ],
               ),
             ),
@@ -323,7 +325,7 @@ class _DepositSheetState extends State<_DepositSheet> {
                               _methodDetails(_selected!),
                               if (_selected!['instructions'] != null) ...[
                                 const SizedBox(height: 8),
-                                Text(_selected!['instructions'].toString(), style: const TextStyle(color: Colors.orange, fontSize: 12)),
+                                Text(_selected!['instructions'].toString(), style: const TextStyle(color: AppColors.orange, fontSize: 12)),
                               ],
                             ],
                           ),

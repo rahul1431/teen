@@ -17,10 +17,14 @@ class _LoginPageState extends State<LoginPage> {
   final _passCtrl = TextEditingController();
   bool _loading = false;
   bool _obscure = true;
+  String? _errorMsg;
+
+  @override
+  void dispose() { _phoneCtrl.dispose(); _passCtrl.dispose(); super.dispose(); }
 
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
-    setState(() => _loading = true);
+    setState(() { _loading = true; _errorMsg = null; });
     try {
       final res = await Dio().post('${AppConfig.apiBaseUrl}/api/auth/login', data: {
         'phone': _phoneCtrl.text.trim(),
@@ -33,37 +37,59 @@ class _LoginPageState extends State<LoginPage> {
       await SecureStorage.saveUser(userId: res.data['user']['id'], username: res.data['user']['username']);
       if (mounted) context.go('/home');
     } on DioException catch (e) {
-      if (mounted) _showError(e.response?.data?['error'] ?? 'Login failed');
+      setState(() => _errorMsg = e.response?.data?['error'] ?? 'Login failed. Please try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
-
-  void _showError(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: AppColors.red));
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
           child: Form(
             key: _formKey,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SizedBox(height: 40),
-                const Center(child: Text('🃏', style: TextStyle(fontSize: 64))),
-                const SizedBox(height: 8),
-                const Center(child: Text('Welcome Back', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold))),
-                const Center(child: Text('Login to your account', style: TextStyle(color: AppColors.textSecondary))),
+                const SizedBox(height: 24),
+                Center(
+                  child: Column(
+                    children: [
+                      Container(
+                        width: 72, height: 72,
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(colors: [AppColors.gold, AppColors.goldLight]),
+                          borderRadius: BorderRadius.circular(18),
+                          boxShadow: [BoxShadow(color: AppColors.gold.withOpacity(0.4), blurRadius: 20, spreadRadius: 2)],
+                        ),
+                        child: const Icon(Icons.style_rounded, size: 40, color: Colors.black),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text('Welcome Back', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 4),
+                      const Text('Sign in to your account', style: TextStyle(color: AppColors.textSecondary, fontSize: 14)),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 40),
                 TextFormField(
                   controller: _phoneCtrl,
                   keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(labelText: 'Mobile Number', prefixText: '+91 '),
-                  validator: (v) => (v?.length ?? 0) == 10 ? null : 'Enter 10-digit number',
                   maxLength: 10,
+                  decoration: const InputDecoration(
+                    labelText: 'Mobile Number',
+                    prefixText: '+91  ',
+                    prefixIcon: Icon(Icons.phone_rounded, color: AppColors.textSecondary, size: 20),
+                    counterText: '',
+                  ),
+                  validator: (v) {
+                    if ((v?.length ?? 0) != 10) return 'Enter a valid 10-digit mobile number';
+                    if (!RegExp(r'^[6-9]\d{9}$').hasMatch(v!)) return 'Enter a valid Indian mobile number';
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
@@ -71,54 +97,77 @@ class _LoginPageState extends State<LoginPage> {
                   obscureText: _obscure,
                   decoration: InputDecoration(
                     labelText: 'Password',
+                    prefixIcon: const Icon(Icons.lock_rounded, color: AppColors.textSecondary, size: 20),
                     suffixIcon: IconButton(
-                      icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility),
+                      icon: Icon(_obscure ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                          color: AppColors.textSecondary, size: 20),
                       onPressed: () => setState(() => _obscure = !_obscure),
                     ),
                   ),
                   validator: (v) => (v?.length ?? 0) >= 6 ? null : 'Min 6 characters',
                 ),
+                if (_errorMsg != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.red.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.red.withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.error_outline, color: AppColors.red, size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(_errorMsg!, style: const TextStyle(color: AppColors.red, fontSize: 13))),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 32),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: _loading ? null : _login,
-                    child: _loading ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black)) : const Text('Login'),
+                    child: _loading
+                        ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                        : const Text('Login'),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Text("Don't have an account? ", style: TextStyle(color: AppColors.textSecondary)),
+                    const Text("Don't have an account?  ", style: TextStyle(color: AppColors.textSecondary)),
                     GestureDetector(
-                      onTap: () => context.go('/auth/otp?phone='),
+                      onTap: () => context.push('/auth/otp'),
                       child: const Text('Register', style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
-                const SizedBox(height: 24),
-                const Divider(color: AppColors.border),
-                const SizedBox(height: 8),
+                const SizedBox(height: 32),
+                Row(children: [
+                  const Expanded(child: Divider(color: AppColors.border)),
+                  const Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('OR', style: TextStyle(color: AppColors.textSecondary, fontSize: 12))),
+                  const Expanded(child: Divider(color: AppColors.border)),
+                ]),
+                const SizedBox(height: 16),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () => context.push('/games/teen-patti/demo'),
-                    icon: const Icon(Icons.visibility, color: AppColors.gold),
-                    label: const Text('Preview Teen Patti Table (Demo)',
-                        style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold)),
+                    icon: const Icon(Icons.play_circle_outline_rounded, color: AppColors.gold, size: 20),
+                    label: const Text('Preview Teen Patti (Demo)', style: TextStyle(color: AppColors.gold)),
                     style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: AppColors.gold),
+                      side: const BorderSide(color: AppColors.border),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                   ),
                 ),
+                const SizedBox(height: 8),
                 const Center(
-                  child: Padding(
-                    padding: EdgeInsets.only(top: 6),
-                    child: Text('No login needed — UI preview with sample players',
-                        style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
-                  ),
+                  child: Text('No login needed · UI preview only',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
                 ),
               ],
             ),

@@ -66,11 +66,11 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                 decoration: BoxDecoration(
-                  color: Colors.black54,
+                  color: AppColors.feltDark,
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: AppColors.gold.withOpacity(0.6)),
                 ),
-                child: Text('🪙 ₹${_balance ?? '—'}',
+                child: Text('₹${_balance ?? '—'}',
                     style: const TextStyle(
                         color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
               ),

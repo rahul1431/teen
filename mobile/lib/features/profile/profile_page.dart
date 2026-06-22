@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/network/api_client.dart';
 import '../../core/storage/secure_storage.dart';
 import '../../shared/theme/app_theme.dart';
+import '../../shared/widgets/error_retry.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -15,11 +16,23 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> {
   final _api = ApiClient();
   Map<String, dynamic>? _user;
+  bool _loading = true;
+  bool _hasError = false;
 
   @override
   void initState() {
     super.initState();
-    _api.dio.get('/api/users/me').then((r) => setState(() => _user = r.data)).catchError((_) {});
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _hasError = false; });
+    try {
+      final res = await _api.dio.get('/api/users/me');
+      if (mounted) setState(() { _user = res.data; _loading = false; });
+    } catch (_) {
+      if (mounted) setState(() { _loading = false; _hasError = true; });
+    }
   }
 
   Future<void> _logout() async {
@@ -27,108 +40,193 @@ class _ProfilePageState extends State<ProfilePage> {
     if (mounted) context.go('/auth/login');
   }
 
+  bool get _kycApproved => _user?['kyc_status'] == 'approved';
+
   @override
   Widget build(BuildContext context) {
-    if (_user == null) return const Scaffold(body: Center(child: CircularProgressIndicator(color: AppColors.gold)));
-
     return Scaffold(
       appBar: AppBar(title: const Text('Profile')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          // Avatar + name
-          Center(
-            child: Column(
-              children: [
-                CircleAvatar(
-                  radius: 40,
-                  backgroundColor: AppColors.gold,
-                  child: Text((_user!['username']?[0] ?? 'P').toUpperCase(), style: const TextStyle(fontSize: 32, color: Colors.black, fontWeight: FontWeight.bold)),
-                ),
-                const SizedBox(height: 12),
-                Text(_user!['username'] ?? '', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                Text('+91${_user!['phone'] ?? ''}', style: const TextStyle(color: AppColors.textSecondary)),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: _user!['kyc_status'] == 'approved' ? AppColors.green.withOpacity(0.15) : Colors.orange.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    _user!['kyc_status'] == 'approved' ? '✓ KYC Verified' : '⚠ KYC Pending',
-                    style: TextStyle(color: _user!['kyc_status'] == 'approved' ? AppColors.green : Colors.orange, fontSize: 12),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
+          : _hasError
+              ? ErrorRetry(message: 'Could not load profile', onRetry: _load)
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  color: AppColors.gold,
+                  backgroundColor: AppColors.surface,
+                  child: ListView(
+                    padding: const EdgeInsets.all(20),
+                    children: [
+                      _buildAvatar(),
+                      const SizedBox(height: 24),
+                      _buildStats(),
+                      const SizedBox(height: 16),
+                      _buildKycBanner(),
+                      const SizedBox(height: 16),
+                      _buildReferralCard(),
+                      const SizedBox(height: 24),
+                      _buildLogoutButton(),
+                      const SizedBox(height: 32),
+                    ],
                   ),
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // Stats
-          Row(
-            children: [
-              _statCard('Games\nPlayed', _user!['total_games']?.toString() ?? '0'),
-              const SizedBox(width: 12),
-              _statCard('Total\nWinnings', '₹${double.parse((_user!['total_winnings'] ?? 0).toString()).toStringAsFixed(0)}'),
-            ],
-          ),
-          const SizedBox(height: 24),
-
-          // Referral
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: AppColors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border)),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Referral Code', style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Text(_user!['referral_code'] ?? '-', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.gold, letterSpacing: 4)),
-                    const Spacer(),
-                    IconButton(icon: const Icon(Icons.copy, color: AppColors.gold), onPressed: () {
-                      Clipboard.setData(ClipboardData(text: _user!['referral_code'] ?? ''));
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Code copied!')));
-                    }),
-                    IconButton(icon: const Icon(Icons.share, color: AppColors.gold), onPressed: () {
-                      Share.share('Join me on MyOnlineJoker! Use code ${_user!['referral_code']} and get ₹50 bonus. Download: http://game.myonlinejoker.com');
-                    }),
-                  ],
-                ),
-                const Text('Earn ₹50 for every friend who joins and deposits!', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Logout
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _logout,
-              icon: const Icon(Icons.logout, color: AppColors.red),
-              label: const Text('Logout', style: TextStyle(color: AppColors.red)),
-              style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.red), padding: const EdgeInsets.symmetric(vertical: 14)),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
-  Widget _statCard(String label, String value) => Expanded(
+  Widget _buildAvatar() => Center(
+    child: Column(
+      children: [
+        Container(
+          width: 80, height: 80,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const LinearGradient(colors: [AppColors.gold, AppColors.goldLight]),
+            boxShadow: [BoxShadow(color: AppColors.gold.withOpacity(0.4), blurRadius: 20, spreadRadius: 2)],
+          ),
+          child: Center(
+            child: Text(
+              ((_user?['username'] as String?)?.isNotEmpty == true ? _user!['username'][0] : 'P').toUpperCase(),
+              style: const TextStyle(fontSize: 34, color: Colors.black, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(_user?['username'] ?? '', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 4),
+        Text('+91 ${_user?['phone'] ?? ''}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 14)),
+      ],
+    ),
+  );
+
+  Widget _buildKycBanner() => GestureDetector(
+    onTap: _kycApproved ? null : () => AppSnackBar.show(context, 'KYC verification coming soon'),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: (_kycApproved ? AppColors.green : AppColors.orange).withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: (_kycApproved ? AppColors.green : AppColors.orange).withOpacity(0.4)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _kycApproved ? Icons.verified_rounded : Icons.warning_amber_rounded,
+            color: _kycApproved ? AppColors.green : AppColors.orange,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _kycApproved ? 'KYC Verified' : 'KYC Pending',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: _kycApproved ? AppColors.green : AppColors.orange,
+                    fontSize: 13,
+                  ),
+                ),
+                if (!_kycApproved)
+                  const Text('Complete KYC to enable withdrawals', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+              ],
+            ),
+          ),
+          if (!_kycApproved)
+            Icon(Icons.chevron_right_rounded, color: AppColors.orange, size: 20),
+        ],
+      ),
+    ),
+  );
+
+  Widget _buildStats() => Row(
+    children: [
+      _statCard(Icons.sports_esports_rounded, 'Games Played', _user?['total_games']?.toString() ?? '0'),
+      const SizedBox(width: 12),
+      _statCard(Icons.emoji_events_rounded, 'Total Winnings',
+          formatCurrency(_user?['total_winnings'] ?? 0)),
+    ],
+  );
+
+  Widget _statCard(IconData icon, String label, String value) => Expanded(
     child: Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: AppColors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border)),
+      decoration: BoxDecoration(
+        color: AppColors.cardBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+          Icon(icon, color: AppColors.gold, size: 20),
+          const SizedBox(height: 8),
+          Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
           const SizedBox(height: 4),
-          Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
         ],
+      ),
+    ),
+  );
+
+  Widget _buildReferralCard() => Container(
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: AppColors.cardBg,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: AppColors.gold.withOpacity(0.3)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Row(
+          children: [
+            Icon(Icons.card_giftcard_rounded, color: AppColors.gold, size: 18),
+            SizedBox(width: 8),
+            Text('Referral Code', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                _user?['referral_code'] ?? '—',
+                style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: AppColors.gold, letterSpacing: 5),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.copy_rounded, color: AppColors.gold, size: 20),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: _user?['referral_code'] ?? ''));
+                AppSnackBar.show(context, 'Referral code copied!', success: true);
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.share_rounded, color: AppColors.gold, size: 20),
+              onPressed: () => Share.share(
+                'Join MyOnlineJoker! Use my code ${_user?['referral_code']} and get ₹50 bonus. Download: https://game.myonlinejoker.com',
+              ),
+            ),
+          ],
+        ),
+        const Text(
+          'Earn ₹50 for every friend who joins and deposits!',
+          style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+        ),
+      ],
+    ),
+  );
+
+  Widget _buildLogoutButton() => SizedBox(
+    width: double.infinity,
+    child: OutlinedButton.icon(
+      onPressed: _logout,
+      icon: const Icon(Icons.logout_rounded, color: AppColors.red, size: 18),
+      label: const Text('Logout', style: TextStyle(color: AppColors.red, fontWeight: FontWeight.bold)),
+      style: OutlinedButton.styleFrom(
+        side: const BorderSide(color: AppColors.red),
+        padding: const EdgeInsets.symmetric(vertical: 14),
       ),
     ),
   );
