@@ -55,14 +55,19 @@ export default function Dashboard() {
       </Row>
 
       <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
+        <Col xs={24} xl={8}>
           <Card title="New Registrations Today" size="small">
             <Statistic value={stats.new_users_today || 0} suffix="users" />
           </Card>
         </Col>
-        <Col xs={24} xl={12}>
+        <Col xs={24} xl={8}>
           <Card title="Pending Withdrawals" size="small">
             <Statistic value={stats.pending_withdrawals || 0} suffix="requests" valueStyle={{ color: stats.pending_withdrawals > 0 ? '#fa8c16' : undefined }} />
+          </Card>
+        </Col>
+        <Col xs={24} xl={8}>
+          <Card title="Pending Deposits (to approve)" size="small">
+            <Statistic value={stats.pending_deposits || 0} suffix="requests" valueStyle={{ color: stats.pending_deposits > 0 ? '#fa8c16' : undefined }} />
           </Card>
         </Col>
       </Row>

@@ -231,11 +231,12 @@ async function start() {
 
   // GET /api/admin/dashboard/stats
   app.get('/api/admin/dashboard/stats', { onRequest: [authenticate] }, async (_req, reply) => {
-    const [activeUsers, activeRooms, revenueToday, pendingWithdrawals, newUsersToday] = await Promise.all([
+    const [activeUsers, activeRooms, revenueToday, pendingWithdrawals, pendingDeposits, newUsersToday] = await Promise.all([
       db.query("SELECT COUNT(*) FROM users WHERE status = 'active' AND is_bot = false"),
       db.query("SELECT COUNT(*) FROM game_rooms WHERE status = 'active'"),
       db.query("SELECT COALESCE(SUM(platform_fee_collected),0) as total FROM game_rooms WHERE ended_at >= NOW() - INTERVAL '1 day'"),
       db.query("SELECT COUNT(*) FROM payment_orders WHERE type = 'withdrawal' AND status = 'created'"),
+      db.query("SELECT COUNT(*) FROM payment_orders WHERE type = 'deposit' AND status = 'created'"),
       db.query("SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '1 day' AND is_bot = false"),
     ])
     return reply.send({
@@ -243,6 +244,7 @@ async function start() {
       active_rooms: parseInt(activeRooms.rows[0].count),
       revenue_today: parseFloat(revenueToday.rows[0].total),
       pending_withdrawals: parseInt(pendingWithdrawals.rows[0].count),
+      pending_deposits: parseInt(pendingDeposits.rows[0].count),
       new_users_today: parseInt(newUsersToday.rows[0].count),
       fraud_alerts: 0,
     })

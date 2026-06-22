@@ -207,15 +207,17 @@ function Deposits() {
           {
             title: 'Actions', render: (r: any) => r.status !== 'paid' ? (
               <Space>
-                <Tooltip title="Credit the user's wallet and mark this deposit paid (use when gateway succeeded but webhook never landed)">
-                  <Button size="small" icon={<DollarOutlined />}
+                <Tooltip title={r.gateway === 'manual'
+                  ? "Approve this manual deposit: credit the user's wallet and mark it paid"
+                  : "Credit the user's wallet and mark this deposit paid (use when gateway succeeded but webhook never landed)"}>
+                  <Button size="small" type="primary" icon={<DollarOutlined />}
                     onClick={() => { setRecon({ row: r, action: 'mark_paid_and_credit' }); setReference(''); setReason('') }}>
-                    Reconcile + Credit
+                    {r.gateway === 'manual' ? 'Approve & Credit' : 'Reconcile + Credit'}
                   </Button>
                 </Tooltip>
                 <Button size="small" danger icon={<CloseOutlined />}
                   onClick={() => { setRecon({ row: r, action: 'mark_failed' }); setReference(''); setReason('') }}>
-                  Mark Failed
+                  {r.gateway === 'manual' ? 'Reject' : 'Mark Failed'}
                 </Button>
               </Space>
             ) : '-'
