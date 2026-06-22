@@ -3,11 +3,16 @@ import 'package:flutter/services.dart';
 import 'dart:math';
 import 'dart:async';
 import '../../../core/network/api_client.dart';
+import '../../../core/socket/socket_service.dart';
+import '../../../core/constants/socket_events.dart';
 import '../../../shared/theme/app_theme.dart';
 
-// Single-player Aviator. Each round is the player vs the house: a fresh round
-// starts automatically, the plane climbs, and the player cashes out before it
-// flies away. The round is driven entirely on-device (no shared multiplayer).
+// Server-driven Aviator. The round (crash point, multiplier, history) is owned
+// by the aviator engine (port 3005) over Socket.IO so the outcome is provably
+// fair, cheat-resistant, and subject to the admin-configured economics
+// (house edge / rake / max-win). The device only renders and sends
+// place_bet / cashout intents. A local 60fps interpolation keeps the plane
+// motion smooth between the server's multiplier ticks.
 class AviatorPage extends StatefulWidget {
   const AviatorPage({super.key});
   @override
@@ -15,13 +20,17 @@ class AviatorPage extends StatefulWidget {
 }
 
 class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin {
-  // Drives the per-frame render loop (plane, curve, multiplier growth).
+  final _aviator = AviatorSocketService();
+  final _subs = <StreamSubscription>[];
+
+  // Drives the per-frame render loop (plane glow + multiplier interpolation).
   late final AnimationController _ticker;
   // Pulses the multiplier / plane glow.
   late final AnimationController _pulse;
 
-  String _phase = 'betting'; // betting, flying, crashed
-  double _multiplier = 1.00;
+  String _phase = 'connecting'; // connecting, betting, flying, crashed
+  double _multiplier = 1.00;       // smoothed value shown on screen
+  double _serverMultiplier = 1.00; // latest authoritative value from server
   double? _crashAt;
   double _betAmount = 50;
   bool _betPlaced = false;
@@ -31,9 +40,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   String? _errorMsg;
   int _bettingSecondsLeft = 5;
   double? _balance;
-
-  final _rng = Random();
-  int _phaseStartMs = 0;
+  Timer? _bettingTimer;
 
   @override
   void initState() {
@@ -44,8 +51,19 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 600))
       ..repeat(reverse: true);
     _loadBalance();
-    _history = List.generate(8, (_) => _rollCrash());
-    _enterBetting();
+    _connect();
+  }
+
+  Future<void> _connect() async {
+    await _aviator.connect();
+    _subs.add(_aviator.on(SocketEvents.aviatorRoundStart).listen(_onRoundStart));
+    _subs.add(_aviator.on(SocketEvents.aviatorFlyingStart).listen(_onFlyingStart));
+    _subs.add(_aviator.on(SocketEvents.aviatorMultiplierTick).listen(_onTick));
+    _subs.add(_aviator.on(SocketEvents.aviatorCrashed).listen(_onCrashed));
+    _subs.add(_aviator.on(SocketEvents.aviatorRoundState).listen(_onRoundState));
+    _subs.add(_aviator.on(SocketEvents.aviatorBetPlaced).listen(_onBetPlaced));
+    _subs.add(_aviator.on(SocketEvents.aviatorCashedOut).listen(_onCashedOut));
+    _subs.add(_aviator.on(SocketEvents.errorEvent).listen(_onError));
   }
 
   Future<void> _loadBalance() async {
@@ -56,78 +74,141 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     } catch (_) {/* offline / no auth */}
   }
 
-  void _enterBetting() {
+  List<double> _parseHistory(dynamic raw) {
+    if (raw is! List) return _history;
+    return raw.map((e) => double.tryParse(e.toString()) ?? 0).toList();
+  }
+
+  // ── Socket event handlers ──────────────────────────────────────────────
+  void _onRoundStart(dynamic data) {
+    if (!mounted) return;
+    final ms = (data?['betting_time_ms'] as num?)?.toInt() ?? 5000;
     setState(() {
       _phase = 'betting';
-      _betPlaced = false; _cashedOut = false; _myMultiplier = null;
+      _betPlaced = false;
+      _cashedOut = false;
+      _myMultiplier = null;
       _multiplier = 1.00;
-      _bettingSecondsLeft = 5;
-      _crashAt = _rollCrash();
+      _serverMultiplier = 1.00;
+      _crashAt = null;
+      _history = _parseHistory(data?['history']);
+      _bettingSecondsLeft = (ms / 1000).ceil();
     });
-    _phaseStartMs = DateTime.now().millisecondsSinceEpoch;
+    _startBettingCountdown(ms);
   }
 
-  // House-edge weighted crash point: mostly 1–3x, occasional long tail.
-  double _rollCrash() {
-    final r = _rng.nextDouble();
-    final c = (0.97 / (1 - r)).clamp(1.0, 50.0);
-    return double.parse(c.toStringAsFixed(2));
+  void _startBettingCountdown(int ms) {
+    _bettingTimer?.cancel();
+    final end = DateTime.now().millisecondsSinceEpoch + ms;
+    _bettingTimer = Timer.periodic(const Duration(milliseconds: 200), (t) {
+      if (!mounted || _phase != 'betting') { t.cancel(); return; }
+      final left = ((end - DateTime.now().millisecondsSinceEpoch) / 1000).ceil().clamp(0, 99);
+      if (left != _bettingSecondsLeft) setState(() => _bettingSecondsLeft = left);
+      if (left <= 0) t.cancel();
+    });
   }
 
+  void _onFlyingStart(dynamic _) {
+    if (!mounted) return;
+    _bettingTimer?.cancel();
+    setState(() {
+      _phase = 'flying';
+      _multiplier = 1.00;
+      _serverMultiplier = 1.00;
+    });
+  }
+
+  void _onTick(dynamic data) {
+    final m = (data?['multiplier'] as num?)?.toDouble();
+    if (m == null) return;
+    _serverMultiplier = m;
+    if (_phase != 'flying') setState(() => _phase = 'flying');
+  }
+
+  void _onCrashed(dynamic data) {
+    if (!mounted) return;
+    final crash = (data?['crash_at'] as num?)?.toDouble() ?? _serverMultiplier;
+    HapticFeedback.heavyImpact();
+    setState(() {
+      _phase = 'crashed';
+      _crashAt = crash;
+      _multiplier = crash;
+      _serverMultiplier = crash;
+      _history = [crash, ..._history].take(20).toList();
+    });
+    // Wallet settles on the server at crash time; refresh the balance.
+    _loadBalance();
+  }
+
+  void _onRoundState(dynamic data) {
+    if (!mounted) return;
+    final status = data?['status']?.toString() ?? 'betting';
+    setState(() {
+      _phase = status == 'flying' ? 'flying' : status == 'crashed' ? 'crashed' : 'betting';
+      _serverMultiplier = (data?['multiplier'] as num?)?.toDouble() ?? 1.00;
+      _multiplier = _serverMultiplier;
+      _history = _parseHistory(data?['history']);
+    });
+  }
+
+  void _onBetPlaced(dynamic data) {
+    if (!mounted) return;
+    setState(() => _betPlaced = true);
+    HapticFeedback.mediumImpact();
+    _loadBalance(); // server locked the stake
+  }
+
+  void _onCashedOut(dynamic data) {
+    if (!mounted) return;
+    final m = (data?['multiplier'] as num?)?.toDouble() ?? _serverMultiplier;
+    setState(() {
+      _cashedOut = true;
+      _myMultiplier = m;
+    });
+    HapticFeedback.heavyImpact();
+  }
+
+  void _onError(dynamic data) {
+    if (!mounted) return;
+    final msg = data?['message']?.toString() ?? 'Something went wrong';
+    setState(() => _errorMsg = msg);
+    Future.delayed(const Duration(seconds: 3), () { if (mounted) setState(() => _errorMsg = null); });
+  }
+
+  // 60fps render loop: ease the displayed multiplier toward the server value
+  // so the plane glides smoothly between 100ms server ticks.
   void _onFrame() {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final elapsed = (now - _phaseStartMs) / 1000.0;
-
-    if (_phase == 'betting') {
-      final left = (5 - elapsed).ceil();
-      if (left != _bettingSecondsLeft) setState(() => _bettingSecondsLeft = left.clamp(0, 5));
-      if (elapsed >= 5) { setState(() => _phase = 'flying'); _phaseStartMs = now; }
-    } else if (_phase == 'flying') {
-      final m = exp(0.16 * elapsed); // ~2x at 4.3s, ~4x at 8.7s
-      if (_crashAt != null && m >= _crashAt!) {
-        setState(() { _multiplier = _crashAt!; _phase = 'crashed'; });
-        HapticFeedback.heavyImpact();
-        _phaseStartMs = now;
-      } else {
-        setState(() => _multiplier = m);
-      }
-    } else if (_phase == 'crashed') {
-      if (elapsed >= 2.5) {
-        setState(() => _history = [_crashAt ?? _multiplier, ..._history].take(20).toList());
-        _enterBetting();
-      } else {
-        setState(() {}); // keep painting the crash frame
-      }
+    if (_phase == 'flying') {
+      final next = _multiplier + (_serverMultiplier - _multiplier) * 0.25;
+      setState(() => _multiplier = next);
     } else {
-      setState(() {});
+      setState(() {}); // keep painting glow / crash frame
     }
   }
 
   void _placeBet() {
-    // Block betting with insufficient balance.
+    if (_phase != 'betting') return;
     if (_balance != null && _balance! < _betAmount) {
       setState(() => _errorMsg = 'Low balance — add money to play');
       Future.delayed(const Duration(seconds: 3), () { if (mounted) setState(() => _errorMsg = null); });
       return;
     }
-    setState(() {
-      _betPlaced = true;
-      if (_balance != null) _balance = _balance! - _betAmount;
-    });
+    // Optimistic lock; server confirms via aviator:bet_placed or rejects via error.
+    setState(() => _betPlaced = true);
+    _aviator.emit(SocketEvents.aviatorPlaceBet, {'amount': _betAmount});
     HapticFeedback.mediumImpact();
   }
 
   void _cashout() {
-    setState(() {
-      _cashedOut = true;
-      _myMultiplier = _multiplier;
-      if (_balance != null) _balance = _balance! + _betAmount * _multiplier;
-    });
-    HapticFeedback.heavyImpact();
+    if (_phase != 'flying' || !_betPlaced || _cashedOut) return;
+    _aviator.emit(SocketEvents.aviatorCashout);
   }
 
   @override
   void dispose() {
+    _bettingTimer?.cancel();
+    for (final s in _subs) { s.cancel(); }
+    _aviator.disconnect();
     _ticker.dispose();
     _pulse.dispose();
     super.dispose();
@@ -229,6 +310,16 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   );
 
   Widget _buildCenterReadout(bool crashed) {
+    if (_phase == 'connecting') {
+      return const Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(width: 28, height: 28, child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 2.5)),
+          SizedBox(height: 14),
+          Text('Connecting to round…', style: TextStyle(color: Colors.white54, letterSpacing: 1)),
+        ],
+      );
+    }
     if (crashed) {
       return Column(
         mainAxisSize: MainAxisSize.min,

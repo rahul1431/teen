@@ -67,8 +67,23 @@ Admin panel (`admin-panel/src/pages/GameConfig.tsx`):
 | Gradle 8.3 incompatible with AGP 8.3.0 | Bumped Gradle wrapper to 8.4 |
 | `flutter_local_notifications` desugaring error | Added `coreLibraryDesugaringEnabled = true` + `desugar_jdk_libs:2.1.4` |
 
+### Phase 7 — Mobile Aviator wired to server engine ✅
+- `aviator_page.dart` rebuilt to be **server-driven** via `AviatorSocketService`
+  (`/aviator/` namespace → engine port 3005). The device no longer decides the
+  outcome — crash point, multiplier and history all come from the server, so the
+  game is provably fair and the admin economics (houseEdge/rake/maxWin) now
+  actually apply.
+- Socket events consumed: `round_start`, `flying_start`, `multiplier_tick`,
+  `crashed`, `round_state` (resync on connect); emits `place_bet` / `cashout`.
+- Wallet now settled server-side (lock on bet, credit on crash); client just
+  refreshes `/api/wallet/balance` on `bet_placed` and `crashed`.
+- Local 60fps interpolation eases the displayed multiplier toward the latest
+  server tick so the plane glides smoothly between 100ms ticks.
+- Low-balance guard + "Connecting to round…" state retained.
+- ⚠️ **Deploy note:** nginx must route `/aviator/` → `127.0.0.1:3005`
+  (websocket upgrade) for the APK to reach the engine over HTTPS.
+
 ### Pending for session 6 items ⏳
-- [ ] **Wire mobile Aviator to server engine** (port 3005) for real-money settlement — currently runs local on-device rounds. Admin profit controls (houseEdge/rake/maxWin) only apply to server rounds.
 - [ ] VPS redeploy: `git pull` + `pm2 restart teen-aviator-engine teen-admin-svc` + rebuild admin panel
 - [ ] Teen Patti rake deduction (Go engine currently credits full pot)
 - [ ] APK build status: last mobile commit `8a18b69` — verify green on Actions
