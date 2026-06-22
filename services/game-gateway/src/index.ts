@@ -34,16 +34,18 @@ async function start() {
 
   // Socket.IO auth middleware
   io.use(async (socket, next) => {
+    console.log(`[socket] handshake attempt from ${socket.handshake.address} transport=${socket.conn.transport.name} hasToken=${!!(socket.handshake.auth.token || socket.handshake.headers.authorization)}`)
     try {
       const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.split(' ')[1]
-      if (!token) return next(new Error('No token'))
+      if (!token) { console.warn('[socket] rejected: no token'); return next(new Error('No token')) }
       const payload = app.jwt.verify(token) as any
       socket.data.userId = payload.sub
       socket.data.username = payload.username
       // Map socketId → userId in Redis
       await pubClient.setex(`game:socket:${socket.id}`, 3600, payload.sub)
       next()
-    } catch {
+    } catch (err) {
+      console.warn('[socket] rejected: invalid token —', (err as Error).message)
       next(new Error('Invalid token'))
     }
   })
