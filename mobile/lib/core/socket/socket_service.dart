@@ -24,7 +24,7 @@ class SocketService {
       return;
     }
     _socket = io.io(AppConfig.socketUrl, io.OptionBuilder()
-        .setTransports(['websocket', 'polling'])
+        .setTransports(['polling', 'websocket'])
         .setAuth({'token': token})
         .enableAutoConnect()
         .enableReconnection()
@@ -95,7 +95,7 @@ class AviatorSocketService {
     if (_socket?.connected == true) return;
     final token = await SecureStorage.getAccessToken();
     _socket = io.io(AppConfig.socketUrl, io.OptionBuilder()
-        .setTransports(['websocket', 'polling'])
+        .setTransports(['polling', 'websocket'])
         .setPath('/aviator/')
         .setAuth({'token': token})
         .enableAutoConnect()
