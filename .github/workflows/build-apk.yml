@@ -52,6 +52,12 @@ jobs:
           API_BASE_URL="${API_BASE_URL:-https://game.myonlinejoker.com}"
           SOCKET_URL="${SOCKET_URL:-https://game.myonlinejoker.com}"
           RAZORPAY_KEY_ID="${RAZORPAY_KEY_ID:-rzp_test_placeholder}"
+          # Strip leading/trailing whitespace — a SOCKET_URL secret with a stray
+          # trailing space compiles fine but makes the socket fail host lookup
+          # (getaddrinfo errno 7) while leaving HTTP/Dio unaffected.
+          API_BASE_URL="$(printf '%s' "$API_BASE_URL" | xargs)"
+          SOCKET_URL="$(printf '%s' "$SOCKET_URL" | xargs)"
+          RAZORPAY_KEY_ID="$(printf '%s' "$RAZORPAY_KEY_ID" | xargs)"
           cat > lib/core/constants/app_config.dart << EOF
           class AppConfig {
             static const String apiBaseUrl = '${API_BASE_URL}';

@@ -19,7 +19,9 @@ class SocketService {
   // problems are visible on-device without adb/server logs.
   final ValueNotifier<String> status = ValueNotifier('idle');
   final ValueNotifier<String> lastError = ValueNotifier('');
-  String get url => AppConfig.socketUrl;
+  // Trim defensively: a SOCKET_URL build secret with trailing whitespace
+  // compiles fine but makes getaddrinfo fail ("Failed host lookup", errno 7).
+  String get url => AppConfig.socketUrl.trim();
   bool tokenPresent = false;
 
   bool get isConnected => _socket?.connected ?? false;
@@ -36,7 +38,7 @@ class SocketService {
       return;
     }
     status.value = 'connecting to $url';
-    _socket = io.io(AppConfig.socketUrl, <String, dynamic>{
+    _socket = io.io(url, <String, dynamic>{
       'transports': ['polling', 'websocket'],
       'autoConnect': true,
       'reconnection': true,
@@ -126,7 +128,7 @@ class AviatorSocketService {
   Future<void> connect() async {
     if (_socket?.connected == true) return;
     final token = await SecureStorage.getAccessToken();
-    _socket = io.io(AppConfig.socketUrl, io.OptionBuilder()
+    _socket = io.io(AppConfig.socketUrl.trim(), io.OptionBuilder()
         .setTransports(['polling', 'websocket'])
         .setPath('/aviator/')
         .setAuth({'token': token})
