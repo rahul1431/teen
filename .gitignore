@@ -15,9 +15,6 @@ services/game-engines/teen-patti/teen-patti-engine
 .env
 **/.env
 *.env.local
-google-services.json
-**/google-services.json
-
 # Flutter
 mobile/.dart_tool/
 mobile/android/local.properties
@@ -28,7 +25,6 @@ mobile/.flutter-plugins-dependencies
 mobile/build/
 mobile/.pub-cache/
 mobile/android/.gradle/
-mobile/android/app/google-services.json
 *.apk
 
 # Runtime user uploads — keep the directory layout, ignore the content

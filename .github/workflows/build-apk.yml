@@ -30,18 +30,26 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Write google-services.json (only if secret is set)
+      - name: Write google-services.json
         working-directory: mobile/android/app
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           if [ -n "$GOOGLE_SERVICES_JSON" ]; then
-            echo "$GOOGLE_SERVICES_JSON" | base64 -d > google-services.json
-            echo "Wrote google-services.json — Firebase/FCM enabled."
+            # Try base64 decode first; fall back to writing raw JSON if it's not base64
+            if echo "$GOOGLE_SERVICES_JSON" | base64 -d > google-services.json 2>/dev/null && \
+               python3 -c "import json,sys; json.load(open('google-services.json'))" 2>/dev/null; then
+              echo "Wrote google-services.json from base64 secret — Firebase/FCM enabled."
+            else
+              echo "$GOOGLE_SERVICES_JSON" > google-services.json
+              echo "Wrote google-services.json from raw JSON secret — Firebase/FCM enabled."
+            fi
           else
-            echo "GOOGLE_SERVICES_JSON secret not set — skipping. APK builds without"
-            echo "Firebase config; push notifications disabled until the secret is added."
+            # Use the bundled fallback (already committed for CI)
+            echo "GOOGLE_SERVICES_JSON secret not set — using bundled google-services.json."
           fi
+          # Verify the file is valid JSON
+          python3 -c "import json; json.load(open('google-services.json')); print('google-services.json OK')"
 
       - name: Write app config
         working-directory: mobile

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "694238629601",
+    "project_id": "teen-26cae",
+    "storage_bucket": "teen-26cae.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:694238629601:android:48185fbcdce19f41d1f1a0",
+        "android_client_info": {
+          "package_name": "com.teenpatti.game"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCdWKkuROCAlqFTziUv58X_x7yeNjcx2w8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
