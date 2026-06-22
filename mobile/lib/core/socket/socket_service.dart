@@ -36,15 +36,13 @@ class SocketService {
       return;
     }
     status.value = 'connecting to $url';
-    // Pass token as query param — avoids a null-crash bug in OptionBuilder.setAuth()
-    // that causes "Null check operator used on a null value" during polling handshake.
-    final uri = '${AppConfig.socketUrl}?token=${Uri.encodeComponent(token)}';
-    _socket = io.io(uri, <String, dynamic>{
+    _socket = io.io(AppConfig.socketUrl, <String, dynamic>{
       'transports': ['polling', 'websocket'],
       'autoConnect': true,
       'reconnection': true,
       'reconnectionAttempts': 10,
       'reconnectionDelay': 2000,
+      'query': {'token': token},
     });
 
     // Apply event handlers that were registered via on() before socket existed.
@@ -68,16 +66,16 @@ class SocketService {
     });
     _socket!.onConnectError((e) {
       status.value = 'connect-error';
-      lastError.value = e.toString();
+      lastError.value = e?.toString() ?? 'unknown connect error';
       print('[Socket] Connect error: $e');
     });
     _socket!.onError((e) {
-      lastError.value = e.toString();
+      lastError.value = e?.toString() ?? 'unknown error';
       print('[Socket] error: $e');
     });
     _socket!.on('connect_error', (e) {
       status.value = 'connect-error';
-      lastError.value = e.toString();
+      lastError.value = e?.toString() ?? 'unknown connect error';
       print('[Socket] connect_error detail: $e');
     });
   }
