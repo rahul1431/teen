@@ -224,6 +224,8 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+            _buildSocketDebugPanel(),
             const Spacer(),
             if (_searching)
               Column(
@@ -242,6 +244,57 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                   ),
                 ],
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Live socket diagnostics — visible on-device so connection failures are
+  // observable without adb/server logs. Tap to force a reconnect.
+  Widget _buildSocketDebugPanel() {
+    return GestureDetector(
+      onTap: () => _socket.connect(),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.35),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.gold.withOpacity(0.4)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(Icons.bug_report, size: 14, color: AppColors.gold),
+                SizedBox(width: 6),
+                Text('Socket Debug (tap to reconnect)',
+                    style: TextStyle(color: AppColors.gold, fontSize: 11, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text('URL: ${_socket.url}',
+                style: const TextStyle(color: Colors.white70, fontSize: 10)),
+            Text('Token: ${_socket.tokenPresent ? "present" : "MISSING"}',
+                style: TextStyle(
+                    color: _socket.tokenPresent ? Colors.greenAccent : Colors.redAccent,
+                    fontSize: 10)),
+            ValueListenableBuilder<String>(
+              valueListenable: _socket.status,
+              builder: (_, status, __) => Text('Status: $status',
+                  style: TextStyle(
+                      color: status == 'connected' ? Colors.greenAccent : Colors.orangeAccent,
+                      fontSize: 10, fontWeight: FontWeight.bold)),
+            ),
+            ValueListenableBuilder<String>(
+              valueListenable: _socket.lastError,
+              builder: (_, err, __) => err.isEmpty
+                  ? const SizedBox.shrink()
+                  : Text('Error: $err',
+                      style: const TextStyle(color: Colors.redAccent, fontSize: 10)),
+            ),
           ],
         ),
       ),

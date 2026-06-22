@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../constants/app_config.dart';
 import '../storage/secure_storage.dart';
@@ -14,15 +15,27 @@ class SocketService {
   final _pendingHandlers = <String, void Function(dynamic)>{};
   void Function()? _reconnectHandler;
 
+  // Observable diagnostics — surfaced in the lobby debug panel so connection
+  // problems are visible on-device without adb/server logs.
+  final ValueNotifier<String> status = ValueNotifier('idle');
+  final ValueNotifier<String> lastError = ValueNotifier('');
+  String get url => AppConfig.socketUrl;
+  bool tokenPresent = false;
+
   bool get isConnected => _socket?.connected ?? false;
 
   Future<void> connect() async {
     if (_socket?.connected == true) return;
+    status.value = 'reading-token';
     final token = await SecureStorage.getAccessToken();
-    if (token == null) {
+    tokenPresent = token != null && token.isNotEmpty;
+    if (token == null || token.isEmpty) {
+      status.value = 'no-token';
+      lastError.value = 'No auth token — please log in again';
       print('[Socket] connect() skipped: no auth token');
       return;
     }
+    status.value = 'connecting to $url';
     _socket = io.io(AppConfig.socketUrl, io.OptionBuilder()
         .setTransports(['polling', 'websocket'])
         .setAuth({'token': token})
@@ -42,10 +55,29 @@ class SocketService {
       _socket!.on('reconnect', (_) => _reconnectHandler!());
     }
 
-    _socket!.onConnect((_) => print('[Socket] Connected to ${AppConfig.socketUrl}'));
-    _socket!.onDisconnect((reason) => print('[Socket] Disconnected: $reason'));
-    _socket!.onConnectError((e) => print('[Socket] Connect error: $e'));
-    _socket!.on('connect_error', (e) => print('[Socket] connect_error detail: $e'));
+    _socket!.onConnect((_) {
+      status.value = 'connected';
+      lastError.value = '';
+      print('[Socket] Connected to ${AppConfig.socketUrl}');
+    });
+    _socket!.onDisconnect((reason) {
+      status.value = 'disconnected: $reason';
+      print('[Socket] Disconnected: $reason');
+    });
+    _socket!.onConnectError((e) {
+      status.value = 'connect-error';
+      lastError.value = e.toString();
+      print('[Socket] Connect error: $e');
+    });
+    _socket!.onError((e) {
+      lastError.value = e.toString();
+      print('[Socket] error: $e');
+    });
+    _socket!.on('connect_error', (e) {
+      status.value = 'connect-error';
+      lastError.value = e.toString();
+      print('[Socket] connect_error detail: $e');
+    });
   }
 
   Stream<dynamic> on(String event) {
