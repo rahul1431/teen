@@ -30,23 +30,16 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Write google-services.json
+      - name: Verify google-services.json
         working-directory: mobile/android/app
-        env:
-          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
-          set +e
-          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
-            echo "$GOOGLE_SERVICES_JSON" | base64 -d > google-services.json 2>/dev/null
-            if [ $? -ne 0 ] || [ ! -s google-services.json ]; then
-              printf '%s' "$GOOGLE_SERVICES_JSON" > google-services.json
-            fi
-            echo "google-services.json written from secret."
-          else
-            echo "No GOOGLE_SERVICES_JSON secret — using bundled file."
-          fi
-          ls -la google-services.json || echo "Warning: google-services.json not found, build may fail"
-          exit 0
+          # The valid google-services.json is committed to the repo. We do NOT
+          # overwrite it from a secret, since a malformed secret breaks the
+          # Gradle processReleaseGoogleServices task. Just verify it parses.
+          python3 -c "import json; json.load(open('google-services.json'))" \
+            && echo "Bundled google-services.json is valid JSON." \
+            || { echo "ERROR: bundled google-services.json is invalid"; exit 1; }
+          ls -la google-services.json
 
       - name: Write app config
         working-directory: mobile
