@@ -38,14 +38,18 @@ class SocketService {
       return;
     }
     status.value = 'connecting to $url';
-    _socket = io.io(url, <String, dynamic>{
-      'transports': ['polling', 'websocket'],
-      'autoConnect': true,
-      'reconnection': true,
-      'reconnectionAttempts': 10,
-      'reconnectionDelay': 2000,
-      'query': {'token': token},
-    });
+    // Build options via OptionBuilder so the full Engine.IO option set is
+    // populated. Passing a bare Map leaves internal keys unset and trips a
+    // "Null check operator used on a null value" crash inside the client.
+    // Token is sent as a query param — the gateway reads handshake.query.token.
+    _socket = io.io(url, io.OptionBuilder()
+        .setTransports(['polling', 'websocket'])
+        .setQuery({'token': token})
+        .enableAutoConnect()
+        .enableReconnection()
+        .setReconnectionAttempts(10)
+        .setReconnectionDelay(2000)
+        .build());
 
     // Apply event handlers that were registered via on() before socket existed.
     _pendingHandlers.forEach((event, handler) {
