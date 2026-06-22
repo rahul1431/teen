@@ -6,7 +6,8 @@ import '../../../core/constants/socket_events.dart';
 import '../../../shared/theme/app_theme.dart';
 
 class TeenPattiLobbyPage extends StatefulWidget {
-  const TeenPattiLobbyPage({super.key});
+  final String variation;
+  const TeenPattiLobbyPage({super.key, this.variation = 'classic'});
   @override
   State<TeenPattiLobbyPage> createState() => _TeenPattiLobbyPageState();
 }
@@ -16,7 +17,15 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   double _selectedStake = 10;
   bool _searching = false;
   String? _balance;
+  double? _balanceValue;
   final _stakes = [10.0, 50.0, 100.0, 500.0, 1000.0];
+
+  String get _variationLabel {
+    switch (widget.variation) {
+      case 'ak47': return 'AK47';
+      default:     return 'Classic';
+    }
+  }
 
   @override
   void initState() {
@@ -39,14 +48,63 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
     try {
       final res = await ApiClient().dio.get('/api/wallet/balance');
       if (!mounted) return;
-      setState(() => _balance =
-          double.parse(res.data['real_balance'].toString()).toStringAsFixed(0));
+      final value = double.parse(res.data['real_balance'].toString());
+      setState(() {
+        _balanceValue = value;
+        _balance = value.toStringAsFixed(0);
+      });
     } catch (_) {/* offline / no auth — leave as '—' */}
   }
 
   void _joinMatchmaking() {
+    // Gate: block join when balance is unknown or below the selected stake.
+    if (_balanceValue == null || _balanceValue! < _selectedStake) {
+      _showLowBalanceDialog();
+      return;
+    }
     setState(() => _searching = true);
-    _socket.emit(SocketEvents.joinMatchmaking, {'game_type': 'teen_patti', 'stake': _selectedStake});
+    _socket.emit(SocketEvents.joinMatchmaking, {
+      'game_type': 'teen_patti',
+      'stake': _selectedStake,
+      'variation': widget.variation,
+    });
+  }
+
+  void _showLowBalanceDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.cardBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: const [
+            Icon(Icons.account_balance_wallet_rounded, color: AppColors.orange, size: 22),
+            SizedBox(width: 8),
+            Text('Low Balance', style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(
+          'You need ₹${_selectedStake.toInt()} to join this table.\n'
+          'Your balance is ₹${_balance ?? '0'}.\n\nAdd money to start playing.',
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          ElevatedButton.icon(
+            onPressed: () { Navigator.pop(ctx); context.push('/wallet'); },
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('Add Money'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.gold,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _cancelSearch() {
@@ -58,7 +116,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Teen Patti'),
+        title: Text('Teen Patti · $_variationLabel'),
         actions: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14),

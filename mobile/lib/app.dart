@@ -9,6 +9,7 @@ import 'features/auth/pages/register_page.dart';
 import 'features/auth/pages/otp_page.dart';
 import 'features/home/home_page.dart';
 import 'features/wallet/wallet_page.dart';
+import 'features/games/teen_patti/modes_page.dart';
 import 'features/games/teen_patti/lobby_page.dart';
 import 'features/games/teen_patti/game_page.dart';
 import 'features/games/aviator/aviator_page.dart';
@@ -39,7 +40,8 @@ final GoRouter _router = GoRouter(
     GoRoute(path: '/home', builder: (_, __) => const HomePage()),
     GoRoute(path: '/wallet', builder: (_, __) => const WalletPage()),
     GoRoute(path: '/notifications', builder: (_, __) => const NotificationsPage()),
-    GoRoute(path: '/games/teen-patti', builder: (_, __) => const TeenPattiLobbyPage()),
+    GoRoute(path: '/games/teen-patti', builder: (_, __) => const TeenPattiModesPage()),
+    GoRoute(path: '/games/teen-patti/lobby', builder: (_, s) => TeenPattiLobbyPage(variation: s.uri.queryParameters['variation'] ?? 'classic')),
     GoRoute(path: '/games/teen-patti/play/:roomId', builder: (_, s) => TeenPattiGamePage(roomId: s.pathParameters['roomId']!)),
     GoRoute(path: '/games/teen-patti/demo', builder: (_, __) => const TeenPattiGamePage(roomId: 'DEMO', demo: true)),
     GoRoute(path: '/games/aviator', builder: (_, __) => const AviatorPage()),
