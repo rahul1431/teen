@@ -321,8 +321,22 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// loadRakePct reads the admin-configured platform fee for Teen Patti from
+// game_configs.rake_percent (a percentage, e.g. 5 = 5%) and returns it as a
+// fraction. Falls back to 5% if the config is missing or out of range.
+func (s *Server) loadRakePct() float64 {
+	const def = 0.05
+	var pct float64
+	err := s.db.QueryRow(context.Background(),
+		`SELECT rake_percent FROM game_configs WHERE game_type = 'teen_patti'`).Scan(&pct)
+	if err != nil || pct < 0 || pct > 50 {
+		return def
+	}
+	return pct / 100.0
+}
+
 func (s *Server) determineWinner(state *GameState) *GameResult {
-	rakePct := 0.05
+	rakePct := s.loadRakePct()
 	rake := state.Pot * rakePct
 	prize := state.Pot - rake
 
