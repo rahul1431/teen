@@ -215,6 +215,49 @@ export class MatchmakingService {
       }
     }
 
+    // Ludo runs on its own engine (roll/move turns, no cards). It uses a
+    // different state shape, so it gets a dedicated cache + room:joined branch.
+    if (gameType === 'ludo') {
+      const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
+      try {
+        const res = await fetch(`${engineUrl}/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            room_id: roomId,
+            stake,
+            players: gatewayPlayers.map(p => ({ user_id: p.userId, username: p.username, seat: p.seat, is_bot: p.isBot })),
+          }),
+          signal: AbortSignal.timeout(5000),
+        })
+        if (res.ok) engineState = await res.json()
+      } catch (e) {
+        console.error('Ludo engine unavailable', e)
+      }
+
+      const ludoState = engineState || { ...fallbackState, game_type: 'ludo', current_turn: 0 }
+      await this.redis.setex(`game:room:${roomId}`, 3600, JSON.stringify({ ...ludoState, gameType: 'ludo', stake }))
+
+      console.log(`[matchmaking] emitting room:joined (ludo) to ${realPlayers.length} players for room=${roomId}`)
+      for (const p of realPlayers) {
+        this.hub.joinRoom(p.userId, roomId)
+        this.hub.sendToUser(p.userId, 'room:joined', {
+          room_id: roomId,
+          game_type: 'ludo',
+          stake,
+          state: ludoState,
+          players: ludoState.players,
+          your_seat: gatewayPlayers.find(pl => pl.userId === p.userId)?.seat,
+          current_turn: ludoState.current_turn ?? 0,
+          pot: stake * allPlayers.length,
+        })
+      }
+
+      // If a bot holds the opening turn, start driving bot turns immediately.
+      void this.driveLudoBots(roomId)
+      return
+    }
+
     const gameState = engineState || fallbackState
     // Always cache in gateway key so game:action handler can find the room
     await this.redis.setex(`game:room:${roomId}`, 3600, JSON.stringify({
@@ -309,6 +352,64 @@ export class MatchmakingService {
         console.error('Bot turn error', e)
       }
     }, 1500 + Math.random() * 1500)
+  }
+
+  // Drive consecutive bot turns for a Ludo room until it's a human's turn or
+  // the game ends. Each bot turn is broadcast so clients animate the dice/move.
+  async driveLudoBots(roomId: string): Promise<void> {
+    const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
+    for (let guard = 0; guard < 400; guard++) {
+      const state = await this.getRoomState(roomId)
+      if (!state || state.status === 'completed') return
+      const turnIdx = state.current_turn ?? state.currentTurn ?? 0
+      const cur = state.players?.[turnIdx]
+      if (!cur || !cur.is_bot) return // human's turn — stop and wait for input
+
+      await new Promise(r => setTimeout(r, 1200)) // pacing so the table feels live
+      try {
+        const res = await fetch(`${engineUrl}/bot-turn`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ room_id: roomId, user_id: cur.user_id }),
+          signal: AbortSignal.timeout(5000),
+        })
+        if (!res.ok) return
+        const data = await res.json() as any
+        const newState = data.state
+        await this.setRoomState(roomId, { ...newState, gameType: 'ludo' })
+        this.hub.sendToRoom(roomId, 'game:state_update', {
+          room_id: roomId,
+          state: newState,
+          last_action: { user_id: cur.user_id, action: 'bot', dice: data.dice, moved_token: data.moved_token },
+          result: data.result ?? null,
+        })
+        if (data.result) { await this.handleLudoEnd(roomId, data.result); return }
+      } catch (e) {
+        console.error('Ludo bot turn error', e)
+        return
+      }
+    }
+  }
+
+  // Credit the Ludo winner and broadcast the final result to the room.
+  async handleLudoEnd(roomId: string, result: any): Promise<void> {
+    if (result?.winner_id) {
+      try {
+        await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit-game-win`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+          body: JSON.stringify({ user_id: result.winner_id, amount: result.prize, room_id: roomId }),
+        })
+      } catch (e) {
+        console.error('Failed to credit ludo win', e)
+      }
+    }
+    this.hub.sendToRoom(roomId, 'game:result', {
+      room_id: roomId,
+      winner_id: result.winner_id,
+      prize: result.prize,
+      rankings: result.rankings ?? [],
+    })
   }
 
   async handleGameEnd(roomId: string, result: any, realPlayers: MatchmakingEntry[], state: any): Promise<void> {

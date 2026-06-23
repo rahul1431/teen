@@ -115,6 +115,10 @@ async function start() {
       }
 
       case 'game:action': {
+        const rawState = await matchmaking.getRoomState(data.room_id)
+        if (rawState && (rawState.gameType === 'ludo' || rawState.game_type === 'ludo')) {
+          return handleLudoAction(conn, data.room_id, data)
+        }
         const { room_id, action, amount, sequence_num } = data
         return handleGameAction(conn, room_id, action, amount, sequence_num)
       }
@@ -145,6 +149,45 @@ async function start() {
 
       default:
         console.warn(`[ws] unknown event: ${event}`)
+    }
+  }
+
+  // Ludo: forward roll_dice / move_token to the Ludo engine, broadcast the new
+  // board to the room, then either finish or hand off to the bot driver.
+  async function handleLudoAction(conn: Conn, room_id: string, data: any): Promise<void> {
+    const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
+    try {
+      const res = await fetch(`${engineUrl}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          room_id,
+          user_id: conn.userId,
+          action: data.action,
+          token_index: data.token_index,
+        }),
+      })
+      if (!res.ok) {
+        const msg = await res.text()
+        return hub.send(conn, 'error', { message: msg || 'Engine error' })
+      }
+      const out = await res.json() as any
+      const newState = out.state
+      await matchmaking.setRoomState(room_id, { ...newState, gameType: 'ludo' })
+      hub.sendToRoom(room_id, 'game:state_update', {
+        room_id,
+        state: newState,
+        last_action: { user_id: conn.userId, action: data.action, dice: newState.dice, token_index: data.token_index },
+        result: out.result ?? null,
+      })
+      if (out.result) {
+        await matchmaking.handleLudoEnd(room_id, out.result)
+      } else {
+        void matchmaking.driveLudoBots(room_id)
+      }
+    } catch (e) {
+      console.error('Ludo action failed', e)
+      hub.send(conn, 'error', { message: 'Engine unavailable' })
     }
   }
 
