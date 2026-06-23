@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../core/network/api_client.dart';
+import '../../core/storage/secure_storage.dart';
 import '../../shared/theme/app_theme.dart';
 import '../../shared/widgets/error_retry.dart';
 
@@ -12,6 +13,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedIndex = 0;
   Map<String, dynamic>? _user;
   double _realBalance = 0;
@@ -52,6 +54,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey,
+      drawer: _buildDrawer(),
       body: SafeArea(
         child: Stack(
           children: [
@@ -83,9 +87,15 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   Widget _buildHeader() => Padding(
-    padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+    padding: const EdgeInsets.fromLTRB(8, 12, 20, 0),
     child: Row(
       children: [
+        // Hamburger — opens the full navigation drawer (top-left).
+        IconButton(
+          icon: const Icon(Icons.menu_rounded, color: AppColors.gold),
+          tooltip: 'Menu',
+          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+        ),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -295,10 +305,21 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
   BottomNavigationBar _buildBottomNav() => BottomNavigationBar(
     currentIndex: _selectedIndex,
+    type: BottomNavigationBarType.fixed,
+    showUnselectedLabels: true,
+    selectedItemColor: AppColors.gold,
+    unselectedItemColor: AppColors.textSecondary,
+    backgroundColor: AppColors.surface,
     onTap: (i) {
+      if (i == _selectedIndex) return;
+      // Home stays in place; the others push so the back button returns here
+      // and the footer highlight resets correctly on return.
       setState(() => _selectedIndex = i);
       const paths = ['/home', '/wallet', '/leaderboard', '/profile'];
-      context.go(paths[i]);
+      if (i == 0) return;
+      context.push(paths[i]).then((_) {
+        if (mounted) setState(() => _selectedIndex = 0);
+      });
     },
     items: const [
       BottomNavigationBarItem(icon: Icon(Icons.home_rounded), label: 'Home'),
@@ -307,4 +328,103 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       BottomNavigationBarItem(icon: Icon(Icons.person_rounded), label: 'Profile'),
     ],
   );
+
+  // Full navigation drawer — every section + all games in one place.
+  Widget _buildDrawer() => Drawer(
+    backgroundColor: AppColors.background,
+    child: SafeArea(
+      child: Column(
+        children: [
+          // Profile / balance header.
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                  colors: [AppColors.cardBg, AppColors.surface],
+                  begin: Alignment.topLeft, end: Alignment.bottomRight),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 24,
+                      backgroundColor: AppColors.gold,
+                      child: Text(
+                        ((_user?['username'] as String?)?.isNotEmpty == true
+                            ? _user!['username'][0]
+                            : 'P').toUpperCase(),
+                        style: const TextStyle(
+                            color: Colors.black, fontWeight: FontWeight.bold, fontSize: 18),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(_user?['username'] ?? 'Player',
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w900)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text('Balance: ${formatCurrency(_realBalance)}',
+                    style: const TextStyle(
+                        color: AppColors.gold, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                _drawerItem(Icons.home_rounded, 'Home', '/home'),
+                _drawerItem(Icons.account_balance_wallet_rounded, 'Wallet', '/wallet'),
+                _drawerItem(Icons.leaderboard_rounded, 'Leaderboard', '/leaderboard'),
+                _drawerItem(Icons.notifications_rounded, 'Notifications', '/notifications'),
+                _drawerItem(Icons.person_rounded, 'Profile', '/profile'),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 14, 20, 6),
+                  child: Text('GAMES',
+                      style: TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 11,
+                          letterSpacing: 1.5,
+                          fontWeight: FontWeight.bold)),
+                ),
+                _drawerItem(Icons.style_rounded, 'Teen Patti', '/games/teen-patti'),
+                _drawerItem(Icons.flight_rounded, 'Aviator', '/games/aviator'),
+                _drawerItem(Icons.casino_rounded, 'Ludo', '/games/ludo'),
+                _drawerItem(Icons.sports_cricket_rounded, 'Cricket Betting', '/games/cricket'),
+                _drawerItem(Icons.confirmation_number_rounded, 'Matka', '/games/matka'),
+                _drawerItem(Icons.local_activity_rounded, 'Lottery', '/games/lottery'),
+                const Divider(color: AppColors.border, height: 24),
+                ListTile(
+                  leading: const Icon(Icons.logout_rounded, color: AppColors.red),
+                  title: const Text('Logout',
+                      style: TextStyle(color: AppColors.red)),
+                  onTap: () async {
+                    await SecureStorage.clearAll();
+                    if (mounted) context.go('/auth/login');
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _drawerItem(IconData icon, String label, String route) => ListTile(
+        leading: Icon(icon, color: AppColors.gold),
+        title: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+        onTap: () {
+          Navigator.pop(context); // close the drawer first
+          if (route == '/home') return;
+          context.push(route);
+        },
+      );
 }
