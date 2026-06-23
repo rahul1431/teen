@@ -21,6 +21,13 @@ class AppColors {
   static const List<Color> aviatorGrad    = [Color(0xFF1E3A8A), Color(0xFF0B1E52)];
   static const List<Color> premiumGrad    = [Color(0xFFB8870B), Color(0xFF7A5A00)];
   static const List<Color> variationsGrad = [Color(0xFF0E5C2F), Color(0xFF07311A)];
+  static const List<Color> ludoGrad       = [Color(0xFF6A1B9A), Color(0xFF311B5E)];
+
+  // Ludo token colours (seat order)
+  static const ludoRed    = Color(0xFFE53935);
+  static const ludoGreen  = Color(0xFF43A047);
+  static const ludoYellow = Color(0xFFFDD835);
+  static const ludoBlue   = Color(0xFF1E88E5);
 
   // Table felt
   static const feltDark    = Color(0xFF0A1428);

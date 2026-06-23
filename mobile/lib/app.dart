@@ -13,6 +13,9 @@ import 'features/games/teen_patti/modes_page.dart';
 import 'features/games/teen_patti/lobby_page.dart';
 import 'features/games/teen_patti/game_page.dart';
 import 'features/games/aviator/aviator_page.dart';
+import 'features/games/ludo/ludo_modes_page.dart';
+import 'features/games/ludo/ludo_lobby_page.dart';
+import 'features/games/ludo/ludo_game_page.dart';
 import 'features/leaderboard/leaderboard_page.dart';
 import 'features/profile/profile_page.dart';
 import 'features/notifications/notifications_page.dart';
@@ -45,6 +48,10 @@ final GoRouter _router = GoRouter(
     GoRoute(path: '/games/teen-patti/play/:roomId', builder: (_, s) => TeenPattiGamePage(roomId: s.pathParameters['roomId']!)),
     GoRoute(path: '/games/teen-patti/demo', builder: (_, __) => const TeenPattiGamePage(roomId: 'DEMO', demo: true)),
     GoRoute(path: '/games/aviator', builder: (_, __) => const AviatorPage()),
+    GoRoute(path: '/games/ludo', builder: (_, __) => const LudoModesPage()),
+    GoRoute(path: '/games/ludo/lobby', builder: (_, s) => LudoLobbyPage(privateMode: s.uri.queryParameters['private'], privateCode: s.uri.queryParameters['code'])),
+    GoRoute(path: '/games/ludo/practice', builder: (_, __) => const LudoGamePage(offline: true)),
+    GoRoute(path: '/games/ludo/play/:roomId', builder: (_, s) => LudoGamePage(roomId: s.pathParameters['roomId']!, initialData: s.extra as Map<String, dynamic>?)),
     GoRoute(path: '/leaderboard', builder: (_, __) => const LeaderboardPage()),
     GoRoute(path: '/profile', builder: (_, __) => const ProfilePage()),
   ],

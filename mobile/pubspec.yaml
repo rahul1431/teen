@@ -45,6 +45,9 @@ dependencies:
   lottie: ^3.1.2
   flutter_animate: ^4.5.0
   google_fonts: ^6.2.1
+
+  # Sound effects (dice, chips, cashout, win/lose cues across all games)
+  audioplayers: ^6.1.0
   fl_chart: ^0.68.0
 
   # Deep links
@@ -72,3 +75,4 @@ flutter:
   assets:
     - assets/images/
     - assets/animations/
+    - assets/sounds/
