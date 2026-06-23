@@ -1198,6 +1198,82 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // ═══════════════════ BETTING GAMES (Matka / Lottery / Cricket) ═══════════
+  // The admin panel manages these here; write actions proxy to the
+  // betting-service internal endpoints (which hold the result-settlement
+  // logic and wallet payouts) using the shared internal key.
+  const BETTING_URL = process.env.BETTING_SERVICE_URL || 'http://127.0.0.1:3012'
+  const callBetting = async (path: string, body: any) => {
+    const res = await fetch(`${BETTING_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+      body: JSON.stringify(body),
+    })
+    const data = await res.json().catch(() => ({}))
+    return { ok: res.ok, status: res.status, data }
+  }
+
+  // --- Matka ---
+  app.get('/api/admin/betting/matka/draws', { onRequest: [authenticate] }, async (_req, reply) => {
+    const rows = await db.query(
+      `SELECT d.*, m.name AS market_name,
+              (SELECT COUNT(*) FROM matka_bets b WHERE b.draw_id = d.id) AS bet_count,
+              (SELECT COALESCE(SUM(b.amount),0) FROM matka_bets b WHERE b.draw_id = d.id) AS total_staked
+       FROM matka_draws d JOIN matka_markets m ON m.id = d.market_id
+       WHERE d.draw_date = CURRENT_DATE ORDER BY m.sort_order`)
+    return reply.send({ draws: rows.rows })
+  })
+
+  app.post('/api/admin/betting/matka/declare', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/matka/declare', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  // --- Lottery ---
+  app.get('/api/admin/betting/lottery/draws', { onRequest: [authenticate] }, async (_req, reply) => {
+    const rows = await db.query(
+      `SELECT d.*,
+              (SELECT COUNT(*) FROM lottery_tickets t WHERE t.draw_id = d.id) AS ticket_count
+       FROM lottery_draws d ORDER BY d.draw_time DESC LIMIT 100`)
+    return reply.send({ draws: rows.rows })
+  })
+
+  app.post('/api/admin/betting/lottery/create', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/lottery/create', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/lottery/draw', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/lottery/draw', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  // --- Cricket ---
+  app.get('/api/admin/betting/cricket/matches', { onRequest: [authenticate] }, async (_req, reply) => {
+    const matches = await db.query(`SELECT * FROM cricket_matches ORDER BY start_time DESC LIMIT 100`)
+    const out = []
+    for (const m of matches.rows) {
+      const markets = await db.query(`SELECT * FROM cricket_markets WHERE match_id = $1`, [m.id])
+      out.push({ ...m, markets: markets.rows })
+    }
+    return reply.send({ matches: out })
+  })
+
+  app.post('/api/admin/betting/cricket/match', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/match', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/market', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/market', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/settle', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/settle', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))
 
   const port = parseInt(process.env.PORT || '3008')

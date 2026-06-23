@@ -10,6 +10,7 @@ import GameRooms from './pages/GameRooms'
 import Finance from './pages/Finance'
 import Notifications from './pages/Notifications'
 import GameConfig from './pages/GameConfig'
+import BettingManagement from './pages/BettingManagement'
 import AdminUsers from './pages/AdminUsers'
 import Profile from './pages/Profile'
 import RiskCenter from './pages/RiskCenter'
@@ -34,6 +35,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="finance" element={<Finance />} />
           <Route path="notifications" element={<Notifications />} />
           <Route path="game-config" element={<GameConfig />} />
+          <Route path="betting" element={<BettingManagement />} />
           <Route path="admin-users" element={<AdminUsers />} />
           <Route path="profile" element={<Profile />} />
           <Route path="risk-center" element={<RiskCenter />} />
