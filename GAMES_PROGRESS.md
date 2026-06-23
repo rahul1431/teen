@@ -59,13 +59,13 @@ sending a handshake. Everything now runs on **raw WebSockets**.
 
 ## 2. Aviator (update gameplay) 🟡
 
-Current engine works (provably-fair crash curve, bet/cashout). Planned
-gameplay + polish updates:
-- ⬜ Smooth multiplier curve animation (eased, 60fps) + rising plane path
-- ⬜ Auto-cashout target input + auto-bet for next round
-- ⬜ Live bets list with cashout flashes; "you won" burst on cashout
-- ⬜ Round history chips with color coding (low/mid/high crash)
-- ⬜ Takeoff / tick / cashout / crash sound effects
+Current engine works (provably-fair crash curve, bet/cashout). Updates:
+- ✅ Smooth multiplier curve animation (eased, 60fps) + rising plane path
+- ✅ **Auto-cashout** target stepper + **auto-bet** for next round
+- ✅ "You won +₹X" burst animation on cashout (flutter_animate)
+- ✅ Round history chips with colour coding (low/mid/high crash)
+- ✅ Takeoff / countdown / cashout / crash sound effects
+- ⬜ Live bets list (other players) with cashout flashes
 - ⬜ Lottie explosion on crash, confetti on big cashout
 
 ---
@@ -82,11 +82,13 @@ Shared building blocks (packages already present: `flutter_animate`,
 
 ## 4. Sound effects (every game) 🟡
 
-- 🟡 `core/audio/SoundService` (audioplayers) — preloaded SFX, mute toggle,
+- ✅ `core/audio/SoundService` (audioplayers) — pooled SFX, mute toggle,
   graceful no-op when an asset is missing.
-- ⬜ Asset set under `assets/sounds/` (dice, token move, capture, win, lose,
-  card deal, chip, button tap, aviator takeoff/cashout/crash, countdown).
-- ⬜ Wire into Teen Patti, Ludo, Aviator.
+- ⬜ Asset set under `assets/sounds/` (drop royalty-free files — see
+  `assets/sounds/README.md` for the exact filename list).
+- ✅ Wired into **Ludo** (dice/move/capture/home/win/lose/turn).
+- ✅ Wired into **Aviator** (takeoff/countdown/cashout/crash/win).
+- 🟡 Teen Patti (card deal / chip / win-lose) — in progress.
 
 > Note: SFX **binaries** must be added to `assets/sounds/` (royalty-free, e.g.
 > Mixkit/Freesound/Pixabay). The service is wired to filenames and silently

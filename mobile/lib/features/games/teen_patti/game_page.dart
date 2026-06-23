@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:async';
 import 'dart:math' as math;
+import '../../../core/audio/sound_service.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../core/storage/secure_storage.dart';
@@ -56,6 +57,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
   @override
   void initState() {
     super.initState();
+    SoundService.instance.init();
     SystemChrome.setPreferredOrientations(
         [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
@@ -144,6 +146,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         _isMyTurn = (currentPlayer?['userId'] ?? currentPlayer?['user_id']) == _myUserId;
         if (_isMyTurn) _startTurnTimer();
       });
+      SoundService.instance.play(Sfx.cardDeal);
     });
 
     _socket.on(SocketEvents.gameStateUpdate).listen((data) {
@@ -183,8 +186,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         Timer(const Duration(milliseconds: 140), HapticFeedback.heavyImpact);
         Timer(const Duration(milliseconds: 280), HapticFeedback.heavyImpact);
         SystemSound.play(SystemSoundType.alert);
+        SoundService.instance.play(Sfx.win);
       } else {
         HapticFeedback.mediumImpact();
+        SoundService.instance.play(Sfx.lose);
       }
     });
 
@@ -240,6 +245,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     _turnTimer?.cancel();
     setState(() => _isMyTurn = false);
     if (action == 'show') setState(() => _isSeen = true);
+    SoundService.instance.play(action == 'fold' ? Sfx.buttonTap : Sfx.chipBet);
     if (widget.demo) {
       _applyDemoAction(action, amount);
       return;
