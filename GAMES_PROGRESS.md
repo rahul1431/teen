@@ -115,9 +115,11 @@ settle" games, settled by admin/internal endpoints.
 - **Rummy retired** ✅ — config row deleted, removed from admin panel and UI
   (enum value retained; Postgres can't drop it safely).
 - Admin/internal endpoints to create matches/markets/draws and declare
-  results. ⬜ Admin-panel UI screens for managing these (next).
-- ⬜ "My bets" history screens on mobile (endpoints exist:
-  `/matka/my-bets`, `/lottery/my-tickets`, `/cricket/my-bets`).
+  results. ✅ **Admin-panel "Betting Games" page**: Matka declare
+  open/close, Lottery create + declare winner, Cricket add match/market +
+  settle/void.
+- ✅ **"My Bets" history** on mobile (unified page; receipt icon in each
+  game's app bar) — Matka bets, Lottery tickets, Cricket bets.
 
 ## 5. "Top games" structure (rules / gameplay / feel)
 

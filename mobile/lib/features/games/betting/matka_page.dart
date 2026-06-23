@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../core/audio/sound_service.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
+import 'betting_history_page.dart';
 
 /// Satta Matka — pick a market, bet single/jodi/panna numbers, view your bets.
 class MatkaPage extends StatefulWidget {
@@ -38,7 +39,17 @@ class _MatkaPageState extends State<MatkaPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Matka')),
+      appBar: AppBar(title: const Text('Matka'), actions: [
+        IconButton(
+          icon: const Icon(Icons.receipt_long_rounded),
+          tooltip: 'My Bets',
+          onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) =>
+                      const BettingHistoryPage(type: BettingType.matka))),
+        ),
+      ]),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
           : RefreshIndicator(

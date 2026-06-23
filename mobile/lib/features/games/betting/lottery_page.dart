@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../core/audio/sound_service.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
+import 'betting_history_page.dart';
 
 /// Lottery — buy a numbered ticket for an open draw; win big on an exact match.
 class LotteryPage extends StatefulWidget {
@@ -36,7 +37,17 @@ class _LotteryPageState extends State<LotteryPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Lottery')),
+      appBar: AppBar(title: const Text('Lottery'), actions: [
+        IconButton(
+          icon: const Icon(Icons.receipt_long_rounded),
+          tooltip: 'My Tickets',
+          onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) =>
+                      const BettingHistoryPage(type: BettingType.lottery))),
+        ),
+      ]),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
           : RefreshIndicator(

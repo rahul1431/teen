@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../core/audio/sound_service.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
+import 'betting_history_page.dart';
 
 /// Cricket betting — IPL / T20 / ICC and more. Each match exposes markets
 /// (match winner, top batsman, …) with odds; tap an option to place a bet.
@@ -37,7 +38,17 @@ class _CricketPageState extends State<CricketPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Cricket Betting')),
+      appBar: AppBar(title: const Text('Cricket Betting'), actions: [
+        IconButton(
+          icon: const Icon(Icons.receipt_long_rounded),
+          tooltip: 'My Bets',
+          onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) =>
+                      const BettingHistoryPage(type: BettingType.cricket))),
+        ),
+      ]),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
           : RefreshIndicator(
