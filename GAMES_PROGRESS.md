@@ -17,13 +17,16 @@ sending a handshake. Everything now runs on **raw WebSockets**.
 | Flutter `web_socket_channel` client | ✅ | same public API, token refresh, backoff |
 | `dotenv` dependency fix (VPS crash) | ✅ | gateway + aviator were missing it |
 | Gateway `cluster`→`fork` (single instance) | ✅ | in-memory hub needs one process |
-| **Nginx `/ws` upgrade block on VPS** | 🟡 | **blocking live connect** — see below |
+| **Nginx `/ws` upgrade block on VPS** | ✅ | live — `/ws` returns `101` through nginx |
 
-> ⚠️ **Action required on VPS:** the public site returns `404` for `/ws`
-> because the updated nginx config isn't applied. Paste
-> `infra/nginx/hestia-proxy.conf` into Hestia → Web → Edit Domain → Advanced →
-> Custom Nginx Config, then `nginx -t && systemctl reload nginx`. Verified the
-> gateway itself upgrades correctly (`curl` to `127.0.0.1:3004/ws` → `101`).
+> ✅ **Resolved on VPS.** The `/ws`, `/ws/aviator` and `/api/betting/` blocks
+> were added to the live Hestia per-domain config
+> (`/home/admin/conf/web/game.myonlinejoker.com/nginx{,.ssl}.conf_api`).
+> Verified: `https://game.myonlinejoker.com/ws` → `101 Switching Protocols`
+> and `/api/betting/...` → `401` (service reachable, auth required).
+> Note: the repo's `infra/nginx/hestia-proxy.conf` uses a different (rewrite)
+> style than the box's hand-written `*_api` files — the live box was patched
+> in its own style rather than replaced.
 
 ---
 
