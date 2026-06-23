@@ -96,6 +96,29 @@ Shared building blocks (packages already present: `flutter_animate`,
 
 ---
 
+## 4b. Betting games — Matka · Lottery · Cricket ✅ (backend + mobile)
+
+New consolidated **betting-service** (port 3012, REST under `/api/betting`)
+plus mobile screens. These are "place bet → scheduled/declared result →
+settle" games, settled by admin/internal endpoints.
+
+| Game | Backend | Mobile | Settlement |
+|------|---------|--------|------------|
+| **Matka** | ✅ markets, daily draws, single/jodi/panna, std multipliers | ✅ market list + bet sheet | open/close session declare |
+| **Lottery** | ✅ scheduled draws, ticket buy | ✅ draw list + buy sheet (lucky dip) | exact-match payout |
+| **Cricket** (IPL/T20/ICC) | ✅ matches → markets (winner/top-bat/…) w/ odds | ✅ match cards + odds + bet sheet | per-market settle / void+refund |
+
+- Idempotent stake debit + prize credit via wallet-service (added
+  `/internal/wallet/debit`).
+- Migration `009_betting_games.sql`: all tables, `cricket` enum value, seeds
+  Matka markets, activates configs.
+- **Rummy retired** ✅ — config row deleted, removed from admin panel and UI
+  (enum value retained; Postgres can't drop it safely).
+- Admin/internal endpoints to create matches/markets/draws and declare
+  results. ⬜ Admin-panel UI screens for managing these (next).
+- ⬜ "My bets" history screens on mobile (endpoints exist:
+  `/matka/my-bets`, `/lottery/my-tickets`, `/cricket/my-bets`).
+
 ## 5. "Top games" structure (rules / gameplay / feel)
 
 Patterns we mirror from established titles, adapted to our stack:
@@ -117,6 +140,7 @@ Patterns we mirror from established titles, adapted to our stack:
 | aviator | 3005 | fork ×1 |
 | teen-patti engine | 3010 | fork ×1 |
 | **ludo engine** | **3011** | **fork ×1** |
+| **betting-service** (matka/lottery/cricket) | **3012** | **fork ×1** |
 
 ---
 

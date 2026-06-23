@@ -22,6 +22,9 @@ class AppColors {
   static const List<Color> premiumGrad    = [Color(0xFFB8870B), Color(0xFF7A5A00)];
   static const List<Color> variationsGrad = [Color(0xFF0E5C2F), Color(0xFF07311A)];
   static const List<Color> ludoGrad       = [Color(0xFF6A1B9A), Color(0xFF311B5E)];
+  static const List<Color> matkaGrad      = [Color(0xFFC2410C), Color(0xFF7A2208)];
+  static const List<Color> lotteryGrad    = [Color(0xFF0D9488), Color(0xFF064E45)];
+  static const List<Color> cricketGrad    = [Color(0xFF15803D), Color(0xFF0A4521)];
 
   // Ludo token colours (seat order)
   static const ludoRed    = Color(0xFFE53935);

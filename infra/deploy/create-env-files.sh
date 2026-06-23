@@ -3,7 +3,7 @@
 # Edit each file with your actual credentials after running
 
 BASE=/opt/teen
-SERVICES=(auth-service user-service wallet-service game-gateway leaderboard-service notification-service admin-service)
+SERVICES=(auth-service user-service wallet-service game-gateway betting-service leaderboard-service notification-service admin-service)
 
 # Generate ONE value per shared secret so every service agrees. A mismatched
 # JWT_SECRET between auth-service (signs tokens) and game-gateway (verifies
@@ -41,6 +41,18 @@ WALLET_SERVICE_URL=http://localhost:3003
 INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
 ENV
   echo "Created: $AVIATOR_ENV"
+fi
+
+# Create ludo engine env (HTTP engine behind the gateway, no JWT needed).
+LUDO_ENV="$BASE/services/game-engines/ludo/.env"
+if [ ! -f "$LUDO_ENV" ]; then
+cat > "$LUDO_ENV" << ENV
+PORT=3011
+NODE_ENV=production
+DATABASE_URL=postgresql://teen:teen_secret_2024@localhost:5432/teen_db
+REDIS_URL=redis://:teen_redis_2024@localhost:6379
+ENV
+  echo "Created: $LUDO_ENV"
 fi
 
 echo ""

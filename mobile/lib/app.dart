@@ -16,6 +16,9 @@ import 'features/games/aviator/aviator_page.dart';
 import 'features/games/ludo/ludo_modes_page.dart';
 import 'features/games/ludo/ludo_lobby_page.dart';
 import 'features/games/ludo/ludo_game_page.dart';
+import 'features/games/betting/matka_page.dart';
+import 'features/games/betting/lottery_page.dart';
+import 'features/games/betting/cricket_page.dart';
 import 'features/leaderboard/leaderboard_page.dart';
 import 'features/profile/profile_page.dart';
 import 'features/notifications/notifications_page.dart';
@@ -52,6 +55,9 @@ final GoRouter _router = GoRouter(
     GoRoute(path: '/games/ludo/lobby', builder: (_, s) => LudoLobbyPage(privateMode: s.uri.queryParameters['private'], privateCode: s.uri.queryParameters['code'])),
     GoRoute(path: '/games/ludo/practice', builder: (_, __) => const LudoGamePage(offline: true)),
     GoRoute(path: '/games/ludo/play/:roomId', builder: (_, s) => LudoGamePage(roomId: s.pathParameters['roomId']!, initialData: s.extra as Map<String, dynamic>?)),
+    GoRoute(path: '/games/matka', builder: (_, __) => const MatkaPage()),
+    GoRoute(path: '/games/lottery', builder: (_, __) => const LotteryPage()),
+    GoRoute(path: '/games/cricket', builder: (_, __) => const CricketPage()),
     GoRoute(path: '/leaderboard', builder: (_, __) => const LeaderboardPage()),
     GoRoute(path: '/profile', builder: (_, __) => const ProfilePage()),
   ],

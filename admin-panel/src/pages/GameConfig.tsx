@@ -5,10 +5,10 @@ import { adminApi } from '../api/client'
 const GAME_LABELS: Record<string, string> = {
   teen_patti: '🃏 Teen Patti',
   aviator: '✈️ Aviator',
-  rummy: '🎴 Rummy',
   ludo: '🎲 Ludo',
   matka: '🎯 Matka',
   lottery: '🎰 Lottery',
+  cricket: '🏏 Cricket',
 }
 
 export default function GameConfig() {
