@@ -67,6 +67,16 @@ module.exports = {
       max_memory_restart: '300M',
     },
     {
+      name: 'teen-betting',
+      cwd: `${BASE}/betting-service`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('betting-service'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '300M',
+    },
+    {
       name: 'teen-leaderboard',
       cwd: `${BASE}/leaderboard-service`,
       script: 'dist/index.js',

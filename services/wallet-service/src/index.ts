@@ -307,6 +307,33 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // Internal: POST /internal/wallet/debit (called by betting-service to take a
+  // stake when a user places a Matka/Lottery/Cricket bet). Idempotent.
+  app.post('/internal/wallet/debit', { onRequest: [authenticateInternal] }, async (req, reply) => {
+    const body = z.object({
+      user_id: z.string().uuid(),
+      amount: z.number().positive(),
+      reference_id: z.string().optional(),
+      idempotency_key: z.string(),
+      description: z.string().optional(),
+    }).parse(req.body)
+    try {
+      await walletSvc.debit({
+        userId: body.user_id,
+        amount: body.amount,
+        type: 'game_debit',
+        walletType: 'real',
+        referenceId: body.reference_id,
+        idempotencyKey: body.idempotency_key,
+        description: body.description || `Bet stake: ${body.reference_id}`,
+      })
+      return reply.send({ success: true })
+    } catch (err: any) {
+      const msg = err?.message === 'Insufficient balance' ? 'Insufficient balance' : 'Debit failed'
+      return reply.code(400).send({ error: msg })
+    }
+  })
+
   // Alias used by game-gateway: POST /internal/wallet/credit-game-win
   app.post('/internal/wallet/credit-game-win', { onRequest: [authenticateInternal] }, async (req, reply) => {
     const { user_id, amount, room_id } = req.body as any
