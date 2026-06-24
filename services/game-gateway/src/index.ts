@@ -224,7 +224,11 @@ async function start() {
       })
 
       if (newState.status === 'completed' && data.result) {
+        let winnerUsername = 'Unknown'
         if (data.result.winner_id) {
+          const winner = newState.players?.find((p: any) => (p.userId ?? p.user_id) === data.result.winner_id)
+          if (winner) winnerUsername = winner.username ?? 'Player'
+
           fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit-game-win`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
@@ -234,10 +238,15 @@ async function start() {
         hub.sendToRoom(room_id, 'game:result', {
           room_id,
           winner_id: data.result.winner_id,
+          winner_username: winnerUsername,
           prize: data.result.prize,
           hand_rank: data.result.hand_rank,
           all_hands: data.result.all_hands ?? [],
         })
+      } else {
+        const realPlayers = (newState.players ?? []).filter((p: any) => !(p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
+        const bots = (newState.players ?? []).filter((p: any) => (p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
+        matchmaking.scheduleBotTurn(room_id, newState, realPlayers, bots)
       }
     } catch (e) {
       console.error('Engine call failed', e)

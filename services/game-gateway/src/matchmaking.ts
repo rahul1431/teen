@@ -428,11 +428,15 @@ export class MatchmakingService {
       }
     }
 
+    const winner = state.players?.find((p: any) => (p.userId ?? p.user_id ?? p.id) === result.winner_id)
+    const winnerUsername = winner ? (winner.username ?? 'Player') : 'Unknown'
+
     // Notify all real players of result
     for (const p of realPlayers) {
       this.hub.sendToUser(p.userId, 'game:result', {
         room_id: roomId,
         winner_id: result.winner_id,
+        winner_username: winnerUsername,
         prize: result.prize,
         hand_rank: result.hand_rank,
         all_hands: result.all_hands ?? [],
