@@ -885,7 +885,7 @@ class _AviatorPainter extends CustomPainter {
         ],
         stops: const [0.0, 0.6, 1.0],
       ).createShader(Offset.zero & size);
-    canvas.drawRect(Offset.zero & size, Paint()..shader = bgGlow);
+    canvas.drawRect(Offset.zero & size, bgGlow);
 
     // Draw sliding dust stars to feel velocity
     final starPaint = Paint()..color = Colors.white.withOpacity(0.18);

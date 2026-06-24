@@ -201,8 +201,11 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         final la = data['last_action'] as Map?;
         if (la != null) {
           final actorId = la['user_id']?.toString() ?? '';
-          final actor = mappedPlayers.firstWhere((p) => (p['userId'] ?? p['user_id']) == actorId, orElse: () => null);
-          final actorName = actor?['username'] ?? 'Player';
+          final actor = mappedPlayers.firstWhere(
+            (p) => (p['userId'] ?? p['user_id']) == actorId,
+            orElse: () => <String, dynamic>{},
+          );
+          final actorName = actor['username'] ?? 'Player';
           _chat.add(_ChatMsg(userId: actorId, username: actorName, text: '${la['action']?.toString().toUpperCase()}', type: 'text'));
           if (_chat.length > 50) _chat.removeAt(0);
         }
