@@ -394,7 +394,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text('💥 CASH OUT 💥', 
-                      style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.black, letterSpacing: 2)),
+                      style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 2)),
                   const SizedBox(height: 2),
                   Text('+${formatCurrency(_lastWinPrize)}',
                       style: const TextStyle(
@@ -448,13 +448,13 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('FLEW AWAY!', style: TextStyle(color: AppColors.red, fontSize: 22, fontWeight: FontWeight.black, letterSpacing: 3)),
+          const Text('FLEW AWAY!', style: TextStyle(color: AppColors.red, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 3)),
           const SizedBox(height: 6),
           Text('${(_crashAt ?? _multiplier).toStringAsFixed(2)}x',
               style: const TextStyle(
                 color: AppColors.red, 
                 fontSize: 68, 
-                fontWeight: FontWeight.black,
+                fontWeight: FontWeight.w900,
                 shadows: [
                   Shadow(color: Colors.red, blurRadius: 16),
                 ],
@@ -472,7 +472,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
               style: const TextStyle(color: AppColors.textSecondary, letterSpacing: 2, fontSize: 11, fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
           Text('${_bettingSecondsLeft}s', 
-              style: const TextStyle(color: Colors.white, fontSize: 52, fontWeight: FontWeight.black)),
+              style: const TextStyle(color: Colors.white, fontSize: 52, fontWeight: FontWeight.w900)),
           const SizedBox(height: 12),
           SizedBox(
             width: 160,
@@ -510,7 +510,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
           Text('${_multiplier.toStringAsFixed(2)}x',
             style: TextStyle(
               fontSize: 72, 
-              fontWeight: FontWeight.black,
+              fontWeight: FontWeight.w900,
               color: multColor,
               shadows: [
                 Shadow(color: multColor.withOpacity(0.65), blurRadius: 28),
@@ -723,7 +723,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
                   child: Text('${target.toStringAsFixed(1)}x',
                       style: const TextStyle(
                           color: AppColors.gold,
-                          fontWeight: FontWeight.black,
+                          fontWeight: FontWeight.w900,
                           fontSize: 11)),
                 ),
                 _stepBtn(Icons.add, () => setState(() {
@@ -833,7 +833,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('CASH OUT', style: TextStyle(fontWeight: FontWeight.black, fontSize: 9, letterSpacing: 0.5)),
+              const Text('CASH OUT', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 9, letterSpacing: 0.5)),
               Text(formatCurrency(amount * _multiplier),
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
             ],

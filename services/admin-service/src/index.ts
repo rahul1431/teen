@@ -1274,6 +1274,105 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  // --- Satta Matka Market Creation & Deletion ---
+  app.get('/api/admin/betting/matka/markets', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query('SELECT * FROM matka_markets ORDER BY sort_order')
+    return reply.send({ markets: res.rows })
+  })
+
+  app.post('/api/admin/betting/matka/markets', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const body = z.object({
+      name: z.string(),
+      open_time: z.string(),
+      close_time: z.string(),
+      sort_order: z.number().int().default(0),
+    }).parse(req.body)
+    const r = await db.query(
+      `INSERT INTO matka_markets (name, open_time, close_time, sort_order)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [body.name, body.open_time, body.close_time, body.sort_order]
+    )
+    return reply.send({ success: true, market: r.rows[0] })
+  })
+
+  app.delete('/api/admin/betting/matka/markets/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const draws = await db.query(`SELECT id FROM matka_draws WHERE market_id = $1`, [id])
+    const drawIds = draws.rows.map(d => d.id)
+    if (drawIds.length > 0) {
+      await db.query(`DELETE FROM matka_bets WHERE draw_id = ANY($1)`, [drawIds])
+      await db.query(`DELETE FROM matka_draws WHERE id = ANY($1)`, [drawIds])
+    }
+    await db.query(`DELETE FROM matka_markets WHERE id = $1`, [id])
+    return reply.send({ success: true })
+  })
+
+  // --- Lottery Draw Deletion ---
+  app.delete('/api/admin/betting/lottery/draws/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    await db.query(`DELETE FROM lottery_tickets WHERE draw_id = $1`, [id])
+    await db.query(`DELETE FROM lottery_draws WHERE id = $1`, [id])
+    return reply.send({ success: true })
+  })
+
+  // --- Bot Management ---
+  app.post('/api/admin/bots', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const body = z.object({
+      username: z.string(),
+      phone: z.string().optional(),
+      initial_balance: z.number().nonnegative().default(10000),
+    }).parse(req.body)
+    
+    const phone = body.phone || `999${Math.floor(1000000 + Math.random() * 9000000)}`
+    const referralCode = Math.random().toString(36).substring(2, 10).toUpperCase()
+    
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
+      const userRes = await client.query(
+        `INSERT INTO users (phone, username, password_hash, is_bot, status, referral_code)
+         VALUES ($1, $2, $3, true, 'active', $4) RETURNING id`,
+        [phone, body.username, '$2b$12$invalid_bot_hash_never_login', referralCode]
+      )
+      const botId = userRes.rows[0].id
+      await client.query(
+        `INSERT INTO wallets (user_id, real_balance, bonus_balance)
+         VALUES ($1, $2, 0)`,
+        [botId, body.initial_balance]
+      )
+      await client.query('COMMIT')
+      return reply.send({ success: true, bot: { id: botId, username: body.username, phone, balance: body.initial_balance } })
+    } catch (e: any) {
+      await client.query('ROLLBACK')
+      return reply.code(400).send({ error: e.message || 'Failed to create bot' })
+    } finally {
+      client.release()
+    }
+  })
+
+  app.delete('/api/admin/bots/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const botCheck = await db.query('SELECT is_bot FROM users WHERE id = $1', [id])
+    if (!botCheck.rows.length || !botCheck.rows[0].is_bot) {
+      return reply.code(400).send({ error: 'User is not a bot or does not exist' })
+    }
+    
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('DELETE FROM game_participants WHERE user_id = $1', [id])
+      await client.query('DELETE FROM wallets WHERE user_id = $1', [id])
+      await client.query('DELETE FROM users WHERE id = $1', [id])
+      await client.query('COMMIT')
+      return reply.send({ success: true })
+    } catch (e: any) {
+      await client.query('ROLLBACK')
+      return reply.code(400).send({ error: e.message || 'Failed to delete bot' })
+    } finally {
+      client.release()
+    }
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))
 
   const port = parseInt(process.env.PORT || '3008')

@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import AdminLayout from './pages/Layout'
 import Dashboard from './pages/Dashboard'
 import Users from './pages/Users'
+import Bots from './pages/Bots'
 import Finance from './pages/Finance'
 import Notifications from './pages/Notifications'
 import AdminUsers from './pages/AdminUsers'
@@ -34,6 +35,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
           <Route index element={<Dashboard />} />
           <Route path="users" element={<Users />} />
+          <Route path="bots" element={<Bots />} />
           <Route path="finance" element={<Finance />} />
           <Route path="notifications" element={<Notifications />} />
           <Route path="games/teen-patti" element={<TeenPatti />} />

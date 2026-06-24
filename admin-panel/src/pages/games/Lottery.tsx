@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Divider
+  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Divider, Popconfirm
 } from 'antd'
-import { ReloadOutlined } from '@ant-design/icons'
+import { ReloadOutlined, DeleteOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
 const { Text } = Typography
@@ -79,6 +79,16 @@ export default function Lottery() {
     }
   }
 
+  const deleteDraw = async (id: string) => {
+    try {
+      await adminApi.delete(`/betting/lottery/draws/${id}`)
+      message.success('Draw deleted successfully!')
+      loadDraws()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to delete draw')
+    }
+  }
+
   useEffect(() => {
     loadConfig()
     loadDraws()
@@ -149,8 +159,20 @@ export default function Lottery() {
               { title: 'Winning #', dataIndex: 'winning_number', render: (v: string) => v || '—' },
               {
                 title: 'Action', render: (_: any, d: any) => (
-                  <Button type="primary" size="small" disabled={d.status === 'settled'}
-                    onClick={() => setDrawFor(d)}>Declare Winner</Button>
+                  <Space size="middle">
+                    <Button type="primary" size="small" disabled={d.status === 'settled'}
+                      onClick={() => setDrawFor(d)}>Declare Winner</Button>
+                    <Popconfirm
+                      title="Delete Draw"
+                      description="Delete this draw and all associated tickets? This cannot be undone."
+                      onConfirm={() => deleteDraw(d.id)}
+                      okText="Yes"
+                      cancelText="No"
+                      okButtonProps={{ danger: true }}
+                    >
+                      <Button danger size="small" icon={<DeleteOutlined />}>Delete</Button>
+                    </Popconfirm>
+                  </Space>
                 ),
               },
             ]} />

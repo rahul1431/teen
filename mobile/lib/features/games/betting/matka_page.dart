@@ -159,7 +159,7 @@ class _MatkaPageState extends State<MatkaPage> {
                     m['name'] ?? 'MARKET',
                     style: const TextStyle(
                         fontSize: 18,
-                        fontWeight: FontWeight.black,
+                        fontWeight: FontWeight.w900,
                         color: Colors.white,
                         letterSpacing: 0.5),
                   ),
@@ -178,7 +178,7 @@ class _MatkaPageState extends State<MatkaPage> {
                     settled ? 'CLOSED' : 'OPEN',
                     style: TextStyle(
                         fontSize: 10,
-                        fontWeight: FontWeight.black,
+                        fontWeight: FontWeight.w900,
                         color: settled ? Colors.white60 : AppColors.green),
                   ),
                 ),
@@ -241,7 +241,7 @@ class _MatkaPageState extends State<MatkaPage> {
                       elevation: 0,
                   ),
                   child: Text(settled ? 'CLOSED FOR TODAY' : 'PLACE BET NOW',
-                      style: const TextStyle(fontWeight: FontWeight.black, fontSize: 13, letterSpacing: 0.5)),
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 0.5)),
                 ),
               ),
             ),
@@ -307,7 +307,7 @@ class _MatkaPageState extends State<MatkaPage> {
             char,
             style: TextStyle(
               fontSize: 15,
-              fontWeight: FontWeight.black,
+              fontWeight: FontWeight.w900,
               color: isJodi ? Colors.white : AppColors.gold,
               letterSpacing: 0.5,
             ),
@@ -418,7 +418,7 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
           const SizedBox(height: 16),
           Text('${widget.market['name']} · Betting Slip'.toUpperCase(),
               style:
-                  const TextStyle(fontSize: 16, fontWeight: FontWeight.black, color: AppColors.gold, letterSpacing: 1)),
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: AppColors.gold, letterSpacing: 1)),
           const SizedBox(height: 14),
           const Text('Select Bet Type', style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
@@ -435,7 +435,7 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
             controller: _numberCtrl,
             keyboardType: TextInputType.number,
             maxLength: _maxLen,
-            style: const TextStyle(fontWeight: FontWeight.black, fontSize: 16),
+            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
             decoration: InputDecoration(
               labelText: 'Enter number ($_maxLen digit${_maxLen > 1 ? 's' : ''})',
               labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
@@ -469,7 +469,7 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
                   Text(
                     'Potential payout: ₹${(_amount * (double.tryParse(mult) ?? 0)).toStringAsFixed(0)} (${mult}x)',
                     style: const TextStyle(
-                        color: AppColors.goldLight, fontWeight: FontWeight.black, fontSize: 12),
+                        color: AppColors.goldLight, fontWeight: FontWeight.w900, fontSize: 12),
                   ),
                 ],
               ),
@@ -515,7 +515,7 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
                             strokeWidth: 2.5, color: Colors.black))
                     : Text('PLACE BET OF ₹${_amount.toInt()}',
                         style: const TextStyle(
-                            fontWeight: FontWeight.black, fontSize: 14, letterSpacing: 0.5)),
+                            fontWeight: FontWeight.w900, fontSize: 14, letterSpacing: 0.5)),
               ),
             ),
           ),
@@ -586,7 +586,7 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
                 '₹${v.toInt()}',
                 style: const TextStyle(
                   color: Colors.white,
-                  fontWeight: FontWeight.black,
+                  fontWeight: FontWeight.w900,
                   fontSize: 12,
                   shadows: [Shadow(color: Colors.black54, blurRadius: 2, offset: Offset(0, 1))]
                 ),

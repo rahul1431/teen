@@ -3,7 +3,7 @@ import {
   DashboardOutlined, UserOutlined, PlayCircleOutlined, DollarOutlined,
   BellOutlined, SettingOutlined, LogoutOutlined, TrophyOutlined, SafetyOutlined,
   TeamOutlined, ProfileOutlined, WarningOutlined, CustomerServiceOutlined,
-  FundOutlined,
+  FundOutlined, RobotOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
@@ -13,6 +13,7 @@ const { Sider, Header, Content } = Layout
 const menuItems = [
   { key: '/admin', icon: <DashboardOutlined />, label: 'Dashboard' },
   { key: '/admin/users', icon: <UserOutlined />, label: 'Users' },
+  { key: '/admin/bots', icon: <RobotOutlined />, label: 'Bot Management' },
   {
     key: 'games',
     icon: <PlayCircleOutlined />,

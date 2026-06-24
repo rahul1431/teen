@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import {
-  Card, Form, Switch, InputNumber, Select, Button, Table, Tag, Badge,
-  Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col, Modal, Input, Typography
+  Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
+  Space, message, Divider, Row, Col, Modal, Input, Typography, Popconfirm
 } from 'antd'
-import { ReloadOutlined } from '@ant-design/icons'
+import { ReloadOutlined, DeleteOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
 const { Text } = Typography
@@ -17,6 +17,13 @@ export default function Matka() {
   const [loadingDraws, setLoadingDraws] = useState(false)
   const [declareFor, setDeclareFor] = useState<any>(null)
   const [form] = Form.useForm()
+
+  // Markets management state
+  const [markets, setMarkets] = useState<any[]>([])
+  const [loadingMarkets, setLoadingMarkets] = useState(false)
+  const [showCreateMarket, setShowCreateMarket] = useState(false)
+  const [submittingMarket, setSubmittingMarket] = useState(false)
+  const [marketForm] = Form.useForm()
 
   const loadConfig = () => {
     setLoadingConfig(true)
@@ -48,6 +55,40 @@ export default function Matka() {
       .finally(() => setLoadingDraws(false))
   }
 
+  const loadMarkets = () => {
+    setLoadingMarkets(true)
+    adminApi.get('/betting/matka/markets')
+      .then(r => setMarkets(r.data.markets || []))
+      .catch(() => message.error('Failed to load markets'))
+      .finally(() => setLoadingMarkets(false))
+  }
+
+  const createMarket = async (values: any) => {
+    setSubmittingMarket(true)
+    try {
+      await adminApi.post('/betting/matka/markets', values)
+      message.success('Matka market created successfully!')
+      setShowCreateMarket(false)
+      marketForm.resetFields()
+      loadMarkets()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to create market')
+    } finally {
+      setSubmittingMarket(false)
+    }
+  }
+
+  const deleteMarket = async (id: number) => {
+    try {
+      await adminApi.delete(`/betting/matka/markets/${id}`)
+      message.success('Market and all associated draws deleted successfully')
+      loadMarkets()
+      loadDraws()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to delete market')
+    }
+  }
+
   const declare = async (values: any) => {
     try {
       const r = await adminApi.post('/betting/matka/declare', {
@@ -65,6 +106,7 @@ export default function Matka() {
   useEffect(() => {
     loadConfig()
     loadDraws()
+    loadMarkets()
   }, [])
 
   return (
@@ -113,26 +155,97 @@ export default function Matka() {
         </Col>
 
         <Col xs={24} lg={16}>
-          <Card title="Today's Matka Draws" extra={<Button icon={<ReloadOutlined />} onClick={loadDraws}>Refresh</Button>} loading={loadingDraws}>
-            <Table rowKey="id" dataSource={draws} pagination={false} size="small" columns={[
-              { title: 'Market', dataIndex: 'market_name' },
-              { title: 'Status', dataIndex: 'status', render: (s: string) => <Tag color={s === 'settled' ? 'red' : 'green'}>{s}</Tag> },
-              { title: 'Open', render: (_: any, d: any) => d.open_panna ? `${d.open_panna}-${d.open_digit}` : '—' },
-              { title: 'Close', render: (_: any, d: any) => d.close_panna ? `${d.close_digit}-${d.close_panna}` : '—' },
-              { title: 'Jodi', dataIndex: 'jodi', render: (j: string) => j || '—' },
-              { title: 'Bets', dataIndex: 'bet_count' },
-              { title: 'Staked', dataIndex: 'total_staked', render: (v: any) => `₹${Number(v || 0).toFixed(0)}` },
-              {
-                title: 'Action', render: (_: any, d: any) => (
-                  <Button type="primary" size="small" disabled={d.status === 'settled'}
-                    onClick={() => setDeclareFor(d)}>Declare</Button>
-                ),
-              },
-            ]} />
-          </Card>
+          <Space direction="vertical" size={24} style={{ width: '100%' }}>
+            
+            {/* Matka Markets Card */}
+            <Card 
+              title="Matka Markets" 
+              extra={
+                <Space>
+                  <Button type="primary" onClick={() => setShowCreateMarket(true)}>+ New Market</Button>
+                  <Button icon={<ReloadOutlined />} onClick={loadMarkets}>Refresh</Button>
+                </Space>
+              } 
+              loading={loadingMarkets}
+            >
+              <Table 
+                rowKey="id" 
+                dataSource={markets} 
+                pagination={false} 
+                size="small" 
+                columns={[
+                  { title: 'Market Name', dataIndex: 'name' },
+                  { title: 'Open Time', dataIndex: 'open_time' },
+                  { title: 'Close Time', dataIndex: 'close_time' },
+                  { title: 'Sort Order', dataIndex: 'sort_order' },
+                  {
+                    title: 'Action', 
+                    render: (_: any, m: any) => (
+                      <Popconfirm
+                        title="Delete Market"
+                        description="Delete this market and all associated draws/bets? This cannot be undone."
+                        onConfirm={() => deleteMarket(m.id)}
+                        okText="Yes"
+                        cancelText="No"
+                        okButtonProps={{ danger: true }}
+                      >
+                        <Button danger type="text" size="small" icon={<DeleteOutlined />}>Delete</Button>
+                      </Popconfirm>
+                    ),
+                  },
+                ]} 
+              />
+            </Card>
+
+            {/* Draws Card */}
+            <Card title="Today's Matka Draws" extra={<Button icon={<ReloadOutlined />} onClick={loadDraws}>Refresh</Button>} loading={loadingDraws}>
+              <Table rowKey="id" dataSource={draws} pagination={false} size="small" columns={[
+                { title: 'Market', dataIndex: 'market_name' },
+                { title: 'Status', dataIndex: 'status', render: (s: string) => <Tag color={s === 'settled' ? 'red' : 'green'}>{s}</Tag> },
+                { title: 'Open', render: (_: any, d: any) => d.open_panna ? `${d.open_panna}-${d.open_digit}` : '—' },
+                { title: 'Close', render: (_: any, d: any) => d.close_panna ? `${d.close_digit}-${d.close_panna}` : '—' },
+                { title: 'Jodi', dataIndex: 'jodi', render: (j: string) => j || '—' },
+                { title: 'Bets', dataIndex: 'bet_count' },
+                { title: 'Staked', dataIndex: 'total_staked', render: (v: any) => `₹${Number(v || 0).toFixed(0)}` },
+                {
+                  title: 'Action', render: (_: any, d: any) => (
+                    <Button type="primary" size="small" disabled={d.status === 'settled'}
+                      onClick={() => setDeclareFor(d)}>Declare</Button>
+                  ),
+                },
+              ]} />
+            </Card>
+
+          </Space>
         </Col>
       </Row>
 
+      {/* Create Market Modal */}
+      <Modal 
+        open={showCreateMarket} 
+        title="Create Matka Market" 
+        onCancel={() => setShowCreateMarket(false)} 
+        onOk={() => marketForm.submit()} 
+        okText="Create" 
+        confirmLoading={submittingMarket}
+      >
+        <Form form={marketForm} layout="vertical" onFinish={createMarket}>
+          <Form.Item name="name" label="Market Name" rules={[{ required: true, message: 'Please enter market name' }]}>
+            <Input placeholder="e.g. Kalyan Night" />
+          </Form.Item>
+          <Form.Item name="open_time" label="Open Time (HH:MM:SS)" rules={[{ required: true, message: 'Please enter open time' }]}>
+            <Input placeholder="e.g. 21:00:00" />
+          </Form.Item>
+          <Form.Item name="close_time" label="Close Time (HH:MM:SS)" rules={[{ required: true, message: 'Please enter close time' }]}>
+            <Input placeholder="e.g. 23:00:00" />
+          </Form.Item>
+          <Form.Item name="sort_order" label="Sort Order" initialValue={0}>
+            <InputNumber min={0} style={{ width: '100%' }} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Declare Result Modal */}
       <Modal open={!!declareFor} title={`Declare result — ${declareFor?.market_name}`}
         onCancel={() => setDeclareFor(null)} onOk={() => form.submit()} okText="Declare">
         <Form form={form} layout="vertical" onFinish={declare}>
