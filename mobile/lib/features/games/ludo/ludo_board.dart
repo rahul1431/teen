@@ -67,7 +67,7 @@ Offset tokenPosition(int seatIndex, int tokenIndex, int progress, double size) {
   return _cellCenter(7, 7, size); // home / centre
 }
 
-class LudoBoard extends StatelessWidget {
+class LudoBoard extends StatefulWidget {
   final LudoState state;
   final int? mySeatIndex; // highlight my movable tokens
   final void Function(int playerIdx, int tokenIndex)? onTokenTap;
@@ -80,20 +80,71 @@ class LudoBoard extends StatelessWidget {
   });
 
   @override
+  State<LudoBoard> createState() => _LudoBoardState();
+}
+
+class _LudoBoardState extends State<LudoBoard> with SingleTickerProviderStateMixin {
+  late final AnimationController _breathingCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _breathingCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = constraints.maxWidth;
-        return SizedBox(
-          width: size,
-          height: size,
-          child: Stack(
-            children: [
-              // Static board.
-              CustomPaint(size: Size(size, size), painter: _BoardPainter()),
-              // Tokens.
-              ...(_buildTokens(size)),
+        // Restrict size slightly to account for the mahogany wood border padding
+        final borderSize = size - 16.0;
+        
+        return Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF4E2C1B), Color(0xFF261005)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFF8C5D3A), width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.55),
+                blurRadius: 12,
+                offset: const Offset(0, 5),
+              ),
             ],
+          ),
+          child: SizedBox(
+            width: borderSize,
+            height: borderSize,
+            child: AnimatedBuilder(
+              animation: _breathingCtrl,
+              builder: (context, child) {
+                // Get active player seat (1-indexed: 1, 2, 3, 4) -> map to 0..3 index
+                final activeSeat = widget.state.players[widget.state.currentTurn].seat - 1;
+                return Stack(
+                  children: [
+                    // Static board.
+                    CustomPaint(
+                      size: Size(borderSize, borderSize), 
+                      painter: _BoardPainter(
+                        activeSeatIndex: activeSeat,
+                        breathing: _breathingCtrl.value,
+                      ),
+                    ),
+                    // Tokens.
+                    ...(_buildTokens(borderSize)),
+                  ],
+                );
+              },
+            ),
           ),
         );
       },
@@ -103,20 +154,20 @@ class LudoBoard extends StatelessWidget {
   List<Widget> _buildTokens(double size) {
     final widgets = <Widget>[];
     final s = size / 15.0;
-    final tokenSize = s * 0.82;
+    final tokenSize = s * 0.85;
 
-    for (var pi = 0; pi < state.players.length; pi++) {
-      final player = state.players[pi];
+    for (var pi = 0; pi < widget.state.players.length; pi++) {
+      final player = widget.state.players[pi];
       final color = _seatColors[player.seat - 1 >= 0 ? (player.seat - 1) % 4 : pi % 4];
-      final isMine = mySeatIndex == pi;
-      final canMoveNow = pi == state.currentTurn &&
-          state.awaiting == 'move' &&
-          (mySeatIndex == null || isMine);
+      final isMine = widget.mySeatIndex == pi;
+      final canMoveNow = pi == widget.state.currentTurn &&
+          widget.state.awaiting == 'move' &&
+          (widget.mySeatIndex == null || isMine);
 
       for (var ti = 0; ti < player.tokens.length; ti++) {
         final progress = player.tokens[ti];
         final pos = tokenPosition(player.seat - 1, ti, progress, size);
-        final movable = canMoveNow && state.movableTokens.contains(ti);
+        final movable = canMoveNow && widget.state.movableTokens.contains(ti);
 
         widgets.add(AnimatedPositioned(
           duration: const Duration(milliseconds: 320),
@@ -126,7 +177,7 @@ class LudoBoard extends StatelessWidget {
           width: tokenSize,
           height: tokenSize,
           child: GestureDetector(
-            onTap: movable ? () => onTokenTap?.call(pi, ti) : null,
+            onTap: movable ? () => widget.onTokenTap?.call(pi, ti) : null,
             child: _Token(color: color, highlighted: movable),
           ),
         ));
@@ -143,88 +194,179 @@ class _Token extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
+    Widget tokenBody = Container(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: RadialGradient(
-          colors: [color.withOpacity(0.95), color.withOpacity(0.7)],
-          center: const Alignment(-0.3, -0.3),
+          colors: [
+            Colors.white.withOpacity(0.95), // Shiny reflections
+            color,
+            color.withOpacity(0.85),
+            Colors.black.withOpacity(0.45), // 3D spherical shade
+          ],
+          stops: const [0.0, 0.25, 0.75, 1.0],
+          center: const Alignment(-0.35, -0.35),
+          radius: 0.9,
         ),
         border: Border.all(
-          color: highlighted ? Colors.white : Colors.black.withOpacity(0.4),
-          width: highlighted ? 2.4 : 1.4,
+          color: highlighted ? Colors.white : Colors.black.withOpacity(0.45),
+          width: highlighted ? 2.2 : 1.0,
         ),
         boxShadow: [
           BoxShadow(
-            color: highlighted
-                ? Colors.white.withOpacity(0.7)
-                : Colors.black.withOpacity(0.35),
-            blurRadius: highlighted ? 10 : 3,
-            spreadRadius: highlighted ? 1 : 0,
+            color: Colors.black.withOpacity(0.45),
+            blurRadius: 4,
+            offset: const Offset(1.5, 3),
           ),
+          if (highlighted)
+            BoxShadow(
+              color: color.withOpacity(0.7),
+              blurRadius: 14,
+              spreadRadius: 2,
+            ),
         ],
       ),
       child: Center(
         child: Container(
-          width: 6,
-          height: 6,
+          width: 5,
+          height: 5,
           decoration: const BoxDecoration(
-              shape: BoxShape.circle, color: Colors.white70),
+            shape: BoxShape.circle,
+            color: Colors.white70,
+          ),
         ),
       ),
+    );
+
+    if (highlighted) {
+      return _BouncingToken(child: tokenBody);
+    }
+    return tokenBody;
+  }
+}
+
+class _BouncingToken extends StatefulWidget {
+  final Widget child;
+  const _BouncingToken({required this.child});
+  @override
+  State<_BouncingToken> createState() => _BouncingTokenState();
+}
+
+class _BouncingTokenState extends State<_BouncingToken>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 600),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, child) {
+        final val = _ctrl.value;
+        return Transform.translate(
+          offset: Offset(0, -7 * val),
+          child: Transform.scale(
+            scale: 1.0 + 0.05 * val,
+            child: child,
+          ),
+        );
+      },
+      child: widget.child,
     );
   }
 }
 
 class _BoardPainter extends CustomPainter {
+  final int activeSeatIndex;
+  final double breathing;
+
+  _BoardPainter({required this.activeSeatIndex, required this.breathing});
+
   @override
   void paint(Canvas canvas, Size size) {
     final s = size.width / 15.0;
-    final bg = Paint()..color = const Color(0xFF0F1626);
+    
+    // 1. Dark Board Background
+    final bg = Paint()..color = const Color(0xFF0F1422);
     canvas.drawRect(Offset.zero & size, bg);
 
-    // Base quadrants.
-    _quadrant(canvas, s, 0, 9, _seatColors[0]);  // bottom-left  (seat 0)
-    _quadrant(canvas, s, 0, 0, _seatColors[1]);  // top-left     (seat 1)
-    _quadrant(canvas, s, 9, 0, _seatColors[2]);  // top-right    (seat 2)
-    _quadrant(canvas, s, 9, 9, _seatColors[3]);  // bottom-right (seat 3)
+    // 2. Base quadrants (6x6 base slots)
+    _drawBaseQuadrant(canvas, s, 0, 9, _seatColors[0], 0);  // bottom-left (seat 0)
+    _drawBaseQuadrant(canvas, s, 0, 0, _seatColors[1], 1);  // top-left (seat 1)
+    _drawBaseQuadrant(canvas, s, 9, 0, _seatColors[2], 2);  // top-right (seat 2)
+    _drawBaseQuadrant(canvas, s, 9, 9, _seatColors[3], 3);  // bottom-right (seat 3)
 
-    // Track cells (white) + safe cells (highlighted).
-    final cellPaint = Paint()..style = PaintingStyle.fill;
+    // 3. Track cells & safe cells
     final stroke = Paint()
       ..style = PaintingStyle.stroke
-      ..color = Colors.black.withOpacity(0.25)
+      ..color = Colors.white.withOpacity(0.06)
       ..strokeWidth = 0.8;
+
     for (var i = 0; i < _track.length; i++) {
       final c = _track[i];
       final rect = Rect.fromLTWH(c[0] * s, c[1] * s, s, s);
-      cellPaint.color =
-          kSafeCells.contains(i) ? const Color(0xFF243049) : const Color(0xFF1A2336);
+      final isSafe = kSafeCells.contains(i);
+      
+      final cellPaint = Paint()..style = PaintingStyle.fill;
+      if (isSafe) {
+        cellPaint.shader = LinearGradient(
+          colors: [const Color(0xFF243049), const Color(0xFF161F33)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ).createShader(rect);
+      } else {
+        cellPaint.color = const Color(0xFF161B26);
+      }
+      
       canvas.drawRect(rect, cellPaint);
       canvas.drawRect(rect, stroke);
-      if (kSafeCells.contains(i)) _star(canvas, rect.center, s * 0.28);
+      
+      if (isSafe) {
+        _drawSafeShield(canvas, rect.center, s * 0.35);
+      }
     }
 
-    // Colored home lanes + start cells.
+    // 4. Colored home lanes & start cells
     for (var seat = 0; seat < 4; seat++) {
       final color = _seatColors[seat];
       for (final c in _homeLanes[seat]) {
         final rect = Rect.fromLTWH(c[0] * s, c[1] * s, s, s);
-        canvas.drawRect(rect, Paint()..color = color.withOpacity(0.55));
+        final lanePaint = Paint()
+          ..shader = RadialGradient(
+            colors: [color.withOpacity(0.65), color.withOpacity(0.35)],
+          ).createShader(rect);
+        canvas.drawRect(rect, lanePaint);
         canvas.drawRect(rect, stroke);
       }
-      // Start cell tint.
+      
+      // Start cell tint
       final start = _track[kStartOffsets[seat]];
       final sr = Rect.fromLTWH(start[0] * s, start[1] * s, s, s);
-      canvas.drawRect(sr, Paint()..color = color.withOpacity(0.45));
+      canvas.drawRect(
+        sr,
+        Paint()
+          ..shader = LinearGradient(
+            colors: [color.withOpacity(0.7), color.withOpacity(0.4)],
+          ).createShader(sr),
+      );
       canvas.drawRect(sr, stroke);
+      _drawSafeShield(canvas, sr.center, s * 0.28, color: color.withOpacity(0.6));
     }
 
-    // Centre home triangle (3×3).
+    // 5. Central Home Triangle (3x3 center)
     final cx = 6 * s, cy = 6 * s, cs = 3 * s;
     canvas.drawRect(
-        Rect.fromLTWH(cx, cy, cs, cs), Paint()..color = const Color(0xFF11192B));
+      Rect.fromLTWH(cx, cy, cs, cs),
+      Paint()..color = const Color(0xFF0F1524),
+    );
     final center = Offset(7.5 * s, 7.5 * s);
     final tri = [
       [_seatColors[1], Offset(cx, cy), Offset(cx + cs, cy)],         // top → seat1
@@ -238,36 +380,154 @@ class _BoardPainter extends CustomPainter {
         ..lineTo((t[2] as Offset).dx, (t[2] as Offset).dy)
         ..lineTo(center.dx, center.dy)
         ..close();
-      canvas.drawPath(p, Paint()..color = (t[0] as Color).withOpacity(0.8));
+      canvas.drawPath(
+        p,
+        Paint()
+          ..shader = RadialGradient(
+            center: Alignment.center,
+            radius: 1.0,
+            colors: [(t[0] as Color), (t[0] as Color).withOpacity(0.4)],
+          ).createShader(Rect.fromPoints(t[1] as Offset, center)),
+      );
     }
+    
+    // Draw golden crown watermark in absolute center
+    final crownPaint = Paint()
+      ..color = const Color(0xFFFFD700).withOpacity(0.18)
+      ..style = PaintingStyle.fill;
+    final crown = Path()
+      ..moveTo(center.dx - 12, center.dy + 8)
+      ..lineTo(center.dx - 16, center.dy - 6)
+      ..lineTo(center.dx - 6, center.dy)
+      ..lineTo(center.dx, center.dy - 12) // center point of crown
+      ..lineTo(center.dx + 6, center.dy)
+      ..lineTo(center.dx + 16, center.dy - 6)
+      ..lineTo(center.dx + 12, center.dy + 8)
+      ..close();
+    canvas.drawPath(crown, crownPaint);
   }
 
-  void _quadrant(Canvas canvas, double s, int col, int row, Color color) {
+  void _drawBaseQuadrant(Canvas canvas, double s, int col, int row, Color color, int seatIndex) {
     final outer = Rect.fromLTWH(col * s, row * s, 6 * s, 6 * s);
-    canvas.drawRect(outer, Paint()..color = color.withOpacity(0.85));
-    // Inner white home tray.
+    final isActive = seatIndex == activeSeatIndex;
+
+    // Draw quadrant background gradient
+    final quadPaint = Paint()
+      ..shader = LinearGradient(
+        colors: [color.withOpacity(0.8), color.withOpacity(0.35)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ).createShader(outer);
+    canvas.drawRect(outer, quadPaint);
+    
+    // Draw active turn breathing glow border
+    if (isActive) {
+      canvas.drawRect(
+        outer,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..color = color.withOpacity(0.35 + 0.45 * breathing)
+          ..strokeWidth = 3.5 + 3.5 * breathing
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 3.5 + 3.5 * breathing),
+      );
+    }
+
+    // Draw thin gold boundary
+    canvas.drawRect(
+      outer,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..color = const Color(0xFFFFD700).withOpacity(0.35)
+        ..strokeWidth = 1.0,
+    );
+
+    // Inner tray (glassmorphic token yard)
     final inner = Rect.fromLTWH((col + 1) * s, (row + 1) * s, 4 * s, 4 * s);
     canvas.drawRRect(
-        RRect.fromRectAndRadius(inner, Radius.circular(s * 0.4)),
-        Paint()..color = const Color(0xFF0F1626));
+      RRect.fromRectAndRadius(inner, Radius.circular(s * 0.4)),
+      Paint()
+        ..color = const Color(0xFF0D121F).withOpacity(0.85)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(inner, Radius.circular(s * 0.4)),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..color = Colors.white.withOpacity(0.08)
+        ..strokeWidth = 1.0,
+    );
+
+    // Draw 4 glossy pocket sockets for token positions
+    final dots = _baseDots[seatIndex];
+    for (final d in dots) {
+      final center = Offset(d[0] * s, d[1] * s);
+      final socketRadius = s * 0.65;
+      
+      // Outer shadow of socket
+      canvas.drawCircle(
+        center,
+        socketRadius,
+        Paint()
+          ..color = Colors.black.withOpacity(0.6)
+          ..style = PaintingStyle.fill,
+      );
+      
+      // Gold/metallic trim ring
+      canvas.drawCircle(
+        center,
+        socketRadius,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..color = const Color(0xFFFFD700).withOpacity(0.25)
+          ..strokeWidth = 1.2,
+      );
+      
+      // Inner deep shading
+      canvas.drawCircle(
+        center,
+        s * 0.45,
+        Paint()
+          ..shader = RadialGradient(
+            colors: [Colors.black, color.withOpacity(0.12)],
+          ).createShader(Rect.fromCircle(center: center, radius: s * 0.45)),
+      );
+    }
   }
 
-  void _star(Canvas canvas, Offset c, double r) {
-    final paint = Paint()..color = Colors.white.withOpacity(0.5);
-    final path = Path();
-    for (var i = 0; i < 5; i++) {
-      final a = -math.pi / 2 + i * 2 * math.pi / 5; // outer points, 72° steps
-      final p = Offset(c.dx + r * math.cos(a), c.dy + r * math.sin(a));
-      i == 0 ? path.moveTo(p.dx, p.dy) : path.lineTo(p.dx, p.dy);
-      final a2 = a + math.pi / 5; // inner points
-      final p2 =
-          Offset(c.dx + r * 0.45 * math.cos(a2), c.dy + r * 0.45 * math.sin(a2));
-      path.lineTo(p2.dx, p2.dy);
-    }
-    path.close();
+  void _drawSafeShield(Canvas canvas, Offset c, double r, {Color? color}) {
+    final activeColor = color ?? const Color(0xFFFFD700).withOpacity(0.85);
+    final paint = Paint()
+      ..color = activeColor
+      ..style = PaintingStyle.fill;
+      
+    // Draw shield shape path
+    final path = Path()
+      ..moveTo(c.dx, c.dy - r)
+      ..lineTo(c.dx + r * 0.8, c.dy - r * 0.4)
+      ..lineTo(c.dx + r * 0.7, c.dy + r * 0.3)
+      ..quadraticBezierTo(c.dx, c.dy + r, c.dx, c.dy + r)
+      ..quadraticBezierTo(c.dx - r * 0.7, c.dy + r * 0.3, c.dx - r * 0.7, c.dy + r * 0.3)
+      ..lineTo(c.dx - r * 0.8, c.dy - r * 0.4)
+      ..close();
     canvas.drawPath(path, paint);
+    
+    // Inner star on shield
+    final starPaint = Paint()..color = const Color(0xFF0F1524);
+    final starPath = Path();
+    final starRadius = r * 0.45;
+    for (var i = 0; i < 5; i++) {
+      final a = -math.pi / 2 + i * 2 * math.pi / 5;
+      final p = Offset(c.dx + starRadius * math.cos(a), c.dy + starRadius * math.sin(a));
+      i == 0 ? starPath.moveTo(p.dx, p.dy) : starPath.lineTo(p.dx, p.dy);
+      final a2 = a + math.pi / 5;
+      final p2 = Offset(c.dx + starRadius * 0.4 * math.cos(a2), c.dy + starRadius * 0.4 * math.sin(a2));
+      starPath.lineTo(p2.dx, p2.dy);
+    }
+    starPath.close();
+    canvas.drawPath(starPath, starPaint);
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _BoardPainter oldDelegate) =>
+      oldDelegate.activeSeatIndex != activeSeatIndex || oldDelegate.breathing != breathing;
 }

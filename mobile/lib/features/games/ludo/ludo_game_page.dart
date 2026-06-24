@@ -294,35 +294,32 @@ class _LudoGamePageState extends State<LudoGamePage>
   Widget build(BuildContext context) {
     final s = _state;
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: Text(widget.offline ? 'Ludo · Practice' : 'Ludo'),
-      ),
       body: s == null
           ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
-          : SafeArea(
-              child: Column(
-                children: [
-                  _playersBar(s),
-                  Expanded(
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: AspectRatio(
-                          aspectRatio: 1,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                  color: AppColors.gold.withOpacity(0.5),
-                                  width: 2),
-                              boxShadow: [
-                                BoxShadow(
-                                    color: Colors.black.withOpacity(0.5),
-                                    blurRadius: 18)
-                              ],
-                            ),
-                            clipBehavior: Clip.antiAlias,
+          : Container(
+              decoration: const BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment(0, -0.2),
+                  radius: 1.3,
+                  colors: [
+                    Color(0xFF1E2D5A), // Bright spotlight center
+                    Color(0xFF0F1736), // Deep navy
+                    Color(0xFF060A1A), // Dark shadow corners
+                  ],
+                  stops: [0.0, 0.6, 1.0],
+                ),
+              ),
+              child: SafeArea(
+                child: Column(
+                  children: [
+                    _buildAppBar(context),
+                    _playersBar(s),
+                    Expanded(
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          child: AspectRatio(
+                            aspectRatio: 1,
                             child: LudoBoard(
                               state: s,
                               mySeatIndex: _mySeatIndex,
@@ -332,17 +329,61 @@ class _LudoGamePageState extends State<LudoGamePage>
                         ),
                       ),
                     ),
-                  ),
-                  _controlBar(s),
-                ],
+                    _controlBar(s),
+                  ],
+                ),
               ),
             ),
     );
   }
 
+  Widget _buildAppBar(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            widget.offline ? 'LUDO · PRACTICE' : 'LUDO LIVE',
+            style: const TextStyle(
+              color: AppColors.gold,
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.5,
+            ),
+          ),
+          const Spacer(),
+          if (!widget.offline)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.black38,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.gold.withOpacity(0.3)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('🪙 ', style: TextStyle(fontSize: 11)),
+                  Text(
+                    formatCurrency(_state?.stake ?? 0),
+                    style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _playersBar(LudoState s) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: List.generate(s.players.length, (i) {
@@ -354,34 +395,69 @@ class _LudoGamePageState extends State<LudoGamePage>
             AppColors.ludoYellow,
             AppColors.ludoBlue
           ][(p.seat - 1) % 4];
+          
           return AnimatedContainer(
             duration: const Duration(milliseconds: 250),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: active ? color.withOpacity(0.25) : AppColors.cardBg,
-              borderRadius: BorderRadius.circular(12),
+              color: active ? color.withOpacity(0.18) : const Color(0xFF161F38).withOpacity(0.6),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                  color: active ? color : Colors.transparent, width: 2),
+                color: active ? color : Colors.white.withOpacity(0.05), 
+                width: active ? 1.8 : 1.0,
+              ),
+              boxShadow: active ? [
+                BoxShadow(
+                  color: color.withOpacity(0.2),
+                  blurRadius: 8,
+                  spreadRadius: 1,
+                )
+              ] : [],
             ),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Row(children: [
-                  Container(
-                      width: 12,
-                      height: 12,
-                      decoration:
-                          BoxDecoration(color: color, shape: BoxShape.circle)),
-                  const SizedBox(width: 6),
-                  Text(p.username,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: color, 
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(color: color.withOpacity(0.6), blurRadius: 4, spreadRadius: 0.5)
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      p.username,
                       style: TextStyle(
-                          fontSize: 12,
-                          fontWeight:
-                              active ? FontWeight.w800 : FontWeight.w500)),
-                ]),
-                const SizedBox(height: 2),
-                Text('🏠 ${p.finished}/4',
-                    style: const TextStyle(
-                        fontSize: 10, color: AppColors.textSecondary)),
+                        fontSize: 12,
+                        fontWeight: active ? FontWeight.w900 : FontWeight.bold,
+                        color: active ? Colors.white : AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.black26,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'HOME ${p.finished}/4',
+                    style: TextStyle(
+                      fontSize: 9, 
+                      fontWeight: FontWeight.bold,
+                      color: active ? AppColors.gold : AppColors.textSecondary,
+                    ),
+                  ),
+                ),
               ],
             ),
           );
@@ -393,29 +469,74 @@ class _LudoGamePageState extends State<LudoGamePage>
   Widget _controlBar(LudoState s) {
     final canRoll = _isMyTurn && s.awaiting == 'roll' && !_rolling && !_botBusy;
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F1322),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        border: Border.all(color: Colors.white.withOpacity(0.04)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.35),
+            blurRadius: 12,
+            offset: const Offset(0, -3),
+          )
+        ],
+      ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(_banner ?? '',
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              _banner ?? '',
+              textAlign: TextAlign.center,
               style: const TextStyle(
-                  color: AppColors.gold, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 12),
+                color: AppColors.goldLight, 
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _DiceWidget(value: s.dice ?? 1, controller: _diceCtrl),
-              const SizedBox(width: 24),
-              ElevatedButton.icon(
-                onPressed: canRoll ? _onRoll : null,
-                icon: const Icon(Icons.casino_rounded),
-                label: Text(s.awaiting == 'move' && _isMyTurn
-                    ? 'Tap a token'
-                    : 'Roll Dice'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.gold,
-                  disabledBackgroundColor: AppColors.cardBg,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+              const SizedBox(width: 28),
+              Container(
+                decoration: canRoll ? BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.gold.withOpacity(0.25),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    )
+                  ],
+                ) : null,
+                child: ElevatedButton.icon(
+                  onPressed: canRoll ? _onRoll : null,
+                  icon: const Icon(Icons.casino_rounded, size: 18),
+                  label: Text(
+                    s.awaiting == 'move' && _isMyTurn
+                        ? 'TAP A TOKEN'
+                        : 'ROLL DICE',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.gold,
+                    foregroundColor: Colors.black,
+                    disabledBackgroundColor: Colors.white.withOpacity(0.05),
+                    disabledForegroundColor: Colors.white30,
+                    padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 15),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    elevation: 0,
+                  ),
                 ),
               ),
             ],
@@ -454,19 +575,45 @@ class _DiceWidget extends StatelessWidget {
 
   Widget _face(int v) {
     return Container(
-      width: 56,
-      height: 56,
+      width: 58,
+      height: 58,
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-            colors: [Colors.white, Color(0xFFE0E0E0)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight),
-        borderRadius: BorderRadius.circular(12),
+          colors: [
+            Color(0xFFFFFFFF),
+            Color(0xFFF5F5F0), // Off-white ivory look
+            Color(0xFFE0DCD3),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          stops: [0.0, 0.4, 1.0],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE0D8C8), width: 1.5),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 6)
+          BoxShadow(
+            color: Colors.black.withOpacity(0.55),
+            blurRadius: 8,
+            offset: const Offset(1, 4),
+          ),
+          BoxShadow(
+            color: Colors.white.withOpacity(0.45),
+            blurRadius: 2,
+            offset: const Offset(-1, -1),
+            spreadRadius: -0.5,
+          ),
         ],
       ),
-      child: CustomPaint(painter: _PipsPainter(v)),
+      child: Padding(
+        padding: const EdgeInsets.all(5),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white.withOpacity(0.5), width: 1.0),
+          ),
+          child: CustomPaint(painter: _PipsPainter(v)),
+        ),
+      ),
     );
   }
 }
@@ -477,8 +624,10 @@ class _PipsPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final p = Paint()..color = const Color(0xFF1A1A1A);
-    final r = size.width * 0.09;
+    // Red color for 1 and 4, dark gray/black for others (standard casino style)
+    final isRed = value == 1 || value == 4;
+    
+    final r = size.width * 0.095;
     final cells = {
       'tl': Offset(size.width * 0.28, size.height * 0.28),
       'tr': Offset(size.width * 0.72, size.height * 0.28),
@@ -497,7 +646,16 @@ class _PipsPainter extends CustomPainter {
       6: ['tl', 'tr', 'cl', 'cr', 'bl', 'br'],
     };
     for (final key in layout[value] ?? ['c']) {
-      canvas.drawCircle(cells[key]!, r, p);
+      final center = cells[key]!;
+      canvas.drawCircle(center, r, Paint()..shader = RadialGradient(
+        colors: isRed 
+            ? [const Color(0xFFFF5252), const Color(0xFFB71C1C)] 
+            : [const Color(0xFF424242), const Color(0xFF000000)],
+        center: const Alignment(-0.35, -0.35),
+      ).createShader(Rect.fromCircle(center: center, radius: r)));
+      
+      // Highlight dot
+      canvas.drawCircle(Offset(center.dx - r * 0.35, center.dy - r * 0.35), r * 0.2, Paint()..color = Colors.white70);
     }
   }
 

@@ -375,29 +375,56 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
         Center(child: _buildCenterReadout(crashed)),
         if (_showWinBurst && _lastWinPrize > 0)
           Center(
-            child: Text('+${formatCurrency(_lastWinPrize)}',
-                    style: const TextStyle(
-                        color: AppColors.green,
-                        fontSize: 40,
-                        fontWeight: FontWeight.w900,
-                        shadows: [Shadow(color: Colors.black54, blurRadius: 12)]))
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF00E676), Color(0xFF00B0FF)],
+                ),
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00E676).withOpacity(0.4),
+                    blurRadius: 20,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('💥 CASH OUT 💥', 
+                      style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.black, letterSpacing: 2)),
+                  const SizedBox(height: 2),
+                  Text('+${formatCurrency(_lastWinPrize)}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 32,
+                          fontWeight: FontWeight.w900)),
+                ],
+              ),
+            )
                 .animate()
                 .scale(
                     begin: const Offset(0.4, 0.4),
-                    end: const Offset(1.2, 1.2),
-                    duration: 500.ms,
+                    end: const Offset(1.1, 1.1),
+                    duration: 400.ms,
                     curve: Curves.elasticOut)
                 .fadeOut(delay: 1100.ms, duration: 400.ms)
-                .moveY(begin: 0, end: -60, duration: 1500.ms),
+                .moveY(begin: 0, end: -70, duration: 1500.ms),
           ),
         if (_errorMsg != null)
           Positioned(
-            bottom: 12, left: 0, right: 0,
+            bottom: 12, left: 16, right: 16,
             child: Center(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(color: AppColors.red.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                child: Text(_errorMsg!, style: const TextStyle(color: AppColors.red)),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppColors.red.withOpacity(0.22),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.red.withOpacity(0.6)),
+                ),
+                child: Text(_errorMsg!, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
               ),
             ),
           ),
@@ -407,12 +434,13 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
 
   Widget _buildCenterReadout(bool crashed) {
     if (_phase == 'connecting') {
-      return const Column(
+      return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(width: 28, height: 28, child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 2.5)),
-          SizedBox(height: 14),
-          Text('Connecting to round…', style: TextStyle(color: Colors.white54, letterSpacing: 1)),
+          const SizedBox(width: 32, height: 32, child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 3)),
+          const SizedBox(height: 16),
+          Text('Connecting to Live Room…'.toUpperCase(), 
+              style: const TextStyle(color: AppColors.textSecondary, letterSpacing: 2, fontSize: 11, fontWeight: FontWeight.bold)),
         ],
       );
     }
@@ -420,30 +448,41 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('FLEW AWAY!', style: TextStyle(color: AppColors.red, fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 2)),
-          const SizedBox(height: 4),
+          const Text('FLEW AWAY!', style: TextStyle(color: AppColors.red, fontSize: 22, fontWeight: FontWeight.black, letterSpacing: 3)),
+          const SizedBox(height: 6),
           Text('${(_crashAt ?? _multiplier).toStringAsFixed(2)}x',
-              style: const TextStyle(color: AppColors.red, fontSize: 56, fontWeight: FontWeight.w900)),
+              style: const TextStyle(
+                color: AppColors.red, 
+                fontSize: 68, 
+                fontWeight: FontWeight.black,
+                shadows: [
+                  Shadow(color: Colors.red, blurRadius: 16),
+                ],
+              )),
         ],
-      );
+      )
+      .animate()
+      .shake(duration: 400.ms, hz: 6, curve: Curves.easeInOut);
     }
     if (_phase == 'betting') {
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('NEXT ROUND IN', style: TextStyle(color: Colors.white54, letterSpacing: 2, fontSize: 12)),
+          Text('ROUND STARTS IN'.toUpperCase(), 
+              style: const TextStyle(color: AppColors.textSecondary, letterSpacing: 2, fontSize: 11, fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
-          Text('${_bettingSecondsLeft}s', style: const TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
+          Text('${_bettingSecondsLeft}s', 
+              style: const TextStyle(color: Colors.white, fontSize: 52, fontWeight: FontWeight.black)),
+          const SizedBox(height: 12),
           SizedBox(
-            width: 140,
+            width: 160,
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(4),
+              borderRadius: BorderRadius.circular(6),
               child: LinearProgressIndicator(
                 value: (_bettingSecondsLeft / 5).clamp(0.0, 1.0),
-                backgroundColor: Colors.white12,
+                backgroundColor: Colors.white.withOpacity(0.08),
                 color: AppColors.gold,
-                minHeight: 5,
+                minHeight: 6,
               ),
             ),
           ),
@@ -451,8 +490,18 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       );
     }
     // flying / waiting
-    final scale = _phase == 'flying' ? 1.0 + _pulse.value * 0.06 : 1.0;
-    final hot = _multiplier >= 2.0;
+    final scale = _phase == 'flying' ? 1.0 + _pulse.value * 0.05 : 1.0;
+    
+    // Gradient coloring according to the height of the multiplier
+    final hot = _multiplier >= 10.0;
+    final medium = _multiplier >= 2.0;
+    
+    final Color multColor = hot 
+        ? const Color(0xFFE040FB) // Pulsing purple
+        : medium 
+            ? AppColors.aviatorGreen 
+            : Colors.white;
+
     return Transform.scale(
       scale: scale,
       child: Column(
@@ -460,25 +509,37 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
         children: [
           Text('${_multiplier.toStringAsFixed(2)}x',
             style: TextStyle(
-              fontSize: 60, fontWeight: FontWeight.w900,
-              color: hot ? AppColors.aviatorGreen : Colors.white,
-              shadows: [Shadow(color: (hot ? AppColors.aviatorGreen : Colors.white).withOpacity(0.6), blurRadius: 24)],
+              fontSize: 72, 
+              fontWeight: FontWeight.black,
+              color: multColor,
+              shadows: [
+                Shadow(color: multColor.withOpacity(0.65), blurRadius: 28),
+              ],
             )),
+          const SizedBox(height: 6),
           Column(
             children: [
               if (_cashedOut1 && _myMultiplier1 != null)
                 Container(
                   margin: const EdgeInsets.only(top: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  decoration: BoxDecoration(color: AppColors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.green)),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.green.withOpacity(0.12), 
+                    borderRadius: BorderRadius.circular(20), 
+                    border: Border.all(color: AppColors.green.withOpacity(0.6)),
+                  ),
                   child: Text('Bet 1 Out @ ${_myMultiplier1!.toStringAsFixed(2)}x · +${formatCurrency(_betAmount1 * _myMultiplier1!)}',
                       style: const TextStyle(color: AppColors.green, fontSize: 11, fontWeight: FontWeight.bold)),
                 ),
               if (_cashedOut2 && _myMultiplier2 != null)
                 Container(
                   margin: const EdgeInsets.only(top: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  decoration: BoxDecoration(color: AppColors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.green)),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.green.withOpacity(0.12), 
+                    borderRadius: BorderRadius.circular(20), 
+                    border: Border.all(color: AppColors.green.withOpacity(0.6)),
+                  ),
                   child: Text('Bet 2 Out @ ${_myMultiplier2!.toStringAsFixed(2)}x · +${formatCurrency(_betAmount2 * _myMultiplier2!)}',
                       style: const TextStyle(color: AppColors.green, fontSize: 11, fontWeight: FontWeight.bold)),
                 ),
@@ -491,17 +552,23 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
 
   Widget _buildBetPanel() => Container(
     padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
-    decoration: const BoxDecoration(
-      color: Color(0xFF11182E),
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    decoration: BoxDecoration(
+      color: const Color(0xFF0F1322),
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      border: Border.all(color: Colors.white.withOpacity(0.04)),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.4),
+          blurRadius: 16,
+          offset: const Offset(0, -4),
+        )
+      ],
     ),
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         _buildIndividualBetPanel(1),
-        const SizedBox(height: 10),
-        const Divider(color: Colors.white10, height: 1),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         _buildIndividualBetPanel(2),
       ],
     ),
@@ -510,57 +577,82 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   Widget _buildIndividualBetPanel(int betIndex) {
     final amount = betIndex == 1 ? _betAmount1 : _betAmount2;
     final placed = betIndex == 1 ? _betPlaced1 : _betPlaced2;
+    final cashed = betIndex == 1 ? _cashedOut1 : _cashedOut2;
 
-    return Column(
-      children: [
-        _buildAutoControls(betIndex),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            // Left: Quick bet buttons
-            Expanded(
-              flex: 2,
-              child: Row(
-                children: [10, 50, 100].map((v) {
-                  final sel = amount == v.toDouble();
-                  final locked = placed || _phase == 'flying';
-                  return Expanded(
-                    child: GestureDetector(
-                      onTap: locked ? null : () => setState(() {
-                        if (betIndex == 1) {
-                          _betAmount1 = v.toDouble();
-                        } else {
-                          _betAmount2 = v.toDouble();
-                        }
-                      }),
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 2),
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        decoration: BoxDecoration(
-                          color: sel ? AppColors.gold : Colors.white12,
-                          borderRadius: BorderRadius.circular(8),
-                          border: sel ? null : Border.all(color: Colors.white12),
-                        ),
-                        child: Text('₹$v', textAlign: TextAlign.center,
-                            style: TextStyle(color: sel ? Colors.black : Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Right: Main Action Button
-            Expanded(
-              flex: 3,
-              child: SizedBox(
-                height: 38,
-                child: _buildMainButton(betIndex),
-              ),
-            ),
-          ],
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF161F38).withOpacity(0.8), // Glassy dark navy
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: placed 
+              ? (cashed ? AppColors.green.withOpacity(0.4) : AppColors.gold.withOpacity(0.4)) 
+              : Colors.white.withOpacity(0.06),
+          width: placed ? 1.5 : 1.0,
         ),
-      ],
+      ),
+      child: Column(
+        children: [
+          _buildAutoControls(betIndex),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              // Left: Quick bet buttons
+              Expanded(
+                flex: 2,
+                child: Row(
+                  children: [10, 50, 100, 500].map((v) {
+                    final sel = amount == v.toDouble();
+                    final locked = placed || _phase == 'flying';
+                    return Expanded(
+                      child: GestureDetector(
+                        onTap: locked ? null : () => setState(() {
+                          if (betIndex == 1) {
+                            _betAmount1 = v.toDouble();
+                          } else {
+                            _betAmount2 = v.toDouble();
+                          }
+                        }),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          margin: const EdgeInsets.symmetric(horizontal: 2),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            gradient: sel 
+                                ? const LinearGradient(
+                                    colors: [Color(0xFFFFD54F), Color(0xFFFFA000)], // gold gradient
+                                  )
+                                : null,
+                            color: sel ? null : Colors.white.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: sel ? Colors.transparent : Colors.white.withOpacity(0.05),
+                            ),
+                          ),
+                          child: Text('₹$v', textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  color: sel ? Colors.black : Colors.white70, 
+                                  fontWeight: FontWeight.bold, 
+                                  fontSize: 12)),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Right: Main Action Button
+              Expanded(
+                flex: 1,
+                child: SizedBox(
+                  height: 38,
+                  child: _buildMainButton(betIndex),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -591,10 +683,10 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: autoCash ? AppColors.green.withOpacity(0.18) : Colors.white12,
+              color: autoCash ? AppColors.green.withOpacity(0.12) : Colors.white.withOpacity(0.05),
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                  color: autoCash ? AppColors.green : Colors.white12),
+                  color: autoCash ? AppColors.green.withOpacity(0.6) : Colors.white.withOpacity(0.05)),
             ),
             child: Row(
               children: [
@@ -612,10 +704,10 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
                             ? Icons.check_box_rounded
                             : Icons.check_box_outline_blank_rounded,
                         size: 16,
-                        color: autoCash ? AppColors.green : Colors.white54),
+                        color: autoCash ? AppColors.green : Colors.white30),
                     const SizedBox(width: 4),
                     const Text('Auto Out',
-                        style: TextStyle(color: Colors.white, fontSize: 11)),
+                        style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
                   ]),
                 ),
                 const Spacer(),
@@ -627,11 +719,11 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
                   }
                 })),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
                   child: Text('${target.toStringAsFixed(1)}x',
                       style: const TextStyle(
                           color: AppColors.gold,
-                          fontWeight: FontWeight.bold,
+                          fontWeight: FontWeight.black,
                           fontSize: 11)),
                 ),
                 _stepBtn(Icons.add, () => setState(() {
@@ -656,21 +748,21 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
           padding: const EdgeInsets.symmetric(vertical: 6),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: on ? AppColors.gold.withOpacity(0.2) : Colors.white12,
+            color: on ? AppColors.gold.withOpacity(0.12) : Colors.white.withOpacity(0.05),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: on ? AppColors.gold : Colors.white12),
+            border: Border.all(color: on ? AppColors.gold.withOpacity(0.6) : Colors.white.withOpacity(0.05)),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(on ? Icons.autorenew_rounded : Icons.autorenew_outlined,
-                  size: 14, color: on ? AppColors.gold : Colors.white54),
+                  size: 14, color: on ? AppColors.gold : Colors.white30),
               const SizedBox(width: 4),
               Text(label,
                   style: TextStyle(
                       color: on ? AppColors.gold : Colors.white70,
                       fontSize: 11,
-                      fontWeight: FontWeight.w600)),
+                      fontWeight: FontWeight.bold)),
             ],
           ),
         ),
@@ -682,7 +774,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
           width: 22,
           height: 22,
           decoration: BoxDecoration(
-              color: Colors.white10, borderRadius: BorderRadius.circular(6)),
+              color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(6)),
           child: Icon(icon, size: 13, color: Colors.white),
         ),
       );
@@ -693,33 +785,67 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     final cashed = betIndex == 1 ? _cashedOut1 : _cashedOut2;
 
     if (_phase == 'betting' && !placed) {
-      return ElevatedButton(
-        onPressed: () => _placeBet(betIndex),
-        style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.gold, 
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            padding: EdgeInsets.zero,
+      return Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.gold.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            )
+          ],
         ),
-        child: Text('BET ₹${amount.toInt()}', style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 13)),
+        child: ElevatedButton(
+          onPressed: () => _placeBet(betIndex),
+          style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.gold, 
+              foregroundColor: Colors.black,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.zero,
+              elevation: 0,
+          ),
+          child: Text('BET ₹${amount.toInt()}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5)),
+        ),
       );
     }
     if (_phase == 'flying' && placed && !cashed) {
-      return ElevatedButton(
-        onPressed: () => _cashout(betIndex),
-        style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.green, 
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            padding: EdgeInsets.zero,
+      return Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.green.withOpacity(0.4),
+              blurRadius: 10,
+              offset: const Offset(0, 2),
+            )
+          ],
         ),
-        child: Text('OUT ${formatCurrency(amount * _multiplier)}',
-            style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12)),
+        child: ElevatedButton(
+          onPressed: () => _cashout(betIndex),
+          style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.green, 
+              foregroundColor: Colors.black,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.zero,
+              elevation: 0,
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('CASH OUT', style: TextStyle(fontWeight: FontWeight.black, fontSize: 9, letterSpacing: 0.5)),
+              Text(formatCurrency(amount * _multiplier),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+            ],
+          ),
+        ),
       );
     }
     return ElevatedButton(
       onPressed: null,
       style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.white10,
-        disabledBackgroundColor: Colors.white10,
+        backgroundColor: Colors.white.withOpacity(0.05),
+        disabledBackgroundColor: Colors.white.withOpacity(0.05),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         padding: EdgeInsets.zero,
       ),
@@ -727,7 +853,10 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
         placed && !cashed ? 'Placed' :
         cashed ? 'Cashed ✓' :
         _phase == 'crashed' ? 'Ended' : 'Wait…',
-        style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.w600),
+        style: TextStyle(
+            color: cashed ? AppColors.green : Colors.white30, 
+            fontSize: 12, 
+            fontWeight: FontWeight.w600),
       ),
     );
   }
@@ -743,6 +872,33 @@ class _AviatorPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     _drawGrid(canvas, size);
+    
+    // Draw background overhead spotlight glow
+    final bgGlow = Paint()
+      ..shader = RadialGradient(
+        center: const Alignment(0, -0.3),
+        radius: 1.2,
+        colors: [
+          const Color(0xFF1E2D5A).withOpacity(0.65), // Spotlight center
+          const Color(0xFF0F1736).withOpacity(0.4),
+          const Color(0xFF060A1A).withOpacity(0),
+        ],
+        stops: const [0.0, 0.6, 1.0],
+      ).createShader(Offset.zero & size);
+    canvas.drawRect(Offset.zero & size, Paint()..shader = bgGlow);
+
+    // Draw sliding dust stars to feel velocity
+    final starPaint = Paint()..color = Colors.white.withOpacity(0.18);
+    final random = Random(42); // fixed seed for consistency
+    for (int i = 0; i < 28; i++) {
+      final rx = random.nextDouble() * size.width;
+      final ry = random.nextDouble() * size.height * 0.85;
+      // Scroll speed based on height to create parallax feel
+      final speed = 1.0 + (ry / size.height) * 1.5;
+      final dx = (rx - spin * speed * size.width) % size.width;
+      canvas.drawCircle(Offset(dx, ry), 1.0 + random.nextDouble() * 1.5, starPaint);
+    }
+
     if (phase != 'flying' && phase != 'crashed') return;
 
     final crashed = phase == 'crashed';
@@ -755,7 +911,7 @@ class _AviatorPainter extends CustomPainter {
     for (int i = 0; i <= steps; i++) {
       final t = i / steps * progress;
       final x = t * size.width;
-      final y = size.height - pow(t, 1.5).toDouble() * size.height * 0.82;
+      final y = size.height - pow(t, 1.6).toDouble() * size.height * 0.82;
       path.lineTo(x, y);
       px = x; py = y;
     }
@@ -770,7 +926,7 @@ class _AviatorPainter extends CustomPainter {
       Paint()
         ..shader = LinearGradient(
           begin: Alignment.topCenter, end: Alignment.bottomCenter,
-          colors: [main.withOpacity(0.35), main.withOpacity(0.02)],
+          colors: [main.withOpacity(0.24), main.withOpacity(0.01)],
         ).createShader(Offset.zero & size),
     );
 
@@ -782,7 +938,7 @@ class _AviatorPainter extends CustomPainter {
         ..strokeWidth = 4
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
     );
 
     // The plane at the tip.
@@ -790,7 +946,7 @@ class _AviatorPainter extends CustomPainter {
   }
 
   void _drawGrid(Canvas canvas, Size size) {
-    final p = Paint()..color = Colors.white.withOpacity(0.04)..strokeWidth = 1;
+    final p = Paint()..color = Colors.white.withOpacity(0.03)..strokeWidth = 1;
     for (double x = 0; x < size.width; x += size.width / 6) {
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), p);
     }
@@ -800,23 +956,103 @@ class _AviatorPainter extends CustomPainter {
   }
 
   void _drawPlane(Canvas canvas, Offset c, Color glow, bool crashed) {
-    // Glow halo
-    canvas.drawCircle(c, 22, Paint()
-      ..color = glow.withOpacity(0.25)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+    // 1. Double outer soft glow aura
+    canvas.drawCircle(c, 26, Paint()
+      ..color = glow.withOpacity(0.15)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12));
+    canvas.drawCircle(c, 16, Paint()
+      ..color = glow.withOpacity(0.3)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
 
-    final body = Paint()..color = crashed ? AppColors.red : AppColors.gold;
-    // Simple stylised plane (triangle nose + tail) pointing up-right.
-    final plane = Path()
-      ..moveTo(c.dx + 14, c.dy - 10) // nose
-      ..lineTo(c.dx - 10, c.dy + 2)  // tail-bottom
-      ..lineTo(c.dx - 2, c.dy + 2)
-      ..lineTo(c.dx - 8, c.dy + 12)  // rudder
-      ..lineTo(c.dx + 2, c.dy + 4)
+    // 2. Jet Thruster Fire (exhaust)
+    if (!crashed) {
+      final thrusterPaint = Paint()
+        ..shader = RadialGradient(
+          colors: [Colors.orangeAccent, Colors.redAccent.withOpacity(0)],
+        ).createShader(Rect.fromCircle(center: Offset(c.dx - 14, c.dy + 4), radius: 10 + spin * 5));
+      canvas.drawCircle(Offset(c.dx - 14, c.dy + 4), 10 + spin * 5, thrusterPaint);
+    }
+
+    // 3. Draw Plane Fuselage & Wings (3D/Glossy shading using paths)
+    final bodyPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: crashed 
+            ? [const Color(0xFFFF5252), const Color(0xFFC62828)]
+            : [const Color(0xFFFF2A4B), const Color(0xFF9E0018)], // Rich candy red
+      ).createShader(Rect.fromCircle(center: c, radius: 18));
+
+    // Fuselage path (sleek aerodynamical body)
+    final fuselage = Path()
+      ..moveTo(c.dx - 15, c.dy + 6)
+      ..quadraticBezierTo(c.dx - 5, c.dy + 8, c.dx + 12, c.dy + 2) // belly
+      ..lineTo(c.dx + 18, c.dy - 2) // nose tip
+      ..quadraticBezierTo(c.dx + 6, c.dy - 6, c.dx - 15, c.dy - 2) // top deck
+      ..lineTo(c.dx - 18, c.dy + 2) // tail base
       ..close();
-    canvas.drawPath(plane, body);
-    // Cockpit dot
-    canvas.drawCircle(Offset(c.dx + 4, c.dy - 2), 2.4, Paint()..color = Colors.white);
+    canvas.drawPath(fuselage, bodyPaint);
+
+    // Main wing
+    final wingPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: crashed
+            ? [const Color(0xFFFF8686), const Color(0xFFC62828)]
+            : [const Color(0xFFFF6B81), const Color(0xFF7C0010)],
+      ).createShader(Rect.fromCircle(center: c, radius: 14));
+
+    final wing = Path()
+      ..moveTo(c.dx - 2, c.dy + 2)
+      ..lineTo(c.dx - 12, c.dy + 14) // wing tip bottom
+      ..lineTo(c.dx - 6, c.dy + 15)
+      ..lineTo(c.dx + 6, c.dy + 3)
+      ..close();
+    canvas.drawPath(wing, wingPaint);
+
+    // Tail wing (Stabiliser)
+    final tail = Path()
+      ..moveTo(c.dx - 12, c.dy - 3)
+      ..lineTo(c.dx - 18, c.dy - 12) // tail tip top
+      ..lineTo(c.dx - 14, c.dy - 12)
+      ..lineTo(c.dx - 8, c.dy - 2)
+      ..close();
+    canvas.drawPath(tail, wingPaint);
+
+    // Cockpit windshield (Glass glow)
+    final glassPaint = Paint()
+      ..color = Colors.cyanAccent.withOpacity(0.85)
+      ..style = PaintingStyle.fill;
+    final cockpit = Path()
+      ..moveTo(c.dx + 4, c.dy - 2)
+      ..quadraticBezierTo(c.dx + 8, c.dy - 3, c.dx + 11, c.dy - 1)
+      ..lineTo(c.dx + 8, c.dy + 1)
+      ..close();
+    canvas.drawPath(cockpit, glassPaint);
+
+    // 4. Spinning Propeller circle at nose
+    if (!crashed) {
+      final propPaint = Paint()
+        ..color = Colors.white.withOpacity(0.3)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0;
+      canvas.drawOval(
+        Rect.fromCenter(center: Offset(c.dx + 18, c.dy - 2), width: 3, height: 22),
+        propPaint,
+      );
+      // Propeller spin blades
+      final angle = spin * 2 * pi;
+      final propBladesPaint = Paint()
+        ..color = Colors.white.withOpacity(0.65)
+        ..strokeWidth = 1.2;
+      final cosA = cos(angle);
+      canvas.drawLine(
+        Offset(c.dx + 18, c.dy - 2 - 10 * cosA),
+        Offset(c.dx + 18, c.dy - 2 + 10 * cosA),
+        propBladesPaint,
+      );
+    }
   }
 
   @override
