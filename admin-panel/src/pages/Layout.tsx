@@ -13,11 +13,21 @@ const { Sider, Header, Content } = Layout
 const menuItems = [
   { key: '/admin', icon: <DashboardOutlined />, label: 'Dashboard' },
   { key: '/admin/users', icon: <UserOutlined />, label: 'Users' },
-  { key: '/admin/game-rooms', icon: <PlayCircleOutlined />, label: 'Game Rooms' },
+  {
+    key: 'games',
+    icon: <PlayCircleOutlined />,
+    label: 'Games',
+    children: [
+      { key: '/admin/games/teen-patti', label: '🃏 Teen Patti' },
+      { key: '/admin/games/ludo', label: '🎲 Ludo' },
+      { key: '/admin/games/aviator', label: '✈️ Aviator' },
+      { key: '/admin/games/matka', label: '🎯 Satta Matka' },
+      { key: '/admin/games/lottery', label: '🎰 Lottery' },
+      { key: '/admin/games/cricket', label: '🏏 Cricket' },
+    ]
+  },
   { key: '/admin/finance', icon: <DollarOutlined />, label: 'Finance' },
   { key: '/admin/notifications', icon: <BellOutlined />, label: 'Notifications' },
-  { key: '/admin/game-config', icon: <SettingOutlined />, label: 'Game Config' },
-  { key: '/admin/betting', icon: <FundOutlined />, label: 'Betting Games' },
   { key: '/admin/admin-users', icon: <TeamOutlined />, label: 'Admin Users' },
   { key: '/admin/risk-center', icon: <WarningOutlined />, label: 'Risk Center' },
   { key: '/admin/support', icon: <CustomerServiceOutlined />, label: 'Support & CMS' },
@@ -47,7 +57,11 @@ export default function AdminLayout() {
           mode="inline"
           selectedKeys={[location.pathname]}
           items={menuItems}
-          onClick={({ key }) => navigate(key)}
+          onClick={({ key }) => {
+            if (key.startsWith('/')) {
+              navigate(key)
+            }
+          }}
           style={{ marginTop: 8 }}
         />
       </Sider>

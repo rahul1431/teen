@@ -280,6 +280,16 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 		state.Pot += raiseAmount
 		state.MinBet = raiseAmount
 	case "show":
+		activeCount := 0
+		for _, p := range state.Players {
+			if p.Status != "folded" {
+				activeCount++
+			}
+		}
+		if activeCount != 2 {
+			http.Error(w, "Show is only allowed when exactly 2 active players remain", 400)
+			return
+		}
 		state.Players[playerIdx].IsSeen = true
 	}
 
