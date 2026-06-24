@@ -37,7 +37,7 @@ interface RoundState {
   status: 'betting' | 'flying' | 'crashed'
   crashAt: number
   currentMultiplier: number
-  bets: Record<string, { userId: string; amount: number; cashedOut: boolean; cashoutMultiplier?: number }>
+  bets: Record<string, { userId: string; username: string; amount: number; cashedOut: boolean; betIndex: number; cashoutMultiplier?: number }>
   history: number[]
   startedAt?: number
 }
@@ -165,7 +165,7 @@ async function crashRound(crashAt: number) {
       let payout = prize - rake
       // Apply the admin max-win cap (0 = unlimited) to limit tail-risk payouts.
       if (aviatorConfig.maxWin > 0) payout = Math.min(payout, aviatorConfig.maxWin)
-      await creditWallet(bet.userId, payout, currentRound.roundId)
+      await creditWallet(bet.userId, payout, currentRound.roundId, bet.betIndex)
     }
   }
 
@@ -185,7 +185,7 @@ async function crashRound(crashAt: number) {
   setTimeout(() => startBettingPhase(), 3000)
 }
 
-async function creditWallet(userId: string, amount: number, referenceId: string) {
+async function creditWallet(userId: string, amount: number, referenceId: string, betIndex: number) {
   try {
     await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit`, {
       method: 'POST',
@@ -195,7 +195,7 @@ async function creditWallet(userId: string, amount: number, referenceId: string)
         amount: Math.round(amount * 100) / 100,
         type: 'game_credit',
         reference_id: referenceId,
-        idempotency_key: `aviator_cashout_${userId}_${referenceId}`,
+        idempotency_key: `aviator_cashout_${userId}_${referenceId}_${betIndex}`,
       }),
     })
   } catch (err) {
@@ -251,6 +251,10 @@ async function start() {
 
       if (event === 'aviator:place_bet') {
         const amount = data?.amount
+        const betIndex = Number(data?.bet_index ?? 1)
+        if (betIndex !== 1 && betIndex !== 2) {
+          return send(ws, 'error', { message: 'Invalid bet index' })
+        }
         if (!currentRound || currentRound.status !== 'betting') {
           return send(ws, 'error', { message: 'Betting phase not active' })
         }
@@ -264,7 +268,7 @@ async function start() {
           const res = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-            body: JSON.stringify({ user_id: userId, amount, room_id: currentRound.roundId }),
+            body: JSON.stringify({ user_id: userId, amount, room_id: `${currentRound.roundId}_${betIndex}` }),
           })
           if (!res.ok) {
             const err = await res.json() as any
@@ -274,11 +278,12 @@ async function start() {
           return send(ws, 'error', { message: 'Wallet service unavailable' })
         }
 
-        currentRound.bets[userId] = { userId, amount, cashedOut: false }
-        send(ws, 'aviator:bet_placed', { amount, round_id: currentRound.roundId })
+        const betKey = `${userId}_${betIndex}`
+        currentRound.bets[betKey] = { userId, username, amount, cashedOut: false, betIndex }
+        send(ws, 'aviator:bet_placed', { amount, round_id: currentRound.roundId, bet_index: betIndex })
         broadcast('aviator:live_bets', {
           bets: Object.values(currentRound.bets).map(b => ({
-            username,
+            username: b.username,
             amount: b.amount,
             cashed_out: b.cashedOut,
             cashout_multiplier: b.cashoutMultiplier,
@@ -291,14 +296,25 @@ async function start() {
         if (!currentRound || currentRound.status !== 'flying') {
           return send(ws, 'error', { message: 'Not in flying phase' })
         }
-        const bet = currentRound.bets[userId]
-        if (!bet || bet.cashedOut) return send(ws, 'error', { message: 'No active bet' })
+        const betIndex = Number(data?.bet_index ?? 1)
+        const betKey = `${userId}_${betIndex}`
+        const bet = currentRound.bets[betKey]
+        if (!bet || bet.cashedOut) return send(ws, 'error', { message: `No active bet for panel ${betIndex}` })
 
         const multiplier = currentRound.currentMultiplier
         bet.cashedOut = true
         bet.cashoutMultiplier = multiplier
         const prize = bet.amount * multiplier
-        send(ws, 'aviator:cashed_out', { multiplier, prize, amount: bet.amount })
+        send(ws, 'aviator:cashed_out', { multiplier, prize, amount: bet.amount, bet_index: betIndex })
+        
+        broadcast('aviator:live_bets', {
+          bets: Object.values(currentRound.bets).map(b => ({
+            username: b.username,
+            amount: b.amount,
+            cashed_out: b.cashedOut,
+            cashout_multiplier: b.cashoutMultiplier,
+          })),
+        })
         return
       }
     })

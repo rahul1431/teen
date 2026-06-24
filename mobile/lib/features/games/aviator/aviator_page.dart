@@ -38,22 +38,32 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   double _multiplier = 1.00;       // smoothed value shown on screen
   double _serverMultiplier = 1.00; // latest authoritative value from server
   double? _crashAt;
-  double _betAmount = 50;
-  bool _betPlaced = false;
-  bool _cashedOut = false;
-  double? _myMultiplier;
   List<double> _history = [];
   String? _errorMsg;
   int _bettingSecondsLeft = 5;
   double? _balance;
   Timer? _bettingTimer;
 
-  // Crash-game staples: cash out automatically at a target multiplier, and/or
-  // re-bet the same stake every round hands-free.
-  bool _autoCashout = false;
-  double _autoTarget = 2.0;
-  bool _autoBet = false;
+  // Panel 1 State
+  double _betAmount1 = 50;
+  bool _betPlaced1 = false;
+  bool _cashedOut1 = false;
+  double? _myMultiplier1;
+  bool _autoCashout1 = false;
+  double _autoTarget1 = 2.0;
+  bool _autoBet1 = false;
+
+  // Panel 2 State
+  double _betAmount2 = 50;
+  bool _betPlaced2 = false;
+  bool _cashedOut2 = false;
+  double? _myMultiplier2;
+  bool _autoCashout2 = false;
+  double _autoTarget2 = 2.0;
+  bool _autoBet2 = false;
+
   bool _showWinBurst = false;
+  double _lastWinPrize = 0.0;
 
   @override
   void initState() {
@@ -99,21 +109,28 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     final ms = (data?['betting_time_ms'] as num?)?.toInt() ?? 5000;
     setState(() {
       _phase = 'betting';
-      _betPlaced = false;
-      _cashedOut = false;
-      _myMultiplier = null;
+      _betPlaced1 = false;
+      _betPlaced2 = false;
+      _cashedOut1 = false;
+      _cashedOut2 = false;
+      _myMultiplier1 = null;
+      _myMultiplier2 = null;
       _multiplier = 1.00;
       _serverMultiplier = 1.00;
       _crashAt = null;
       _history = _parseHistory(data?['history']);
       _bettingSecondsLeft = (ms / 1000).ceil();
       _showWinBurst = false;
+      _lastWinPrize = 0.0;
     });
     SoundService.instance.play(Sfx.countdown);
     _startBettingCountdown(ms);
     // Auto-bet: re-stake the same amount for the new round hands-free.
-    if (_autoBet && (_balance == null || _balance! >= _betAmount)) {
-      _placeBet();
+    if (_autoBet1 && (_balance == null || _balance! >= _betAmount1)) {
+      _placeBet(1);
+    }
+    if (_autoBet2 && (_balance == null || _balance! >= _betAmount2)) {
+      _placeBet(2);
     }
   }
 
@@ -145,8 +162,11 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     _serverMultiplier = m;
     if (_phase != 'flying') setState(() => _phase = 'flying');
     // Auto-cashout: fire as soon as the authoritative value hits the target.
-    if (_autoCashout && _betPlaced && !_cashedOut && m >= _autoTarget) {
-      _cashout();
+    if (_autoCashout1 && _betPlaced1 && !_cashedOut1 && m >= _autoTarget1) {
+      _cashout(1);
+    }
+    if (_autoCashout2 && _betPlaced2 && !_cashedOut2 && m >= _autoTarget2) {
+      _cashout(2);
     }
   }
 
@@ -179,7 +199,14 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
 
   void _onBetPlaced(dynamic data) {
     if (!mounted) return;
-    setState(() => _betPlaced = true);
+    final betIndex = data?['bet_index'] as int? ?? 1;
+    setState(() {
+      if (betIndex == 1) {
+        _betPlaced1 = true;
+      } else {
+        _betPlaced2 = true;
+      }
+    });
     HapticFeedback.mediumImpact();
     _loadBalance(); // server locked the stake
   }
@@ -187,10 +214,18 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   void _onCashedOut(dynamic data) {
     if (!mounted) return;
     final m = (data?['multiplier'] as num?)?.toDouble() ?? _serverMultiplier;
+    final betIndex = data?['bet_index'] as int? ?? 1;
+    final prize = (data?['prize'] as num?)?.toDouble() ?? 0.0;
     setState(() {
-      _cashedOut = true;
-      _myMultiplier = m;
+      if (betIndex == 1) {
+        _cashedOut1 = true;
+        _myMultiplier1 = m;
+      } else {
+        _cashedOut2 = true;
+        _myMultiplier2 = m;
+      }
       _showWinBurst = true;
+      _lastWinPrize = prize;
     });
     HapticFeedback.heavyImpact();
     SoundService.instance.play(Sfx.cashout);
@@ -218,22 +253,34 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     }
   }
 
-  void _placeBet() {
+  void _placeBet(int betIndex) {
     if (_phase != 'betting') return;
-    if (_balance != null && _balance! < _betAmount) {
+    final amount = betIndex == 1 ? _betAmount1 : _betAmount2;
+    if (_balance != null && _balance! < amount) {
       setState(() => _errorMsg = 'Low balance — add money to play');
       Future.delayed(const Duration(seconds: 3), () { if (mounted) setState(() => _errorMsg = null); });
       return;
     }
     // Optimistic lock; server confirms via aviator:bet_placed or rejects via error.
-    setState(() => _betPlaced = true);
-    _aviator.emit(SocketEvents.aviatorPlaceBet, {'amount': _betAmount});
+    setState(() {
+      if (betIndex == 1) {
+        _betPlaced1 = true;
+      } else {
+        _betPlaced2 = true;
+      }
+    });
+    _aviator.emit(SocketEvents.aviatorPlaceBet, {'amount': amount, 'bet_index': betIndex});
     HapticFeedback.mediumImpact();
   }
 
-  void _cashout() {
-    if (_phase != 'flying' || !_betPlaced || _cashedOut) return;
-    _aviator.emit(SocketEvents.aviatorCashout);
+  void _cashout(int betIndex) {
+    if (_phase != 'flying') return;
+    if (betIndex == 1) {
+      if (!_betPlaced1 || _cashedOut1) return;
+    } else {
+      if (!_betPlaced2 || _cashedOut2) return;
+    }
+    _aviator.emit(SocketEvents.aviatorCashout, {'bet_index': betIndex});
   }
 
   @override
@@ -326,9 +373,9 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
           ),
         ),
         Center(child: _buildCenterReadout(crashed)),
-        if (_showWinBurst && _myMultiplier != null)
+        if (_showWinBurst && _lastWinPrize > 0)
           Center(
-            child: Text('+${formatCurrency(_betAmount * _myMultiplier!)}',
+            child: Text('+${formatCurrency(_lastWinPrize)}',
                     style: const TextStyle(
                         color: AppColors.green,
                         fontSize: 40,
@@ -417,135 +464,212 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
               color: hot ? AppColors.aviatorGreen : Colors.white,
               shadows: [Shadow(color: (hot ? AppColors.aviatorGreen : Colors.white).withOpacity(0.6), blurRadius: 24)],
             )),
-          if (_cashedOut && _myMultiplier != null)
-            Container(
-              margin: const EdgeInsets.only(top: 10),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              decoration: BoxDecoration(color: AppColors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(20), border: Border.all(color: AppColors.green)),
-              child: Text('Cashed out @ ${_myMultiplier!.toStringAsFixed(2)}x  ·  +${formatCurrency(_betAmount * _myMultiplier!)}',
-                  style: const TextStyle(color: AppColors.green, fontSize: 13, fontWeight: FontWeight.bold)),
-            ),
+          Column(
+            children: [
+              if (_cashedOut1 && _myMultiplier1 != null)
+                Container(
+                  margin: const EdgeInsets.only(top: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(color: AppColors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.green)),
+                  child: Text('Bet 1 Out @ ${_myMultiplier1!.toStringAsFixed(2)}x · +${formatCurrency(_betAmount1 * _myMultiplier1!)}',
+                      style: const TextStyle(color: AppColors.green, fontSize: 11, fontWeight: FontWeight.bold)),
+                ),
+              if (_cashedOut2 && _myMultiplier2 != null)
+                Container(
+                  margin: const EdgeInsets.only(top: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(color: AppColors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.green)),
+                  child: Text('Bet 2 Out @ ${_myMultiplier2!.toStringAsFixed(2)}x · +${formatCurrency(_betAmount2 * _myMultiplier2!)}',
+                      style: const TextStyle(color: AppColors.green, fontSize: 11, fontWeight: FontWeight.bold)),
+                ),
+            ],
+          ),
         ],
       ),
     );
   }
 
   Widget _buildBetPanel() => Container(
-    padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+    padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
     decoration: const BoxDecoration(
       color: Color(0xFF11182E),
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),
     child: Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        _buildAutoControls(),
+        _buildIndividualBetPanel(1),
         const SizedBox(height: 10),
-        Row(
-          children: [10, 50, 100, 500].map((v) {
-            final sel = _betAmount == v.toDouble();
-            final locked = _betPlaced || _phase == 'flying';
-            return Expanded(
-              child: GestureDetector(
-                onTap: locked ? null : () => setState(() => _betAmount = v.toDouble()),
-                child: Container(
-                  margin: const EdgeInsets.all(4),
-                  padding: const EdgeInsets.symmetric(vertical: 11),
-                  decoration: BoxDecoration(
-                    color: sel ? AppColors.gold : Colors.white12,
-                    borderRadius: BorderRadius.circular(10),
-                    border: sel ? null : Border.all(color: Colors.white12),
-                  ),
-                  child: Text('₹$v', textAlign: TextAlign.center,
-                      style: TextStyle(color: sel ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-        const SizedBox(height: 12),
-        SizedBox(width: double.infinity, height: 54, child: _buildMainButton()),
+        const Divider(color: Colors.white10, height: 1),
+        const SizedBox(height: 10),
+        _buildIndividualBetPanel(2),
       ],
     ),
   );
 
-  // Auto-bet toggle + auto-cashout toggle with a target-multiplier stepper.
-  Widget _buildAutoControls() => Row(
-    children: [
-      Expanded(
-        child: _autoChip(
-          label: 'Auto Bet',
-          on: _autoBet,
-          onTap: () => setState(() => _autoBet = !_autoBet),
-        ),
-      ),
-      const SizedBox(width: 8),
-      Expanded(
-        flex: 2,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(
-            color: _autoCashout ? AppColors.green.withOpacity(0.18) : Colors.white12,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-                color: _autoCashout ? AppColors.green : Colors.white12),
-          ),
-          child: Row(
-            children: [
-              GestureDetector(
-                onTap: () => setState(() => _autoCashout = !_autoCashout),
-                child: Row(children: [
-                  Icon(
-                      _autoCashout
-                          ? Icons.check_box_rounded
-                          : Icons.check_box_outline_blank_rounded,
-                      size: 18,
-                      color: _autoCashout ? AppColors.green : Colors.white54),
-                  const SizedBox(width: 4),
-                  const Text('Auto Cashout',
-                      style: TextStyle(color: Colors.white, fontSize: 12)),
-                ]),
+  Widget _buildIndividualBetPanel(int betIndex) {
+    final amount = betIndex == 1 ? _betAmount1 : _betAmount2;
+    final placed = betIndex == 1 ? _betPlaced1 : _betPlaced2;
+
+    return Column(
+      children: [
+        _buildAutoControls(betIndex),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            // Left: Quick bet buttons
+            Expanded(
+              flex: 2,
+              child: Row(
+                children: [10, 50, 100].map((v) {
+                  final sel = amount == v.toDouble();
+                  final locked = placed || _phase == 'flying';
+                  return Expanded(
+                    child: GestureDetector(
+                      onTap: locked ? null : () => setState(() {
+                        if (betIndex == 1) {
+                          _betAmount1 = v.toDouble();
+                        } else {
+                          _betAmount2 = v.toDouble();
+                        }
+                      }),
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 2),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        decoration: BoxDecoration(
+                          color: sel ? AppColors.gold : Colors.white12,
+                          borderRadius: BorderRadius.circular(8),
+                          border: sel ? null : Border.all(color: Colors.white12),
+                        ),
+                        child: Text('₹$v', textAlign: TextAlign.center,
+                            style: TextStyle(color: sel ? Colors.black : Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                      ),
+                    ),
+                  );
+                }).toList(),
               ),
-              const Spacer(),
-              _stepBtn(Icons.remove, () => setState(
-                  () => _autoTarget = (_autoTarget - 0.5).clamp(1.5, 50.0))),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Text('${_autoTarget.toStringAsFixed(1)}x',
-                    style: const TextStyle(
-                        color: AppColors.gold,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13)),
+            ),
+            const SizedBox(width: 8),
+            // Right: Main Action Button
+            Expanded(
+              flex: 3,
+              child: SizedBox(
+                height: 38,
+                child: _buildMainButton(betIndex),
               ),
-              _stepBtn(Icons.add, () => setState(
-                  () => _autoTarget = (_autoTarget + 0.5).clamp(1.5, 50.0))),
-            ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAutoControls(int betIndex) {
+    final autoBet = betIndex == 1 ? _autoBet1 : _autoBet2;
+    final autoCash = betIndex == 1 ? _autoCashout1 : _autoCashout2;
+    final target = betIndex == 1 ? _autoTarget1 : _autoTarget2;
+
+    return Row(
+      children: [
+        Expanded(
+          flex: 2,
+          child: _autoChip(
+            label: 'Auto Bet',
+            on: autoBet,
+            onTap: () => setState(() {
+              if (betIndex == 1) {
+                _autoBet1 = !_autoBet1;
+              } else {
+                _autoBet2 = !_autoBet2;
+              }
+            }),
           ),
         ),
-      ),
-    ],
-  );
+        const SizedBox(width: 8),
+        Expanded(
+          flex: 3,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: autoCash ? AppColors.green.withOpacity(0.18) : Colors.white12,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                  color: autoCash ? AppColors.green : Colors.white12),
+            ),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () => setState(() {
+                    if (betIndex == 1) {
+                      _autoCashout1 = !_autoCashout1;
+                    } else {
+                      _autoCashout2 = !_autoCashout2;
+                    }
+                  }),
+                  child: Row(children: [
+                    Icon(
+                        autoCash
+                            ? Icons.check_box_rounded
+                            : Icons.check_box_outline_blank_rounded,
+                        size: 16,
+                        color: autoCash ? AppColors.green : Colors.white54),
+                    const SizedBox(width: 4),
+                    const Text('Auto Out',
+                        style: TextStyle(color: Colors.white, fontSize: 11)),
+                  ]),
+                ),
+                const Spacer(),
+                _stepBtn(Icons.remove, () => setState(() {
+                  if (betIndex == 1) {
+                    _autoTarget1 = (_autoTarget1 - 0.5).clamp(1.5, 50.0);
+                  } else {
+                    _autoTarget2 = (_autoTarget2 - 0.5).clamp(1.5, 50.0);
+                  }
+                })),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text('${target.toStringAsFixed(1)}x',
+                      style: const TextStyle(
+                          color: AppColors.gold,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11)),
+                ),
+                _stepBtn(Icons.add, () => setState(() {
+                  if (betIndex == 1) {
+                    _autoTarget1 = (_autoTarget1 + 0.5).clamp(1.5, 50.0);
+                  } else {
+                    _autoTarget2 = (_autoTarget2 + 0.5).clamp(1.5, 50.0);
+                  }
+                })),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _autoChip({required String label, required bool on, required VoidCallback onTap}) =>
       GestureDetector(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 9),
+          padding: const EdgeInsets.symmetric(vertical: 6),
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: on ? AppColors.gold.withOpacity(0.2) : Colors.white12,
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(8),
             border: Border.all(color: on ? AppColors.gold : Colors.white12),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(on ? Icons.autorenew_rounded : Icons.autorenew_outlined,
-                  size: 16, color: on ? AppColors.gold : Colors.white54),
-              const SizedBox(width: 5),
+                  size: 14, color: on ? AppColors.gold : Colors.white54),
+              const SizedBox(width: 4),
               Text(label,
                   style: TextStyle(
                       color: on ? AppColors.gold : Colors.white70,
-                      fontSize: 12,
+                      fontSize: 11,
                       fontWeight: FontWeight.w600)),
             ],
           ),
@@ -555,28 +679,40 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   Widget _stepBtn(IconData icon, VoidCallback onTap) => GestureDetector(
         onTap: onTap,
         child: Container(
-          width: 26,
-          height: 26,
+          width: 22,
+          height: 22,
           decoration: BoxDecoration(
-              color: Colors.white10, borderRadius: BorderRadius.circular(7)),
-          child: Icon(icon, size: 15, color: Colors.white),
+              color: Colors.white10, borderRadius: BorderRadius.circular(6)),
+          child: Icon(icon, size: 13, color: Colors.white),
         ),
       );
 
-  Widget _buildMainButton() {
-    if (_phase == 'betting' && !_betPlaced) {
+  Widget _buildMainButton(int betIndex) {
+    final amount = betIndex == 1 ? _betAmount1 : _betAmount2;
+    final placed = betIndex == 1 ? _betPlaced1 : _betPlaced2;
+    final cashed = betIndex == 1 ? _cashedOut1 : _cashedOut2;
+
+    if (_phase == 'betting' && !placed) {
       return ElevatedButton(
-        onPressed: _placeBet,
-        style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
-        child: Text('BET ₹${_betAmount.toInt()}', style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 17)),
+        onPressed: () => _placeBet(betIndex),
+        style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.gold, 
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            padding: EdgeInsets.zero,
+        ),
+        child: Text('BET ₹${amount.toInt()}', style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 13)),
       );
     }
-    if (_phase == 'flying' && _betPlaced && !_cashedOut) {
+    if (_phase == 'flying' && placed && !cashed) {
       return ElevatedButton(
-        onPressed: _cashout,
-        style: ElevatedButton.styleFrom(backgroundColor: AppColors.green, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
-        child: Text('CASH OUT  ${formatCurrency(_betAmount * _multiplier)}',
-            style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 17)),
+        onPressed: () => _cashout(betIndex),
+        style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.green, 
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            padding: EdgeInsets.zero,
+        ),
+        child: Text('OUT ${formatCurrency(amount * _multiplier)}',
+            style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12)),
       );
     }
     return ElevatedButton(
@@ -584,13 +720,14 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       style: ElevatedButton.styleFrom(
         backgroundColor: Colors.white10,
         disabledBackgroundColor: Colors.white10,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        padding: EdgeInsets.zero,
       ),
       child: Text(
-        _betPlaced && !_cashedOut ? 'Bet placed — good luck!' :
-        _cashedOut ? 'Cashed out ✓' :
-        _phase == 'crashed' ? 'Round over — next one soon' : 'Connecting…',
-        style: const TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.w600),
+        placed && !cashed ? 'Placed' :
+        cashed ? 'Cashed ✓' :
+        _phase == 'crashed' ? 'Ended' : 'Wait…',
+        style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.w600),
       ),
     );
   }
