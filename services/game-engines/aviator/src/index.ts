@@ -134,10 +134,10 @@ async function startFlyingPhase() {
 
   broadcast('aviator:flying_start', { round_id: currentRound.roundId })
 
-  let multiplier = 1.00
+  let rawMultiplier = 1.00
   flyingInterval = setInterval(async () => {
-    multiplier += 0.01 * multiplier * 0.07 // exponential growth curve
-    multiplier = Math.round(multiplier * 100) / 100
+    rawMultiplier += 0.012 * rawMultiplier // exponential growth curve
+    const multiplier = Math.round(rawMultiplier * 100) / 100
 
     if (currentRound) currentRound.currentMultiplier = multiplier
 
