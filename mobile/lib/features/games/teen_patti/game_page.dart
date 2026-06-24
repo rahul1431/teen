@@ -13,11 +13,9 @@ import 'practice_engine.dart';
 /// Landscape Teen Patti table with live chat, emoji reactions and gifts.
 class TeenPattiGamePage extends StatefulWidget {
   final String roomId;
-
-  /// When true, the table renders with mock players/cards offline — no socket,
-  /// no login, no backend. Used for UI preview.
   final bool demo;
-  const TeenPattiGamePage({super.key, required this.roomId, this.demo = false});
+  final Map<String, dynamic>? initialData;
+  const TeenPattiGamePage({super.key, required this.roomId, this.demo = false, this.initialData});
   @override
   State<TeenPattiGamePage> createState() => _TeenPattiGamePageState();
 }
@@ -121,49 +119,89 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
 
   List<Map<String, dynamic>> _myCards = [];
 
+  void _applyRoomJoinedData(Map<String, dynamic> data) {
+    if (!mounted) return;
+    setState(() {
+      final rawCards = data['my_cards'] as List?;
+      _myCards = rawCards?.cast<Map<String, dynamic>>() ?? [];
+      final rawState = data['state'] as Map<String, dynamic>? ?? data;
+
+      final List rawPlayers = data['players'] ?? rawState['players'] ?? [];
+      final List<Map<String, dynamic>> mappedPlayers = [];
+      for (final p in rawPlayers) {
+        if (p is Map) {
+          final mapped = Map<String, dynamic>.from(p);
+          if (mapped['user_id'] == null && mapped['userId'] != null) {
+            mapped['user_id'] = mapped['userId'];
+          }
+          if (mapped['userId'] == null && mapped['user_id'] != null) {
+            mapped['userId'] = mapped['user_id'];
+          }
+          mappedPlayers.add(mapped);
+        }
+      }
+
+      _gameState = {
+        ...rawState,
+        'pot': data['pot'] ?? rawState['pot'] ?? 0,
+        'min_bet': data['min_bet'] ?? rawState['min_bet'] ?? 0,
+        'current_turn': data['current_turn'] ?? rawState['current_turn'] ?? 0,
+        'players': mappedPlayers,
+      };
+      _betAmount = (data['min_bet'] as num?)?.toDouble() ?? 0;
+      final idx = (data['current_turn'] ?? 0) as int;
+      final players = _gameState!['players'] as List? ?? [];
+      final currentPlayer = idx < players.length ? players[idx] : null;
+      _isMyTurn = (currentPlayer?['userId'] ?? currentPlayer?['user_id']) == _myUserId;
+      if (_isMyTurn) _startTurnTimer();
+    });
+    SoundService.instance.play(Sfx.cardDeal);
+  }
+
   Future<void> _init() async {
     _myUserId = await SecureStorage.getUserId();
     _socket.emit(SocketEvents.joinRoom, {'room_id': widget.roomId});
 
+    if (widget.initialData != null) {
+      _applyRoomJoinedData(Map<String, dynamic>.from(widget.initialData!));
+    }
+
     // Server sends room:joined with private cards for this player
     _socket.on(SocketEvents.roomJoined).listen((data) {
-      if (!mounted) return;
-      setState(() {
-        final rawCards = data['my_cards'] as List?;
-        _myCards = rawCards?.cast<Map<String, dynamic>>() ?? [];
-        final rawState = data['state'] as Map<String, dynamic>? ?? data;
-        _gameState = {
-          ...rawState,
-          'pot': data['pot'] ?? rawState['pot'] ?? 0,
-          'min_bet': data['min_bet'] ?? rawState['min_bet'] ?? 0,
-          'current_turn': data['current_turn'] ?? rawState['current_turn'] ?? 0,
-          'players': data['players'] ?? rawState['players'] ?? [],
-        };
-        _betAmount = (data['min_bet'] as num?)?.toDouble() ?? 0;
-        final idx = (data['current_turn'] ?? 0) as int;
-        final players = _gameState!['players'] as List? ?? [];
-        final currentPlayer = idx < players.length ? players[idx] : null;
-        _isMyTurn = (currentPlayer?['userId'] ?? currentPlayer?['user_id']) == _myUserId;
-        if (_isMyTurn) _startTurnTimer();
-      });
-      SoundService.instance.play(Sfx.cardDeal);
+      _applyRoomJoinedData(Map<String, dynamic>.from(data));
     });
 
     _socket.on(SocketEvents.gameStateUpdate).listen((data) {
       if (!mounted) return;
       final innerState = data['state'] as Map<String, dynamic>? ?? data;
       setState(() {
-        _gameState = innerState;
+        final List rawPlayers = innerState['players'] ?? [];
+        final List<Map<String, dynamic>> mappedPlayers = [];
+        for (final p in rawPlayers) {
+          if (p is Map) {
+            final mapped = Map<String, dynamic>.from(p);
+            if (mapped['user_id'] == null && mapped['userId'] != null) {
+              mapped['user_id'] = mapped['userId'];
+            }
+            if (mapped['userId'] == null && mapped['user_id'] != null) {
+              mapped['userId'] = mapped['user_id'];
+            }
+            mappedPlayers.add(mapped);
+          }
+        }
+        _gameState = {
+          ...innerState,
+          'players': mappedPlayers,
+        };
         final idx = (innerState['current_turn'] ?? innerState['CurrentTurn'] ?? 0) as int;
-        final players = innerState['players'] as List? ?? [];
-        final currentPlayer = idx < players.length ? players[idx] : null;
+        final currentPlayer = idx < mappedPlayers.length ? mappedPlayers[idx] : null;
         _isMyTurn = (currentPlayer?['userId'] ?? currentPlayer?['user_id']) == _myUserId;
         if (_isMyTurn) _startTurnTimer();
         // Show last action in chat
         final la = data['last_action'] as Map?;
         if (la != null) {
           final actorId = la['user_id']?.toString() ?? '';
-          final actor = players.firstWhere((p) => (p['userId'] ?? p['user_id']) == actorId, orElse: () => null);
+          final actor = mappedPlayers.firstWhere((p) => (p['userId'] ?? p['user_id']) == actorId, orElse: () => null);
           final actorName = actor?['username'] ?? 'Player';
           _chat.add(_ChatMsg(userId: actorId, username: actorName, text: '${la['action']?.toString().toUpperCase()}', type: 'text'));
           if (_chat.length > 50) _chat.removeAt(0);
@@ -362,51 +400,139 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
   // Reference look: navy room, ornate gold-bordered RED felt with watermark
   Widget _buildFelt() => Positioned.fill(
         child: Container(
+          // Overhead casino spotlight background room atmosphere
           decoration: const BoxDecoration(
             gradient: RadialGradient(
-              center: Alignment(0, -0.5),
-              radius: 1.2,
-              colors: [Color(0xFF1C2C57), Color(0xFF0A1428)],
+              center: Alignment(0, -0.2),
+              radius: 1.4,
+              colors: [
+                Color(0xFF1E2D5A), // Bright spotlight center
+                Color(0xFF0F1736), // Deep navy
+                Color(0xFF060A1A), // Dark shadow corners
+              ],
+              stops: [0.0, 0.6, 1.0],
             ),
           ),
           child: Center(
             child: FractionallySizedBox(
-              widthFactor: 0.82,
-              heightFactor: 0.76,
+              widthFactor: 0.88,
+              heightFactor: 0.82,
               child: Container(
-                // outer ornate gold ring
-                padding: const EdgeInsets.all(7),
+                // 1. Padded Leather Outer Cushion Rail (3D Table Frame)
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(400),
-                  gradient: const LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0xFFFFE082), Color(0xFFD4AF37), Color(0xFF8A6D1E)],
+                  gradient: const RadialGradient(
+                    center: Alignment.center,
+                    radius: 1.0,
+                    colors: [
+                      Color(0xFF381F17), // Highlighted wood/leather
+                      Color(0xFF1D0E09), // Shadowed wood/leather
+                    ],
                   ),
                   boxShadow: [
-                    BoxShadow(color: AppColors.gold.withOpacity(0.30), blurRadius: 26, spreadRadius: 2),
-                    BoxShadow(color: Colors.black.withOpacity(0.55), blurRadius: 22, spreadRadius: 4),
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.7),
+                      blurRadius: 28,
+                      offset: const Offset(0, 10),
+                      spreadRadius: 4,
+                    ),
                   ],
                 ),
                 child: Container(
-                  // inner red felt
+                  // 2. Shiny Metallic Multi-tier Gold Rim
+                  padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(400),
-                    border: Border.all(color: const Color(0xFF5A0E14), width: 3),
-                    gradient: const RadialGradient(
-                      center: Alignment.center,
-                      radius: 0.9,
-                      colors: [Color(0xFFB11226), Color(0xFF7A0C1A)],
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFFFFDF7A), // Bright gold
+                        Color(0xFFB38F24), // Antique gold
+                        Color(0xFFFFDF7A), // Reflective highlights
+                        Color(0xFF8C6B12), // Deep brass shadow
+                      ],
+                      stops: [0.0, 0.35, 0.7, 1.0],
                     ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.5),
+                        blurRadius: 4,
+                        spreadRadius: 1,
+                      ),
+                    ],
                   ),
-                  child: Center(
-                    child: Text(
-                      'TEEN PATTI',
-                      style: TextStyle(
-                        color: Colors.black.withOpacity(0.18),
-                        fontSize: 34,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 6,
+                  child: Container(
+                    // 3. Inner Cushion Deep Shadow
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F0505),
+                      borderRadius: BorderRadius.circular(400),
+                    ),
+                    child: Container(
+                      // 4. Premium Felt with Radial Lighting vignette and Watermarks
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(400),
+                        gradient: const RadialGradient(
+                          center: Alignment.center,
+                          radius: 0.85,
+                          colors: [
+                            Color(0xFFC61A2E), // Bright spotlight felt center
+                            Color(0xFF8B0F1E), // Velvet crimson
+                            Color(0xFF53050F), // Dark edge felt shadow under rail
+                          ],
+                          stops: [0.0, 0.65, 1.0],
+                        ),
+                      ),
+                      child: Stack(
+                        children: [
+                          // 5. Classic Casino Circular Line Marking (Playing Zone)
+                          Positioned.fill(
+                            child: Container(
+                              margin: const EdgeInsets.all(28),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(400),
+                                border: Border.all(
+                                  color: const Color(0xFFFFD700).withOpacity(0.08),
+                                  width: 1.5,
+                                ),
+                              ),
+                            ),
+                          ),
+                          // 6. Center Branding Crest & Watermark
+                          Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '👑',
+                                  style: TextStyle(
+                                    fontSize: 32,
+                                    color: const Color(0xFFFFD700).withOpacity(0.08),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'TEEN PATTI',
+                                  style: TextStyle(
+                                    color: const Color(0xFFFFD700).withOpacity(0.12),
+                                    fontSize: 36,
+                                    fontWeight: FontWeight.w800,
+                                    fontFamily: 'Serif',
+                                    letterSpacing: 8,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Container(
+                                  width: 80,
+                                  height: 1,
+                                  color: const Color(0xFFFFD700).withOpacity(0.08),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
