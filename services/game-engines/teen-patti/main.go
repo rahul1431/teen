@@ -352,6 +352,9 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 // fraction. Falls back to 5% if the config is missing or out of range.
 func (s *Server) loadRakePct() float64 {
 	const def = 0.05
+	if s.db == nil {
+		return def
+	}
 	var pct float64
 	err := s.db.QueryRow(context.Background(),
 		`SELECT rake_percent FROM game_configs WHERE game_type = 'teen_patti'`).Scan(&pct)
