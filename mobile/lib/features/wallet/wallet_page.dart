@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:hive/hive.dart';
 import '../../core/network/api_client.dart';
 import '../../core/constants/app_config.dart';
 import '../../shared/theme/app_theme.dart';
@@ -29,7 +30,22 @@ class _WalletPageState extends State<WalletPage> {
   @override
   void initState() {
     super.initState();
+    _loadCachedData();
     _loadData();
+  }
+
+  void _loadCachedData() {
+    try {
+      final box = Hive.box('wallet');
+      final cachedReal = box.get('real_balance')?.toString();
+      final cachedBonus = box.get('bonus_balance')?.toString();
+      if (cachedReal != null || cachedBonus != null) {
+        setState(() {
+          if (cachedReal != null) _realBalance = cachedReal;
+          if (cachedBonus != null) _bonusBalance = cachedBonus;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadData() async {
@@ -38,11 +54,18 @@ class _WalletPageState extends State<WalletPage> {
         _api.dio.get('/api/wallet/balance'),
         _api.dio.get('/api/wallet/transactions?limit=20'),
       ]);
+      final real = double.parse(balRes.data['real_balance'].toString()).toStringAsFixed(2);
+      final bonus = double.parse(balRes.data['bonus_balance'].toString()).toStringAsFixed(2);
       setState(() {
-        _realBalance = double.parse(balRes.data['real_balance'].toString()).toStringAsFixed(2);
-        _bonusBalance = double.parse(balRes.data['bonus_balance'].toString()).toStringAsFixed(2);
+        _realBalance = real;
+        _bonusBalance = bonus;
         _transactions = txnRes.data;
       });
+      try {
+        final box = Hive.box('wallet');
+        box.put('real_balance', real);
+        box.put('bonus_balance', bonus);
+      } catch (_) {}
     } catch (_) {
       if (mounted) AppSnackBar.show(context, 'Could not load wallet data', error: true);
     }

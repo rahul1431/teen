@@ -1,5 +1,6 @@
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
+import 'package:hive/hive.dart';
 
 /// Named sound effects used across all games. The string value is the asset
 /// filename under `assets/sounds/`.
@@ -46,9 +47,25 @@ class SoundService {
   int _next = 0;
 
   bool _muted = false;
-  bool get muted => _muted;
-  set muted(bool v) => _muted = v;
-  void toggleMute() => _muted = !_muted;
+  bool get muted {
+    try {
+      final box = Hive.box('settings');
+      return box.get('muted', defaultValue: false) as bool;
+    } catch (_) {
+      return _muted;
+    }
+  }
+
+  set muted(bool v) {
+    _muted = v;
+    try {
+      Hive.box('settings').put('muted', v);
+    } catch (_) {}
+  }
+
+  void toggleMute() {
+    muted = !muted;
+  }
 
   /// Optional long-running ambience (e.g. table felt loop). Kept separate from
   /// the one-shot pool so it can loop and be stopped independently.

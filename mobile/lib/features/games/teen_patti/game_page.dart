@@ -9,6 +9,7 @@ import '../../../core/constants/socket_events.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'practice_engine.dart';
+import 'coin_rain.dart';
 
 /// Landscape Teen Patti table with live chat, emoji reactions and gifts.
 class TeenPattiGamePage extends StatefulWidget {
@@ -376,6 +377,49 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     super.dispose();
   }
 
+  bool _isReconnectingStatus(String status) {
+    final s = status.toLowerCase();
+    return s.contains('reconnect') || s.contains('connecting') || s.contains('error');
+  }
+
+  Widget _buildReconnectingBanner(String statusText) {
+    return Positioned(
+      top: 48,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFFFFD700), Color(0xFFDAA520)],
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 6, offset: Offset(0, 2))],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation(Colors.black),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'Reconnecting: $statusText...',
+                style: const TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -388,18 +432,25 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         body: SafeArea(
           child: _resultMessage != null
               ? _buildResult()
-              : Stack(
-                  children: [
-                    _buildFelt(),
-                    _buildSeatsAndCenter(),
-                    _buildTopBar(),
-                    _buildMyHand(),
-                    _buildMyChips(),
-                    if (_isMyTurn) _buildActionBar(),
-                    _buildSocialButtons(),
-                    if (_showGiftTray) _buildGiftTray(),
-                    if (_showChat) _buildChatPanel(),
-                  ],
+              : ValueListenableBuilder<String>(
+                  valueListenable: _socket.status,
+                  builder: (context, statusVal, child) {
+                    final showBanner = !widget.demo && _isReconnectingStatus(statusVal);
+                    return Stack(
+                      children: [
+                        _buildFelt(),
+                        _buildSeatsAndCenter(),
+                        _buildTopBar(),
+                        _buildMyHand(),
+                        _buildMyChips(),
+                        if (_isMyTurn) _buildActionBar(),
+                        _buildSocialButtons(),
+                        if (_showGiftTray) _buildGiftTray(),
+                        if (_showChat) _buildChatPanel(),
+                        if (showBanner) _buildReconnectingBanner(statusVal),
+                      ],
+                    );
+                  },
                 ),
         ),
       ),
@@ -750,6 +801,19 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
                 clipBehavior: Clip.none,
                 alignment: Alignment.center,
                 children: [
+                  if (isTurn && player['is_bot'] == true)
+                    Positioned(
+                      top: -12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.black87,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AppColors.gold.withOpacity(0.5)),
+                        ),
+                        child: const _ThinkingDots(),
+                      ),
+                    ),
                   // ring: green countdown arc on the active turn, gold idle
                   SizedBox(
                     width: 46,
@@ -950,6 +1014,16 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
                 }), size: 36),
             const SizedBox(width: 6),
             _circleBtn(Icons.person_add_alt_1, () => _showTopBarSnack('Invite friend'), size: 36),
+            const SizedBox(width: 6),
+            _circleBtn(
+              SoundService.instance.muted ? Icons.volume_off : Icons.volume_up,
+              () {
+                setState(() {
+                  SoundService.instance.toggleMute();
+                });
+              },
+              size: 36,
+            ),
             const SizedBox(width: 6),
             _circleBtn(Icons.settings, () => _showTopBarSnack('Settings'), size: 36),
           ],
@@ -1386,21 +1460,29 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
         ),
       );
 
-  Widget _buildResult() => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(_resultMessage ?? '',
-                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
-                  textAlign: TextAlign.center),
-              const SizedBox(height: 24),
-              ElevatedButton(onPressed: _exit, child: const Text('Back to Lobby')),
-            ],
+  Widget _buildResult() {
+    final won = _resultMessage?.contains('Won') ?? false;
+    return Stack(
+      children: [
+        if (won) const Positioned.fill(child: CoinRainWidget(active: true)),
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(_resultMessage ?? '',
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 24),
+                ElevatedButton(onPressed: _exit, child: const Text('Back to Lobby')),
+              ],
+            ),
           ),
         ),
-      );
+      ],
+    );
+  }
 }
 
 class _ChatMsg {
@@ -1451,6 +1533,50 @@ class _ReactionBubbleState extends State<_ReactionBubble> with SingleTickerProvi
           ),
         );
       },
+    );
+  }
+}
+
+class _ThinkingDots extends StatefulWidget {
+  const _ThinkingDots();
+  @override
+  State<_ThinkingDots> createState() => _ThinkingDotsState();
+}
+
+class _ThinkingDotsState extends State<_ThinkingDots> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1200))..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(3, (i) {
+        return AnimatedBuilder(
+          animation: _c,
+          builder: (_, __) {
+            final delay = i * 0.2;
+            final t = (_c.value - delay).clamp(0.0, 1.0);
+            final bounce = math.sin(t * math.pi);
+            return Container(
+              margin: const EdgeInsets.symmetric(horizontal: 1.5),
+              width: 5,
+              height: 5,
+              transform: Matrix4.translationValues(0, -bounce * 4, 0),
+              decoration: const BoxDecoration(
+                color: AppColors.gold,
+                shape: BoxShape.circle,
+              ),
+            );
+          },
+        );
+      }),
     );
   }
 }
