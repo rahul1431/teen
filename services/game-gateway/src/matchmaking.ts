@@ -66,22 +66,57 @@ export class MatchmakingService {
 
   private async tryCreateRoom(gameType: string, stake: number, config: any): Promise<void> {
     const key = `matchmaking:${gameType}:${stake}`
-    const members = await this.redis.zrange(key, 0, config.max_players - 1)
-    if (members.length < config.min_players) return
+    
+    // Atomically check if enough players are ready, and if so pop them
+    const members = await this.redis.eval(
+      `
+      local key = KEYS[1]
+      local min_players = tonumber(ARGV[1])
+      local max_players = tonumber(ARGV[2])
+      local members = redis.call('zrange', key, 0, max_players - 1)
+      if #members < min_players then
+        return {}
+      end
+      for _, m in ipairs(members) do
+        redis.call('zrem', key, m)
+      end
+      return members
+      `,
+      1,
+      key,
+      config.min_players,
+      config.max_players
+    ) as string[]
+
+    if (!members || members.length < config.min_players) return
 
     console.log(`[matchmaking] tryCreateRoom: ${members.length} players ready for ${gameType}:${stake} — starting game`)
     const players: MatchmakingEntry[] = members.map(m => JSON.parse(m))
-    await this.redis.zrem(key, ...members)
     await this.startGame(gameType, stake, players, [])
   }
 
   private async botFillRoom(gameType: string, stake: number, config: any): Promise<void> {
     const key = `matchmaking:${gameType}:${stake}`
-    const members = await this.redis.zrange(key, 0, -1)
-    if (!members.length) return
+    
+    // Atomically pop all waiting players from the queue
+    const members = await this.redis.eval(
+      `
+      local key = KEYS[1]
+      local members = redis.call('zrange', key, 0, -1)
+      if #members > 0 then
+        for _, m in ipairs(members) do
+          redis.call('zrem', key, m)
+        end
+      end
+      return members
+      `,
+      1,
+      key
+    ) as string[]
+
+    if (!members || !members.length) return
 
     const realPlayers: MatchmakingEntry[] = members.map(m => JSON.parse(m))
-    await this.redis.zrem(key, ...members)
     console.log(`[matchmaking] botFillRoom: ${realPlayers.length} real players for ${gameType}:${stake} — filling with bots`)
 
     const maxBots = Math.floor(config.max_players * config.max_bot_ratio)
