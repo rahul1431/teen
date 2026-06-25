@@ -33,6 +33,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
   String? _resultMessage;
   /// Current chaal/raise amount the user is about to commit. Stepped by stake.
   double _betAmount = 0;
+  StreamSubscription? _reconnectSub;
 
   // Social
   bool _showChat = false;
@@ -161,6 +162,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
   Future<void> _init() async {
     _myUserId = await SecureStorage.getUserId();
     _socket.emit(SocketEvents.joinRoom, {'room_id': widget.roomId});
+
+    _reconnectSub = _socket.on('reconnect').listen((_) {
+      _socket.emit(SocketEvents.joinRoom, {'room_id': widget.roomId});
+    });
 
     if (widget.initialData != null) {
       _applyRoomJoinedData(Map<String, dynamic>.from(widget.initialData!));
@@ -361,6 +366,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
 
   @override
   void dispose() {
+    _reconnectSub?.cancel();
     _turnTimer?.cancel();
     _practice?.dispose();
     _chatInput.dispose();

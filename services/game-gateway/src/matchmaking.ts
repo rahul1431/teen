@@ -10,6 +10,7 @@ export interface MatchmakingEntry {
 
 export class MatchmakingService {
   private timers = new Map<string, NodeJS.Timeout>()
+  private botTimers = new Map<string, { timer: NodeJS.Timeout; turnIdx: number }>()
 
   constructor(
     private redis: Redis,
@@ -306,13 +307,27 @@ export class MatchmakingService {
   async scheduleBotTurn(roomId: string, state: any, realPlayers: MatchmakingEntry[], bots: MatchmakingEntry[]): Promise<void> {
     const currentIdx = state.current_turn ?? state.CurrentTurn ?? 0
     const currentPlayer = state.players?.[currentIdx]
+
+    // Clear existing timer if turn changed, or prevent duplicate scheduling if same turn
+    const existing = this.botTimers.get(roomId)
+    if (existing) {
+      if (!currentPlayer || existing.turnIdx !== currentIdx) {
+        clearTimeout(existing.timer)
+        this.botTimers.delete(roomId)
+      } else {
+        // Already scheduled for this turn
+        return
+      }
+    }
+
     if (!currentPlayer) return
 
     const isBot = bots.some(b => b.userId === (currentPlayer.user_id ?? currentPlayer.userId))
     if (!isBot) return
 
     // Bot acts after a short delay
-    setTimeout(async () => {
+    const timer = setTimeout(async () => {
+      this.botTimers.delete(roomId)
       const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
       try {
         const action = Math.random() > 0.3 ? 'call' : 'fold'
@@ -352,6 +367,8 @@ export class MatchmakingService {
         console.error('Bot turn error', e)
       }
     }, 1500 + Math.random() * 1500)
+
+    this.botTimers.set(roomId, { timer, turnIdx: currentIdx })
   }
 
   // Drive consecutive bot turns for a Ludo room until it's a human's turn or

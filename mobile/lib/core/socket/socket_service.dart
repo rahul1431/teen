@@ -111,6 +111,7 @@ class SocketService {
 
     _startPing();
     _reconnectHandler?.call();
+    _controllers['reconnect']?.add(null);
   }
 
   void _onFrame(dynamic raw) {

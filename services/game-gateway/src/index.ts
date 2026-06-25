@@ -124,7 +124,62 @@ async function start() {
       }
 
       case 'join_room': {
-        if (data.room_id) hub.joinConn(conn, data.room_id)
+        const { room_id } = data
+        if (!room_id) return
+        hub.joinConn(conn, room_id)
+
+        // Fetch current game state to sync the client
+        const rawState = await matchmaking.getRoomState(room_id)
+        if (rawState) {
+          let myCards: any[] = []
+          
+          if (rawState.gameType === 'teen_patti' || rawState.game_type === 'teen_patti') {
+            // Fetch full state with cards from Redis
+            const fullStateRaw = await redis.get(`tp:game:${room_id}`)
+            if (fullStateRaw) {
+              try {
+                const fullState = JSON.parse(fullStateRaw)
+                const me = fullState.players?.find((p: any) => (p.user_id ?? p.userId) === conn.userId)
+                if (me) {
+                  myCards = me.cards ?? []
+                }
+              } catch (e) {
+                console.error('Failed to parse full tp state', e)
+              }
+            }
+          }
+
+          // Send room:joined event to sync this connection
+          hub.send(conn, 'room:joined', {
+            room_id,
+            players: rawState.players?.map((p: any) => ({
+              ...p,
+              userId: p.userId ?? p.user_id,
+              cards: undefined, // ensure opponents' cards hidden
+            })),
+            my_cards: myCards,
+            your_seat: rawState.players?.findIndex((p: any) => (p.userId ?? p.user_id) === conn.userId) + 1,
+            game_type: rawState.gameType ?? rawState.game_type,
+            stake: rawState.stake,
+            pot: rawState.pot,
+            current_turn: rawState.currentTurn ?? rawState.current_turn ?? 0,
+            min_bet: rawState.minBet ?? rawState.min_bet ?? rawState.stake,
+          })
+
+          // Bot recovery: if it's currently a bot's turn, trigger/drive the bot
+          const currentIdx = rawState.currentTurn ?? rawState.current_turn ?? 0
+          const currentPlayer = rawState.players?.[currentIdx]
+          if (currentPlayer && (currentPlayer.isBot || currentPlayer.is_bot)) {
+            console.log(`[ws] join_room bot recovery: driving bot turn for room=${room_id} turn=${currentIdx}`)
+            if (rawState.gameType === 'ludo' || rawState.game_type === 'ludo') {
+              void matchmaking.driveLudoBots(room_id)
+            } else {
+              const realPlayers = (rawState.players ?? []).filter((p: any) => !(p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
+              const bots = (rawState.players ?? []).filter((p: any) => (p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
+              matchmaking.scheduleBotTurn(room_id, rawState, realPlayers, bots)
+            }
+          }
+        }
         return
       }
 
