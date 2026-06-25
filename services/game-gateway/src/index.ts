@@ -20,6 +20,27 @@ async function start() {
 
   const httpServer = createServer(app.server)
   const hub = new RealtimeHub()
+  hub.setRedisPub(redis)
+
+  const redisSub = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
+  if (redisSub.status === 'wait') await redisSub.connect()
+  await redisSub.subscribe('gateway:broadcast')
+  redisSub.on('message', (channel, message) => {
+    if (channel !== 'gateway:broadcast') return
+    try {
+      const msg = JSON.parse(message)
+      if (msg.sender === hub.processId) return
+      
+      if (msg.type === 'room') {
+        hub.sendToRoom(msg.target, msg.event, msg.data, msg.sender)
+      } else if (msg.type === 'user') {
+        hub.sendToUser(msg.target, msg.event, msg.data, msg.sender)
+      }
+    } catch (e) {
+      console.error('[redis-sub] Error processing cluster message', e)
+    }
+  })
+
   const matchmaking = new MatchmakingService(redis, db, hub)
 
   // Raw WebSocket transport (replaces socket.io). Path /ws; token via the
@@ -445,15 +466,12 @@ async function start() {
       const amount = parseFloat(row.entry_fee_deducted)
       if (amount > 0) {
         try {
-          await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit`, {
+          await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
             body: JSON.stringify({
               user_id: row.user_id,
               amount,
-              type: 'game_credit',
-              reference_id: `refund:${roomId}`,
-              idempotency_key: `refund:${roomId}:${row.user_id}`,
             }),
           })
           console.log(`Refunded user=${row.user_id} amount=${amount} for terminated room=${roomId}`)

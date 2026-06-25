@@ -123,6 +123,7 @@ export class MatchmakingService {
     console.log(`[matchmaking] startGame room=${roomId} ${gameType}:${stake} real=${realPlayers.length} bots=${bots.length}`)
 
     const client = await this.db.connect()
+    const lockedUserIds: string[] = []
     try {
       await client.query('BEGIN')
 
@@ -137,19 +138,16 @@ export class MatchmakingService {
         const isBot = bots.some(b => b.userId === p.userId)
 
         if (!isBot && stake > 0) {
-          try {
-            const lockRes = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-              body: JSON.stringify({ user_id: p.userId, amount: stake, room_id: roomId }),
-            })
-            if (!lockRes.ok) {
-              const msg = await lockRes.text()
-              console.warn(`Wallet lock failed for ${p.userId}: ${msg} — continuing`)
-            }
-          } catch (lockErr) {
-            console.warn(`Wallet lock error for ${p.userId}:`, lockErr, '— continuing')
+          const lockRes = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+            body: JSON.stringify({ user_id: p.userId, amount: stake, room_id: roomId }),
+          })
+          if (!lockRes.ok) {
+            const msg = await lockRes.text()
+            throw new Error(`Wallet lock failed for ${p.username}: ${msg}`)
           }
+          lockedUserIds.push(p.userId)
         }
 
         await client.query(
@@ -164,9 +162,24 @@ export class MatchmakingService {
     } catch (err) {
       await client.query('ROLLBACK')
       console.error('Failed to start game room', err)
+      
+      // Unlock/refund any players whose wallets were successfully locked before this failure occurred
+      for (const uid of lockedUserIds) {
+        try {
+          await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+            body: JSON.stringify({ user_id: uid, amount: stake }),
+          })
+          console.log(`Rollback-unlocked user=${uid} amount=${stake} due to game start failure`)
+        } catch (unlockErr) {
+          console.error(`Failed to unlock wallet for user=${uid} during rollback:`, unlockErr)
+        }
+      }
+
       // Notify real players so they don't wait forever
       for (const p of realPlayers) {
-        this.hub.sendToUser(p.userId, 'error', { message: 'Failed to start game. Please try again.' })
+        this.hub.sendToUser(p.userId, 'error', { message: `Failed to start game: ${(err as Error).message || err}` })
       }
       return
     } finally {
@@ -410,17 +423,30 @@ export class MatchmakingService {
 
   // Credit the Ludo winner and broadcast the final result to the room.
   async handleLudoEnd(roomId: string, result: any): Promise<void> {
-    if (result?.winner_id) {
-      try {
-        await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit-game-win`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-          body: JSON.stringify({ user_id: result.winner_id, amount: result.prize, room_id: roomId }),
-        })
-      } catch (e) {
-        console.error('Failed to credit ludo win', e)
-      }
+    try {
+      const parts = await this.db.query(
+        'SELECT user_id, entry_fee_deducted, is_bot FROM game_participants WHERE room_id = $1',
+        [roomId]
+      )
+      const players = parts.rows.filter(r => !r.is_bot).map(r => ({
+        user_id: r.user_id,
+        entry_fee: parseFloat(r.entry_fee_deducted)
+      }))
+
+      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/settle-game`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+        body: JSON.stringify({
+          room_id: roomId,
+          winner_id: result?.winner_id || null,
+          prize: result?.winner_id ? Number(result.prize) : 0,
+          players,
+        }),
+      })
+    } catch (e) {
+      console.error('Failed to settle Ludo game', e)
     }
+
     this.hub.sendToRoom(roomId, 'game:result', {
       room_id: roomId,
       winner_id: result.winner_id,
@@ -432,17 +458,29 @@ export class MatchmakingService {
   async handleGameEnd(roomId: string, result: any, realPlayers: MatchmakingEntry[], state: any): Promise<void> {
     if (!result) return
 
-    // Credit winner via wallet service
-    if (result.winner_id) {
-      try {
-        await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit-game-win`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-          body: JSON.stringify({ user_id: result.winner_id, amount: result.prize, room_id: roomId }),
-        })
-      } catch (e) {
-        console.error('Failed to credit game win', e)
-      }
+    // Settle game via wallet service (consumes locked balance for all players, pays winner)
+    try {
+      const parts = await this.db.query(
+        'SELECT user_id, entry_fee_deducted, is_bot FROM game_participants WHERE room_id = $1',
+        [roomId]
+      )
+      const players = parts.rows.filter(r => !r.is_bot).map(r => ({
+        user_id: r.user_id,
+        entry_fee: parseFloat(r.entry_fee_deducted)
+      }))
+
+      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/settle-game`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+        body: JSON.stringify({
+          room_id: roomId,
+          winner_id: result.winner_id || null,
+          prize: result.winner_id ? Number(result.prize) : 0,
+          players,
+        }),
+      })
+    } catch (e) {
+      console.error('Failed to settle Teen Patti game', e)
     }
 
     const winner = state.players?.find((p: any) => (p.userId ?? p.user_id ?? p.id) === result.winner_id)

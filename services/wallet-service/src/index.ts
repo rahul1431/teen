@@ -285,6 +285,57 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // Internal: POST /internal/wallet/unlock (called by game-gateway on termination/cancel)
+  app.post('/internal/wallet/unlock', { onRequest: [authenticateInternal] }, async (req, reply) => {
+    const body = z.object({ user_id: z.string().uuid(), amount: z.number() }).parse(req.body)
+    await walletSvc.unlockFunds(body.user_id, body.amount)
+    return reply.send({ success: true })
+  })
+
+  // Internal: POST /internal/wallet/settle-game (called by game-gateway at game end)
+  app.post('/internal/wallet/settle-game', { onRequest: [authenticateInternal] }, async (req, reply) => {
+    const body = z.object({
+      room_id: z.string(),
+      winner_id: z.string().uuid().nullable(),
+      prize: z.number().nonnegative(),
+      players: z.array(z.object({
+        user_id: z.string().uuid(),
+        entry_fee: z.number().nonnegative()
+      }))
+    }).parse(req.body)
+
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
+      
+      // 1. Consume locked funds for all participants
+      for (const p of body.players) {
+        await walletSvc.consumeLockedFunds(p.user_id, p.entry_fee, client)
+      }
+
+      // 2. If there is a winner, credit the prize to their real wallet
+      if (body.winner_id && body.prize > 0) {
+        await walletSvc.credit({
+          userId: body.winner_id,
+          amount: body.prize,
+          type: 'game_credit',
+          walletType: 'real',
+          referenceId: body.room_id,
+          idempotencyKey: `win:${body.room_id}:${body.winner_id}`,
+          description: `Game win: room ${body.room_id}`,
+        }, client)
+      }
+
+      await client.query('COMMIT')
+      return reply.send({ success: true })
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
+  })
+
   // Internal: POST /internal/wallet/credit (called by game-gateway after game result)
   app.post('/internal/wallet/credit', { onRequest: [authenticateInternal] }, async (req, reply) => {
     const body = z.object({

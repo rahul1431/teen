@@ -1,4 +1,6 @@
 import { WebSocket } from 'ws'
+import { Redis } from 'ioredis'
+import { v4 as uuid } from 'uuid'
 
 // One live WebSocket connection plus its identity and room membership.
 export interface Conn {
@@ -9,13 +11,17 @@ export interface Conn {
   isAlive: boolean
 }
 
-// RealtimeHub replaces socket.io's rooms/emit model with plain in-memory maps.
-// It targets a single gateway instance (PM2 fork mode). To scale horizontally
-// later, the send* methods are the only place that needs a Redis pub/sub
-// fan-out — the rest of the app talks to this interface, not the transport.
+// RealtimeHub manages connections and handles cluster-wide broadcasts via Redis.
 export class RealtimeHub {
   private byUser = new Map<string, Set<Conn>>()
   private byRoom = new Map<string, Set<Conn>>()
+  
+  public processId = uuid()
+  private redisPub: Redis | null = null
+
+  setRedisPub(redis: Redis): void {
+    this.redisPub = redis
+  }
 
   add(conn: Conn): void {
     let set = this.byUser.get(conn.userId)
@@ -39,8 +45,7 @@ export class RealtimeHub {
     conn.rooms.clear()
   }
 
-  // Join every live connection of a user to a room (used by matchmaking, where
-  // we only know the userId, not the specific connection).
+  // Join every live connection of a user to a room
   joinRoom(userId: string, roomId: string): void {
     const conns = this.byUser.get(userId)
     if (!conns) return
@@ -49,7 +54,7 @@ export class RealtimeHub {
     for (const c of conns) { roomSet.add(c); c.rooms.add(roomId) }
   }
 
-  // Join a specific connection to a room (used by the join_room handler).
+  // Join a specific connection to a room
   joinConn(conn: Conn, roomId: string): void {
     let roomSet = this.byRoom.get(roomId)
     if (!roomSet) { roomSet = new Set(); this.byRoom.set(roomId, roomSet) }
@@ -57,21 +62,47 @@ export class RealtimeHub {
     conn.rooms.add(roomId)
   }
 
-  sendToUser(userId: string, event: string, data: unknown): void {
+  sendToUser(userId: string, event: string, data: unknown, senderId?: string): void {
+    // 1. Send to local connections on this instance
     const conns = this.byUser.get(userId)
-    if (!conns) return
-    const msg = JSON.stringify({ event, data })
-    for (const c of conns) this.rawSend(c.ws, msg)
+    if (conns) {
+      const msg = JSON.stringify({ event, data })
+      for (const c of conns) this.rawSend(c.ws, msg)
+    }
+
+    // 2. Publish to Redis so other instances in the cluster receive it
+    if (this.redisPub && !senderId) {
+      this.redisPub.publish('gateway:broadcast', JSON.stringify({
+        type: 'user',
+        target: userId,
+        event,
+        data,
+        sender: this.processId
+      })).catch(() => {})
+    }
   }
 
-  sendToRoom(roomId: string, event: string, data: unknown): void {
+  sendToRoom(roomId: string, event: string, data: unknown, senderId?: string): void {
+    // 1. Send to local connections on this instance
     const conns = this.byRoom.get(roomId)
-    if (!conns) return
-    const msg = JSON.stringify({ event, data })
-    for (const c of conns) this.rawSend(c.ws, msg)
+    if (conns) {
+      const msg = JSON.stringify({ event, data })
+      for (const c of conns) this.rawSend(c.ws, msg)
+    }
+
+    // 2. Publish to Redis so other instances in the cluster receive it
+    if (this.redisPub && !senderId) {
+      this.redisPub.publish('gateway:broadcast', JSON.stringify({
+        type: 'room',
+        target: roomId,
+        event,
+        data,
+        sender: this.processId
+      })).catch(() => {})
+    }
   }
 
-  // Per-connection reply (replaces socket.emit).
+  // Per-connection reply (replaces socket.emit)
   send(conn: Conn, event: string, data: unknown): void {
     this.rawSend(conn.ws, JSON.stringify({ event, data }))
   }

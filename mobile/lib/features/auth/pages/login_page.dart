@@ -155,9 +155,9 @@ class _LoginPageState extends State<LoginPage> {
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
-                    onPressed: () => context.push('/games/teen-patti/demo'),
-                    icon: const Icon(Icons.play_circle_outline_rounded, color: AppColors.gold, size: 20),
-                    label: const Text('Preview Teen Patti (Demo)', style: TextStyle(color: AppColors.gold)),
+                    onPressed: () => context.push('/auth/offline-demo'),
+                    icon: const Icon(Icons.videogame_asset_outlined, color: AppColors.gold, size: 20),
+                    label: const Text('Play Offline Practice Games', style: TextStyle(color: AppColors.gold)),
                     style: OutlinedButton.styleFrom(
                       side: const BorderSide(color: AppColors.border),
                       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -166,7 +166,7 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 const SizedBox(height: 8),
                 const Center(
-                  child: Text('No login needed · UI preview only',
+                  child: Text('No login or internet needed · Play vs local Bots',
                     style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
                 ),
               ],

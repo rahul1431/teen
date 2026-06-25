@@ -38,11 +38,9 @@ module.exports = {
       cwd: `${BASE}/game-gateway`,
       script: 'dist/index.js',
       env_file: ENV_FILE('game-gateway'),
-      // Single fork: the realtime hub (user/room → socket maps) is in-memory,
-      // so multiple cluster workers would each hold a partial view and break
-      // room broadcasts. Keep one instance until we add a Redis fan-out.
-      instances: 1,
-      exec_mode: 'fork',
+      // Cluster mode: enabled by adding Redis Pub/Sub cluster fan-out broker.
+      instances: 'max',
+      exec_mode: 'cluster',
       watch: false,
       max_memory_restart: '400M',
     },
