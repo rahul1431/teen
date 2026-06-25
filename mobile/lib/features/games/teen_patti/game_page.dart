@@ -968,24 +968,53 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
 
   Widget _buildMyHand() {
     final me = (_gameState?['players'] as List?)
-        ?.where((p) => p['user_id'] == _myUserId)
+        ?.where((p) => (p['user_id'] ?? p['userId']) == _myUserId)
         .firstOrNull;
-    final cards = (me?['cards'] as List?) ?? [];
+    if (me != null) {
+      final serverSeen = me['is_seen'] == true || me['isSeen'] == true;
+      if (serverSeen && !_isSeen) {
+        _isSeen = true;
+      }
+    }
+    final cards = _myCards;
     if (cards.isEmpty) return const SizedBox.shrink();
     return Positioned(
-      // Sit above the action bar (≈92px tall) when it's showing, else near the edge.
       bottom: _isMyTurn ? 104 : 14,
       left: 0,
       right: 0,
       child: Center(
-        child: Row(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            for (var i = 0; i < cards.length; i++)
-              Transform.rotate(
-                angle: (i - (cards.length - 1) / 2) * 0.12,
-                child: _buildCard(cards[i]['value'].toString(), cards[i]['suit'].toString()),
+            if (!_isSeen) ...[
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.gold,
+                  foregroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                ),
+                onPressed: () {
+                  _sendAction('see');
+                  setState(() {
+                    _isSeen = true;
+                  });
+                },
+                child: const Text('See Cards', style: TextStyle(fontWeight: FontWeight.bold)),
               ),
+              const SizedBox(height: 8),
+            ],
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < cards.length; i++)
+                  Transform.rotate(
+                    angle: (i - (cards.length - 1) / 2) * 0.12,
+                    child: _isSeen
+                        ? _buildCard(cards[i]['value'].toString(), cards[i]['suit'].toString())
+                        : _buildCardBack(),
+                  ),
+              ],
+            ),
           ],
         ),
       ),
@@ -1041,12 +1070,36 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
     );
   }
 
+  Widget _buildCardBack() {
+    return Container(
+      width: 52,
+      height: 74,
+      margin: const EdgeInsets.symmetric(horizontal: 3),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1E3A8A), Color(0xFF0B1E52)],
+        ),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.gold, width: 1.5),
+        boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(1, 3))],
+      ),
+      alignment: Alignment.center,
+      child: const Text('♠', style: TextStyle(color: AppColors.gold, fontSize: 28, fontWeight: FontWeight.bold)),
+    );
+  }
+
   Widget _buildActionBar() {
     final stake = (_gameState?['min_bet'] as num?)?.toDouble() ?? 10;
     final minBet = _isSeen ? stake * 2 : stake;
     final maxBet = minBet * 4; // standard Teen Patti chaal cap
     if (_betAmount < minBet) _betAmount = minBet;
     if (_betAmount > maxBet) _betAmount = maxBet;
+
+    final players = (_gameState?['players'] as List?) ?? [];
+    final activeCount = players.where((p) => p['status'] == 'active').length;
+    final showAllowed = activeCount == 2;
 
     return Positioned(
       bottom: 6,
@@ -1063,14 +1116,18 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _actionBtn('Pack', AppColors.red, () => _sendAction('fold')),
-              const SizedBox(width: 10),
-              _actionBtn('Side Show', Colors.deepPurple, () => _sendAction('side_show')),
+              if (showAllowed) ...[
+                const SizedBox(width: 10),
+                _actionBtn('Show', Colors.deepPurple, () => _sendAction('show')),
+              ],
               const SizedBox(width: 10),
               // Bet stepper: −  [Chaal ₹amt]  +
               _stepperBtn('−', () => _adjustBet(-stake, minBet, maxBet)),
               const SizedBox(width: 6),
-              _actionBtn('Chaal ₹${_betAmount.toInt()}', AppColors.green,
-                  () => _sendAction('call', amount: _betAmount)),
+              _actionBtn(
+                  _betAmount > minBet ? 'Raise ₹${_betAmount.toInt()}' : 'Chaal ₹${_betAmount.toInt()}',
+                  AppColors.green,
+                  () => _sendAction(_betAmount > minBet ? 'raise' : 'call', amount: _betAmount)),
               const SizedBox(width: 6),
               _stepperBtn('+', () => _adjustBet(stake, minBet, maxBet)),
             ],

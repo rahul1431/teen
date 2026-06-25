@@ -274,7 +274,44 @@ async function start() {
     const state = rawState
     const playerIdx = state.players.findIndex((p: any) => (p.userId ?? p.user_id) === conn.userId)
     if (playerIdx === -1) return hub.send(conn, 'error', { message: 'Not in this room' })
-    if ((state.currentTurn ?? state.current_turn) !== playerIdx) return hub.send(conn, 'error', { message: 'Not your turn' })
+    if (action !== 'see' && (state.currentTurn ?? state.current_turn) !== playerIdx) {
+      return hub.send(conn, 'error', { message: 'Not your turn' })
+    }
+
+    // In-game bet locking
+    let extraBet = 0
+    const player = state.players[playerIdx]
+    const isBot = player.isBot || player.is_bot || false
+    if (!isBot) {
+      const isSeen = player.isSeen || player.is_seen || false
+      const minBet = state.minBet ?? state.min_bet ?? state.stake ?? 0
+      if (action === 'call') {
+        extraBet = isSeen ? minBet * 2 : minBet
+      } else if (action === 'raise') {
+        extraBet = amount
+      } else if (action === 'show') {
+        extraBet = isSeen ? minBet * 2 : minBet
+      }
+    }
+
+    let locked = false
+    if (extraBet > 0) {
+      try {
+        const lockRes = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+          body: JSON.stringify({ user_id: conn.userId, amount: extraBet, room_id }),
+        })
+        if (!lockRes.ok) {
+          const msg = await lockRes.text()
+          return hub.send(conn, 'error', { message: `Insufficient balance: ${msg}` })
+        }
+        locked = true
+      } catch (err) {
+        console.error('[gateway] Wallet lock failed', err)
+        return hub.send(conn, 'error', { message: 'Wallet service unavailable' })
+      }
+    }
 
     const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
     try {
@@ -284,11 +321,26 @@ async function start() {
         body: JSON.stringify({ room_id, user_id: conn.userId, action, amount: amount ?? 0, sequence_num: sequence_num ?? 0 }),
       })
       if (!res.ok) {
+        if (locked) {
+          await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+            body: JSON.stringify({ user_id: conn.userId, amount: extraBet }),
+          }).catch(e => console.error('[gateway] unlock rollback failed', e))
+        }
         const msg = await res.text()
         return hub.send(conn, 'error', { message: msg || 'Engine error' })
       }
+
       const data = await res.json() as any
       const newState = data.state ?? data
+
+      if (locked) {
+        await db.query(
+          'UPDATE game_participants SET entry_fee_deducted = entry_fee_deducted + $1 WHERE room_id = $2 AND user_id = $3',
+          [extraBet, room_id, conn.userId]
+        ).catch(e => console.error('[gateway] Failed to update entry_fee_deducted in DB', e))
+      }
 
       await matchmaking.setRoomState(room_id, { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) })
 
@@ -299,33 +351,23 @@ async function start() {
         result: data.result ?? null,
       })
 
-      if (newState.status === 'completed' && data.result) {
-        let winnerUsername = 'Unknown'
-        if (data.result.winner_id) {
-          const winner = newState.players?.find((p: any) => (p.userId ?? p.user_id) === data.result.winner_id)
-          if (winner) winnerUsername = winner.username ?? 'Player'
+      const realPlayers = (newState.players ?? []).filter((p: any) => !(p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
 
-          fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit-game-win`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-            body: JSON.stringify({ user_id: data.result.winner_id, amount: data.result.prize, room_id }),
-          }).catch(e => console.error('credit-game-win failed', e))
-        }
-        hub.sendToRoom(room_id, 'game:result', {
-          room_id,
-          winner_id: data.result.winner_id,
-          winner_username: winnerUsername,
-          prize: data.result.prize,
-          hand_rank: data.result.hand_rank,
-          all_hands: data.result.all_hands ?? [],
-        })
+      if (newState.status === 'completed' && data.result) {
+        await matchmaking.handleGameEnd(room_id, data.result, realPlayers, newState)
       } else {
-        const realPlayers = (newState.players ?? []).filter((p: any) => !(p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
         const bots = (newState.players ?? []).filter((p: any) => (p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
         matchmaking.scheduleBotTurn(room_id, newState, realPlayers, bots)
       }
     } catch (e) {
       console.error('Engine call failed', e)
+      if (locked) {
+        await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+          body: JSON.stringify({ user_id: conn.userId, amount: extraBet }),
+        }).catch(err => console.error('[gateway] unlock rollback failed on catch', err))
+      }
       hub.sendToRoom(room_id, 'game:action_received', { user_id: conn.userId, action, amount, sequence_num })
     }
   }
