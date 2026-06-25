@@ -1421,6 +1421,13 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  app.post('/api/admin/betting/cricket/matches/:id/sync-score', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const r = await callBetting(`/internal/cricket/matches/${id}/sync-score`, req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+
 
   // --- Satta Matka Market Creation & Deletion ---
   app.get('/api/admin/betting/matka/markets', { onRequest: [authenticate] }, async (_req, reply) => {

@@ -613,11 +613,13 @@ async function start() {
     const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
     const specialRules = configRes.rows[0]?.special_rules || {}
     const { api_key } = specialRules
-    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
+    if (!api_key) {
+      return reply.code(400).send({ error: "Please configure a valid CricAPI Key in the Admin Panel." })
+    }
 
     try {
       // 1. Fetch current/live matches
-      const currentUrl = `https://api.cricapi.com/v1/currentMatches?apikey=${keyToUse}&offset=0`
+      const currentUrl = `https://api.cricapi.com/v1/currentMatches?apikey=${api_key}&offset=0`
       const currentRes = await fetch(currentUrl)
       if (!currentRes.ok) throw new Error(`CricAPI currentMatches returned ${currentRes.status}`)
       const currentData = await currentRes.json()
@@ -625,7 +627,7 @@ async function start() {
 
       // 2. Fetch upcoming matches list to show in lobby
       let upcomingMatches: any[] = []
-      const matchesUrl = `https://api.cricapi.com/v1/matches?apikey=${keyToUse}&offset=0`
+      const matchesUrl = `https://api.cricapi.com/v1/matches?apikey=${api_key}&offset=0`
       const matchesRes = await fetch(matchesUrl).catch(() => null)
       if (matchesRes && matchesRes.ok) {
         const matchesData = await matchesRes.json()
@@ -728,10 +730,12 @@ async function start() {
     const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
     const specialRules = configRes.rows[0]?.special_rules || {}
     const { api_key } = specialRules
-    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
+    if (!api_key) {
+      return reply.code(400).send({ error: "Please configure a valid CricAPI Key in the Admin Panel." })
+    }
 
     try {
-      const url = `https://api.cricapi.com/v1/countries?apikey=${keyToUse}&offset=0`
+      const url = `https://api.cricapi.com/v1/countries?apikey=${api_key}&offset=0`
       const apiRes = await fetch(url)
       if (!apiRes.ok) throw new Error(`CricAPI countries returned ${apiRes.status}`)
       const data = await apiRes.json()
@@ -760,12 +764,14 @@ async function start() {
     const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
     const specialRules = configRes.rows[0]?.special_rules || {}
     const { api_key } = specialRules
-    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
+    if (!api_key) {
+      return reply.code(400).send({ error: "Please configure a valid CricAPI Key in the Admin Panel." })
+    }
 
     const { search, offset = 0 } = req.body as { search?: string, offset?: number }
 
     try {
-      let url = `https://api.cricapi.com/v1/series?apikey=${keyToUse}&offset=${offset}`
+      let url = `https://api.cricapi.com/v1/series?apikey=${api_key}&offset=${offset}`
       if (search) {
         url += `&search=${encodeURIComponent(search)}`
       }
@@ -785,13 +791,15 @@ async function start() {
     const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
     const specialRules = configRes.rows[0]?.special_rules || {}
     const { api_key } = specialRules
-    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
+    if (!api_key) {
+      return reply.code(400).send({ error: "Please configure a valid CricAPI Key in the Admin Panel." })
+    }
 
     const { series_id } = req.body as { series_id: string }
     if (!series_id) return reply.code(400).send({ error: 'series_id is required' })
 
     try {
-      const url = `https://api.cricapi.com/v1/series_info?apikey=${keyToUse}&id=${series_id}`
+      const url = `https://api.cricapi.com/v1/series_info?apikey=${api_key}&id=${series_id}`
       const apiRes = await fetch(url)
       if (!apiRes.ok) throw new Error(`CricAPI series_info returned ${apiRes.status}`)
       const data = await apiRes.json()
@@ -861,7 +869,9 @@ async function start() {
     const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
     const specialRules = configRes.rows[0]?.special_rules || {}
     const { api_key } = specialRules
-    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
+    if (!api_key) {
+      return reply.code(400).send({ error: "Please configure a valid CricAPI Key in the Admin Panel." })
+    }
 
     const { match_id, match_api_id } = req.body as { match_id: string, match_api_id: string }
     if (!match_id || !match_api_id) {
@@ -869,7 +879,7 @@ async function start() {
     }
 
     try {
-      const url = `https://api.cricapi.com/v1/match_squad?apikey=${keyToUse}&id=${match_api_id}`
+      const url = `https://api.cricapi.com/v1/match_squad?apikey=${api_key}&id=${match_api_id}`
       const apiRes = await fetch(url)
       if (!apiRes.ok) throw new Error(`CricAPI match_squad returned ${apiRes.status}`)
       const data = await apiRes.json()
@@ -946,6 +956,79 @@ async function start() {
     }
   })
 
+  // Sync Score for Match from CricAPI
+  app.post('/internal/cricket/matches/:id/sync-score', { onRequest: [internal] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const matchRes = await db.query('SELECT * FROM cricket_matches WHERE id = $1', [id])
+    if (!matchRes.rows.length) {
+      return reply.code(404).send({ error: 'Match not found' })
+    }
+    const match = matchRes.rows[0]
+    const apiId = match.match_api_id
+    if (!apiId) {
+      return reply.code(400).send({ error: 'Match does not have a CricAPI ID associated with it' })
+    }
+
+    const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
+    const specialRules = configRes.rows[0]?.special_rules || {}
+    const { api_key } = specialRules
+    if (!api_key) {
+      return reply.code(400).send({ error: "Please configure a valid CricAPI Key in the Admin Panel." })
+    }
+
+    try {
+      const url = `https://api.cricapi.com/v1/match_info?apikey=${api_key}&id=${apiId}`
+      const apiRes = await fetch(url)
+      if (!apiRes.ok) throw new Error(`CricAPI match_info returned ${apiRes.status}`)
+      const data = await apiRes.json()
+      if (data.status !== 'success') throw new Error(data.reason || 'Failed to fetch match info')
+
+      const m = data.data
+      if (!m) throw new Error('No match data returned from CricAPI')
+
+      // Determine status
+      let status = match.status
+      if (m.matchEnded) {
+        status = 'settled'
+      } else if (m.matchStarted) {
+        status = 'live'
+      }
+
+      // Live score mapping
+      const live_score: any = {}
+      if (m.score && Array.isArray(m.score)) {
+        const latestInning = m.score[m.score.length - 1]
+        if (latestInning) {
+          live_score.runs = latestInning.r || 0
+          live_score.wickets = latestInning.w || 0
+          live_score.overs = latestInning.o || 0
+          live_score.current_innings = latestInning.inning || ''
+          live_score.description = m.status || ''
+        }
+      }
+
+      const existingScore = match.live_score || {}
+      const mergedScore = {
+        ...existingScore,
+        runs: live_score.runs ?? existingScore.runs,
+        wickets: live_score.wickets ?? existingScore.wickets,
+        overs: live_score.overs ?? existingScore.overs,
+        current_innings: live_score.current_innings ?? existingScore.current_innings,
+        description: live_score.description ?? existingScore.description
+      }
+
+      const res = await db.query(
+        `UPDATE cricket_matches 
+         SET status = $1, live_score = $2
+         WHERE id = $3 RETURNING *`,
+        [status, JSON.stringify(mergedScore), id]
+      )
+
+      return { success: true, match: res.rows[0] }
+    } catch (e: any) {
+      return reply.code(500).send({ error: `Match score sync failed: ${e.message}` })
+    }
+  })
 
   app.get('/health', async () => ({ status: 'ok', service: 'betting' }))
 

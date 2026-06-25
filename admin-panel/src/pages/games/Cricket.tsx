@@ -49,6 +49,7 @@ export default function Cricket() {
   const [liveMatchId, setLiveMatchId] = useState<string>('')
   const [liveMatch, setLiveMatch] = useState<any>(null)
   const [loadingLive, setLoadingLive] = useState(false)
+  const [syncingScore, setSyncingScore] = useState(false)
   const [scoreForm] = Form.useForm()
   const [liveMarketForm] = Form.useForm()
 
@@ -352,6 +353,20 @@ export default function Cricket() {
     }
   }
 
+  const syncMatchScore = async (matchId: string) => {
+    setSyncingScore(true)
+    try {
+      await adminApi.post(`/betting/cricket/matches/${matchId}/sync-score`, {})
+      message.success('Match score auto-synced from CricAPI!')
+      loadLiveMatch(matchId)
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to auto-sync match score')
+    } finally {
+      setSyncingScore(false)
+    }
+  }
+
   useEffect(() => {
     loadConfig()
     loadMatches()
@@ -587,7 +602,22 @@ export default function Cricket() {
       children: (
         <Row gutter={[24, 24]}>
           <Col xs={24} lg={10}>
-            <Card title="Active Match Operator Scoreboard">
+            <Card 
+              title="Active Match Operator Scoreboard"
+              extra={
+                liveMatch && liveMatch.match_api_id && (
+                  <Button 
+                    type="dashed" 
+                    icon={<SyncOutlined />} 
+                    loading={syncingScore} 
+                    onClick={() => syncMatchScore(liveMatchId)}
+                    style={{ borderColor: '#d4af37', color: '#d4af37' }}
+                  >
+                    Auto Sync Score
+                  </Button>
+                )
+              }
+            >
               <div style={{ marginBottom: 16 }}>
                 <Text>Select Match: </Text>
                 <Select 
