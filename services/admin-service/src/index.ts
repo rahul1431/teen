@@ -1370,6 +1370,38 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  // --- Cricket Fantasy & Live Updates ---
+  app.get('/api/admin/betting/cricket/fantasy/players', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query('SELECT * FROM cricket_fantasy_players ORDER BY role ASC, name ASC')
+    return reply.send({ players: res.rows })
+  })
+
+  app.post('/api/admin/betting/cricket/fantasy/players', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/fantasy/players', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/fantasy/leagues', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/fantasy/leagues', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/scores/update', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/scores/update', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/fantasy/settle', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/fantasy/settle', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/sync-api', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/sync-api', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+
   // --- Satta Matka Market Creation & Deletion ---
   app.get('/api/admin/betting/matka/markets', { onRequest: [authenticate] }, async (_req, reply) => {
     const res = await db.query('SELECT * FROM matka_markets ORDER BY sort_order')

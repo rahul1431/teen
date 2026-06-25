@@ -11,7 +11,7 @@ import {
   settleMatkaSession,
 } from './matka'
 import { settleLottery } from './lottery'
-import { settleCricketMarket } from './cricket'
+import { settleCricketMarket, settleFantasyLeague } from './cricket'
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 10 })
@@ -240,6 +240,196 @@ async function start() {
     return { bets: rows.rows }
   })
 
+  // Get eligible fantasy players for a match (or all players)
+  app.get('/cricket/players', { onRequest: [auth] }, async (req) => {
+    const { match_id } = req.query as { match_id?: string }
+    if (match_id) {
+      const mRes = await db.query('SELECT team_a, team_b FROM cricket_matches WHERE id = $1', [match_id])
+      if (mRes.rows.length) {
+        const match = mRes.rows[0]
+        const players = await db.query(
+          `SELECT * FROM cricket_fantasy_players 
+           WHERE team_name IN ($1, $2) 
+           ORDER BY role ASC, name ASC`,
+          [match.team_a, match.team_b]
+        )
+        return { players: players.rows }
+      }
+    }
+    const allPlayers = await db.query('SELECT * FROM cricket_fantasy_players ORDER BY role ASC, name ASC')
+    return { players: allPlayers.rows }
+  })
+
+  // Submit/edit a user's fantasy team roster
+  app.post('/cricket/fantasy/team', { onRequest: [auth] }, async (req, reply) => {
+    const body = z.object({
+      match_id: z.string().uuid(),
+      player_ids: z.array(z.string().uuid()).length(11),
+      captain_id: z.string().uuid(),
+      vice_captain_id: z.string().uuid(),
+    }).parse(req.body)
+
+    if (body.captain_id === body.vice_captain_id) {
+      return reply.code(400).send({ error: 'Captain and Vice-Captain cannot be the same player' })
+    }
+    if (!body.player_ids.includes(body.captain_id) || !body.player_ids.includes(body.vice_captain_id)) {
+      return reply.code(400).send({ error: 'Captain and Vice-Captain must be members of the selected team' })
+    }
+
+    const mRes = await db.query('SELECT status FROM cricket_matches WHERE id = $1', [body.match_id])
+    if (!mRes.rows.length) return reply.code(404).send({ error: 'Match not found' })
+    if (mRes.rows[0].status !== 'upcoming') {
+      return reply.code(400).send({ error: 'Cannot submit team: Match has already started or settled' })
+    }
+
+    const playersRes = await db.query(
+      'SELECT id, role, credits FROM cricket_fantasy_players WHERE id = ANY($1)',
+      [body.player_ids]
+    )
+    if (playersRes.rows.length !== 11) {
+      return reply.code(400).send({ error: 'One or more selected players do not exist' })
+    }
+
+    let totalCredits = 0
+    let wk = 0, bat = 0, ar = 0, bowl = 0
+
+    for (const p of playersRes.rows) {
+      totalCredits += Number(p.credits)
+      if (p.role === 'wicket_keeper') wk++
+      else if (p.role === 'batsman') bat++
+      else if (p.role === 'all_rounder') ar++
+      else if (p.role === 'bowler') bowl++
+    }
+
+    if (totalCredits > 100.0) {
+      return reply.code(400).send({ error: `Roster exceeds budget cap: ${totalCredits.toFixed(1)}/100 credits` })
+    }
+    if (wk < 1 || wk > 4) return reply.code(400).send({ error: 'Roster must contain between 1 and 4 Wicket Keepers' })
+    if (bat < 3 || bat > 6) return reply.code(400).send({ error: 'Roster must contain between 3 and 6 Batsmen' })
+    if (ar < 1 || ar > 4) return reply.code(400).send({ error: 'Roster must contain between 1 and 4 All-Rounders' })
+    if (bowl < 3 || bowl > 6) return reply.code(400).send({ error: 'Roster must contain between 3 and 6 Bowlers' })
+
+    const teamRes = await db.query(
+      `INSERT INTO user_fantasy_teams (user_id, match_id, player_ids, captain_id, vice_captain_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [uid(req), body.match_id, body.player_ids, body.captain_id, body.vice_captain_id]
+    )
+    return { success: true, team_id: teamRes.rows[0].id }
+  })
+
+  // Get user's fantasy teams
+  app.get('/cricket/fantasy/my-teams', { onRequest: [auth] }, async (req) => {
+    const { match_id } = req.query as { match_id: string }
+    const res = await db.query(
+      `SELECT t.*, 
+        (SELECT name FROM cricket_fantasy_players WHERE id = t.captain_id) AS captain_name,
+        (SELECT name FROM cricket_fantasy_players WHERE id = t.vice_captain_id) AS vice_captain_name
+       FROM user_fantasy_teams t 
+       WHERE t.user_id = $1 AND t.match_id = $2`,
+      [uid(req), match_id]
+    )
+    return { teams: res.rows }
+  })
+
+  // Get open fantasy leagues
+  app.get('/cricket/fantasy/leagues', { onRequest: [auth] }, async (req) => {
+    const { match_id } = req.query as { match_id: string }
+    const res = await db.query(
+      `SELECT l.*, 
+        (SELECT id FROM cricket_fantasy_entries WHERE league_id = l.id AND user_id = $2) AS joined_entry_id
+       FROM cricket_fantasy_leagues l 
+       WHERE l.match_id = $1 ORDER BY l.entry_fee ASC`,
+      [match_id, uid(req)]
+    )
+    return { leagues: res.rows }
+  })
+
+  // Join a fantasy league
+  app.post('/cricket/fantasy/join', { onRequest: [auth] }, async (req, reply) => {
+    const body = z.object({
+      league_id: z.string().uuid(),
+      team_id: z.string().uuid(),
+    }).parse(req.body)
+
+    const leagueRes = await db.query('SELECT * FROM cricket_fantasy_leagues WHERE id = $1 FOR UPDATE', [body.league_id])
+    if (!leagueRes.rows.length) return reply.code(404).send({ error: 'League not found' })
+    const league = leagueRes.rows[0]
+
+    if (league.status !== 'open') return reply.code(400).send({ error: 'League is not open' })
+    if (league.current_entries >= league.max_entries) return reply.code(400).send({ error: 'League is full' })
+
+    const teamRes = await db.query('SELECT * FROM user_fantasy_teams WHERE id = $1', [body.team_id])
+    if (!teamRes.rows.length) return reply.code(404).send({ error: 'Team roster not found' })
+    const team = teamRes.rows[0]
+    if (team.user_id !== uid(req)) return reply.code(403).send({ error: 'Not your team roster' })
+    if (team.match_id !== league.match_id) return reply.code(400).send({ error: 'Team match mismatch' })
+
+    const entryRes = await db.query('SELECT id FROM cricket_fantasy_entries WHERE league_id = $1 AND user_id = $2', [body.league_id, uid(req)])
+    if (entryRes.rows.length) return reply.code(409).send({ error: 'You have already joined this league' })
+
+    const entryId = crypto.randomUUID()
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
+
+      await client.query(
+        `INSERT INTO cricket_fantasy_entries (id, league_id, team_id, user_id, points, payout_received, status)
+         VALUES ($1, $2, $3, $4, 0.0, 0.0, 'joined')`,
+        [entryId, body.league_id, body.team_id, uid(req)]
+      )
+
+      const debit = await debitStake({
+        userId: uid(req),
+        amount: Number(league.entry_fee),
+        referenceId: entryId,
+        idempotencyKey: `cricket_fantasy_stake_${entryId}`,
+        description: `Joined fantasy league: ${league.name}`
+      })
+
+      if (!debit.ok) {
+        throw new Error(debit.error || 'Debit failed')
+      }
+
+      await client.query('UPDATE cricket_fantasy_leagues SET current_entries = current_entries + 1 WHERE id = $1', [body.league_id])
+      await client.query('COMMIT')
+      return { success: true, entry_id: entryId }
+    } catch (err) {
+      await client.query('ROLLBACK')
+      return reply.code(400).send({ error: (err as Error).message })
+    } finally {
+      client.release()
+    }
+  })
+
+  // Get live match details, including score, streaming link, and live markets
+  app.get('/cricket/matches/:id/live', { onRequest: [auth] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const matchRes = await db.query('SELECT * FROM cricket_matches WHERE id = $1', [id])
+    if (!matchRes.rows.length) return reply.code(404).send({ error: 'Match not found' })
+    const match = matchRes.rows[0]
+
+    const markets = await db.query(
+      `SELECT id, market_type, label, options, status FROM cricket_markets 
+       WHERE match_id = $1`,
+      [id]
+    )
+
+    const playersRes = await db.query(
+      `SELECT mp.*, fp.name, fp.role, fp.team_name 
+       FROM cricket_match_players mp
+       JOIN cricket_fantasy_players fp ON fp.id = mp.player_id
+       WHERE mp.match_id = $1`,
+      [id]
+    )
+
+    return { 
+      match, 
+      markets: markets.rows,
+      player_performances: playersRes.rows 
+    }
+  })
+
   // ═══════════════════════ ADMIN / INTERNAL ═══════════════════════
   // Declare a Matka session result. session 'open' or 'close'.
   app.post('/internal/matka/declare', { onRequest: [internal] }, async (req, reply) => {
@@ -310,7 +500,106 @@ async function start() {
     return { success: true, market: r.rows[0] }
   })
 
-  app.post('/internal/cricket/settle', { onRequest: [internal] }, async (req) => {
+  // Create fantasy player (Admin)
+  app.post('/internal/cricket/fantasy/players', { onRequest: [internal] }, async (req) => {
+    const body = z.object({
+      name: z.string(),
+      role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']),
+      credits: z.number().min(5.0).max(15.0),
+      team_name: z.string(),
+      avatar_url: z.string().optional()
+    }).parse(req.body)
+
+    const res = await db.query(
+      `INSERT INTO cricket_fantasy_players (name, role, credits, team_name, avatar_url)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [body.name, body.role, body.credits, body.team_name, body.avatar_url || null]
+    )
+    return { success: true, player: res.rows[0] }
+  })
+
+  // Create fantasy contest/league for a match (Admin)
+  app.post('/internal/cricket/fantasy/leagues', { onRequest: [internal] }, async (req) => {
+    const body = z.object({
+      match_id: z.string().uuid(),
+      name: z.string(),
+      entry_fee: z.number().nonnegative(),
+      prize_pool: z.number().nonnegative(),
+      max_entries: z.number().int().positive(),
+      prize_distribution: z.array(z.object({
+        rank_start: z.number().int().positive(),
+        rank_end: z.number().int().positive(),
+        payout: z.number().positive()
+      }))
+    }).parse(req.body)
+
+    const res = await db.query(
+      `INSERT INTO cricket_fantasy_leagues (match_id, name, entry_fee, prize_pool, max_entries, prize_distribution)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [body.match_id, body.name, body.entry_fee, body.prize_pool, body.max_entries, JSON.stringify(body.prize_distribution)]
+    )
+    return { success: true, league: res.rows[0] }
+  })
+
+  // Update live score, stats, and stream URL (Admin)
+  app.post('/internal/cricket/scores/update', { onRequest: [internal] }, async (req, reply) => {
+    const body = z.object({
+      match_id: z.string().uuid(),
+      live_score: z.object({
+        runs: z.number(),
+        wickets: z.number(),
+        overs: z.number(),
+        target: z.number().optional(),
+        runs_required: z.number().optional(),
+        balls_remaining: z.number().optional(),
+        batsmen: z.array(z.object({ name: z.string(), runs: z.number(), balls: z.number() })).optional(),
+        bowler: z.object({ name: z.string(), overs: z.number(), runs: z.number(), wickets: z.number() }).optional(),
+        current_innings: z.string().optional(),
+        description: z.string().optional()
+      }).optional(),
+      live_tv_url: z.string().optional(),
+      status: z.enum(['upcoming', 'live', 'closed', 'settled']).optional()
+    }).parse(req.body)
+
+    const updateFields: string[] = []
+    const params: any[] = [body.match_id]
+    let paramIndex = 2
+
+    if (body.live_score) {
+      updateFields.push(`live_score = $${paramIndex++}`)
+      params.push(JSON.stringify(body.live_score))
+    }
+    if (body.live_tv_url !== undefined) {
+      updateFields.push(`live_tv_url = $${paramIndex++}`)
+      params.push(body.live_tv_url || null)
+    }
+    if (body.status) {
+      updateFields.push(`status = $${paramIndex++}`)
+      params.push(body.status)
+    }
+
+    if (updateFields.length === 0) return reply.code(400).send({ error: 'No fields to update' })
+
+    const res = await db.query(
+      `UPDATE cricket_matches SET ${updateFields.join(', ')} WHERE id = $1 RETURNING *`,
+      params
+    )
+
+    return { success: true, match: res.rows[0] }
+  })
+
+  // Settle fantasy points and leagues (Admin)
+  app.post('/internal/cricket/fantasy/settle', { onRequest: [internal] }, async (req) => {
+    const body = z.object({
+      match_id: z.string().uuid(),
+      player_points: z.record(z.string().uuid(), z.number())
+    }).parse(req.body)
+
+    const res = await settleFantasyLeague(db, body.match_id, body.player_points)
+    return { success: true, ...res }
+  })
+
+  app.post('/internal/cricket/settle', { onRequest: [internal] }, async (req, reply) => {
     const body = z.object({
       market_id: z.string().uuid(),
       result_key: z.string().nullable(),
@@ -318,6 +607,90 @@ async function start() {
     const res = await settleCricketMarket(db, body.market_id, body.result_key)
     return { success: true, ...res }
   })
+
+  // Sync cricket matches from CricAPI / CricketData API
+  app.post('/internal/cricket/sync-api', { onRequest: [internal] }, async (req, reply) => {
+    const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
+    const specialRules = configRes.rows[0]?.special_rules || {}
+    const { api_provider, api_key } = specialRules
+
+    if (!api_key || api_provider !== 'cricket_data_api') {
+      return reply.code(400).send({ error: 'No Sports API Key configured. Please go to Cricket Rules & Config and enter a valid API key from cricketdata.org.' })
+    }
+
+    try {
+      const url = `https://api.cricapi.com/v1/currentMatches?apikey=${api_key}&offset=0`
+      const apiRes = await fetch(url)
+      if (!apiRes.ok) {
+        throw new Error(`Cricket API returned status ${apiRes.status}`)
+      }
+      const data: any = await apiRes.json()
+      if (data.status !== 'success') {
+        throw new Error(data.reason || 'Failed to fetch current matches')
+      }
+
+      const matches = data.data || []
+      let insertedCount = 0
+      let updatedCount = 0
+
+      for (const m of matches) {
+        const apiId = m.id
+        if (!apiId) continue
+
+        const team_a = m.teams?.[0] || 'Team A'
+        const team_b = m.teams?.[1] || 'Team B'
+        const team_a_short = m.teamInfo?.[0]?.shortname || team_a.substring(0, 3).toUpperCase()
+        const team_b_short = m.teamInfo?.[1]?.shortname || team_b.substring(0, 3).toUpperCase()
+        const startTime = m.dateTimeGMT ? `${m.dateTimeGMT}Z` : new Date().toISOString()
+        const series = m.name || 'Current Match'
+        const format = m.matchType || 't20'
+
+        // Determine status
+        let status = 'upcoming'
+        if (m.matchEnded) {
+          status = 'settled'
+        } else if (m.matchStarted) {
+          status = 'live'
+        }
+
+        // Live score mapping
+        const live_score: any = {}
+        if (m.score && Array.isArray(m.score)) {
+          const latestInning = m.score[m.score.length - 1]
+          if (latestInning) {
+            live_score.runs = latestInning.runs || 0
+            live_score.wickets = latestInning.wickets || 0
+            live_score.overs = latestInning.overs || 0
+            live_score.current_innings = latestInning.inning || ''
+            live_score.description = m.status || ''
+          }
+        }
+
+        const existing = await db.query('SELECT id FROM cricket_matches WHERE match_api_id = $1', [apiId])
+        if (existing.rows.length) {
+          await db.query(
+            `UPDATE cricket_matches 
+             SET status = $1, live_score = $2 
+             WHERE id = $3`,
+            [status, JSON.stringify(live_score), existing.rows[0].id]
+          )
+          updatedCount++
+        } else {
+          await db.query(
+            `INSERT INTO cricket_matches (series, format, team_a, team_b, team_a_short, team_b_short, start_time, match_api_id, status, live_score)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [series, format, team_a, team_b, team_a_short, team_b_short, startTime, apiId, status, JSON.stringify(live_score)]
+          )
+          insertedCount++
+        }
+      }
+
+      return { success: true, inserted: insertedCount, updated: updatedCount }
+    } catch (e: any) {
+      return reply.code(500).send({ error: `API Sync failed: ${e.message}` })
+    }
+  })
+
 
   app.get('/health', async () => ({ status: 'ok', service: 'betting' }))
 

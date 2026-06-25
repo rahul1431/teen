@@ -45,7 +45,7 @@ android {
         // Must match the package registered in the Firebase project
         // (google-services.json) so FCM push registration works.
         applicationId = "com.teenpatti.game"
-        minSdk = 23
+        minSdkVersion = flutter.minSdkVersion
         targetSdk = 35
         versionCode = flutterVersionCode.toInteger()
         versionName = flutterVersionName
