@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../shared/theme/app_theme.dart';
 
+// Trigger build: integration of atomic matchmaking concurrency updates
 class OfflineDemoPage extends StatelessWidget {
   const OfflineDemoPage({super.key});
 
