@@ -320,6 +320,144 @@ function Ledger() {
   )
 }
 
+// ---- Custom SVG Charting Components ----
+function SVGLineChart({ data, width = 500, height = 200, strokeColor = '#d4af37', fillColor = 'rgba(212, 175, 55, 0.08)', valueKey = 'ggr' }: { data: any[], width?: number, height?: number, strokeColor?: string, fillColor?: string, valueKey?: string }) {
+  if (!data || data.length === 0) return <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>No data available</div>;
+
+  const values = data.map(d => parseFloat(d[valueKey] || 0));
+  const maxVal = Math.max(...values, 100);
+  const minVal = Math.min(...values, 0);
+  const range = maxVal - minVal;
+
+  const points = data.map((d, idx) => {
+    const x = (idx / (data.length - 1 || 1)) * (width - 60) + 40;
+    const val = parseFloat(d[valueKey] || 0);
+    const y = height - 25 - ((val - minVal) / range) * (height - 45);
+    return { x, y, label: d.day ? new Date(d.day).toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) : '', val };
+  });
+
+  const pathD = points.reduce((acc, p, idx) => {
+    return acc + (idx === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`);
+  }, '');
+
+  const areaD = pathD ? `${pathD} L ${points[points.length - 1].x} ${height - 25} L ${points[0].x} ${height - 25} Z` : '';
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} style={{ overflow: 'visible' }}>
+      {/* Grid lines */}
+      {[0, 0.25, 0.5, 0.75, 1].map((ratio, idx) => {
+        const y = 20 + ratio * (height - 45);
+        const val = maxVal - ratio * range;
+        return (
+          <g key={idx}>
+            <line x1="40" y1={y} x2={width - 20} y2={y} stroke="#f0f0f0" strokeDasharray="4 4" />
+            <text x="35" y={y + 4} textAnchor="end" fontSize="10" fill="#999">₹{val.toFixed(0)}</text>
+          </g>
+        );
+      })}
+
+      {/* Area fill */}
+      {areaD && <path d={areaD} fill={fillColor} />}
+      {/* Line path */}
+      {pathD && <path d={pathD} fill="none" stroke={strokeColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />}
+
+      {/* Points and Tooltips */}
+      {points.map((p, idx) => (
+        <g key={idx} className="chart-point-group">
+          <circle cx={p.x} cy={p.y} r="4" fill={strokeColor} stroke="#fff" strokeWidth="1.5" />
+          <title>{`${p.label}\n₹${p.val.toFixed(2)}`}</title>
+        </g>
+      ))}
+
+      {/* X Axis Labels */}
+      {points.filter((_, idx) => data.length < 8 || idx % Math.ceil(data.length / 5) === 0).map((p, idx) => (
+        <text key={idx} x={p.x} y={height - 5} textAnchor="middle" fontSize="10" fill="#999">
+          {p.label}
+        </text>
+      ))}
+    </svg>
+  );
+}
+
+function SVGBarChart({ data, width = 500, height = 200 }: { data: any[], width?: number, height?: number }) {
+  if (!data || data.length === 0) return <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>No data available</div>;
+
+  // Group data by day
+  const dailyMap = new Map<string, { deposits: number; withdrawals: number }>();
+  data.forEach((item) => {
+    const dayStr = new Date(item.day).toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
+    if (!dailyMap.has(dayStr)) {
+      dailyMap.set(dayStr, { deposits: 0, withdrawals: 0 });
+    }
+    const val = parseFloat(item.total || 0);
+    const dayData = dailyMap.get(dayStr)!;
+    if (item.type === 'deposit' && item.status === 'paid') {
+      dayData.deposits += val;
+    } else if (item.type === 'withdrawal' && item.status === 'paid') {
+      dayData.withdrawals += val;
+    }
+  });
+
+  const dailyList = Array.from(dailyMap.entries()).map(([day, values]) => ({ day, ...values })).reverse();
+  const maxVal = Math.max(...dailyList.map((d) => Math.max(d.deposits, d.withdrawals)), 100);
+  const chartWidth = width - 60;
+  const chartHeight = height - 45;
+  const barWidth = Math.max(3, Math.floor(chartWidth / (dailyList.length * 3 || 1)));
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} style={{ overflow: 'visible' }}>
+      {/* Grid lines */}
+      {[0, 0.25, 0.5, 0.75, 1].map((ratio, idx) => {
+        const y = 20 + ratio * chartHeight;
+        const val = maxVal - ratio * maxVal;
+        return (
+          <g key={idx}>
+            <line x1="45" y1={y} x2={width - 15} y2={y} stroke="#f0f0f0" strokeDasharray="4 4" />
+            <text x="40" y={y + 4} textAnchor="end" fontSize="10" fill="#999">₹{val.toFixed(0)}</text>
+          </g>
+        );
+      })}
+
+      {/* Bars */}
+      {dailyList.map((d, idx) => {
+        const xGroup = 45 + (idx / dailyList.length) * chartWidth;
+        const depHeight = (d.deposits / maxVal) * chartHeight;
+        const witHeight = (d.withdrawals / maxVal) * chartHeight;
+
+        const depY = 20 + chartHeight - depHeight;
+        const witY = 20 + chartHeight - witHeight;
+
+        return (
+          <g key={idx}>
+            {/* Deposit Bar */}
+            <rect x={xGroup} y={depY} width={barWidth} height={depHeight} fill="#52c41a" rx="1.5" ry="1.5">
+              <title>{`Deposits: ₹${d.deposits.toFixed(2)}`}</title>
+            </rect>
+            {/* Withdrawal Bar */}
+            <rect x={xGroup + barWidth + 2} y={witY} width={barWidth} height={witHeight} fill="#ff4d4f" rx="1.5" ry="1.5">
+              <title>{`Withdrawals: ₹${d.withdrawals.toFixed(2)}`}</title>
+            </rect>
+            {/* X label */}
+            {dailyList.length < 8 || idx % Math.ceil(dailyList.length / 5) === 0 ? (
+              <text x={xGroup + barWidth} y={height - 5} textAnchor="middle" fontSize="10" fill="#999">
+                {d.day}
+              </text>
+            ) : null}
+          </g>
+        );
+      })}
+
+      {/* Legend */}
+      <g transform={`translate(${width - 160}, 0)`}>
+        <rect x="0" y="0" width="8" height="8" fill="#52c41a" rx="1" />
+        <text x="12" y="8" fontSize="10" fill="#666">Deposits</text>
+        <rect x="65" y="0" width="8" height="8" fill="#ff4d4f" rx="1" />
+        <text x="77" y="8" fontSize="10" fill="#666">Withdrawals</text>
+      </g>
+    </svg>
+  );
+}
+
 // ---- Reconciliation ----
 function Reconciliation() {
   const [data, setData] = useState<any>(null)
@@ -344,40 +482,59 @@ function Reconciliation() {
       </Space>
 
       {!data ? <Empty description={loading ? 'Loading…' : 'No data'} /> : (
-        <Row gutter={16}>
-          <Col span={12}>
-            <Card title="Payment Orders by Day" size="small" style={{ marginBottom: 16 }}>
-              <Table size="small" pagination={false} dataSource={data.by_day} rowKey={(r: any) => `${r.day}-${r.type}-${r.status}`}
-                columns={[
-                  { title: 'Day', dataIndex: 'day', render: (d: string) => new Date(d).toLocaleDateString() },
-                  { title: 'Type', dataIndex: 'type', render: (t: string) => <Tag>{t}</Tag> },
-                  { title: 'Status', dataIndex: 'status' },
-                  { title: 'Count', dataIndex: 'count', align: 'right' as const },
-                  { title: 'Total (₹)', dataIndex: 'total', align: 'right' as const, render: (v: string) => parseFloat(v).toFixed(2) },
-                ]} />
-            </Card>
-          </Col>
-          <Col span={12}>
-            <Card title="Gross Gaming Revenue" size="small" style={{ marginBottom: 16 }}>
-              <Table size="small" pagination={false} dataSource={data.ggr} rowKey="day"
-                columns={[
-                  { title: 'Day', dataIndex: 'day', render: (d: string) => new Date(d).toLocaleDateString() },
-                  { title: 'Pot Volume (₹)', dataIndex: 'pot', align: 'right' as const, render: (v: string) => parseFloat(v).toFixed(2) },
-                  { title: 'GGR / Platform Fee (₹)', dataIndex: 'ggr', align: 'right' as const,
-                    render: (v: string) => <strong style={{ color: '#52c41a' }}>{parseFloat(v).toFixed(2)}</strong> },
-                ]} />
-            </Card>
-            <Card title="By Gateway" size="small">
-              <Table size="small" pagination={false} dataSource={data.by_gateway} rowKey={(r: any) => `${r.gateway}-${r.status}`}
-                columns={[
-                  { title: 'Gateway', dataIndex: 'gateway' },
-                  { title: 'Status', dataIndex: 'status' },
-                  { title: 'Count', dataIndex: 'count', align: 'right' as const },
-                  { title: 'Total (₹)', dataIndex: 'total', align: 'right' as const, render: (v: string) => parseFloat(v).toFixed(2) },
-                ]} />
-            </Card>
-          </Col>
-        </Row>
+        <Space direction="vertical" size="large" style={{ width: '100%' }}>
+          <Row gutter={[24, 24]}>
+            <Col xs={24} xl={12}>
+              <Card title="GGR Platform Revenue Trend (₹)" size="small" style={{ borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+                <div style={{ padding: '16px 8px' }}>
+                  <SVGLineChart data={data.ggr} strokeColor="#d4af37" fillColor="rgba(212, 175, 55, 0.08)" valueKey="ggr" />
+                </div>
+              </Card>
+            </Col>
+            <Col xs={24} xl={12}>
+              <Card title="Daily Deposits vs Withdrawals Volume (₹)" size="small" style={{ borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+                <div style={{ padding: '16px 8px' }}>
+                  <SVGBarChart data={data.by_day} />
+                </div>
+              </Card>
+            </Col>
+          </Row>
+
+          <Row gutter={[24, 24]}>
+            <Col xs={24} lg={12}>
+              <Card title="Payment Orders by Day" size="small" style={{ borderRadius: 12 }}>
+                <Table size="small" pagination={false} dataSource={data.by_day} rowKey={(r: any) => `${r.day}-${r.type}-${r.status}`}
+                  columns={[
+                    { title: 'Day', dataIndex: 'day', render: (d: string) => new Date(d).toLocaleDateString() },
+                    { title: 'Type', dataIndex: 'type', render: (t: string) => <Tag>{t}</Tag> },
+                    { title: 'Status', dataIndex: 'status' },
+                    { title: 'Count', dataIndex: 'count', align: 'right' as const },
+                    { title: 'Total (₹)', dataIndex: 'total', align: 'right' as const, render: (v: string) => parseFloat(v).toFixed(2) },
+                  ]} />
+              </Card>
+            </Col>
+            <Col xs={24} lg={12}>
+              <Card title="Gross Gaming Revenue (Rake)" size="small" style={{ borderRadius: 12, marginBottom: 16 }}>
+                <Table size="small" pagination={false} dataSource={data.ggr} rowKey="day"
+                  columns={[
+                    { title: 'Day', dataIndex: 'day', render: (d: string) => new Date(d).toLocaleDateString() },
+                    { title: 'Pot Volume (₹)', dataIndex: 'pot', align: 'right' as const, render: (v: string) => parseFloat(v).toFixed(2) },
+                    { title: 'GGR / Platform Fee (₹)', dataIndex: 'ggr', align: 'right' as const,
+                      render: (v: string) => <strong style={{ color: '#52c41a' }}>{parseFloat(v).toFixed(2)}</strong> },
+                  ]} />
+              </Card>
+              <Card title="By Gateway" size="small" style={{ borderRadius: 12 }}>
+                <Table size="small" pagination={false} dataSource={data.by_gateway} rowKey={(r: any) => `${r.gateway}-${r.status}`}
+                  columns={[
+                    { title: 'Gateway', dataIndex: 'gateway' },
+                    { title: 'Status', dataIndex: 'status' },
+                    { title: 'Count', dataIndex: 'count', align: 'right' as const },
+                    { title: 'Total (₹)', dataIndex: 'total', align: 'right' as const, render: (v: string) => parseFloat(v).toFixed(2) },
+                  ]} />
+              </Card>
+            </Col>
+          </Row>
+        </Space>
       )}
     </>
   )

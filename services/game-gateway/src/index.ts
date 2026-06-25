@@ -309,6 +309,176 @@ async function start() {
     }
   }
 
+  // --- Internal Admin API Endpoints ---
+
+  app.post('/internal/game-rooms/:roomId/force-action', async (req, reply) => {
+    if (req.headers['x-internal-key'] !== process.env.INTERNAL_SERVICE_KEY) {
+      return reply.code(401).send({ error: 'Unauthorized' })
+    }
+    const { roomId } = req.params as any
+    const { user_id, action, amount, token_index } = req.body as any
+
+    const rawState = await matchmaking.getRoomState(roomId)
+    if (!rawState) return reply.code(404).send({ error: 'Room not found' })
+
+    const mockConn: Conn = {
+      ws: { readyState: 3 } as any, // CLOSED state to prevent crash in rawSend
+      userId: user_id,
+      username: 'Admin',
+      rooms: new Set(),
+      isAlive: true
+    }
+
+    if (rawState.gameType === 'ludo' || rawState.game_type === 'ludo') {
+      await handleLudoAction(mockConn, roomId, { action, token_index })
+    } else {
+      await handleGameAction(mockConn, roomId, action, amount, 0)
+    }
+    return reply.send({ success: true })
+  })
+
+  app.post('/internal/game-rooms/:roomId/kick', async (req, reply) => {
+    if (req.headers['x-internal-key'] !== process.env.INTERNAL_SERVICE_KEY) {
+      return reply.code(401).send({ error: 'Unauthorized' })
+    }
+    const { roomId } = req.params as any
+    const { user_id } = req.body as any
+
+    // 1. Update database
+    await db.query(
+      `UPDATE game_participants SET is_bot = true WHERE room_id = $1 AND user_id = $2`,
+      [roomId, user_id]
+    )
+
+    // 2. Fetch and update Redis state
+    let isLudo = false
+    const ludoStateRaw = await redis.get(`game:room:${roomId}`)
+    if (ludoStateRaw) {
+      try {
+        const state = JSON.parse(ludoStateRaw)
+        if (state.gameType === 'ludo' || state.game_type === 'ludo') {
+          isLudo = true
+          const p = state.players?.find((pl: any) => pl.user_id === user_id)
+          if (p) {
+            p.is_bot = true
+            p.isBot = true
+          }
+          await redis.setex(`game:room:${roomId}`, 3600, JSON.stringify(state))
+          
+          // Broadcast update
+          hub.sendToRoom(roomId, 'game:state_update', { room_id: roomId, state })
+          
+          // Drive bots if it is currently this player's turn
+          const currentIdx = state.current_turn ?? 0
+          if (state.players?.[currentIdx]?.user_id === user_id) {
+            void matchmaking.driveLudoBots(roomId)
+          }
+        }
+      } catch (e) {
+        console.error('Failed to parse ludo state in kick', e)
+      }
+    }
+
+    if (!isLudo) {
+      // Must be Teen Patti
+      const tpStateRaw = await redis.get(`tp:game:${roomId}`)
+      if (tpStateRaw) {
+        try {
+          const state = JSON.parse(tpStateRaw)
+          const p = state.players?.find((pl: any) => (pl.user_id ?? pl.userId) === user_id)
+          if (p) {
+            p.is_bot = true
+            p.isBot = true
+          }
+          // Also update shared cached state (which opponents see)
+          const sharedRaw = await redis.get(`game:room:${roomId}`)
+          if (sharedRaw) {
+            const shared = JSON.parse(sharedRaw)
+            const sp = shared.players?.find((pl: any) => (pl.userId ?? pl.user_id) === user_id)
+            if (sp) {
+              sp.is_bot = true
+              sp.isBot = true
+            }
+            await redis.setex(`game:room:${roomId}`, 3600, JSON.stringify(shared))
+          }
+          
+          await redis.setex(`tp:game:${roomId}`, 3600, JSON.stringify(state))
+
+          // Broadcast update
+          hub.sendToRoom(roomId, 'game:state_update', {
+            room_id: roomId,
+            state: { ...state, players: state.players?.map((ep: any) => ({ ...ep, cards: undefined })) }
+          })
+
+          // Drive bot if it is currently this player's turn
+          const currentIdx = state.current_turn ?? 0
+          if ((state.players?.[currentIdx]?.user_id ?? state.players?.[currentIdx]?.userId) === user_id) {
+            const realPlayers = state.players.filter((pl: any) => !pl.is_bot).map((pl: any) => ({ userId: pl.user_id ?? pl.userId, username: pl.username }))
+            const bots = state.players.filter((pl: any) => pl.is_bot).map((pl: any) => ({ userId: pl.user_id ?? pl.userId, username: pl.username }))
+            matchmaking.scheduleBotTurn(roomId, state, realPlayers, bots)
+          }
+        } catch (e) {
+          console.error('Failed to parse tp state in kick', e)
+        }
+      }
+    }
+
+    // 3. Send a kick socket signal to force client logout/leave
+    hub.sendToUser(user_id, 'game:kicked', { room_id: roomId })
+
+    return reply.send({ success: true })
+  })
+
+  app.post('/internal/game-rooms/:roomId/terminate', async (req, reply) => {
+    if (req.headers['x-internal-key'] !== process.env.INTERNAL_SERVICE_KEY) {
+      return reply.code(401).send({ error: 'Unauthorized' })
+    }
+    const { roomId } = req.params as any
+
+    // 1. Fetch participants to refund stakes
+    const parts = await db.query(
+      `SELECT user_id, entry_fee_deducted FROM game_participants WHERE room_id = $1 AND is_bot = false`,
+      [roomId]
+    )
+
+    for (const row of parts.rows) {
+      const amount = parseFloat(row.entry_fee_deducted)
+      if (amount > 0) {
+        try {
+          await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+            body: JSON.stringify({
+              user_id: row.user_id,
+              amount,
+              type: 'game_credit',
+              reference_id: `refund:${roomId}`,
+              idempotency_key: `refund:${roomId}:${row.user_id}`,
+            }),
+          })
+          console.log(`Refunded user=${row.user_id} amount=${amount} for terminated room=${roomId}`)
+        } catch (e) {
+          console.error(`Refund failed for user=${row.user_id} room=${roomId}`, e)
+        }
+      }
+    }
+
+    // 2. Mark game room as completed/terminated in database
+    await db.query(
+      `UPDATE game_rooms SET status = 'completed', ended_at = NOW() WHERE id = $1`,
+      [roomId]
+    )
+
+    // 3. Delete states from Redis
+    await redis.del(`game:room:${roomId}`)
+    await redis.del(`tp:game:${roomId}`)
+
+    // 4. Broadcast termination event to players in the room
+    hub.sendToRoom(roomId, 'game:terminated', { message: 'Game terminated by administrator. Stake refunded.' })
+
+    return reply.send({ success: true })
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'game-gateway' }))
 
   const port = parseInt(process.env.PORT || '3004')

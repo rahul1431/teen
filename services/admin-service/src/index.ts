@@ -5,6 +5,7 @@ import helmet from '@fastify/helmet'
 import jwt from '@fastify/jwt'
 import multipart from '@fastify/multipart'
 import { Pool } from 'pg'
+import Redis from 'ioredis'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { generateSecret, generateURI, verifySync } from 'otplib'
@@ -37,12 +38,14 @@ function hasRole(actual: string | undefined, required: Role): boolean {
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL!, max: 20 })
+const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
 
 async function start() {
   await app.register(helmet, { crossOriginResourcePolicy: false })
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.ADMIN_JWT_SECRET! })
   await app.register(multipart, { limits: { fileSize: 5 * 1024 * 1024 } }) // 5MB QR images
+  if (redis.status === 'wait') await redis.connect()
   fs.mkdirSync(QR_UPLOAD_DIR, { recursive: true })
 
   const authenticate = async (req: any, reply: any) => {
@@ -456,6 +459,99 @@ async function start() {
       GROUP BY gr.id ORDER BY gr.created_at DESC LIMIT 50
     `, [status || 'active'])
     return reply.send(res.rows)
+  })
+
+  // GET /api/admin/game-rooms/:id/live-state
+  app.get('/api/admin/game-rooms/:id/live-state', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const ludoStateRaw = await redis.get(`game:room:${id}`)
+    let state: any = null
+    if (ludoStateRaw) {
+      state = JSON.parse(ludoStateRaw)
+    }
+
+    const tpStateRaw = await redis.get(`tp:game:${id}`)
+    if (tpStateRaw) {
+      try {
+        const tpState = JSON.parse(tpStateRaw)
+        state = {
+          ...state,
+          ...tpState,
+          players: tpState.players?.map((p: any) => ({
+            ...p,
+            userId: p.user_id ?? p.userId,
+          }))
+        }
+      } catch (e) {
+        console.error('Failed to parse tp state in live-state', e)
+      }
+    }
+
+    if (!state) {
+      return reply.code(404).send({ error: 'Live state not found' })
+    }
+    return reply.send(state)
+  })
+
+  // POST /api/admin/game-rooms/:id/force-action
+  app.post('/api/admin/game-rooms/:id/force-action', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const { user_id, action, amount, token_index } = req.body as any
+
+    const gatewayUrl = process.env.GAME_GATEWAY_URL || 'http://localhost:3004'
+    const res = await fetch(`${gatewayUrl}/internal/game-rooms/${id}/force-action`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-key': process.env.INTERNAL_SERVICE_KEY!,
+      },
+      body: JSON.stringify({ user_id, action, amount, token_index }),
+    })
+    if (!res.ok) {
+      const msg = await res.text()
+      return reply.code(res.status).send({ error: msg || 'Failed to execute force action' })
+    }
+    return reply.send({ success: true })
+  })
+
+  // POST /api/admin/game-rooms/:id/kick
+  app.post('/api/admin/game-rooms/:id/kick', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const { user_id } = req.body as any
+
+    const gatewayUrl = process.env.GAME_GATEWAY_URL || 'http://localhost:3004'
+    const res = await fetch(`${gatewayUrl}/internal/game-rooms/${id}/kick`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-key': process.env.INTERNAL_SERVICE_KEY!,
+      },
+      body: JSON.stringify({ user_id }),
+    })
+    if (!res.ok) {
+      const msg = await res.text()
+      return reply.code(res.status).send({ error: msg || 'Failed to kick player' })
+    }
+    return reply.send({ success: true })
+  })
+
+  // POST /api/admin/game-rooms/:id/terminate
+  app.post('/api/admin/game-rooms/:id/terminate', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as any
+
+    const gatewayUrl = process.env.GAME_GATEWAY_URL || 'http://localhost:3004'
+    const res = await fetch(`${gatewayUrl}/internal/game-rooms/${id}/terminate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-key': process.env.INTERNAL_SERVICE_KEY!,
+      },
+    })
+    if (!res.ok) {
+      const msg = await res.text()
+      return reply.code(res.status).send({ error: msg || 'Failed to terminate game room' })
+    }
+    return reply.send({ success: true })
   })
 
   // GET /api/admin/finance/withdrawals

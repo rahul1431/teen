@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import {
   Card, Tabs, Table, Tag, Button, Modal, Form, Input, Select, Space, message, Popconfirm,
   Switch, InputNumber, Drawer, Typography, Divider, Badge, Empty,
@@ -23,6 +23,9 @@ function TicketsTab() {
   const [drawerMessages, setDrawerMessages] = useState<any[]>([])
   const [replyBody, setReplyBody] = useState('')
   const [replyInternal, setReplyInternal] = useState(false)
+  const [sending, setSending] = useState(false)
+  
+  const chatEndRef = useRef<HTMLDivElement>(null)
 
   const load = (p = page) => {
     setLoading(true)
@@ -34,42 +37,65 @@ function TicketsTab() {
   useEffect(() => { load(1); setPage(1) }, [statusFilter])
 
   const openTicket = async (id: string) => {
-    const r = await adminApi.get(`/support/tickets/${id}`)
-    setDrawerTicket(r.data.ticket)
-    setDrawerMessages(r.data.messages)
+    try {
+      const r = await adminApi.get(`/support/tickets/${id}`)
+      setDrawerTicket(r.data.ticket)
+      setDrawerMessages(r.data.messages || [])
+    } catch {
+      message.error('Failed to fetch ticket details')
+    }
   }
+
+  // Live polling for messages when drawer is open
+  useEffect(() => {
+    if (!drawerTicket) return
+    const interval = setInterval(() => {
+      adminApi.get(`/support/tickets/${drawerTicket.id}`)
+        .then(r => setDrawerMessages(r.data.messages || []))
+        .catch(() => {})
+    }, 4000)
+    return () => clearInterval(interval)
+  }, [drawerTicket])
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [drawerMessages])
 
   const sendReply = async () => {
     if (!replyBody.trim()) return
+    setSending(true)
     try {
       await adminApi.post(`/support/tickets/${drawerTicket.id}/messages`, { body: replyBody, is_internal: replyInternal })
       setReplyBody(''); setReplyInternal(false)
-      openTicket(drawerTicket.id)
+      await openTicket(drawerTicket.id)
       load()
     } catch (e: any) {
-      message.error(e.response?.data?.error || 'Failed')
+      message.error(e.response?.data?.error || 'Failed to send reply')
+    } finally {
+      setSending(false)
     }
   }
 
   const updateTicket = async (patch: any) => {
     try {
       await adminApi.patch(`/support/tickets/${drawerTicket.id}`, patch)
-      message.success('Updated')
+      message.success('Updated ticket successfully')
       openTicket(drawerTicket.id)
       load()
     } catch (e: any) {
-      message.error(e.response?.data?.error || 'Failed')
+      message.error(e.response?.data?.error || 'Failed to update ticket')
     }
   }
 
   const columns = [
     { title: 'Subject', dataIndex: 'subject', render: (v: string, r: any) =>
-      <Button type="link" size="small" onClick={() => openTicket(r.id)}>{v}</Button> },
+      <Button type="link" size="small" onClick={() => openTicket(r.id)} style={{ fontWeight: 600 }}>{v}</Button> },
     { title: 'User', dataIndex: 'username', render: (v: string) => v || <Typography.Text type="secondary">—</Typography.Text> },
     { title: 'Category', dataIndex: 'category' },
     { title: 'Priority', dataIndex: 'priority', render: (v: string) => <Tag color={priorityColor[v]}>{v}</Tag> },
     { title: 'Status', dataIndex: 'status', render: (v: string) => <Tag color={statusColor[v]}>{v.replace('_', ' ')}</Tag> },
-    { title: 'Messages', dataIndex: 'message_count', render: (v: number) => <Badge count={v} showZero style={{ backgroundColor: v > 0 ? '#1890ff' : '#bbb' }} /> },
+    { title: 'Messages', dataIndex: 'message_count', render: (v: number) => <Badge count={v} showZero style={{ backgroundColor: v > 0 ? '#1677ff' : '#bbb' }} /> },
     { title: 'Assigned', dataIndex: 'assigned_to_username', render: (v: string) => v || <Typography.Text type="secondary">unassigned</Typography.Text> },
     { title: 'Created', dataIndex: 'created_at', render: (v: string) => new Date(v).toLocaleString() },
   ]
@@ -95,7 +121,16 @@ function TicketsTab() {
       />
 
       <Drawer
-        title={drawerTicket?.subject} open={!!drawerTicket} onClose={() => setDrawerTicket(null)}
+        title={
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontSize: 16 }}>{drawerTicket?.subject}</span>
+            <span style={{ fontSize: 12, fontWeight: 'normal', color: '#8c8c8c', marginTop: 4 }}>
+              User: {drawerTicket?.username || 'unknown'} {drawerTicket?.phone && `· ${drawerTicket.phone}`}
+            </span>
+          </div>
+        }
+        open={!!drawerTicket}
+        onClose={() => setDrawerTicket(null)}
         width={680}
         extra={
           drawerTicket && (
@@ -111,42 +146,114 @@ function TicketsTab() {
         }
       >
         {drawerTicket && (
-          <>
-            <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              From: <strong>{drawerTicket.username || 'unknown'}</strong>
-              {drawerTicket.email && ` · ${drawerTicket.email}`}
-              {drawerTicket.phone && ` · ${drawerTicket.phone}`}
-              {' '}· Category: <Tag>{drawerTicket.category}</Tag>
-            </Typography.Paragraph>
-            <Divider />
-            {drawerMessages.length === 0 ? <Empty description="No messages yet" /> : (
-              <div style={{ maxHeight: 360, overflowY: 'auto', marginBottom: 16 }}>
-                {drawerMessages.map((m: any) => (
-                  <div key={m.id} style={{
-                    padding: 10, marginBottom: 8, borderRadius: 6,
-                    background: m.is_internal ? '#fffbe6' : m.sender_type === 'admin' ? '#e6f4ff' : '#f6ffed',
-                    border: m.is_internal ? '1px dashed #d4af37' : '1px solid #f0f0f0',
-                  }}>
-                    <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>
-                      <strong>{m.sender_username || m.sender_type}</strong> · {new Date(m.created_at).toLocaleString()}
-                      {m.is_internal && <Tag color="gold" style={{ marginLeft: 6 }}>INTERNAL</Tag>}
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            
+            {/* Live Chat Thread Box */}
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '16px',
+              background: '#f0f2f5',
+              borderRadius: 12,
+              border: '1px solid #e8e8e8',
+              maxHeight: 'calc(100vh - 360px)',
+              minHeight: 350,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12
+            }}>
+              {drawerMessages.length === 0 ? <Empty description="No messages yet" /> : (
+                drawerMessages.map((m: any) => {
+                  const isAdmin = m.sender_type === 'admin';
+                  const isInternal = m.is_internal;
+                  
+                  let bubbleBg = '#fff';
+                  let bubbleColor = '#000';
+                  let borderStyle = '1px solid #e8e8e8';
+                  let alignSelf: 'flex-start' | 'flex-end' | 'center' = 'flex-start';
+                  let maxWidth = '75%';
+
+                  if (isInternal) {
+                    bubbleBg = '#fffbe6';
+                    borderStyle = '1px dashed #d4af37';
+                    alignSelf = 'center';
+                    maxWidth = '90%';
+                  } else if (isAdmin) {
+                    bubbleBg = 'linear-gradient(135deg, #1677ff, #096dd9)';
+                    bubbleColor = '#fff';
+                    alignSelf = 'flex-end';
+                  }
+
+                  return (
+                    <div
+                      key={m.id}
+                      style={{
+                        alignSelf,
+                        maxWidth,
+                        background: bubbleBg,
+                        color: bubbleColor,
+                        padding: '10px 14px',
+                        borderRadius: 12,
+                        border: isInternal || isAdmin ? undefined : borderStyle,
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                        position: 'relative'
+                      }}
+                    >
+                      <div style={{ 
+                        fontSize: 10, 
+                        color: isAdmin && !isInternal ? '#e6f4ff' : '#8c8c8c', 
+                        marginBottom: 4,
+                        fontWeight: 'bold',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        gap: 8
+                      }}>
+                        <span>{m.sender_username || m.sender_type}</span>
+                        <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: '1.5' }}>
+                        {m.body}
+                      </div>
+                      {isInternal && (
+                        <Tag color="gold" style={{ marginTop: 6, marginRight: 0 }}>
+                          INTERNAL NOTE
+                        </Tag>
+                      )}
                     </div>
-                    <div style={{ whiteSpace: 'pre-wrap' }}>{m.body}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-            <Divider>Reply</Divider>
-            <Input.TextArea rows={4} value={replyBody} onChange={(e) => setReplyBody(e.target.value)}
-              placeholder="Type your reply..." />
-            <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Space>
-                <Switch checked={replyInternal} onChange={setReplyInternal} />
-                <span>Internal note (not visible to user)</span>
-              </Space>
-              <Button type="primary" onClick={sendReply}>Send Reply</Button>
+                  )
+                })
+              )}
+              <div ref={chatEndRef} />
             </div>
-          </>
+
+            <Divider style={{ margin: '16px 0' }} />
+
+            {/* Reply Input Box */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <Input.TextArea
+                rows={3}
+                value={replyBody}
+                onChange={(e) => setReplyBody(e.target.value)}
+                placeholder="Type your message here..."
+                onPressEnter={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendReply();
+                  }
+                }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Space>
+                  <Switch checked={replyInternal} onChange={setReplyInternal} />
+                  <span style={{ fontSize: 13 }}>Internal note (only admins see this)</span>
+                </Space>
+                <Button type="primary" onClick={sendReply} loading={sending} disabled={!replyBody.trim()}>
+                  Send Message
+                </Button>
+              </div>
+            </div>
+
+          </div>
         )}
       </Drawer>
     </>
