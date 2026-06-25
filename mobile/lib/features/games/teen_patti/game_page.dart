@@ -430,28 +430,29 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
       child: Scaffold(
         backgroundColor: const Color(0xFF1A1033),
         body: SafeArea(
-          child: _resultMessage != null
-              ? _buildResult()
-              : ValueListenableBuilder<String>(
-                  valueListenable: _socket.status,
-                  builder: (context, statusVal, child) {
-                    final showBanner = !widget.demo && _isReconnectingStatus(statusVal);
-                    return Stack(
-                      children: [
-                        _buildFelt(),
-                        _buildSeatsAndCenter(),
-                        _buildTopBar(),
-                        _buildMyHand(),
-                        _buildMyChips(),
-                        if (_isMyTurn) _buildActionBar(),
-                        _buildSocialButtons(),
-                        if (_showGiftTray) _buildGiftTray(),
-                        if (_showChat) _buildChatPanel(),
-                        if (showBanner) _buildReconnectingBanner(statusVal),
-                      ],
-                    );
-                  },
-                ),
+          child: Stack(
+            children: [
+              _buildFelt(),
+              _buildSeatsAndCenter(),
+              _buildTopBar(),
+              _buildMyHand(),
+              _buildMyChips(),
+              if (_isMyTurn && _resultMessage == null) _buildActionBar(),
+              _buildSocialButtons(),
+              if (_showGiftTray) _buildGiftTray(),
+              if (_showChat) _buildChatPanel(),
+              ValueListenableBuilder<String>(
+                valueListenable: _socket.status,
+                builder: (context, statusVal, child) {
+                  if (!widget.demo && _isReconnectingStatus(statusVal)) {
+                    return _buildReconnectingBanner(statusVal);
+                  }
+                  return const SizedBox.shrink();
+                },
+              ),
+              if (_resultMessage != null) _buildResult(),
+            ],
+          ),
         ),
       ),
     );
@@ -1462,25 +1463,64 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage> {
 
   Widget _buildResult() {
     final won = _resultMessage?.contains('Won') ?? false;
-    return Stack(
-      children: [
-        if (won) const Positioned.fill(child: CoinRainWidget(active: true)),
-        Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(_resultMessage ?? '',
-                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
-                    textAlign: TextAlign.center),
-                const SizedBox(height: 24),
-                ElevatedButton(onPressed: _exit, child: const Text('Back to Lobby')),
-              ],
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black.withOpacity(0.75), // Dim the table felt behind
+        child: Stack(
+          children: [
+            if (won) const Positioned.fill(child: CoinRainWidget(active: true)),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E2D5A),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: AppColors.gold, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.gold.withOpacity(0.3),
+                        blurRadius: 20,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        won ? '🏆 VICTORY 🏆' : '💀 GAME OVER 💀',
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: won ? AppColors.gold : AppColors.red,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _resultMessage ?? '',
+                        style: const TextStyle(fontSize: 18, color: Colors.white),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: won ? AppColors.gold : Colors.white24,
+                          foregroundColor: won ? Colors.black : Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        ),
+                        onPressed: _exit,
+                        child: const Text('Back to Lobby', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-          ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
