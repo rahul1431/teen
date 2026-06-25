@@ -32,7 +32,18 @@ export default function Cricket() {
 
   // --- Sports API States ---
   const [syncing, setSyncing] = useState(false)
+  const [syncingCountries, setSyncingCountries] = useState(false)
   const [apiConfigForm] = Form.useForm()
+
+  // --- Series Import States ---
+  const [seriesOpen, setSeriesOpen] = useState(false)
+  const [seriesQuery, setSeriesQuery] = useState('')
+  const [seriesList, setSeriesList] = useState<any[]>([])
+  const [searchingSeries, setSearchingSeries] = useState(false)
+  const [importingSeriesId, setImportingSeriesId] = useState<string | null>(null)
+
+  // --- Squad Syncing States ---
+  const [syncingSquadId, setSyncingSquadId] = useState<string | null>(null)
 
   // --- Live Console States ---
   const [liveMatchId, setLiveMatchId] = useState<string>('')
@@ -100,6 +111,57 @@ export default function Cricket() {
       message.error(e?.response?.data?.error || 'API Sync failed')
     } finally {
       setSyncing(false)
+    }
+  }
+
+  const syncCountries = async () => {
+    setSyncingCountries(true)
+    try {
+      const r = await adminApi.post('/betting/cricket/sync-countries', {})
+      message.success(`Countries & Flags cached! Imported: ${r.data.count}`)
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Flags sync failed')
+    } finally {
+      setSyncingCountries(false)
+    }
+  }
+
+  const searchSeries = async () => {
+    setSearchingSeries(true)
+    try {
+      const r = await adminApi.post('/betting/cricket/sync-series', { search: seriesQuery })
+      setSeriesList(r.data.series || [])
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to search series')
+    } finally {
+      setSearchingSeries(false)
+    }
+  }
+
+  const importSeriesMatches = async (seriesId: string) => {
+    setImportingSeriesId(seriesId)
+    try {
+      const r = await adminApi.post('/betting/cricket/import-series-matches', { series_id: seriesId })
+      message.success(`Series imported! Added: ${r.data.imported} matches`)
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to import series')
+    } finally {
+      setImportingSeriesId(null)
+    }
+  }
+
+  const syncSquad = async (match: any) => {
+    setSyncingSquadId(match.id)
+    try {
+      const r = await adminApi.post('/betting/cricket/sync-squad', { match_id: match.id, match_api_id: match.match_api_id })
+      message.success(`Squad synced! Seeded ${r.data.seededCount} players for this match`)
+      loadPlayers()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to sync squad')
+    } finally {
+      setSyncingSquadId(null)
     }
   }
 
@@ -353,35 +415,37 @@ export default function Cricket() {
               )}
             </Card>
 
-            <Card title="🌐 Sports API Integration" style={{ marginTop: 16 }} loading={loadingConfig}>
+            <Card title="🌐 CricAPI Integration" style={{ marginTop: 16 }} loading={loadingConfig}>
               <Alert
                 type="info"
-                message="Free API Available"
-                description={<span>Register at <a href="https://cricketdata.org" target="_blank" rel="noreferrer">cricketdata.org</a> for a free API key (100 req/day). Paste it below to auto-import live matches from IPL, BCC, ICC & more.</span>}
+                message="CricAPI Key Configured"
+                description={<span>Paste your API key below to auto-import matches, squads, and flags. By default, the system includes a free key: <code>dd511ce4-aeb7-4e1f-86f4-1160404b2776</code>.</span>}
                 style={{ marginBottom: 16 }}
                 showIcon
               />
               <Form form={apiConfigForm} layout="vertical" onFinish={saveApiConfig}>
                 <Form.Item name="api_provider" label="API Provider" initialValue="cricket_data_api">
                   <Select options={[
-                    { value: 'cricket_data_api', label: 'CricketData.org (Free)' },
-                    { value: 'rapidapi_cricbuzz', label: 'Cricbuzz via RapidAPI (Paid)' },
-                    { value: 'sportsmonks', label: 'Sportsmonks (Paid)' },
+                    { value: 'cricket_data_api', label: 'CricAPI (cricapi.com)' }
                   ]} />
                 </Form.Item>
                 <Form.Item name="api_key" label="API Key">
-                  <Input.Password placeholder="Enter your API key here..." />
+                  <Input.Password placeholder="Enter your CricAPI key here..." />
                 </Form.Item>
                 <Space style={{ width: '100%' }} direction="vertical">
                   <Button type="primary" htmlType="submit" block loading={savingConfig} icon={<CloudDownloadOutlined />}>
                     Save API Key
                   </Button>
+                  <Button block onClick={syncCountries} loading={syncingCountries} icon={<SyncOutlined />} style={{ backgroundColor: '#13c2c2', color: 'white', border: 'none' }}>
+                    {syncingCountries ? 'Caching flags...' : 'Sync Countries & Flags'}
+                  </Button>
                   <Button block onClick={syncFromApi} loading={syncing} icon={<SyncOutlined />} style={{ backgroundColor: '#52c41a', color: 'white', border: 'none' }}>
-                    {syncing ? 'Syncing...' : 'Sync Live Matches Now'}
+                    {syncing ? 'Syncing...' : 'Sync Live/Upcoming Matches'}
                   </Button>
                 </Space>
               </Form>
             </Card>
+
           </Col>
 
           <Col xs={24} lg={16}>
@@ -389,17 +453,37 @@ export default function Cricket() {
               extra={
                 <Space>
                   <Button type="primary" onClick={() => setMatchOpen(true)}>+ Add Match</Button>
+                  <Button icon={<CloudDownloadOutlined />} onClick={() => setSeriesOpen(true)}>Import Series</Button>
                   <Button icon={<ReloadOutlined />} onClick={loadMatches}>Refresh</Button>
                   <Button icon={<SyncOutlined />} onClick={syncFromApi} loading={syncing} style={{ backgroundColor: '#1677ff', color: 'white', border: 'none' }}>
-                    Sync API
+                    Sync Matches
                   </Button>
                 </Space>
               }
               loading={loadingMatches}>
               {matches.map(m => (
                 <Card key={m.id} type="inner" style={{ marginBottom: 16 }}
-                  title={<span>{m.series} · {String(m.format).toUpperCase()} — <b>{m.team_a} vs {m.team_b}</b> <Tag color={m.status === 'settled' ? 'red' : m.status === 'live' ? 'orange' : 'blue'}>{m.status}</Tag></span>}
-                  extra={<Button size="small" onClick={() => setMarketFor(m)}>+ Market</Button>}>
+                  title={
+                    <span>
+                      {m.series} · {String(m.format).toUpperCase()} —{' '}
+                      <b>
+                        {m.team_a_flag && <img src={m.team_a_flag} alt="" style={{ width: 22, height: 15, marginRight: 6, verticalAlign: 'middle', border: '1px solid #ddd', borderRadius: 2 }} />}
+                        {m.team_a} vs {m.team_b}
+                        {m.team_b_flag && <img src={m.team_b_flag} alt="" style={{ width: 22, height: 15, marginLeft: 6, verticalAlign: 'middle', border: '1px solid #ddd', borderRadius: 2 }} />}
+                      </b>{' '}
+                      <Tag color={m.status === 'settled' ? 'red' : m.status === 'live' ? 'orange' : 'blue'}>{m.status}</Tag>
+                    </span>
+                  }
+                  extra={
+                    <Space>
+                      {m.match_api_id && (
+                        <Button size="small" type="dashed" icon={<SyncOutlined />} loading={syncingSquadId === m.id} onClick={() => syncSquad(m)}>
+                          Sync Squad
+                        </Button>
+                      )}
+                      <Button size="small" onClick={() => setMarketFor(m)}>+ Market</Button>
+                    </Space>
+                  }>
                   <Text type="secondary">{new Date(m.start_time).toLocaleString()}</Text>
                   {(m.markets || []).map((mk: any) => (
                     <div key={mk.id} style={{ marginTop: 12 }}>
@@ -774,6 +858,50 @@ export default function Cricket() {
             )}
           </div>
         </Form>
+      </Modal>
+
+      {/* Import Series Modal */}
+      <Modal open={seriesOpen} title="Import Matches from Series" onCancel={() => setSeriesOpen(false)} footer={null} width={700}>
+        <div style={{ marginBottom: 16 }}>
+          <Space.Compact style={{ width: '100%' }}>
+            <Input 
+              placeholder="Search Series (e.g. IPL, ICC, Big Bash)..." 
+              value={seriesQuery} 
+              onChange={e => setSeriesQuery(e.target.value)} 
+              onPressEnter={searchSeries}
+            />
+            <Button type="primary" loading={searchingSeries} onClick={searchSeries}>
+              Search
+            </Button>
+          </Space.Compact>
+        </div>
+
+        <Table
+          rowKey="id"
+          dataSource={seriesList}
+          size="small"
+          loading={searchingSeries}
+          pagination={{ pageSize: 5 }}
+          columns={[
+            { title: 'Series Name', dataIndex: 'name', render: (n: string) => <b>{n}</b> },
+            { title: 'Start Date', dataIndex: 'startDate', render: (d: string) => d ? new Date(d).toLocaleDateString() : '-' },
+            { title: 'End Date', dataIndex: 'endDate', render: (d: string) => d ? new Date(d).toLocaleDateString() : '-' },
+            { title: 'Matches', dataIndex: 'matches' },
+            { 
+              title: 'Action', 
+              render: (record: any) => (
+                <Button 
+                  size="small" 
+                  type="primary" 
+                  loading={importingSeriesId === record.id} 
+                  onClick={() => importSeriesMatches(record.id)}
+                >
+                  Import Matches
+                </Button>
+              ) 
+            }
+          ]}
+        />
       </Modal>
     </div>
   )

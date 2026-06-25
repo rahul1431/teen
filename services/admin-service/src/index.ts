@@ -1401,6 +1401,26 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  app.post('/api/admin/betting/cricket/sync-countries', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/sync-countries', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/sync-series', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/sync-series', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/import-series-matches', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/import-series-matches', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/sync-squad', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/sync-squad', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
 
   // --- Satta Matka Market Creation & Deletion ---
   app.get('/api/admin/betting/matka/markets', { onRequest: [authenticate] }, async (_req, reply) => {

@@ -612,28 +612,57 @@ async function start() {
   app.post('/internal/cricket/sync-api', { onRequest: [internal] }, async (req, reply) => {
     const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
     const specialRules = configRes.rows[0]?.special_rules || {}
-    const { api_provider, api_key } = specialRules
-
-    if (!api_key || api_provider !== 'cricket_data_api') {
-      return reply.code(400).send({ error: 'No Sports API Key configured. Please go to Cricket Rules & Config and enter a valid API key from cricketdata.org.' })
-    }
+    const { api_key } = specialRules
+    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
 
     try {
-      const url = `https://api.cricapi.com/v1/currentMatches?apikey=${api_key}&offset=0`
-      const apiRes = await fetch(url)
-      if (!apiRes.ok) {
-        throw new Error(`Cricket API returned status ${apiRes.status}`)
-      }
-      const data: any = await apiRes.json()
-      if (data.status !== 'success') {
-        throw new Error(data.reason || 'Failed to fetch current matches')
+      // 1. Fetch current/live matches
+      const currentUrl = `https://api.cricapi.com/v1/currentMatches?apikey=${keyToUse}&offset=0`
+      const currentRes = await fetch(currentUrl)
+      if (!currentRes.ok) throw new Error(`CricAPI currentMatches returned ${currentRes.status}`)
+      const currentData = await currentRes.json()
+      if (currentData.status !== 'success') throw new Error(currentData.reason || 'Failed to fetch current matches')
+
+      // 2. Fetch upcoming matches list to show in lobby
+      let upcomingMatches: any[] = []
+      const matchesUrl = `https://api.cricapi.com/v1/matches?apikey=${keyToUse}&offset=0`
+      const matchesRes = await fetch(matchesUrl).catch(() => null)
+      if (matchesRes && matchesRes.ok) {
+        const matchesData = await matchesRes.json()
+        if (matchesData.status === 'success') {
+          upcomingMatches = matchesData.data || []
+        }
       }
 
-      const matches = data.data || []
+      // Fetch cached country flags
+      const flagsRes = await db.query('SELECT name, flag_url FROM cricket_countries')
+      const flagMap = new Map<string, string>()
+      flagsRes.rows.forEach(r => flagMap.set(r.name.toLowerCase(), r.flag_url))
+
+      const findFlag = (teamName: string): string | null => {
+        if (!teamName) return null
+        const nameLower = teamName.toLowerCase()
+        for (const [countryName, flagUrl] of flagMap.entries()) {
+          if (nameLower.includes(countryName) || countryName.includes(nameLower)) {
+            return flagUrl
+          }
+        }
+        return null
+      }
+
+      const allMatchesCombined = [...(currentData.data || [])]
+      // Add upcoming matches that are not already present in currentMatches
+      const existingIds = new Set(allMatchesCombined.map(m => m.id))
+      for (const m of upcomingMatches) {
+        if (!existingIds.has(m.id)) {
+          allMatchesCombined.push(m)
+        }
+      }
+
       let insertedCount = 0
       let updatedCount = 0
 
-      for (const m of matches) {
+      for (const m of allMatchesCombined) {
         const apiId = m.id
         if (!apiId) continue
 
@@ -644,6 +673,9 @@ async function start() {
         const startTime = m.dateTimeGMT ? `${m.dateTimeGMT}Z` : new Date().toISOString()
         const series = m.name || 'Current Match'
         const format = m.matchType || 't20'
+
+        const team_a_flag = findFlag(team_a)
+        const team_b_flag = findFlag(team_b)
 
         // Determine status
         let status = 'upcoming'
@@ -658,9 +690,9 @@ async function start() {
         if (m.score && Array.isArray(m.score)) {
           const latestInning = m.score[m.score.length - 1]
           if (latestInning) {
-            live_score.runs = latestInning.runs || 0
-            live_score.wickets = latestInning.wickets || 0
-            live_score.overs = latestInning.overs || 0
+            live_score.runs = latestInning.r || 0
+            live_score.wickets = latestInning.w || 0
+            live_score.overs = latestInning.o || 0
             live_score.current_innings = latestInning.inning || ''
             live_score.description = m.status || ''
           }
@@ -670,16 +702,16 @@ async function start() {
         if (existing.rows.length) {
           await db.query(
             `UPDATE cricket_matches 
-             SET status = $1, live_score = $2 
-             WHERE id = $3`,
-            [status, JSON.stringify(live_score), existing.rows[0].id]
+             SET status = $1, live_score = $2, team_a_flag = $3, team_b_flag = $4, series = $5, format = $6
+             WHERE id = $7`,
+            [status, JSON.stringify(live_score), team_a_flag, team_b_flag, series, format, existing.rows[0].id]
           )
           updatedCount++
         } else {
           await db.query(
-            `INSERT INTO cricket_matches (series, format, team_a, team_b, team_a_short, team_b_short, start_time, match_api_id, status, live_score)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-            [series, format, team_a, team_b, team_a_short, team_b_short, startTime, apiId, status, JSON.stringify(live_score)]
+            `INSERT INTO cricket_matches (series, format, team_a, team_b, team_a_short, team_b_short, start_time, match_api_id, status, live_score, team_a_flag, team_b_flag)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+            [series, format, team_a, team_b, team_a_short, team_b_short, startTime, apiId, status, JSON.stringify(live_score), team_a_flag, team_b_flag]
           )
           insertedCount++
         }
@@ -688,6 +720,229 @@ async function start() {
       return { success: true, inserted: insertedCount, updated: updatedCount }
     } catch (e: any) {
       return reply.code(500).send({ error: `API Sync failed: ${e.message}` })
+    }
+  })
+
+  // Sync countries & flags from CricAPI
+  app.post('/internal/cricket/sync-countries', { onRequest: [internal] }, async (req, reply) => {
+    const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
+    const specialRules = configRes.rows[0]?.special_rules || {}
+    const { api_key } = specialRules
+    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
+
+    try {
+      const url = `https://api.cricapi.com/v1/countries?apikey=${keyToUse}&offset=0`
+      const apiRes = await fetch(url)
+      if (!apiRes.ok) throw new Error(`CricAPI countries returned ${apiRes.status}`)
+      const data = await apiRes.json()
+      if (data.status !== 'success') throw new Error(data.reason || 'Failed to fetch countries')
+
+      const countries = data.data || []
+      let count = 0
+      for (const c of countries) {
+        if (!c.id || !c.name || !c.genericFlag) continue
+        await db.query(
+          `INSERT INTO cricket_countries (id, name, flag_url) 
+           VALUES ($1, $2, $3)
+           ON CONFLICT (id) DO UPDATE SET name = $2, flag_url = $3`,
+          [c.id.toLowerCase(), c.name, c.genericFlag]
+        )
+        count++
+      }
+      return { success: true, count }
+    } catch (e: any) {
+      return reply.code(500).send({ error: `Sync countries failed: ${e.message}` })
+    }
+  })
+
+  // Sync/Search Cricket Series from CricAPI
+  app.post('/internal/cricket/sync-series', { onRequest: [internal] }, async (req, reply) => {
+    const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
+    const specialRules = configRes.rows[0]?.special_rules || {}
+    const { api_key } = specialRules
+    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
+
+    const { search, offset = 0 } = req.body as { search?: string, offset?: number }
+
+    try {
+      let url = `https://api.cricapi.com/v1/series?apikey=${keyToUse}&offset=${offset}`
+      if (search) {
+        url += `&search=${encodeURIComponent(search)}`
+      }
+      const apiRes = await fetch(url)
+      if (!apiRes.ok) throw new Error(`CricAPI series returned ${apiRes.status}`)
+      const data = await apiRes.json()
+      if (data.status !== 'success') throw new Error(data.reason || 'Failed to fetch series')
+
+      return { success: true, series: data.data || [] }
+    } catch (e: any) {
+      return reply.code(500).send({ error: `Sync series failed: ${e.message}` })
+    }
+  })
+
+  // Import matches of a series
+  app.post('/internal/cricket/import-series-matches', { onRequest: [internal] }, async (req, reply) => {
+    const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
+    const specialRules = configRes.rows[0]?.special_rules || {}
+    const { api_key } = specialRules
+    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
+
+    const { series_id } = req.body as { series_id: string }
+    if (!series_id) return reply.code(400).send({ error: 'series_id is required' })
+
+    try {
+      const url = `https://api.cricapi.com/v1/series_info?apikey=${keyToUse}&id=${series_id}`
+      const apiRes = await fetch(url)
+      if (!apiRes.ok) throw new Error(`CricAPI series_info returned ${apiRes.status}`)
+      const data = await apiRes.json()
+      if (data.status !== 'success') throw new Error(data.reason || 'Failed to fetch series matches')
+
+      const seriesName = data.data?.info?.name || 'Imported Series'
+      const matches = data.data?.matchList || []
+
+      // Fetch cached country flags
+      const flagsRes = await db.query('SELECT name, flag_url FROM cricket_countries')
+      const flagMap = new Map<string, string>()
+      flagsRes.rows.forEach(r => flagMap.set(r.name.toLowerCase(), r.flag_url))
+
+      const findFlag = (teamName: string): string | null => {
+        if (!teamName) return null
+        const nameLower = teamName.toLowerCase()
+        for (const [countryName, flagUrl] of flagMap.entries()) {
+          if (nameLower.includes(countryName) || countryName.includes(nameLower)) {
+            return flagUrl
+          }
+        }
+        return null
+      }
+
+      let imported = 0
+      for (const m of matches) {
+        const apiId = m.id
+        if (!apiId) continue
+
+        const team_a = m.teams?.[0] || 'Team A'
+        const team_b = m.teams?.[1] || 'Team B'
+        const team_a_short = team_a.substring(0, 3).toUpperCase()
+        const team_b_short = team_b.substring(0, 3).toUpperCase()
+        const startTime = m.dateTimeGMT ? `${m.dateTimeGMT}Z` : new Date().toISOString()
+        const format = m.matchType || 't20'
+        const status = m.status === 'live' || m.matchStarted ? 'live' : (m.matchEnded ? 'settled' : 'upcoming')
+        
+        const team_a_flag = findFlag(team_a)
+        const team_b_flag = findFlag(team_b)
+
+        const existing = await db.query('SELECT id FROM cricket_matches WHERE match_api_id = $1', [apiId])
+        if (existing.rows.length) {
+          await db.query(
+            `UPDATE cricket_matches 
+             SET status = $1, team_a_flag = $2, team_b_flag = $3, series = $4, format = $5
+             WHERE id = $6`,
+            [status, team_a_flag, team_b_flag, seriesName, format, existing.rows[0].id]
+          )
+        } else {
+          await db.query(
+            `INSERT INTO cricket_matches (series, format, team_a, team_b, team_a_short, team_b_short, start_time, match_api_id, status, team_a_flag, team_b_flag)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [seriesName, format, team_a, team_b, team_a_short, team_b_short, startTime, apiId, status, team_a_flag, team_b_flag]
+          )
+          imported++
+        }
+      }
+
+      return { success: true, imported, total: matches.length }
+    } catch (e: any) {
+      return reply.code(500).send({ error: `Import series matches failed: ${e.message}` })
+    }
+  })
+
+  // Sync Squad for Match from CricAPI
+  app.post('/internal/cricket/sync-squad', { onRequest: [internal] }, async (req, reply) => {
+    const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
+    const specialRules = configRes.rows[0]?.special_rules || {}
+    const { api_key } = specialRules
+    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
+
+    const { match_id, match_api_id } = req.body as { match_id: string, match_api_id: string }
+    if (!match_id || !match_api_id) {
+      return reply.code(400).send({ error: 'match_id and match_api_id are required' })
+    }
+
+    try {
+      const url = `https://api.cricapi.com/v1/match_squad?apikey=${keyToUse}&id=${match_api_id}`
+      const apiRes = await fetch(url)
+      if (!apiRes.ok) throw new Error(`CricAPI match_squad returned ${apiRes.status}`)
+      const data = await apiRes.json()
+      if (data.status !== 'success') throw new Error(data.reason || 'Failed to fetch match squad')
+
+      const squad = data.data || []
+      let playersSeeded = 0
+
+      // Map squad details: CricAPI returns array of team objects e.g. [{"teamName": "Team X", "players": [...]}]
+      for (const team of squad) {
+        const teamName = team.teamName || 'Unknown Team'
+        const players = team.players || []
+
+        for (const p of players) {
+          const externalId = p.id
+          if (!externalId) continue
+
+          const name = p.name || 'Unknown Player'
+          
+          // Role mapping from CricAPI: role can be e.g. "Batsman", "Bowler", "Allrounder", "Wicketkeeper"
+          // Map to: wicket_keeper | batsman | all_rounder | bowler
+          let role = 'batsman'
+          const apiRole = (p.role || '').toLowerCase().replace(/[^a-z]/g, '')
+          if (apiRole.includes('keeper') || apiRole.includes('wk')) {
+            role = 'wicket_keeper'
+          } else if (apiRole.includes('bowler') || apiRole.includes('bowl')) {
+            role = 'bowler'
+          } else if (apiRole.includes('allrounder') || apiRole.includes('ar')) {
+            role = 'all_rounder'
+          }
+
+          // Check if player exists
+          let pId: string
+          const existingPlayer = await db.query('SELECT id FROM cricket_fantasy_players WHERE external_id = $1', [externalId])
+          
+          if (existingPlayer.rows.length) {
+            pId = existingPlayer.rows[0].id
+            await db.query(
+              `UPDATE cricket_fantasy_players 
+               SET name = $1, role = $2, team_name = $3 
+               WHERE id = $4`,
+              [name, role, teamName, pId]
+            )
+          } else {
+            // Check by name and team to avoid duplicates if external_id is null in old rows
+            const fallbackPlayer = await db.query('SELECT id FROM cricket_fantasy_players WHERE name = $1 AND team_name = $2', [name, teamName])
+            if (fallbackPlayer.rows.length) {
+              pId = fallbackPlayer.rows[0].id
+              await db.query('UPDATE cricket_fantasy_players SET external_id = $1, role = $2 WHERE id = $3', [externalId, role, pId])
+            } else {
+              const inserted = await db.query(
+                `INSERT INTO cricket_fantasy_players (name, role, credits, team_name, external_id)
+                 VALUES ($1, $2, 9.0, $3, $4) RETURNING id`,
+                [name, role, teamName, externalId]
+              )
+              pId = inserted.rows[0].id
+            }
+          }
+
+          // Link player to match in cricket_match_players
+          await db.query(
+            `INSERT INTO cricket_match_players (match_id, player_id, runs_scored, balls_faced, fours, sixes, wickets, runs_conceded, overs_bowled, catches, stumpings, run_outs, fantasy_points)
+             VALUES ($1, $2, 0, 0, 0, 0, 0, 0, 0.0, 0, 0, 0, 0.0)
+             ON CONFLICT (match_id, player_id) DO NOTHING`,
+            [match_id, pId]
+          )
+          playersSeeded++
+        }
+      }
+
+      return { success: true, seededCount: playersSeeded }
+    } catch (e: any) {
+      return reply.code(500).send({ error: `Squad sync failed: ${e.message}` })
     }
   })
 
