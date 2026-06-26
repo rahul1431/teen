@@ -47,16 +47,16 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   final _reactionsNotifier = ValueNotifier<List<_Reaction>>([]);
 
   String? _myUserId;
-  bool    _isSeen      = false;
   bool    _landscapeReady = false; // latches true once the table has laid out in landscape
   int     _turnSeq     = 0;
-  double  _betAmount   = 0;
   Timer?  _turnTimer;
   StreamSubscription? _reconnectSub;
-  final _showChatNotifier    = ValueNotifier<bool>(false);
+  final _isSeenNotifier       = ValueNotifier<bool>(false);
+  final _betAmountNotifier    = ValueNotifier<double>(0);
+  final _showChatNotifier     = ValueNotifier<bool>(false);
   final _showGiftTrayNotifier = ValueNotifier<bool>(false);
-  final _chatInput   = TextEditingController();
-  int  _reactionId   = 0;
+  final _chatInput = TextEditingController();
+  int  _reactionId = 0;
 
   static const _quickEmojis = ['😀','😂','😎','😮','😭','🔥','👏','🤔'];
   static const _gifts = [
@@ -96,7 +96,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _chatInput.dispose();
     for (final n in [_gsNotifier, _myTurnNotifier, _timerNotifier,
         _resultNotifier, _myCardsNotifier, _chatNotifier, _reactionsNotifier,
-        _showChatNotifier, _showGiftTrayNotifier]) {
+        _isSeenNotifier, _betAmountNotifier, _showChatNotifier, _showGiftTrayNotifier]) {
       n.dispose();
     }
     SystemChrome.setPreferredOrientations(
@@ -108,7 +108,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   // ── Demo init ─────────────────────────────────────────────────────────────
   void _initDemo() {
     _myUserId = 'me';
-    _isSeen   = true;
+    _isSeenNotifier.value = true;
     _practice = PracticeEngine(
       onChanged: () {
         if (!mounted) return;
@@ -168,7 +168,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       'players':       players,
     };
     _gsNotifier.value  = gs;
-    _betAmount = (data['min_bet'] as num?)?.toDouble() ?? 0;
+    _betAmountNotifier.value = (data['min_bet'] as num?)?.toDouble() ?? 0;
     final idx  = (gs['current_turn'] ?? 0) as int;
     final cur  = idx < players.length ? players[idx] : null;
     final isMe = (cur?['userId'] ?? cur?['user_id']) == _myUserId;
@@ -271,7 +271,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   void _sendAction(String action, {double? amount}) {
     _turnTimer?.cancel();
     _myTurnNotifier.value = false;
-    if (action == 'show') _isSeen = true;
+    if (action == 'show') _isSeenNotifier.value = true;
     SoundService.instance.play(action == 'fold' ? Sfx.buttonTap : Sfx.chipBet);
     if (widget.demo) { HapticFeedback.mediumImpact(); _practice?.playerAction(action, amount); return; }
     _socket.emit(SocketEvents.gameAction, {
@@ -768,8 +768,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           const SizedBox(width: 6),
           _circleBtn(Icons.person_add_alt_1, () {}, size: 36),
           const SizedBox(width: 6),
-          _circleBtn(SoundService.instance.muted ? Icons.volume_off : Icons.volume_up,
-              () => setState(() => SoundService.instance.toggleMute()), size: 36),
+          const _SoundButtonWidget(),
           const SizedBox(width: 6),
           _circleBtn(Icons.settings, () {}, size: 36),
         ]),
@@ -780,22 +779,25 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     if (cards.isEmpty) return const SizedBox.shrink();
     return Positioned(
       bottom: isMyTurn ? 104 : 14, left: 0, right: 0,
-      child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        if (!_isSeen) ...[
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold, foregroundColor: Colors.black, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
-            onPressed: () { _sendAction('see'); setState(() => _isSeen = true); },
-            child: const Text('See Cards', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-          const SizedBox(height: 8),
-        ],
-        Row(mainAxisSize: MainAxisSize.min,
-          children: [for (var i = 0; i < cards.length; i++) _buildAnimatedCard(cards[i], i, cards.length)]),
-      ])),
+      child: Center(child: ValueListenableBuilder<bool>(
+        valueListenable: _isSeenNotifier,
+        builder: (_, isSeen, __) => Column(mainAxisSize: MainAxisSize.min, children: [
+          if (!isSeen) ...[
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold, foregroundColor: Colors.black, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
+              onPressed: () { _sendAction('see'); _isSeenNotifier.value = true; },
+              child: const Text('See Cards', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(height: 8),
+          ],
+          Row(mainAxisSize: MainAxisSize.min,
+            children: [for (var i = 0; i < cards.length; i++) _buildAnimatedCard(cards[i], i, cards.length, isSeen)]),
+        ]),
+      )),
     );
   }
 
-  Widget _buildAnimatedCard(Map<String, dynamic> card, int index, int total) {
+  Widget _buildAnimatedCard(Map<String, dynamic> card, int index, int total, bool isSeen) {
     return TweenAnimationBuilder<double>(
       key: ValueKey('${card['value']}_${card['suit']}_$index'),
       tween: Tween(begin: 0.0, end: 1.0),
@@ -806,7 +808,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         child: Opacity(opacity: t.clamp(0.0, 1.0),
           child: Transform.rotate(
             angle: (index - (total - 1) / 2) * 0.12,
-            child: _isSeen
+            child: isSeen
                 ? _buildCard(card['value'].toString(), card['suit'].toString())
                 : _buildCardBack(),
           )),
@@ -867,26 +869,31 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   // ── Action Bar ─────────────────────────────────────────────────────────────
   Widget _buildActionBar(Map<String, dynamic>? gs) {
     final stake    = (gs?['min_bet'] as num?)?.toDouble() ?? 10;
-    final minBet   = _isSeen ? stake * 2 : stake;
+    final minBet   = _isSeenNotifier.value ? stake * 2 : stake;
     final maxBet   = minBet * 4;
-    if (_betAmount < minBet) _betAmount = minBet;
-    if (_betAmount > maxBet) _betAmount = maxBet;
+    if (_betAmountNotifier.value < minBet) _betAmountNotifier.value = minBet;
+    if (_betAmountNotifier.value > maxBet) _betAmountNotifier.value = maxBet;
     final players     = (gs?['players'] as List?) ?? [];
     final activeCount = players.where((p) => p['status'] == 'active').length;
     return Positioned(bottom: 6, left: 12, right: 12, child: Column(mainAxisSize: MainAxisSize.min, children: [
-      _coinChip(_betAmount.toInt()),
-      const SizedBox(height: 8),
-      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        _actionBtn('Pack',  AppColors.red, () => _sendAction('fold')),
-        if (activeCount == 2) ...[const SizedBox(width: 10), _actionBtn('Show', Colors.deepPurple, () => _sendAction('show'))],
-        const SizedBox(width: 10),
-        _stepperBtn('−', () { setState(() { _betAmount = (_betAmount - stake).clamp(minBet, maxBet); }); HapticFeedback.selectionClick(); }),
-        const SizedBox(width: 6),
-        _actionBtn(_betAmount > minBet ? 'Raise ₹${_betAmount.toInt()}' : 'Chaal ₹${_betAmount.toInt()}',
-            AppColors.green, () => _sendAction(_betAmount > minBet ? 'raise' : 'call', amount: _betAmount)),
-        const SizedBox(width: 6),
-        _stepperBtn('+', () { setState(() { _betAmount = (_betAmount + stake).clamp(minBet, maxBet); }); HapticFeedback.selectionClick(); }),
-      ]),
+      ValueListenableBuilder<double>(
+        valueListenable: _betAmountNotifier,
+        builder: (_, betAmount, __) => Column(mainAxisSize: MainAxisSize.min, children: [
+          _coinChip(betAmount.toInt()),
+          const SizedBox(height: 8),
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            _actionBtn('Pack',  AppColors.red, () => _sendAction('fold')),
+            if (activeCount == 2) ...[const SizedBox(width: 10), _actionBtn('Show', Colors.deepPurple, () => _sendAction('show'))],
+            const SizedBox(width: 10),
+            _stepperBtn('−', () { _betAmountNotifier.value = (_betAmountNotifier.value - stake).clamp(minBet, maxBet); HapticFeedback.selectionClick(); }),
+            const SizedBox(width: 6),
+            _actionBtn(betAmount > minBet ? 'Raise ₹${betAmount.toInt()}' : 'Chaal ₹${betAmount.toInt()}',
+                AppColors.green, () => _sendAction(betAmount > minBet ? 'raise' : 'call', amount: betAmount)),
+            const SizedBox(width: 6),
+            _stepperBtn('+', () { _betAmountNotifier.value = (_betAmountNotifier.value + stake).clamp(minBet, maxBet); HapticFeedback.selectionClick(); }),
+          ]),
+        ]),
+      ),
     ]));
   }
 
@@ -1246,6 +1253,41 @@ class _SeatTimer extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+// ── Sound Button (Leaf Rebuilder) ──────────────────────────────────────────
+class _SoundButtonWidget extends StatefulWidget {
+  const _SoundButtonWidget();
+  @override
+  State<_SoundButtonWidget> createState() => _SoundButtonWidgetState();
+}
+
+class _SoundButtonWidgetState extends State<_SoundButtonWidget> {
+  void _toggleSound() {
+    SoundService.instance.toggleMute();
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: _toggleSound,
+      child: Container(
+        width: 38, height: 38,
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFFFE082), Color(0xFFD4AF37), Color(0xFF8A6D1E)]),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.4), width: 1),
+          boxShadow: [BoxShadow(color: AppColors.gold.withValues(alpha: 0.45), blurRadius: 8, spreadRadius: 1), const BoxShadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 2))],
+        ),
+        child: Icon(
+          SoundService.instance.muted ? Icons.volume_off : Icons.volume_up,
+          color: Colors.white,
+          size: 38 * 0.52,
+        ),
+      ),
     );
   }
 }
