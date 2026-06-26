@@ -51,8 +51,21 @@ final GoRouter _router = GoRouter(
     GoRoute(path: '/notifications', builder: (_, __) => const NotificationsPage()),
     GoRoute(path: '/games/teen-patti', builder: (_, __) => const TeenPattiModesPage()),
     GoRoute(path: '/games/teen-patti/lobby', builder: (_, s) => TeenPattiLobbyPage(variation: s.uri.queryParameters['variation'] ?? 'classic')),
-    GoRoute(path: '/games/teen-patti/play/:roomId', builder: (_, s) => TeenPattiGamePage(roomId: s.pathParameters['roomId']!, initialData: s.extra as Map<String, dynamic>?)),
-    GoRoute(path: '/games/teen-patti/demo', builder: (_, __) => const TeenPattiGamePage(roomId: 'DEMO', demo: true)),
+    GoRoute(
+      path: '/games/teen-patti/play/:roomId',
+      pageBuilder: (context, state) => NoTransitionPage(
+        child: TeenPattiGamePage(
+          roomId: state.pathParameters['roomId']!,
+          initialData: state.extra as Map<String, dynamic>?,
+        ),
+      ),
+    ),
+    GoRoute(
+      path: '/games/teen-patti/demo',
+      pageBuilder: (context, state) => const NoTransitionPage(
+        child: TeenPattiGamePage(roomId: 'DEMO', demo: true),
+      ),
+    ),
     GoRoute(path: '/games/aviator', builder: (_, __) => const AviatorPage()),
     GoRoute(path: '/games/ludo', builder: (_, __) => const LudoModesPage()),
     GoRoute(path: '/games/ludo/lobby', builder: (_, s) => LudoLobbyPage(privateMode: s.uri.queryParameters['private'], privateCode: s.uri.queryParameters['code'])),
