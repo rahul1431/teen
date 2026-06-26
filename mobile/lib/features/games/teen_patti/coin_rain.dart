@@ -188,9 +188,9 @@ class CoinRainPainter extends CustomPainter {
         ..style = PaintingStyle.fill
         ..shader = RadialGradient(
           colors: [
-            const Color(0xFFFFD700).withOpacity(p.opacity), // Gold
-            const Color(0xFFDAA520).withOpacity(p.opacity), // GoldenRod
-            const Color(0xFFB8860B).withOpacity(p.opacity), // DarkGoldenRod
+            const Color(0xFFFFD700).withValues(alpha: p.opacity), // Gold
+            const Color(0xFFDAA520).withValues(alpha: p.opacity), // GoldenRod
+            const Color(0xFFB8860B).withValues(alpha: p.opacity), // DarkGoldenRod
           ],
           stops: const [0.0, 0.7, 1.0],
         ).createShader(Rect.fromCircle(center: Offset.zero, radius: p.size));
@@ -198,11 +198,11 @@ class CoinRainPainter extends CustomPainter {
       final rimPaint = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.0
-        ..color = const Color(0xFFFFF8DC).withOpacity(p.opacity); // Cornsilk
+        ..color = const Color(0xFFFFF8DC).withValues(alpha: p.opacity); // Cornsilk
 
       final innerPaint = Paint()
         ..style = PaintingStyle.fill
-        ..color = const Color(0xFFB8860B).withOpacity(p.opacity * 0.6);
+        ..color = const Color(0xFFB8860B).withValues(alpha: p.opacity * 0.6);
 
       // Distort for 3D rotation
       canvas.scale(p.scaleX, 1.0);
@@ -220,7 +220,7 @@ class CoinRainPainter extends CustomPainter {
         text: TextSpan(
           text: '₹',
           style: TextStyle(
-            color: const Color(0xFFFFF8DC).withOpacity(p.opacity),
+            color: const Color(0xFFFFF8DC).withValues(alpha: p.opacity),
             fontSize: p.size * 0.9,
             fontWeight: FontWeight.bold,
           ),

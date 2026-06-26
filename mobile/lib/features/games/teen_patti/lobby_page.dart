@@ -135,7 +135,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                 decoration: BoxDecoration(
                   color: AppColors.feltDark,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.gold.withOpacity(0.6)),
+                  border: Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
                 ),
                 child: Text('₹${_balance ?? '—'}',
                     style: const TextStyle(
@@ -188,11 +188,11 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                       ),
                       borderRadius: BorderRadius.circular(28),
                       border: Border.all(
-                        color: selected ? AppColors.gold : AppColors.gold.withOpacity(0.35),
+                        color: selected ? AppColors.gold : AppColors.gold.withValues(alpha: 0.35),
                         width: selected ? 2.5 : 1.5,
                       ),
                       boxShadow: selected
-                          ? [BoxShadow(color: AppColors.gold.withOpacity(0.45), blurRadius: 12, spreadRadius: 1)]
+                          ? [BoxShadow(color: AppColors.gold.withValues(alpha: 0.45), blurRadius: 12, spreadRadius: 1)]
                           : null,
                     ),
                     child: Text(
@@ -259,9 +259,9 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.35),
+          color: Colors.black.withValues(alpha: 0.35),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: AppColors.gold.withOpacity(0.4)),
+          border: Border.all(color: AppColors.gold.withValues(alpha: 0.4)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

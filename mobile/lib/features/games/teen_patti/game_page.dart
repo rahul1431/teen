@@ -474,7 +474,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(400),
                   gradient: const RadialGradient(colors: [Color(0xFF381F17), Color(0xFF1D0E09)]),
-                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.7), blurRadius: 28, offset: const Offset(0, 10), spreadRadius: 4)],
+                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.7), blurRadius: 28, offset: const Offset(0, 10), spreadRadius: 4)],
                 ),
                 child: Container(
                   padding: const EdgeInsets.all(4),
@@ -723,7 +723,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
   Widget _statusPill(String label, Color color) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white.withOpacity(0.3))),
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white.withValues(alpha: 0.3))),
         child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
       );
 
@@ -913,7 +913,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
             gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter,
               colors: [Color.lerp(color, Colors.white, 0.25)!, color, Color.lerp(color, Colors.black, 0.25)!]),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.white.withOpacity(0.25)),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
             boxShadow: [BoxShadow(color: color.withValues(alpha: 0.55), blurRadius: 14, spreadRadius: 1), const BoxShadow(color: Colors.black45, blurRadius: 4, offset: Offset(0, 2))],
           ),
           child: Text(label, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 13, shadows: const [Shadow(color: Colors.black38, blurRadius: 2)])),
@@ -941,7 +941,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           decoration: BoxDecoration(
             gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFFFE082), Color(0xFFD4AF37), Color(0xFF8A6D1E)]),
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white.withOpacity(0.4), width: 1),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.4), width: 1),
             boxShadow: [BoxShadow(color: AppColors.gold.withValues(alpha: 0.45), blurRadius: 8, spreadRadius: 1), const BoxShadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 2))],
           ),
           child: Icon(icon, color: Colors.white, size: size * 0.52),
@@ -1004,7 +1004,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   Widget _buildResult(String message) {
     final won = message.contains('Won');
     return Positioned.fill(key: const ValueKey('result'), child: Container(
-      color: Colors.black.withOpacity(0.75),
+      color: Colors.black.withValues(alpha: 0.75),
       child: Stack(children: [
         if (won) RepaintBoundary(child: const Positioned.fill(child: CoinRainWidget(active: true))),
         Center(child: Container(
