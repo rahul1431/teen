@@ -53,8 +53,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   double  _betAmount   = 0;
   Timer?  _turnTimer;
   StreamSubscription? _reconnectSub;
-  bool _showChat     = false;
-  bool _showGiftTray = false;
+  final _showChatNotifier    = ValueNotifier<bool>(false);
+  final _showGiftTrayNotifier = ValueNotifier<bool>(false);
   final _chatInput   = TextEditingController();
   int  _reactionId   = 0;
 
@@ -95,7 +95,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _practice?.dispose();
     _chatInput.dispose();
     for (final n in [_gsNotifier, _myTurnNotifier, _timerNotifier,
-        _resultNotifier, _myCardsNotifier, _chatNotifier, _reactionsNotifier]) {
+        _resultNotifier, _myCardsNotifier, _chatNotifier, _reactionsNotifier,
+        _showChatNotifier, _showGiftTrayNotifier]) {
       n.dispose();
     }
     SystemChrome.setPreferredOrientations(
@@ -305,7 +306,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _socket.emit(SocketEvents.roomChat,
         {'room_id': widget.roomId, 'message': icon, 'type': 'gift'});
     _spawnReaction(_myUserId ?? '', icon, isGift: true);
-    setState(() => _showGiftTray = false);
+    _showGiftTrayNotifier.value = false;
     HapticFeedback.mediumImpact();
   }
 
@@ -422,10 +423,18 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
             // ⑦ Social
             _buildSocialButtons(),
-            if (_showGiftTray) _buildGiftTray(),
-            if (_showChat) ValueListenableBuilder<List<_ChatMsg>>(
-              valueListenable: _chatNotifier,
-              builder: (_, msgs, __) => _buildChatPanel(msgs),
+            ValueListenableBuilder<bool>(
+              valueListenable: _showGiftTrayNotifier,
+              builder: (_, show, __) => show ? _buildGiftTray() : const SizedBox.shrink(),
+            ),
+            ValueListenableBuilder<bool>(
+              valueListenable: _showChatNotifier,
+              builder: (_, show, __) => show
+                  ? ValueListenableBuilder<List<_ChatMsg>>(
+                      valueListenable: _chatNotifier,
+                      builder: (_, msgs, __) => _buildChatPanel(msgs),
+                    )
+                  : const SizedBox.shrink(),
             ),
 
             // ⑧ Reconnect banner
@@ -649,7 +658,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
               Positioned(
                 left: -4, top: -4,
                 child: GestureDetector(
-                  onTap: () => setState(() { _showGiftTray = true; _showChat = false; }),
+                  onTap: () { _showGiftTrayNotifier.value = true; _showChatNotifier.value = false; },
                   child: Container(
                     width: 20, height: 20, alignment: Alignment.center,
                     decoration: const BoxDecoration(
@@ -755,7 +764,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           const SizedBox(width: 8),
           _circleBtn(Icons.info_outline, () {}),
           const SizedBox(width: 6),
-          _circleBtn(Icons.chat_bubble_outline, () => setState(() { _showChat = !_showChat; _showGiftTray = false; }), size: 36),
+          _circleBtn(Icons.chat_bubble_outline, () { _showChatNotifier.value = !_showChatNotifier.value; _showGiftTrayNotifier.value = false; }, size: 36),
           const SizedBox(width: 6),
           _circleBtn(Icons.person_add_alt_1, () {}, size: 36),
           const SizedBox(width: 6),
@@ -922,7 +931,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
   // ── Social ─────────────────────────────────────────────────────────────────
   Widget _buildSocialButtons() => Positioned(right: 8, top: 52, child: Column(children: [
-        _circleBtn(Icons.card_giftcard, () => setState(() { _showGiftTray = !_showGiftTray; _showChat = false; })),
+        _circleBtn(Icons.card_giftcard, () { _showGiftTrayNotifier.value = !_showGiftTrayNotifier.value; _showChatNotifier.value = false; }),
         const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
