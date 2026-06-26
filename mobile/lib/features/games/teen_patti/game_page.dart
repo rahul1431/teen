@@ -76,6 +76,14 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    precacheImage(const AssetImage('assets/images/table_felt.png'), context);
+    precacheImage(const AssetImage('assets/images/card_back.png'), context);
+    precacheImage(const AssetImage('assets/images/dealer_avatar.png'), context);
+  }
+
+  @override
   void dispose() {
     _reconnectSub?.cancel();
     _turnTimer?.cancel();
