@@ -48,6 +48,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
   String? _myUserId;
   bool    _isSeen      = false;
+  bool    _landscapeReady = false; // latches true once the table has laid out in landscape
   int     _turnSeq     = 0;
   double  _betAmount   = 0;
   Timer?  _turnTimer;
@@ -339,10 +340,34 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
     final isLandscape = size.width > size.height;
-    if (!isLandscape) {
+    if (isLandscape) _landscapeReady = true;
+
+    // Forcing landscape (initState) is async — for the first few frames after
+    // navigation the device is still portrait, and immersiveSticky's bar
+    // peeks momentarily flip MediaQuery back to ~square during the resize.
+    // Gate ONLY on the very first pre-landscape frames, and show a stable dark
+    // loader (never a blank/white SizedBox) so we don't flash blank↔table.
+    // Once the table has rendered once (`_landscapeReady`), always render it.
+    if (!isLandscape && !_landscapeReady) {
       return const Scaffold(
         backgroundColor: Color(0xFF060A1A),
-        body: SizedBox.shrink(),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 36, height: 36,
+                child: CircularProgressIndicator(
+                  strokeWidth: 3,
+                  valueColor: AlwaysStoppedAnimation(Color(0xFFD4AF37)),
+                ),
+              ),
+              SizedBox(height: 16),
+              Text('Loading table…',
+                  style: TextStyle(color: Colors.white60, fontSize: 13)),
+            ],
+          ),
+        ),
       );
     }
 
