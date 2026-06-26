@@ -73,6 +73,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     widget.demo ? _initDemo() : _init();
+    SoundService.instance.loopAmbience('casino_bgm.mp3');
   }
 
   @override
@@ -85,6 +86,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
   @override
   void dispose() {
+    SoundService.instance.stopAmbience();
     _reconnectSub?.cancel();
     _turnTimer?.cancel();
     _practice?.dispose();
