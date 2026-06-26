@@ -80,6 +80,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   void didChangeDependencies() {
     super.didChangeDependencies();
     precacheImage(const AssetImage('assets/images/table_felt.png'), context);
+    precacheImage(const AssetImage('assets/images/table_felt_red.png'), context);
+    precacheImage(const AssetImage('assets/images/table_felt_green.png'), context);
     precacheImage(const AssetImage('assets/images/card_back.png'), context);
     precacheImage(const AssetImage('assets/images/dealer_avatar.png'), context);
   }
@@ -324,9 +326,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   }
 
   void _exit() {
-    SystemChrome.setPreferredOrientations(
-        [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     Navigator.pop(context);
   }
 
@@ -338,6 +337,15 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   // ═══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final isLandscape = size.width > size.height;
+    if (!isLandscape) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF060A1A),
+        body: SizedBox.shrink(),
+      );
+    }
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) { if (!didPop) _exit(); },

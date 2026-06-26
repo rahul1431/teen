@@ -6,6 +6,6 @@
     </style>
     <!-- Theme applied to the Android Window as soon as the process has started. -->
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
-        <item name="android:windowBackground">?android:colorBackground</item>
+        <item name="android:windowBackground">@android:color/black</item>
     </style>
 </resources>
