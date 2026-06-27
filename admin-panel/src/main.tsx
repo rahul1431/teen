@@ -21,6 +21,7 @@ import Lottery from './pages/games/Lottery'
 import Cricket from './pages/games/Cricket'
 import Leaderboard from './pages/Leaderboard'
 import Security from './pages/Security'
+import Changelog from './pages/Changelog'
 import { useAuthStore } from './store/auth'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -52,6 +53,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="support" element={<Support />} />
           <Route path="leaderboard" element={<Leaderboard />} />
           <Route path="security" element={<Security />} />
+          <Route path="changelog" element={<Changelog />} />
         </Route>
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>

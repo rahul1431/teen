@@ -1571,6 +1571,61 @@ async function start() {
     }
   })
 
+  // --- Changelogs & Updates ---
+  app.get('/api/admin/changelogs', { onRequest: [authenticate] }, async (_req, reply) => {
+    try {
+      const res = await db.query('SELECT * FROM changelogs ORDER BY created_at DESC')
+      return reply.send(res.rows)
+    } catch (e: any) {
+      return reply.code(500).send({ error: `Failed to load changelogs: ${e.message}` })
+    }
+  })
+
+  app.post('/api/admin/changelogs', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const body = z.object({
+      version: z.string(),
+      platform: z.enum(['mobile', 'admin', 'server']),
+      title: z.string(),
+      description: z.string(),
+    }).parse(req.body)
+
+    try {
+      const me = req.user as any
+      const res = await db.query(
+        `INSERT INTO changelogs (version, platform, title, description, released_by)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [body.version, body.platform, body.title, body.description, me.username]
+      )
+      return reply.send(res.rows[0])
+    } catch (e: any) {
+      return reply.code(500).send({ error: `Failed to create changelog: ${e.message}` })
+    }
+  })
+
+  app.delete('/api/admin/changelogs/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    try {
+      await db.query('DELETE FROM changelogs WHERE id = $1', [id])
+      return reply.send({ success: true })
+    } catch (e: any) {
+      return reply.code(500).send({ error: `Failed to delete changelog: ${e.message}` })
+    }
+  })
+
+  app.get('/api/admin/changelogs/git', { onRequest: [authenticate] }, async (_req, reply) => {
+    try {
+      const { execSync } = require('child_process')
+      const gitLog = execSync('git log -n 30 --pretty=format:"%h|%an|%ar|%s"', { encoding: 'utf8', cwd: process.cwd() })
+      const commits = gitLog.split('\n').filter(Boolean).map((line: string) => {
+        const [hash, author, date, message] = line.split('|')
+        return { hash, author, date, message }
+      })
+      return reply.send({ commits })
+    } catch (e: any) {
+      return reply.send({ commits: [], error: `Failed to retrieve git log: ${e.message}` })
+    }
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))
 
   const port = parseInt(process.env.PORT || '3008')
