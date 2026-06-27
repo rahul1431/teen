@@ -90,7 +90,7 @@ class SoundService {
 
   /// Play a one-shot effect. Returns immediately; failures are ignored.
   Future<void> play(Sfx sfx, {double volume = 1.0}) async {
-    if (_muted) return;
+    if (muted) return;
     final player = _pool[_next];
     _next = (_next + 1) % _poolSize;
     try {
@@ -103,7 +103,7 @@ class SoundService {
   }
 
   Future<void> loopAmbience(String asset, {double volume = 0.4}) async {
-    if (_muted) return;
+    if (muted) return;
     try {
       await _ambience.play(AssetSource('sounds/$asset'), volume: volume);
     } catch (_) {/* ignore */}
