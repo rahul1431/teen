@@ -285,11 +285,13 @@ function LotteryTab() {
 function CricketTab() {
   const [matches, setMatches] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [syncLoading, setSyncLoading] = useState(false)
   const [matchOpen, setMatchOpen] = useState(false)
   const [marketFor, setMarketFor] = useState<any>(null)
-  const [settleFor, setSettleFor] = useState<any>(null)
+  const [sessionFor, setSessionFor] = useState<any>(null)
   const [mForm] = Form.useForm()
   const [mkForm] = Form.useForm()
+  const [sForm] = Form.useForm()
 
   const load = () => {
     setLoading(true)
@@ -298,6 +300,28 @@ function CricketTab() {
       .finally(() => setLoading(false))
   }
   useEffect(load, [])
+
+  const handleSync = async () => {
+    setSyncLoading(true)
+    try {
+      const r = await adminApi.post('/betting/cricket/sync-api')
+      message.success(`Sync Complete: ${r.data.inserted} new, ${r.data.updated} updated`)
+      load()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Sync failed')
+    } finally {
+      setSyncLoading(false)
+    }
+  }
+
+  const syncCountries = async () => {
+    try {
+      const r = await adminApi.post('/betting/cricket/sync-countries')
+      message.success(`Synced ${r.data.count} countries and flags`)
+    } catch (e: any) {
+      message.error('Country sync failed')
+    }
+  }
 
   const createMatch = async (v: any) => {
     try {
@@ -324,47 +348,98 @@ function CricketTab() {
     } catch (e: any) { message.error(e?.response?.data?.error || 'Failed') }
   }
 
+  const createSession = async (v: any) => {
+    try {
+      await adminApi.post('/betting/cricket/session/create', {
+        match_id: sessionFor.id, label: v.label, min_runs: v.min_runs, max_runs: v.max_runs,
+      })
+      message.success('Session added'); setSessionFor(null); sForm.resetFields(); load()
+    } catch (e: any) { message.error(e?.response?.data?.error || 'Failed') }
+  }
+
   const settle = async (market: any, resultKey: string | null) => {
     try {
       const r = await adminApi.post('/betting/cricket/settle', { market_id: market.id, result_key: resultKey })
       message.success(`Settled — ${r.data.winners} winners, ₹${Number(r.data.paid).toFixed(0)} paid`)
-      setSettleFor(null); load()
+      load()
     } catch (e: any) { message.error(e?.response?.data?.error || 'Settle failed') }
+  }
+
+  const settleSession = async (sessionId: string, runs: number | null) => {
+    try {
+      const r = await adminApi.post('/betting/cricket/session/settle', { session_id: sessionId, result_runs: runs })
+      message.success(`Session Settled — ${r.data.winners} winners paid`)
+      load()
+    } catch (e: any) { message.error('Session settle failed') }
   }
 
   return (
     <Card title="Cricket Matches"
-      extra={<Space><Button type="primary" onClick={() => setMatchOpen(true)}>+ Add Match</Button><Button onClick={load}>Refresh</Button></Space>}
+      extra={
+        <Space>
+          <Button onClick={syncCountries} size="small">Sync Flags</Button>
+          <Button type="primary" onClick={handleSync} loading={syncLoading} icon={<PlusOutlined />}>Sync Matches</Button>
+          <Button type="primary" onClick={() => setMatchOpen(true)}>+ Add Match</Button>
+          <Button onClick={load}>Refresh</Button>
+        </Space>
+      }
       loading={loading}>
       {matches.map(m => (
         <Card key={m.id} type="inner" style={{ marginBottom: 16 }}
           title={<span>{m.series} · {String(m.format).toUpperCase()} — <b>{m.team_a} vs {m.team_b}</b> <Tag color={m.status === 'settled' ? 'red' : m.status === 'live' ? 'orange' : 'blue'}>{m.status}</Tag></span>}
-          extra={<Button size="small" onClick={() => setMarketFor(m)}>+ Market</Button>}>
+          extra={
+            <Space>
+              <Button size="small" onClick={() => setSessionFor(m)}>+ Session</Button>
+              <Button size="small" onClick={() => setMarketFor(m)}>+ Market</Button>
+            </Space>
+          }>
           <Text type="secondary">{new Date(m.start_time).toLocaleString()}</Text>
-          {(m.markets || []).map((mk: any) => (
-            <div key={mk.id} style={{ marginTop: 12 }}>
-              <Divider style={{ margin: '8px 0' }} />
-              <Space wrap>
-                <Text strong>{mk.label}</Text>
-                <Tag color={mk.status === 'settled' ? 'red' : 'green'}>{mk.status}</Tag>
-                {mk.result_key && <Tag color="gold">Result: {mk.result_key}</Tag>}
-              </Space>
-              <div style={{ marginTop: 8 }}>
+
+          {/* Markets Section */}
+          <div style={{ marginTop: 12 }}>
+            <Text strong>Markets</Text>
+            {(m.markets || []).map((mk: any) => (
+              <div key={mk.id} style={{ marginTop: 8 }}>
                 <Space wrap>
+                  <Text>{mk.label}</Text>
+                  <Tag color={mk.status === 'settled' ? 'red' : 'green'}>{mk.status}</Tag>
                   {(mk.options || []).map((o: any) => (
                     <Popconfirm key={o.key} title={`Settle "${mk.label}" → ${o.label} wins?`}
                       disabled={mk.status === 'settled'} onConfirm={() => settle(mk, o.key)}>
                       <Button size="small" disabled={mk.status === 'settled'}>{o.label} @ {o.odds}</Button>
                     </Popconfirm>
                   ))}
-                  <Popconfirm title="Void this market and refund all stakes?"
+                  <Popconfirm title="Void this market?"
                     disabled={mk.status === 'settled'} onConfirm={() => settle(mk, null)}>
-                    <Button size="small" danger disabled={mk.status === 'settled'}>Void / Refund</Button>
+                    <Button size="small" danger disabled={mk.status === 'settled'}>Void</Button>
                   </Popconfirm>
                 </Space>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+
+          {/* Sessions Section */}
+          <div style={{ marginTop: 20 }}>
+            <Text strong>Sessions (Fancy)</Text>
+            {(m.sessions || []).map((s: any) => (
+              <div key={s.id} style={{ marginTop: 8 }}>
+                <Space wrap>
+                  <Text>{s.label} ({s.min_runs}-{s.max_runs})</Text>
+                  <Tag color={s.status === 'settled' ? 'red' : 'green'}>{s.status}</Tag>
+                  {s.status !== 'settled' && (
+                    <Space>
+                      <InputNumber size="small" placeholder="Final Runs" id={`runs-${s.id}`} />
+                      <Button size="small" type="primary" onClick={() => {
+                        const val = (document.getElementById(`runs-${s.id}`) as HTMLInputElement)?.value;
+                        if (val) settleSession(s.id, parseInt(val));
+                      }}>Settle</Button>
+                    </Space>
+                  )}
+                  {s.status === 'settled' && <Text type="success">Result: {s.result_runs} runs</Text>}
+                </Space>
+              </div>
+            ))}
+          </div>
         </Card>
       ))}
 
@@ -402,6 +477,28 @@ function CricketTab() {
             tooltip="Example: a|India|1.75">
             <Input.TextArea rows={4} placeholder={'a|India|1.75\nb|Australia|2.05'} />
           </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal open={!!sessionFor} title={`Add Session — ${sessionFor?.team_a} vs ${sessionFor?.team_b}`}
+        onCancel={() => setSessionFor(null)} onOk={() => sForm.submit()} okText="Add Session">
+        <Form form={sForm} layout="vertical" onFinish={createSession}>
+          <Form.Item name="label" label="Label" rules={[{ required: true }]} initialValue="6 Over Session - India">
+            <Input placeholder="e.g. 6 Over Session - India" />
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="min_runs" label="Line (Min)" rules={[{ required: true }]} initialValue={45}>
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="max_runs" label="Line (Max)" rules={[{ required: true }]} initialValue={47}>
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Text type="secondary">Min is for 'No' bet, Max is for 'Yes' bet.</Text>
         </Form>
       </Modal>
     </Card>

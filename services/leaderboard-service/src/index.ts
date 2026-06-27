@@ -23,6 +23,8 @@ async function start() {
   await app.register(jwt, { secret: process.env.JWT_SECRET! })
 
   const authenticate = async (req: any, reply: any) => {
+    const internalKey = req.headers['x-internal-key']
+    if (internalKey && internalKey === process.env.INTERNAL_SERVICE_KEY) return
     try { await req.jwtVerify() } catch { reply.code(401).send({ error: 'Unauthorized' }) }
   }
 

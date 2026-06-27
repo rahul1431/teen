@@ -237,7 +237,8 @@ function passTurn(state: LudoState): void {
 }
 
 function buildResult(state: LudoState, winner: LudoPlayer): ActionResult {
-  const pot = state.stake * state.players.length
+  const realPlayerCount = state.players.filter(p => !p.is_bot).length
+  const pot = state.stake * realPlayerCount
   const rakeFee = Math.round(pot * 0.05 * 100) / 100
   const prize = Math.round((pot - rakeFee) * 100) / 100
   state.status = 'completed'

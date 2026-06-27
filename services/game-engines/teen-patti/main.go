@@ -53,6 +53,7 @@ type GameState struct {
 	Pot         float64  `json:"pot"`
 	Round       int      `json:"round"`
 	MinBet      float64  `json:"min_bet"`
+	DealerID    string   `json:"dealer_id"`
 	CreatedAt   int64    `json:"created_at"`
 }
 
@@ -112,14 +113,20 @@ func evaluateHand(cards []Card) HandResult {
 	}
 
 	// Check sequence
-	isSeq := (ranks[0]-ranks[1] == 1 && ranks[1]-ranks[2] == 1) ||
-		(ranks[0] == 14 && ranks[1] == 3 && ranks[2] == 2) // A-2-3
+	isSeq := (ranks[0]-ranks[1] == 1 && ranks[1]-ranks[2] == 1)
+	isAce23 := (ranks[0] == 14 && ranks[1] == 3 && ranks[2] == 2) // A-2-3
 
-	if isSeq && sameSuit {
-		return HandResult{Rank: PureSequence, Score: ranks[0]*100 + ranks[1]*10 + ranks[2]}
-	}
-	if isSeq {
-		return HandResult{Rank: Sequence, Score: ranks[0]*100 + ranks[1]*10 + ranks[2]}
+	if isSeq || isAce23 {
+		score := ranks[0]*100 + ranks[1]*10 + ranks[2]
+		if isAce23 {
+			// In many variations, A-2-3 is the highest sequence.
+			// We give it a score higher than A-K-Q (14*100 + 13*10 + 12 = 1542)
+			score = 1600
+		}
+		if sameSuit {
+			return HandResult{Rank: PureSequence, Score: score}
+		}
+		return HandResult{Rank: Sequence, Score: score}
 	}
 	if sameSuit {
 		return HandResult{Rank: Color, Score: ranks[0]*100 + ranks[1]*10 + ranks[2]}
@@ -197,12 +204,16 @@ func (s *Server) startGame(w http.ResponseWriter, r *http.Request) {
 	deck := newDeck()
 	players := req.Players
 
+	realPlayerCount := 0
 	// Deal 3 cards to each player
 	for i := range players {
 		players[i].Cards = deck[i*3 : i*3+3]
 		players[i].Status = "active"
 		players[i].IsSeen = false
 		players[i].Bet = req.Stake
+		if !players[i].IsBot {
+			realPlayerCount++
+		}
 	}
 
 	state := GameState{
@@ -212,9 +223,10 @@ func (s *Server) startGame(w http.ResponseWriter, r *http.Request) {
 		Players:     players,
 		Status:      "betting",
 		CurrentTurn: 0,
-		Pot:         req.Stake * float64(len(players)),
+		Pot:         req.Stake * float64(realPlayerCount),
 		Round:       1,
 		MinBet:      req.Stake,
+		DealerID:    players[0].UserID,
 		CreatedAt:   time.Now().Unix(),
 	}
 

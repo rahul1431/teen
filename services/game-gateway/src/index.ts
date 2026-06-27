@@ -184,6 +184,7 @@ async function start() {
             stake: rawState.stake,
             pot: rawState.pot,
             current_turn: rawState.currentTurn ?? rawState.current_turn ?? 0,
+            dealer_id: rawState.dealer_id ?? rawState.DealerID,
             min_bet: rawState.minBet ?? rawState.min_bet ?? rawState.stake,
           })
 

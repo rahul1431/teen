@@ -1350,7 +1350,8 @@ async function start() {
     const out = []
     for (const m of matches.rows) {
       const markets = await db.query(`SELECT * FROM cricket_markets WHERE match_id = $1`, [m.id])
-      out.push({ ...m, markets: markets.rows })
+      const sessions = await db.query(`SELECT * FROM cricket_sessions WHERE match_id = $1`, [m.id])
+      out.push({ ...m, markets: markets.rows, sessions: sessions.rows })
     }
     return reply.send({ matches: out })
   })
@@ -1367,6 +1368,16 @@ async function start() {
 
   app.post('/api/admin/betting/cricket/settle', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/settle', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/session/create', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/session/create', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/session/settle', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/session/settle', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
@@ -1420,13 +1431,6 @@ async function start() {
     const r = await callBetting('/internal/cricket/sync-squad', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
-
-  app.post('/api/admin/betting/cricket/matches/:id/sync-score', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
-    const { id } = req.params as { id: string }
-    const r = await callBetting(`/internal/cricket/matches/${id}/sync-score`, req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
 
 
   // --- Satta Matka Market Creation & Deletion ---
@@ -1525,6 +1529,45 @@ async function start() {
       return reply.code(400).send({ error: e.message || 'Failed to delete bot' })
     } finally {
       client.release()
+    }
+  })
+
+  // --- Leaderboard ---
+  app.get('/api/admin/leaderboard/:gameType', { onRequest: [authenticate] }, async (req, reply) => {
+    const { gameType } = req.params as { gameType: string }
+    const { period } = req.query as { period?: string }
+    const url = `${process.env.LEADERBOARD_SERVICE_URL || 'http://127.0.0.1:3006'}/leaderboard/${gameType}?period=${period || 'daily'}`
+    
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'x-internal-key': process.env.INTERNAL_SERVICE_KEY || ''
+        }
+      })
+      if (!res.ok) return reply.code(res.status).send({ error: 'Failed to fetch leaderboard from service' })
+      const data = await res.json()
+      return reply.send(data)
+    } catch (e: any) {
+      return reply.code(500).send({ error: `Leaderboard fetch failed: ${e.message}` })
+    }
+  })
+
+  // --- Security Audit Logs ---
+  app.get('/api/admin/security/audit-logs', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { limit = 100, offset = 0 } = req.query as { limit?: number; offset?: number }
+    try {
+      const res = await db.query(
+        `SELECT al.id, al.action, al.target_type, al.target_id, al.details, al.ip_address, al.created_at,
+                a.username AS admin_username
+         FROM admin_audit_log al LEFT JOIN admin_users a ON a.id = al.admin_id
+         ORDER BY al.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [Number(limit), Number(offset)]
+      )
+      const countRes = await db.query(`SELECT COUNT(*) FROM admin_audit_log`)
+      return reply.send({ logs: res.rows, total: parseInt(countRes.rows[0].count) })
+    } catch (e: any) {
+      return reply.code(500).send({ error: `Audit log query failed: ${e.message}` })
     }
   })
 

@@ -11,7 +11,7 @@ import {
   settleMatkaSession,
 } from './matka'
 import { settleLottery } from './lottery'
-import { settleCricketMarket, settleFantasyLeague } from './cricket'
+import { settleCricketMarket, settleFantasyLeague, settleCricketSession } from './cricket'
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 10 })
@@ -426,8 +426,49 @@ async function start() {
     return { 
       match, 
       markets: markets.rows,
-      player_performances: playersRes.rows 
+      sessions: sessions.rows,
+      player_performances: playersRes.rows
     }
+  })
+
+  // Session (Fancy) betting
+  app.post('/cricket/session/bet', { onRequest: [auth] }, async (req, reply) => {
+    const body = z.object({
+      session_id: z.string().uuid(),
+      selection: z.enum(['yes', 'no']),
+      amount: z.number().positive(),
+    }).parse(req.body)
+
+    const sRes = await db.query(
+      `SELECT s.*, mt.status AS match_status FROM cricket_sessions s
+       JOIN cricket_matches mt ON mt.id = s.match_id
+       WHERE s.id = $1`, [body.session_id])
+    if (!sRes.rows.length) return reply.code(404).send({ error: 'Session not found' })
+    const session = sRes.rows[0]
+    if (session.status !== 'open' || session.match_status === 'settled' || session.match_status === 'closed') {
+      return reply.code(409).send({ error: 'Session is closed' })
+    }
+
+    const odds = body.selection === 'yes' ? Number(session.odds_yes) : Number(session.odds_no)
+    const bracket = body.selection === 'yes' ? session.max_runs : session.min_runs
+    const potential = Math.round(body.amount * odds * 100) / 100
+
+    const inserted = await db.query(
+      `INSERT INTO cricket_session_bets (user_id, match_id, session_id, selection, runs_bracket, amount, potential_payout)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [uid(req), session.match_id, session.id, body.selection, bracket, body.amount, potential],
+    )
+    const betId = inserted.rows[0].id
+
+    const debit = await debitStake({
+      userId: uid(req), amount: body.amount, referenceId: betId,
+      idempotencyKey: `cricket_session_stake_${betId}`, description: 'Cricket session bet',
+    })
+    if (!debit.ok) {
+      await db.query('DELETE FROM cricket_session_bets WHERE id = $1', [betId])
+      return reply.code(400).send({ error: debit.error })
+    }
+    return { success: true, bet_id: betId, potential_payout: potential }
   })
 
   // ═══════════════════════ ADMIN / INTERNAL ═══════════════════════
@@ -588,6 +629,34 @@ async function start() {
     return { success: true, match: res.rows[0] }
   })
 
+  // Settle a cricket session (Admin)
+  app.post('/internal/cricket/session/settle', { onRequest: [internal] }, async (req, reply) => {
+    const body = z.object({
+      session_id: z.string().uuid(),
+      result_runs: z.number().nullable(),
+    }).parse(req.body)
+    const res = await settleCricketSession(db, body.session_id, body.result_runs)
+    return { success: true, ...res }
+  })
+
+  // Create a cricket session (Admin)
+  app.post('/internal/cricket/session/create', { onRequest: [internal] }, async (req) => {
+    const body = z.object({
+      match_id: z.string().uuid(),
+      label: z.string(),
+      min_runs: z.number().int(),
+      max_runs: z.number().int(),
+      odds_yes: z.number().default(1.0),
+      odds_no: z.number().default(1.0),
+    }).parse(req.body)
+    const r = await db.query(
+      `INSERT INTO cricket_sessions (match_id, label, min_runs, max_runs, odds_yes, odds_no)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [body.match_id, body.label, body.min_runs, body.max_runs, body.odds_yes, body.odds_no],
+    )
+    return { success: true, session: r.rows[0] }
+  })
+
   // Settle fantasy points and leagues (Admin)
   app.post('/internal/cricket/fantasy/settle', { onRequest: [internal] }, async (req) => {
     const body = z.object({
@@ -613,13 +682,11 @@ async function start() {
     const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
     const specialRules = configRes.rows[0]?.special_rules || {}
     const { api_key } = specialRules
-    if (!api_key) {
-      return reply.code(400).send({ error: "Please configure a valid CricAPI Key in the Admin Panel." })
-    }
+    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
 
     try {
       // 1. Fetch current/live matches
-      const currentUrl = `https://api.cricapi.com/v1/currentMatches?apikey=${api_key}&offset=0`
+      const currentUrl = `https://api.cricapi.com/v1/currentMatches?apikey=${keyToUse}&offset=0`
       const currentRes = await fetch(currentUrl)
       if (!currentRes.ok) throw new Error(`CricAPI currentMatches returned ${currentRes.status}`)
       const currentData = await currentRes.json()
@@ -627,7 +694,7 @@ async function start() {
 
       // 2. Fetch upcoming matches list to show in lobby
       let upcomingMatches: any[] = []
-      const matchesUrl = `https://api.cricapi.com/v1/matches?apikey=${api_key}&offset=0`
+      const matchesUrl = `https://api.cricapi.com/v1/matches?apikey=${keyToUse}&offset=0`
       const matchesRes = await fetch(matchesUrl).catch(() => null)
       if (matchesRes && matchesRes.ok) {
         const matchesData = await matchesRes.json()
@@ -678,6 +745,20 @@ async function start() {
 
         const team_a_flag = findFlag(team_a)
         const team_b_flag = findFlag(team_b)
+
+        // Cache teams in cricket_teams
+        if (m.teamInfo && Array.isArray(m.teamInfo)) {
+          for (const t of m.teamInfo) {
+            if (t.id && t.name) {
+              await db.query(
+                `INSERT INTO cricket_teams (id, name, short_name, flag_url)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (id) DO UPDATE SET name = $2, short_name = $3, flag_url = $4`,
+                [t.id, t.name, t.shortname || null, t.img || null]
+              )
+            }
+          }
+        }
 
         // Determine status
         let status = 'upcoming'
@@ -730,12 +811,10 @@ async function start() {
     const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
     const specialRules = configRes.rows[0]?.special_rules || {}
     const { api_key } = specialRules
-    if (!api_key) {
-      return reply.code(400).send({ error: "Please configure a valid CricAPI Key in the Admin Panel." })
-    }
+    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
 
     try {
-      const url = `https://api.cricapi.com/v1/countries?apikey=${api_key}&offset=0`
+      const url = `https://api.cricapi.com/v1/countries?apikey=${keyToUse}&offset=0`
       const apiRes = await fetch(url)
       if (!apiRes.ok) throw new Error(`CricAPI countries returned ${apiRes.status}`)
       const data = await apiRes.json()
@@ -764,14 +843,12 @@ async function start() {
     const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
     const specialRules = configRes.rows[0]?.special_rules || {}
     const { api_key } = specialRules
-    if (!api_key) {
-      return reply.code(400).send({ error: "Please configure a valid CricAPI Key in the Admin Panel." })
-    }
+    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
 
     const { search, offset = 0 } = req.body as { search?: string, offset?: number }
 
     try {
-      let url = `https://api.cricapi.com/v1/series?apikey=${api_key}&offset=${offset}`
+      let url = `https://api.cricapi.com/v1/series?apikey=${keyToUse}&offset=${offset}`
       if (search) {
         url += `&search=${encodeURIComponent(search)}`
       }
@@ -791,15 +868,13 @@ async function start() {
     const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
     const specialRules = configRes.rows[0]?.special_rules || {}
     const { api_key } = specialRules
-    if (!api_key) {
-      return reply.code(400).send({ error: "Please configure a valid CricAPI Key in the Admin Panel." })
-    }
+    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
 
     const { series_id } = req.body as { series_id: string }
     if (!series_id) return reply.code(400).send({ error: 'series_id is required' })
 
     try {
-      const url = `https://api.cricapi.com/v1/series_info?apikey=${api_key}&id=${series_id}`
+      const url = `https://api.cricapi.com/v1/series_info?apikey=${keyToUse}&id=${series_id}`
       const apiRes = await fetch(url)
       if (!apiRes.ok) throw new Error(`CricAPI series_info returned ${apiRes.status}`)
       const data = await apiRes.json()
@@ -869,9 +944,7 @@ async function start() {
     const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
     const specialRules = configRes.rows[0]?.special_rules || {}
     const { api_key } = specialRules
-    if (!api_key) {
-      return reply.code(400).send({ error: "Please configure a valid CricAPI Key in the Admin Panel." })
-    }
+    const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
 
     const { match_id, match_api_id } = req.body as { match_id: string, match_api_id: string }
     if (!match_id || !match_api_id) {
@@ -879,7 +952,7 @@ async function start() {
     }
 
     try {
-      const url = `https://api.cricapi.com/v1/match_squad?apikey=${api_key}&id=${match_api_id}`
+      const url = `https://api.cricapi.com/v1/match_squad?apikey=${keyToUse}&id=${match_api_id}`
       const apiRes = await fetch(url)
       if (!apiRes.ok) throw new Error(`CricAPI match_squad returned ${apiRes.status}`)
       const data = await apiRes.json()
@@ -956,79 +1029,6 @@ async function start() {
     }
   })
 
-  // Sync Score for Match from CricAPI
-  app.post('/internal/cricket/matches/:id/sync-score', { onRequest: [internal] }, async (req, reply) => {
-    const { id } = req.params as { id: string }
-    const matchRes = await db.query('SELECT * FROM cricket_matches WHERE id = $1', [id])
-    if (!matchRes.rows.length) {
-      return reply.code(404).send({ error: 'Match not found' })
-    }
-    const match = matchRes.rows[0]
-    const apiId = match.match_api_id
-    if (!apiId) {
-      return reply.code(400).send({ error: 'Match does not have a CricAPI ID associated with it' })
-    }
-
-    const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
-    const specialRules = configRes.rows[0]?.special_rules || {}
-    const { api_key } = specialRules
-    if (!api_key) {
-      return reply.code(400).send({ error: "Please configure a valid CricAPI Key in the Admin Panel." })
-    }
-
-    try {
-      const url = `https://api.cricapi.com/v1/match_info?apikey=${api_key}&id=${apiId}`
-      const apiRes = await fetch(url)
-      if (!apiRes.ok) throw new Error(`CricAPI match_info returned ${apiRes.status}`)
-      const data = await apiRes.json()
-      if (data.status !== 'success') throw new Error(data.reason || 'Failed to fetch match info')
-
-      const m = data.data
-      if (!m) throw new Error('No match data returned from CricAPI')
-
-      // Determine status
-      let status = match.status
-      if (m.matchEnded) {
-        status = 'settled'
-      } else if (m.matchStarted) {
-        status = 'live'
-      }
-
-      // Live score mapping
-      const live_score: any = {}
-      if (m.score && Array.isArray(m.score)) {
-        const latestInning = m.score[m.score.length - 1]
-        if (latestInning) {
-          live_score.runs = latestInning.r || 0
-          live_score.wickets = latestInning.w || 0
-          live_score.overs = latestInning.o || 0
-          live_score.current_innings = latestInning.inning || ''
-          live_score.description = m.status || ''
-        }
-      }
-
-      const existingScore = match.live_score || {}
-      const mergedScore = {
-        ...existingScore,
-        runs: live_score.runs ?? existingScore.runs,
-        wickets: live_score.wickets ?? existingScore.wickets,
-        overs: live_score.overs ?? existingScore.overs,
-        current_innings: live_score.current_innings ?? existingScore.current_innings,
-        description: live_score.description ?? existingScore.description
-      }
-
-      const res = await db.query(
-        `UPDATE cricket_matches 
-         SET status = $1, live_score = $2
-         WHERE id = $3 RETURNING *`,
-        [status, JSON.stringify(mergedScore), id]
-      )
-
-      return { success: true, match: res.rows[0] }
-    } catch (e: any) {
-      return reply.code(500).send({ error: `Match score sync failed: ${e.message}` })
-    }
-  })
 
   app.get('/health', async () => ({ status: 'ok', service: 'betting' }))
 

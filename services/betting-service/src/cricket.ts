@@ -215,3 +215,82 @@ export async function settleFantasyLeague(
 
   return { settledLeagues, entriesUpdated, totalPaid }
 }
+
+/**
+ * Settle a cricket session (Fancy bet): mark the final runs, then resolve bets.
+ *  - 'yes' wins if result_runs >= runs_bracket
+ *  - 'no' wins if result_runs < runs_bracket
+ */
+export async function settleCricketSession(
+  db: Pool,
+  sessionId: string,
+  resultRuns: number | null,
+): Promise<{ settled: number; winners: number; paid: number }> {
+  const client = await db.connect()
+  let settled = 0
+  let winners = 0
+  let paid = 0
+  try {
+    await client.query('BEGIN')
+
+    const sRes = await client.query('SELECT * FROM cricket_sessions WHERE id = $1 FOR UPDATE', [sessionId])
+    if (!sRes.rows.length) throw new Error('Session not found')
+
+    const isVoid = resultRuns === null
+    await client.query(
+      `UPDATE cricket_sessions SET status = 'settled', result_runs = $1 WHERE id = $2`,
+      [resultRuns, sessionId],
+    )
+
+    const betsRes = await client.query(
+      `SELECT * FROM cricket_session_bets WHERE session_id = $1 AND status = 'pending'`,
+      [sessionId],
+    )
+
+    for (const bet of betsRes.rows) {
+      settled++
+      if (isVoid) {
+        await client.query(`UPDATE cricket_session_bets SET status = 'void', payout = $1 WHERE id = $2`,
+          [Number(bet.amount), bet.id])
+        await creditPrize({
+          userId: bet.user_id,
+          amount: Number(bet.amount),
+          referenceId: bet.id,
+          idempotencyKey: `cricket_session_refund_${bet.id}`,
+        })
+        continue
+      }
+
+      let won = false
+      if (bet.selection === 'yes') {
+        won = resultRuns >= bet.runs_bracket
+      } else {
+        won = resultRuns < bet.runs_bracket
+      }
+
+      if (won) {
+        winners++
+        const payout = Number(bet.potential_payout)
+        paid += payout
+        await client.query(`UPDATE cricket_session_bets SET status = 'won', payout = $1 WHERE id = $2`,
+          [payout, bet.id])
+        await creditPrize({
+          userId: bet.user_id,
+          amount: payout,
+          referenceId: bet.id,
+          idempotencyKey: `cricket_session_payout_${bet.id}`,
+        })
+      } else {
+        await client.query(`UPDATE cricket_session_bets SET status = 'lost' WHERE id = $1`, [bet.id])
+      }
+    }
+
+    await client.query('COMMIT')
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
+  }
+  return { settled, winners, paid }
+}

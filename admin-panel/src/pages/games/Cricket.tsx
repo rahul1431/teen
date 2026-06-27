@@ -17,8 +17,10 @@ export default function Cricket() {
   const [loadingMatches, setLoadingMatches] = useState(false)
   const [matchOpen, setMatchOpen] = useState(false)
   const [marketFor, setMarketFor] = useState<any>(null)
+  const [sessionFor, setSessionFor] = useState<any>(null)
   const [mForm] = Form.useForm()
   const [mkForm] = Form.useForm()
+  const [sForm] = Form.useForm()
 
   // --- Fantasy States ---
   const [players, setPlayers] = useState<any[]>([])
@@ -49,7 +51,6 @@ export default function Cricket() {
   const [liveMatchId, setLiveMatchId] = useState<string>('')
   const [liveMatch, setLiveMatch] = useState<any>(null)
   const [loadingLive, setLoadingLive] = useState(false)
-  const [syncingScore, setSyncingScore] = useState(false)
   const [scoreForm] = Form.useForm()
   const [liveMarketForm] = Form.useForm()
 
@@ -237,6 +238,30 @@ export default function Cricket() {
     }
   }
 
+  const createSession = async (v: any) => {
+    try {
+      await adminApi.post('/betting/cricket/session/create', {
+        match_id: sessionFor.id, label: v.label, min_runs: v.min_runs, max_runs: v.max_runs,
+      })
+      message.success('Session added')
+      setSessionFor(null)
+      sForm.resetFields()
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to add session')
+    }
+  }
+
+  const settleSession = async (sessionId: string, runs: number | null) => {
+    try {
+      const r = await adminApi.post('/betting/cricket/session/settle', { session_id: sessionId, result_runs: runs })
+      message.success(`Session Settled — ${r.data.winners} winners paid`)
+      loadMatches()
+    } catch (e: any) {
+      message.error('Session settle failed')
+    }
+  }
+
   // --- Fantasy Operators ---
   const addPlayer = async (v: any) => {
     try {
@@ -350,20 +375,6 @@ export default function Cricket() {
       loadMatches()
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'Failed to update scoreboard')
-    }
-  }
-
-  const syncMatchScore = async (matchId: string) => {
-    setSyncingScore(true)
-    try {
-      await adminApi.post(`/betting/cricket/matches/${matchId}/sync-score`, {})
-      message.success('Match score auto-synced from CricAPI!')
-      loadLiveMatch(matchId)
-      loadMatches()
-    } catch (e: any) {
-      message.error(e?.response?.data?.error || 'Failed to auto-sync match score')
-    } finally {
-      setSyncingScore(false)
     }
   }
 
@@ -496,6 +507,7 @@ export default function Cricket() {
                           Sync Squad
                         </Button>
                       )}
+                      <Button size="small" onClick={() => setSessionFor(m)}>+ Session</Button>
                       <Button size="small" onClick={() => setMarketFor(m)}>+ Market</Button>
                     </Space>
                   }>
@@ -524,6 +536,32 @@ export default function Cricket() {
                       </div>
                     </div>
                   ))}
+
+                  {/* Sessions Section */}
+                  {m.sessions && m.sessions.length > 0 && (
+                    <div style={{ marginTop: 20 }}>
+                      <Divider style={{ margin: '8px 0' }} />
+                      <div style={{ marginBottom: 4 }}><Text strong>Sessions (Fancy)</Text></div>
+                      {m.sessions.map((s: any) => (
+                        <div key={s.id} style={{ marginTop: 8 }}>
+                          <Space wrap>
+                            <Text>{s.label} ({s.min_runs}-{s.max_runs})</Text>
+                            <Tag color={s.status === 'settled' ? 'red' : 'green'}>{s.status}</Tag>
+                            {s.status !== 'settled' && (
+                              <Space>
+                                <InputNumber size="small" placeholder="Final Runs" id={`runs-${s.id}`} style={{ width: 100 }} />
+                                <Button size="small" type="primary" onClick={() => {
+                                  const val = (document.getElementById(`runs-${s.id}`) as HTMLInputElement)?.value;
+                                  if (val) settleSession(s.id, parseInt(val));
+                                }}>Settle</Button>
+                              </Space>
+                            )}
+                            {s.status === 'settled' && <Text type="success">Result: {s.result_runs} runs</Text>}
+                          </Space>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </Card>
               ))}
             </Card>
@@ -602,22 +640,7 @@ export default function Cricket() {
       children: (
         <Row gutter={[24, 24]}>
           <Col xs={24} lg={10}>
-            <Card 
-              title="Active Match Operator Scoreboard"
-              extra={
-                liveMatch && liveMatch.match_api_id && (
-                  <Button 
-                    type="dashed" 
-                    icon={<SyncOutlined />} 
-                    loading={syncingScore} 
-                    onClick={() => syncMatchScore(liveMatchId)}
-                    style={{ borderColor: '#d4af37', color: '#d4af37' }}
-                  >
-                    Auto Sync Score
-                  </Button>
-                )
-              }
-            >
+            <Card title="Active Match Operator Scoreboard">
               <div style={{ marginBottom: 16 }}>
                 <Text>Select Match: </Text>
                 <Select 
@@ -932,6 +955,28 @@ export default function Cricket() {
             }
           ]}
         />
+      </Modal>
+
+      <Modal open={!!sessionFor} title={`Add Session — ${sessionFor?.team_a} vs ${sessionFor?.team_b}`}
+        onCancel={() => setSessionFor(null)} onOk={() => sForm.submit()} okText="Add Session">
+        <Form form={sForm} layout="vertical" onFinish={createSession}>
+          <Form.Item name="label" label="Label" rules={[{ required: true }]} initialValue="6 Over Session - India">
+            <Input placeholder="e.g. 6 Over Session - India" />
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="min_runs" label="Line (Min)" rules={[{ required: true }]} initialValue={45}>
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="max_runs" label="Line (Max)" rules={[{ required: true }]} initialValue={47}>
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Text type="secondary">Min is for 'No' bet, Max is for 'Yes' bet.</Text>
+        </Form>
       </Modal>
     </div>
   )

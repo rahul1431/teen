@@ -237,7 +237,7 @@ export class MatchmakingService {
       players: gatewayPlayers,
       status: 'active',
       currentTurn: 0,
-      pot: allPlayers.filter(p => !bots.some(b => b.userId === p.userId)).length * stake,
+      pot: allPlayers.length * stake,
       round: 1,
       createdAt: Date.now(),
     }
@@ -342,6 +342,7 @@ export class MatchmakingService {
         stake,
         pot: gameState.pot ?? gameState.Pot,
         current_turn: gameState.current_turn ?? gameState.CurrentTurn ?? 0,
+        dealer_id: engineState?.dealer_id ?? engineState?.DealerID,
         min_bet: engineState?.min_bet ?? stake,
       })
     }
@@ -378,7 +379,14 @@ export class MatchmakingService {
       this.botTimers.delete(roomId)
       const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
       try {
-        const action = Math.random() > 0.3 ? 'call' : 'fold'
+        const rand = Math.random()
+        let action = 'call'
+        if (rand < 0.15) action = 'fold'
+        else if (rand > 0.85) action = 'raise'
+
+        const minBet = state.min_bet ?? state.MinBet ?? state.stake
+        const amount = action === 'raise' ? minBet * 2 : minBet
+
         const res = await fetch(`${engineUrl}/action`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -386,7 +394,7 @@ export class MatchmakingService {
             room_id: roomId,
             user_id: currentPlayer.user_id ?? currentPlayer.userId,
             action,
-            amount: state.min_bet ?? state.MinBet ?? state.stake,
+            amount,
             sequence_num: 0,
           }),
           signal: AbortSignal.timeout(5000),
