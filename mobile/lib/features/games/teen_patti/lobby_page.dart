@@ -39,8 +39,6 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
     _roomJoinedSub = _socket.on(SocketEvents.roomJoined).listen((data) {
       if (!mounted) return;
       setState(() => _searching = false);
-      SystemChrome.setPreferredOrientations(
-          [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
       context.push('/games/teen-patti/play/${data['room_id']}', extra: data);
     });
     _errorSub = _socket.on(SocketEvents.errorEvent).listen((data) {

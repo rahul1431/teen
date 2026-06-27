@@ -418,7 +418,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
             builder: (context, constraints) {
               final w = constraints.maxWidth;
               final h = constraints.maxHeight;
-              if (w < h) return const Center(child: Text('Please rotate to Landscape', style: TextStyle(color: Colors.white)));
+              if (w < h) return const SizedBox.expand();
 
               return Stack(children: [
                 // ① Felt — wrapped in RepaintBoundary: never repaints
