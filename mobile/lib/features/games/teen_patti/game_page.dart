@@ -679,56 +679,88 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       );
 
   Widget _buildPlayerSeat(Map<String, dynamic> player, Map<String, dynamic>? gs) {
-    final isActive = player['status'] == 'active';
     final isFolded = player['status'] == 'folded';
-
-    // Fix: correctly identify turn by ID or index
     final players = (gs?['players'] as List?) ?? [];
     final turnIdx = (gs?['current_turn'] ?? gs?['CurrentTurn'] ?? -1) as int;
     final turnUserId = gs?['current_turn_user_id'] ??
-                      (turnIdx >= 0 && turnIdx < players.length ? players[turnIdx]['user_id'] ?? players[turnIdx]['userId'] : null);
+        (turnIdx >= 0 && turnIdx < players.length
+            ? players[turnIdx]['user_id'] ?? players[turnIdx]['userId']
+            : null);
+    final isTurn =
+        turnUserId == player['user_id'] || turnUserId == player['userId'];
+    final isDealer = gs?['dealer_id'] == player['user_id'] ||
+        gs?['dealer_id'] == player['userId'];
+    final isBot = player['is_bot'] == true;
+    final status = _statusOf(player);
 
-    final isTurn   = turnUserId == player['user_id'] || turnUserId == player['userId'];
-    final isDealer = gs?['dealer_id'] == player['user_id'] || gs?['dealer_id'] == player['userId'];
-    final status   = _statusOf(player);
     return Opacity(
-      opacity: isFolded ? 0.55 : 1,
+      opacity: isFolded ? 0.45 : 1.0,
       child: Container(
-        width: 96,
-        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        width: 110,
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
         decoration: BoxDecoration(
-          color: Colors.black38,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: isTurn ? AppColors.green : Colors.white12, width: isTurn ? 2.5 : 1),
+          color: const Color(0xFF0D2E18).withValues(alpha: 0.85),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isTurn ? const Color(0xFF2ECC71) : Colors.white12,
+            width: isTurn ? 2.5 : 1.0,
+          ),
           boxShadow: isTurn
-              ? [BoxShadow(color: AppColors.green.withValues(alpha: 0.65), blurRadius: 14, spreadRadius: 1)]
+              ? [BoxShadow(
+                  color: const Color(0xFF2ECC71).withValues(alpha: 0.65),
+                  blurRadius: 14, spreadRadius: 1)]
               : null,
         ),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           if (!isFolded) _opponentCardBacks(),
-          _statusPill(status.$1, status.$2),
-          const SizedBox(height: 3),
+          const SizedBox(height: 4),
           SizedBox(
-            width: 54, height: 50,
+            width: 54, height: 54,
             child: Stack(clipBehavior: Clip.none, alignment: Alignment.center, children: [
-              _SeatTimer(
-                isTurn: isTurn,
-                userId: player['user_id']?.toString() ?? '',
-                timerNotifier: _timerNotifier,
-                isBot: player['is_bot'] == true,
-              ),
+              // Timer ring
+              if (isTurn)
+                ValueListenableBuilder<int>(
+                  valueListenable: _timerNotifier,
+                  builder: (_, secs, __) => SizedBox(
+                    width: 50, height: 50,
+                    child: CircularProgressIndicator(
+                      value: (secs / 30).clamp(0.0, 1.0),
+                      strokeWidth: 3,
+                      backgroundColor: Colors.black26,
+                      valueColor: AlwaysStoppedAnimation(
+                          secs <= 5 ? Colors.red : const Color(0xFF2ECC71)),
+                    ),
+                  ),
+                )
+              else
+                SizedBox(
+                  width: 50, height: 50,
+                  child: CircularProgressIndicator(
+                    value: 1.0,
+                    strokeWidth: 3,
+                    backgroundColor: Colors.black26,
+                    valueColor: AlwaysStoppedAnimation(
+                        const Color(0xFFD4AF37).withValues(alpha: 0.5)),
+                  ),
+                ),
+              // Avatar
               CircleAvatar(
-                radius: 17,
-                backgroundColor: isActive ? Colors.white24 : Colors.grey,
+                radius: 18,
+                backgroundColor: isFolded ? Colors.grey : Colors.white24,
                 child: Text(
                   player['username']?[0]?.toUpperCase() ?? '?',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16),
                 ),
               ),
+              // Gift button
               Positioned(
-                left: -4, top: -4,
+                left: -2, top: -2,
                 child: GestureDetector(
-                  onTap: () => setState(() { _showGiftTray = true; _showChat = false; }),
+                  onTap: () => setState(
+                      () { _showGiftTray = true; _showChat = false; }),
                   child: Container(
                     width: 20, height: 20, alignment: Alignment.center,
                     decoration: const BoxDecoration(
@@ -743,6 +775,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                   ),
                 ),
               ),
+              // Dealer badge
               if (isDealer)
                 Positioned(
                   right: -2, top: -2,
@@ -753,23 +786,66 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.white, width: 1.5),
                     ),
-                    child: const Text('D', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                    child: const Text('D',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              // Thinking dots for bots
+              if (isBot && isTurn)
+                Positioned(
+                  top: -42,
+                  child: Container(
+                    key: ValueKey('thinking_${player['user_id']}'),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                          color: const Color(0xFFD4AF37).withValues(alpha: 0.5)),
+                    ),
+                    child: const _ThinkingDots(),
                   ),
                 ),
             ]),
           ),
+          const SizedBox(height: 4),
+          Text(
+            player['username'] ?? 'Bot',
+            style: const TextStyle(color: Colors.white, fontSize: 11),
+            overflow: TextOverflow.ellipsis,
+          ),
           const SizedBox(height: 3),
-          Text(player['username'] ?? 'Bot', style: const TextStyle(color: Colors.white, fontSize: 11), overflow: TextOverflow.ellipsis),
           if (_chipsOf(player) != null)
             Container(
-              margin: const EdgeInsets.only(top: 2),
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(8), border: Border.all(color: AppColors.gold.withValues(alpha: 0.4))),
-              child: Text('💰 ${_chipsOf(player)}', style: const TextStyle(color: AppColors.goldLight, fontSize: 9, fontWeight: FontWeight.bold)),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                ),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text('💰 ${_chipsOf(player)}',
+                  style: const TextStyle(
+                      color: Colors.black,
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold)),
             ),
-          if (player['is_bot'] == true)
-            const Padding(padding: EdgeInsets.only(top: 2),
-              child: Text('BOT', style: TextStyle(color: Colors.orange, fontSize: 8, fontWeight: FontWeight.bold))),
+          const SizedBox(height: 3),
+          _statusPill(status.$1, status.$2),
+          if (isBot)
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Text('BOT',
+                  style: TextStyle(
+                      color: Colors.orange,
+                      fontSize: 8,
+                      fontWeight: FontWeight.bold)),
+            ),
         ]),
       ),
     );
@@ -1271,85 +1347,3 @@ class _HostessWidgetState extends State<_HostessWidget> with SingleTickerProvide
   }
 }
 
-// ── Seat Timer (Leaf Rebuilder) ────────────────────────────────────────────────
-class _SeatTimer extends StatelessWidget {
-  final bool isTurn;
-  final String userId;
-  final ValueNotifier<int> timerNotifier;
-  final bool isBot;
-
-  const _SeatTimer({
-    required this.isTurn,
-    required this.userId,
-    required this.timerNotifier,
-    required this.isBot,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (!isTurn) {
-      return SizedBox(
-        width: 46, height: 46,
-        child: CircularProgressIndicator(
-          value: 1.0,
-          strokeWidth: 3,
-          backgroundColor: Colors.black26,
-          valueColor: AlwaysStoppedAnimation(const Color(0xFFD4AF37).withValues(alpha: 0.6)),
-        ),
-      );
-    }
-
-    return ValueListenableBuilder<int>(
-      valueListenable: timerNotifier,
-      builder: (context, secs, _) {
-        return Stack(
-          alignment: Alignment.center,
-          clipBehavior: Clip.none,
-          children: [
-            if (isBot)
-              Positioned(
-                top: -38,
-                child: Container(
-                  key: ValueKey('thinking_$userId'),
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.black87,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFD4AF37).withValues(alpha: 0.5)),
-                  ),
-                  child: const _ThinkingDots(),
-                ),
-              ),
-            SizedBox(
-              width: 46, height: 46,
-              child: CircularProgressIndicator(
-                value: (secs / 30).clamp(0.0, 1.0),
-                strokeWidth: 3,
-                backgroundColor: Colors.black26,
-                valueColor: const AlwaysStoppedAnimation(Colors.green),
-              ),
-            ),
-            Positioned(
-              bottom: -4,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5),
-                decoration: BoxDecoration(
-                  color: Colors.red,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '${secs}s',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 9,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
