@@ -129,6 +129,7 @@ class _MatchCard extends StatelessWidget {
     final isLive = match['status'] == 'live';
     final score = match['live_score'] as Map<String, dynamic>?;
     final markets = (match['markets'] as List?) ?? [];
+    final sessions = (match['sessions'] as List?) ?? [];
 
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
@@ -146,17 +147,12 @@ class _MatchCard extends StatelessWidget {
         children: [
           // Header
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: isLive
-                    ? [const Color(0xFF8B0000), const Color(0xFF1a1a2e)]
-                    : AppColors.cricketGrad,
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(18)),
+              color: isLive
+                  ? AppColors.red.withOpacity(0.12)
+                  : Colors.white.withOpacity(0.03),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
             ),
             child: Row(
               children: [
@@ -164,77 +160,81 @@ class _MatchCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        '${match['series']} · ${(match['format'] ?? '').toString().toUpperCase()}',
-                        style: TextStyle(
-                            color: Colors.white.withOpacity(0.75),
-                            fontSize: 10),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${match['team_a']}  vs  ${match['team_b']}',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w900),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _fmt(match['start_time']),
-                        style: TextStyle(
-                            color: Colors.white.withOpacity(0.7),
-                            fontSize: 10),
-                      ),
+                      if (match['series'] != null)
+                        Text('${match['series']}',
+                            style: const TextStyle(
+                                color: AppColors.textSecondary, fontSize: 10)),
+                      Text('${match['team_a']}  vs  ${match['team_b']}',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 14)),
+                      if (match['starts_at'] != null)
+                        Text(_fmt(match['starts_at']),
+                            style: const TextStyle(
+                                color: AppColors.textSecondary, fontSize: 10)),
                     ],
                   ),
                 ),
                 if (isLive)
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                         color: AppColors.red,
-                        borderRadius: BorderRadius.circular(8)),
+                        borderRadius: BorderRadius.circular(6)),
                     child: const Text('LIVE',
                         style: TextStyle(
                             color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold)),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 10)),
                   ),
+                if (score != null && score.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    '${score['runs'] ?? 0}/${score['wickets'] ?? 0}',
+                    style: const TextStyle(
+                        color: AppColors.gold,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13),
+                  ),
+                ],
               ],
             ),
           ),
 
-          // Live score strip
-          if (isLive && score != null && score.isNotEmpty)
-            Container(
-              width: double.infinity,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: const Color(0xFF0D0D1A),
-              child: Text(
-                '${score['current_innings'] ?? ''}: ${score['runs'] ?? 0}/${score['wickets'] ?? 0} (${score['overs'] ?? 0} ov)  ${score['description'] ?? ''}',
-                style: const TextStyle(
-                    color: AppColors.goldLight,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold),
+          // Markets
+          if (markets.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: markets
+                    .where((mk) =>
+                        mk['status'] == null || mk['status'] == 'open')
+                    .map<Widget>((mk) => _MarketRow(match: match, market: mk))
+                    .toList(),
               ),
             ),
 
-          // Markets
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: markets.isEmpty
-                ? const Text('No open markets',
-                    style: TextStyle(
-                        color: AppColors.textSecondary, fontSize: 12))
-                : Column(
-                    children: markets
-                        .take(2)
-                        .map<Widget>((mk) => _MarketRow(match: match, market: mk))
-                        .toList(),
-                  ),
-          ),
+          // Sessions (Fancy)
+          if (sessions.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Divider(color: Colors.white10),
+                  const Text('Sessions (Fancy)',
+                      style: TextStyle(
+                          color: AppColors.gold,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  ...sessions.map((s) => _SessionRow(match: match, session: s)).toList(),
+                ],
+              ),
+            ),
         ],
       ),
     );
@@ -245,6 +245,259 @@ class _MatchCard extends StatelessWidget {
     if (dt == null) return '';
     final l = dt.toLocal();
     return '${l.day}/${l.month}  ${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
+  }
+}
+
+class _SessionRow extends StatelessWidget {
+  final dynamic match;
+  final dynamic session;
+  const _SessionRow({required this.match, required this.session});
+
+  @override
+  Widget build(BuildContext context) {
+    final label = session['label'] ?? session['name'] ?? 'Session';
+    final yesOdds = session['yes_odds'] ?? session['yes'] ?? '-';
+    final noOdds = session['no_odds'] ?? session['no'] ?? '-';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(label,
+                style: const TextStyle(
+                    color: Colors.white70, fontSize: 11)),
+          ),
+          GestureDetector(
+            onTap: () => _showSessionBetSheet(context, true),
+            child: Container(
+              width: 56,
+              padding:
+                  const EdgeInsets.symmetric(vertical: 6),
+              margin: const EdgeInsets.only(right: 6),
+              decoration: BoxDecoration(
+                color: AppColors.green.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                    color: AppColors.green.withOpacity(0.5)),
+              ),
+              child: Column(
+                children: [
+                  const Text('YES',
+                      style: TextStyle(
+                          color: AppColors.green,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold)),
+                  Text('$yesOdds',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+          ),
+          GestureDetector(
+            onTap: () => _showSessionBetSheet(context, false),
+            child: Container(
+              width: 56,
+              padding:
+                  const EdgeInsets.symmetric(vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.red.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                    color: AppColors.red.withOpacity(0.5)),
+              ),
+              child: Column(
+                children: [
+                  const Text('NO',
+                      style: TextStyle(
+                          color: AppColors.red,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold)),
+                  Text('$noOdds',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSessionBetSheet(BuildContext context, bool isYes) {
+    double amount = 50;
+    bool submitting = false;
+    String? error;
+    final odds = double.tryParse(
+            (isYes
+                    ? session['yes_odds'] ?? session['yes']
+                    : session['no_odds'] ?? session['no'])
+                ?.toString() ??
+                '1') ??
+        1;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setSheet) => Padding(
+          padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2))),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                '${match['team_a']} vs ${match['team_b']}',
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                  '${session['label'] ?? session['name']} — ${isYes ? 'YES' : 'NO'}',
+                  style: const TextStyle(
+                      color: AppColors.textSecondary)),
+              const SizedBox(height: 4),
+              Row(children: [
+                const Text('Odds: ',
+                    style: TextStyle(
+                        color: AppColors.textSecondary)),
+                Text('${odds}x',
+                    style: const TextStyle(
+                        color: AppColors.gold,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18)),
+              ]),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children:
+                    [50, 100, 250, 500, 1000, 2000].map((v) {
+                  return GestureDetector(
+                    onTap: () =>
+                        setSheet(() => amount = v.toDouble()),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: amount == v.toDouble()
+                            ? AppColors.gold
+                            : AppColors.cardBg,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: amount == v.toDouble()
+                                ? AppColors.gold
+                                : Colors.white12),
+                      ),
+                      child: Text('Rs.$v',
+                          style: TextStyle(
+                              color: amount == v.toDouble()
+                                  ? Colors.black
+                                  : Colors.white,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                  mainAxisAlignment:
+                      MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Potential Return:',
+                        style: TextStyle(
+                            color: AppColors.textSecondary)),
+                    Text('Rs.${(amount * odds).toStringAsFixed(0)}',
+                        style: const TextStyle(
+                            color: AppColors.goldLight,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold)),
+                  ]),
+              if (error != null) ...[
+                const SizedBox(height: 8),
+                Text(error!,
+                    style: const TextStyle(color: AppColors.red)),
+              ],
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: submitting
+                      ? null
+                      : () async {
+                          setSheet(() {
+                            submitting = true;
+                            error = null;
+                          });
+                          try {
+                            await ApiClient().dio.post(
+                                '/api/betting/cricket/session-bet',
+                                data: {
+                                  'session_id': session['id'],
+                                  'is_yes': isYes,
+                                  'amount': amount,
+                                });
+                            SoundService.instance
+                                .play(Sfx.chipBet);
+                            if (!ctx.mounted) return;
+                            Navigator.pop(ctx);
+                          } catch (e) {
+                            setSheet(() {
+                              submitting = false;
+                              error =
+                                  e.toString().contains('Insufficient')
+                                      ? 'Insufficient balance'
+                                      : 'Could not place bet';
+                            });
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: isYes
+                          ? AppColors.green
+                          : AppColors.red,
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 16),
+                      shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(12))),
+                  child: Text(
+                      submitting
+                          ? 'Placing...'
+                          : 'Bet ${isYes ? 'YES' : 'NO'} — Rs.${amount.toInt()}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
