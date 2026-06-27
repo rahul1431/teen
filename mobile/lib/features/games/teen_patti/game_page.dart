@@ -315,6 +315,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _socket.emit(SocketEvents.roomChat,
         {'room_id': widget.roomId, 'message': emoji, 'type': 'emoji'});
     _spawnReaction(_myUserId ?? '', emoji);
+    SoundService.instance.play(Sfx.buttonTap);
     HapticFeedback.selectionClick();
   }
 
@@ -323,6 +324,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         {'room_id': widget.roomId, 'message': icon, 'type': 'gift'});
     _spawnReaction(_myUserId ?? '', icon, isGift: true);
     setState(() => _showGiftTray = false);
+    SoundService.instance.play(Sfx.chipBet);
     HapticFeedback.mediumImpact();
   }
 
@@ -330,6 +332,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final r = _Reaction(id: ++_reactionId, userId: userId, emoji: emoji, isGift: isGift);
     final list = List<_Reaction>.from(_reactionsNotifier.value)..add(r);
     _reactionsNotifier.value = list;
+    // Play sound for incoming reactions (sender already heard it via _sendGift/_sendEmoji)
+    if (userId != _myUserId) {
+      SoundService.instance.play(Sfx.buttonTap, volume: 0.5);
+    }
     Timer(2600.ms, () {
       if (!mounted) return;
       _reactionsNotifier.value =
