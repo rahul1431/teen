@@ -57,7 +57,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   String? _myUserId;
   bool    _isSeen      = false;
   int     _turnSeq     = 0;
-  double  _betAmount   = 0;
+  double  _betAmount   = 0; // keep for _sendAction read; _betNotifier drives the UI
   Timer?  _turnTimer;
   StreamSubscription? _reconnectSub;
   bool _ready        = false;
@@ -65,6 +65,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   bool _showGiftTray = false;
   final _chatInput   = TextEditingController();
   int  _reactionId   = 0;
+  late final _betNotifier = ValueNotifier<double>(0);
 
   static const _quickEmojis = ['😀','😂','😎','😮','😭','🔥','👏','🤔'];
   static const _gifts = [
@@ -103,7 +104,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _practice?.dispose();
     _chatInput.dispose();
     for (final n in [_gsNotifier, _myTurnNotifier, _timerNotifier,
-        _resultNotifier, _myCardsNotifier, _chatNotifier, _reactionsNotifier]) {
+        _resultNotifier, _myCardsNotifier, _chatNotifier, _reactionsNotifier,
+        _betNotifier]) {
       n.dispose();
     }
     SystemChrome.setPreferredOrientations(
@@ -184,6 +186,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     };
     _gsNotifier.value  = gs;
     _betAmount = (data['min_bet'] as num?)?.toDouble() ?? 0;
+    _betNotifier.value = _betAmount;
     final idx  = (gs['current_turn'] ?? 0) as int;
     final cur  = idx < players.length ? players[idx] : null;
     final isMe = (cur?['userId'] ?? cur?['user_id']) == _myUserId;
@@ -435,7 +438,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                 ),
 
             // ③ Top bar
-            _buildTopBar(),
+            RepaintBoundary(child: _buildTopBar()),
 
             // ④ My hand — only on card/turn change
             ValueListenableBuilder<List<Map<String, dynamic>>>(
@@ -468,7 +471,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
             ),
 
             // ⑦ Social
-            _buildSocialButtons(),
+            RepaintBoundary(child: _buildSocialButtons()),
             if (_showGiftTray) _buildGiftTray(),
             if (_showChat) ValueListenableBuilder<List<_ChatMsg>>(
               valueListenable: _chatNotifier,
@@ -1078,25 +1081,48 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final stake    = (gs?['min_bet'] as num?)?.toDouble() ?? 10;
     final minBet   = _isSeen ? stake * 2 : stake;
     final maxBet   = minBet * 4;
-    if (_betAmount < minBet) _betAmount = minBet;
-    if (_betAmount > maxBet) _betAmount = maxBet;
+    // Clamp without setState — notifier drives UI
+    if (_betNotifier.value < minBet) _betNotifier.value = minBet;
+    if (_betNotifier.value > maxBet) _betNotifier.value = maxBet;
+    _betAmount = _betNotifier.value;
     final players     = (gs?['players'] as List?) ?? [];
     final activeCount = players.where((p) => p['status'] == 'active').length;
-    return Positioned(bottom: 6, left: 12, right: 12, child: Column(mainAxisSize: MainAxisSize.min, children: [
-      _coinChip(_betAmount.toInt()),
-      const SizedBox(height: 8),
-      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        _actionBtn('Pack',  AppColors.red, () => _sendAction('fold')),
-        if (activeCount == 2) ...[const SizedBox(width: 10), _actionBtn('Show', Colors.deepPurple, () => _sendAction('show'))],
-        const SizedBox(width: 10),
-        _stepperBtn('−', () { setState(() { _betAmount = (_betAmount - stake).clamp(minBet, maxBet); }); HapticFeedback.selectionClick(); }),
-        const SizedBox(width: 6),
-        _actionBtn(_betAmount > minBet ? 'Raise ₹${_betAmount.toInt()}' : 'Chaal ₹${_betAmount.toInt()}',
-            AppColors.green, () => _sendAction(_betAmount > minBet ? 'raise' : 'call', amount: _betAmount)),
-        const SizedBox(width: 6),
-        _stepperBtn('+', () { setState(() { _betAmount = (_betAmount + stake).clamp(minBet, maxBet); }); HapticFeedback.selectionClick(); }),
-      ]),
-    ]));
+    return Positioned(
+      bottom: 6, left: 12, right: 12,
+      child: ValueListenableBuilder<double>(
+        valueListenable: _betNotifier,
+        builder: (_, bet, __) {
+          _betAmount = bet;
+          return Column(mainAxisSize: MainAxisSize.min, children: [
+            _coinChip(bet.toInt()),
+            const SizedBox(height: 8),
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              _actionBtn('Pack', AppColors.red, () => _sendAction('fold')),
+              if (activeCount == 2) ...[
+                const SizedBox(width: 10),
+                _actionBtn('Show', Colors.deepPurple, () => _sendAction('show')),
+              ],
+              const SizedBox(width: 10),
+              _stepperBtn('−', () {
+                _betNotifier.value = (bet - stake).clamp(minBet, maxBet);
+                HapticFeedback.selectionClick();
+              }),
+              const SizedBox(width: 6),
+              _actionBtn(
+                bet > minBet ? 'Raise ₹${bet.toInt()}' : 'Chaal ₹${bet.toInt()}',
+                AppColors.green,
+                () => _sendAction(bet > minBet ? 'raise' : 'call', amount: bet),
+              ),
+              const SizedBox(width: 6),
+              _stepperBtn('+', () {
+                _betNotifier.value = (bet + stake).clamp(minBet, maxBet);
+                HapticFeedback.selectionClick();
+              }),
+            ]),
+          ]);
+        },
+      ),
+    );
   }
 
   Widget _coinChip(int amount) => Container(
