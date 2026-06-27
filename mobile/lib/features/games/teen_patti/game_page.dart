@@ -158,6 +158,13 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final rawState = data['state'] as Map<String, dynamic>? ?? data;
     final players  = _mapPlayers(
         rawState['players'] as List? ?? data['players'] as List? ?? []);
+
+    // Restore my own 'seen' status from the players list
+    final me = players.firstWhere(
+        (p) => (p['userId'] ?? p['user_id']) == _myUserId,
+        orElse: () => <String, dynamic>{});
+    _isSeen = me['is_seen'] ?? me['isSeen'] ?? false;
+
     final gs = {
       ...rawState,
       'pot':           data['pot']          ?? rawState['pot']          ?? 0,
@@ -171,7 +178,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final cur  = idx < players.length ? players[idx] : null;
     final isMe = (cur?['userId'] ?? cur?['user_id']) == _myUserId;
     _myTurnNotifier.value = isMe;
-    if (isMe) _startTurnTimer();
+    if (isMe && (_turnTimer == null || !_turnTimer!.isActive)) {
+      _startTurnTimer();
+    }
     SoundService.instance.play(Sfx.cardDeal);
   }
 
@@ -195,8 +204,17 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       final idx = (inner['current_turn'] ?? inner['CurrentTurn'] ?? 0) as int;
       final cur = idx < players.length ? players[idx] : null;
       final isMe = (cur?['userId'] ?? cur?['user_id']) == _myUserId;
+
+      final wasMyTurn = _myTurnNotifier.value;
       _myTurnNotifier.value = isMe;
-      if (isMe) _startTurnTimer();
+
+      // Only start timer if it just became my turn, to prevent resets on every update
+      if (isMe && !wasMyTurn) {
+        _startTurnTimer();
+      } else if (!isMe) {
+        _turnTimer?.cancel();
+      }
+
       final la = data['last_action'] as Map?;
       if (la != null) {
         final actorId = la['user_id']?.toString() ?? '';
@@ -337,30 +355,27 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   // ═══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.sizeOf(context);
-    final isLandscape = size.width > size.height;
-    if (!isLandscape) {
-      return const Scaffold(
-        backgroundColor: Color(0xFF060A1A),
-        body: SizedBox.shrink(),
-      );
-    }
-
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) { if (!didPop) _exit(); },
       child: Scaffold(
         backgroundColor: const Color(0xFF060A1A),
         body: SafeArea(
-          child: Stack(children: [
-            // ① Felt — wrapped in RepaintBoundary: never repaints
-            RepaintBoundary(child: _buildFelt()),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final w = constraints.maxWidth;
+              final h = constraints.maxHeight;
+              if (w < h) return const Center(child: Text('Please rotate to Landscape', style: TextStyle(color: Colors.white)));
 
-            // ② Seats + pot — only on gameState change
-            ValueListenableBuilder<Map<String, dynamic>?>(
-              valueListenable: _gsNotifier,
-              builder: (_, gs, __) => _buildSeatsAndCenter(gs),
-            ),
+              return Stack(children: [
+                // ① Felt — wrapped in RepaintBoundary: never repaints
+                RepaintBoundary(child: _buildFelt()),
+
+                // ② Seats + pot — only on gameState change
+                ValueListenableBuilder<Map<String, dynamic>?>(
+                  valueListenable: _gsNotifier,
+                  builder: (_, gs, __) => _buildSeatsAndCenter(gs, w, h),
+                ),
 
             // ③ Top bar
             _buildTopBar(),
@@ -412,20 +427,22 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
             ),
 
             // ⑨ Result — AnimatedSwitcher prevents hard flash
-            ValueListenableBuilder<String?>(
-              valueListenable: _resultNotifier,
-              builder: (_, result, __) => AnimatedSwitcher(
-                duration: const Duration(milliseconds: 420),
-                transitionBuilder: (child, anim) => FadeTransition(
-                  opacity: anim,
-                  child: ScaleTransition(scale: anim, child: child),
+                ValueListenableBuilder<String?>(
+                  valueListenable: _resultNotifier,
+                  builder: (_, result, __) => AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 420),
+                    transitionBuilder: (child, anim) => FadeTransition(
+                      opacity: anim,
+                      child: ScaleTransition(scale: anim, child: child),
+                    ),
+                    child: (result != null && result.isNotEmpty)
+                        ? _buildResult(result)
+                        : const SizedBox.shrink(),
+                  ),
                 ),
-                child: (result != null && result.isNotEmpty)
-                    ? _buildResult(result)
-                    : const SizedBox.shrink(),
-              ),
-            ),
-          ]),
+              ]);
+            },
+          ),
         ),
       ),
     );
@@ -504,19 +521,11 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       );
 
   // ── Seats + Center ─────────────────────────────────────────────────────────
-  Widget _buildSeatsAndCenter(Map<String, dynamic>? gs) {
-    final size = MediaQuery.sizeOf(context);
-    final w = size.width;
-    final h = size.height;
-    
-    // Safety fallback bounds in case size is zero on first layout
-    final widthVal = w > 0 ? w : 800.0;
-    final heightVal = h > 0 ? h : 480.0;
-
-    final cx = widthVal / 2;
-    final cy = heightVal / 2 - 10;
-    final rx = widthVal * 0.36;
-    final ry = heightVal * 0.30;
+  Widget _buildSeatsAndCenter(Map<String, dynamic>? gs, double w, double h) {
+    final cx = w / 2;
+    final cy = h / 2 - 10;
+    final rx = w * 0.36;
+    final ry = h * 0.30;
 
     final players = (gs?['players'] as List?) ?? [];
     final ordered = List<Map<String, dynamic>>.from(
@@ -532,17 +541,20 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
     final seats = <Widget>[];
     for (var i = 0; i < ordered.length; i++) {
-      if (ordered[i]['user_id'] == _myUserId) continue;
+      final p = ordered[i];
+      if (p['user_id'] == _myUserId || p['userId'] == _myUserId) continue;
       final theta = (math.pi / 2) + (2 * math.pi * i / n);
       final sx = cx + rx * math.cos(theta);
       final sy = cy + ry * math.sin(theta);
-      final uid = ordered[i]['user_id'] as String?;
+      final uid = (p['user_id'] ?? p['userId']) as String?;
 
       seats.add(Positioned(
+        key: ValueKey('seat_$uid'),
         left: sx - 46, top: sy - 40,
-        child: _buildPlayerSeat(ordered[i], gs),
+        child: RepaintBoundary(child: _buildPlayerSeat(p, gs)),
       ));
       seats.add(Positioned(
+        key: ValueKey('reaction_$uid'),
         left: sx - 32, top: sy - 90,
         child: ValueListenableBuilder<List<_Reaction>>(
           valueListenable: _reactionsNotifier,
@@ -559,10 +571,12 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     }
 
     seats.add(Positioned(
+      key: const ValueKey('pot_chip'),
       left: cx - 70, top: cy - 22,
       child: SizedBox(width: 140, child: Center(child: _potChip(gs))),
     ));
     seats.add(Positioned(
+      key: const ValueKey('hostess'),
       left: cx - 40, top: cy - ry - 75,
       child: const _HostessWidget(),
     ));
@@ -584,8 +598,15 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   Widget _buildPlayerSeat(Map<String, dynamic> player, Map<String, dynamic>? gs) {
     final isActive = player['status'] == 'active';
     final isFolded = player['status'] == 'folded';
-    final isTurn   = gs?['current_turn_user_id'] == player['user_id'];
-    final isDealer = gs?['dealer_id'] == player['user_id'];
+
+    // Fix: correctly identify turn by ID or index
+    final players = (gs?['players'] as List?) ?? [];
+    final turnIdx = (gs?['current_turn'] ?? gs?['CurrentTurn'] ?? -1) as int;
+    final turnUserId = gs?['current_turn_user_id'] ??
+                      (turnIdx >= 0 && turnIdx < players.length ? players[turnIdx]['user_id'] ?? players[turnIdx]['userId'] : null);
+
+    final isTurn   = turnUserId == player['user_id'] || turnUserId == player['userId'];
+    final isDealer = gs?['dealer_id'] == player['user_id'] || gs?['dealer_id'] == player['userId'];
     final status   = _statusOf(player);
     return Opacity(
       opacity: isFolded ? 0.55 : 1,
