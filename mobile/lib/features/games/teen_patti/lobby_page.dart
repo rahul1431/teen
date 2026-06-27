@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/socket/socket_service.dart';
@@ -19,6 +21,8 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   String? _balance;
   double? _balanceValue;
   final _stakes = [10.0, 50.0, 100.0, 500.0, 1000.0];
+  StreamSubscription? _roomJoinedSub;
+  StreamSubscription? _errorSub;
 
   String get _variationLabel {
     switch (widget.variation) {
@@ -32,12 +36,14 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
     super.initState();
     _socket.connect();
     _loadBalance();
-    _socket.on(SocketEvents.roomJoined).listen((data) {
+    _roomJoinedSub = _socket.on(SocketEvents.roomJoined).listen((data) {
       if (!mounted) return;
       setState(() => _searching = false);
+      SystemChrome.setPreferredOrientations(
+          [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
       context.push('/games/teen-patti/play/${data['room_id']}', extra: data);
     });
-    _socket.on(SocketEvents.errorEvent).listen((data) {
+    _errorSub = _socket.on(SocketEvents.errorEvent).listen((data) {
       if (!mounted) return;
       setState(() => _searching = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(data['message'] ?? 'Error'), backgroundColor: AppColors.red));
@@ -51,6 +57,13 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
         'variation': widget.variation,
       });
     });
+  }
+
+  @override
+  void dispose() {
+    _roomJoinedSub?.cancel();
+    _errorSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadBalance() async {
