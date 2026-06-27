@@ -343,8 +343,47 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     return num.tryParse(v.toString())?.toStringAsFixed(0);
   }
 
-  void _exit() {
+  void _doExit() {
+    if (!widget.demo) {
+      _socket.emit('leave_room', {'room_id': widget.roomId});
+    }
     Navigator.pop(context);
+  }
+
+  void _confirmExit() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Leave Game?',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          "You'll forfeit this hand and your current bet.",
+          style: TextStyle(color: Colors.white70, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Stay', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _doExit();
+            },
+            child: const Text('Leave', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   bool _isReconnectingStatus(String s) =>
@@ -357,7 +396,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvokedWithResult: (didPop, result) { if (!didPop) _exit(); },
+      onPopInvokedWithResult: (didPop, result) { if (!didPop) _confirmExit(); },
       child: Scaffold(
         backgroundColor: const Color(0xFF060A1A),
         body: SafeArea(
@@ -727,7 +766,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   Widget _buildTopBar() => Positioned(
         top: 6, left: 8, right: 8,
         child: Row(children: [
-          _circleBtn(Icons.arrow_back, _exit, size: 36),
+          _circleBtn(Icons.arrow_back, _confirmExit, size: 36),
           const SizedBox(width: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -1027,7 +1066,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                   foregroundColor: won ? Colors.black : Colors.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12)),
-                onPressed: _exit,
+                onPressed: _doExit,
                 icon: const Icon(Icons.home),
                 label: const Text('Back to Lobby', style: TextStyle(fontWeight: FontWeight.bold)),
               ),
