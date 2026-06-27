@@ -60,6 +60,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   double  _betAmount   = 0;
   Timer?  _turnTimer;
   StreamSubscription? _reconnectSub;
+  bool _ready        = false;
   bool _showChat     = false;
   bool _showGiftTray = false;
   final _chatInput   = TextEditingController();
@@ -145,6 +146,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _chatNotifier.value = [
       _ChatMsg(userId:'b1', username:'Steven P.', text:'Good luck! 🍀', type:'text'),
     ];
+    _ready = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _practice!.startHand();
     });
@@ -200,6 +202,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
     if (widget.initialData != null)
       _applyRoomJoinedData(Map<String, dynamic>.from(widget.initialData!));
+
+    if (mounted) setState(() => _ready = true);
 
     _socket.on(SocketEvents.roomJoined).listen((data) =>
         _applyRoomJoinedData(Map<String, dynamic>.from(data)));
@@ -418,7 +422,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
             builder: (context, constraints) {
               final w = constraints.maxWidth;
               final h = constraints.maxHeight;
-              if (w < h) return const SizedBox.expand();
+              if (w < h || !_ready) return const SizedBox.expand();
 
               return Stack(children: [
                 // ① Felt — wrapped in RepaintBoundary: never repaints
@@ -640,8 +644,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
     seats.add(Positioned(
       key: const ValueKey('pot_chip'),
-      left: w / 2 - 70, top: h / 2 - 28,
-      child: SizedBox(width: 140, child: Center(child: _potChip(gs))),
+      left: w / 2 - 60, top: h / 2 - 24,
+      child: SizedBox(width: 120, child: Center(child: _potChip(gs))),
     ));
 
     seats.add(Positioned(
@@ -654,8 +658,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   }
 
   Widget _potChip(Map<String, dynamic>? gs) => Container(
-        width: 140,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        width: 120,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.55),
           borderRadius: BorderRadius.circular(14),
@@ -696,8 +700,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     return Opacity(
       opacity: isFolded ? 0.45 : 1.0,
       child: Container(
-        width: 110,
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+        width: 90,
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 5),
         decoration: BoxDecoration(
           color: const Color(0xFF0D2E18).withValues(alpha: 0.85),
           borderRadius: BorderRadius.circular(14),
@@ -715,17 +719,17 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           if (!isFolded) _opponentCardBacks(),
           const SizedBox(height: 4),
           SizedBox(
-            width: 54, height: 54,
+            width: 44, height: 44,
             child: Stack(clipBehavior: Clip.none, alignment: Alignment.center, children: [
               // Timer ring
               if (isTurn)
                 ValueListenableBuilder<int>(
                   valueListenable: _timerNotifier,
                   builder: (_, secs, __) => SizedBox(
-                    width: 50, height: 50,
+                    width: 40, height: 40,
                     child: CircularProgressIndicator(
                       value: (secs / 30).clamp(0.0, 1.0),
-                      strokeWidth: 3,
+                      strokeWidth: 2.5,
                       backgroundColor: Colors.black26,
                       valueColor: AlwaysStoppedAnimation(
                           secs <= 5 ? Colors.red : const Color(0xFF2ECC71)),
@@ -734,10 +738,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                 )
               else
                 SizedBox(
-                  width: 50, height: 50,
+                  width: 40, height: 40,
                   child: CircularProgressIndicator(
                     value: 1.0,
-                    strokeWidth: 3,
+                    strokeWidth: 2.5,
                     backgroundColor: Colors.black26,
                     valueColor: AlwaysStoppedAnimation(
                         const Color(0xFFD4AF37).withValues(alpha: 0.5)),
@@ -745,14 +749,14 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                 ),
               // Avatar
               CircleAvatar(
-                radius: 18,
+                radius: 15,
                 backgroundColor: isFolded ? Colors.grey : Colors.white24,
                 child: Text(
                   player['username']?[0]?.toUpperCase() ?? '?',
                   style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
-                      fontSize: 16),
+                      fontSize: 13),
                 ),
               ),
               // Gift button
@@ -811,39 +815,39 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                 ),
             ]),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
           Text(
             player['username'] ?? 'Bot',
-            style: const TextStyle(color: Colors.white, fontSize: 11),
+            style: const TextStyle(color: Colors.white, fontSize: 10),
             overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 2),
           if (_chipsOf(player) != null)
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
                   colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                 ),
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(8),
               ),
               child: Text('💰 ${_chipsOf(player)}',
                   style: const TextStyle(
                       color: Colors.black,
-                      fontSize: 9,
+                      fontSize: 8,
                       fontWeight: FontWeight.bold)),
             ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 2),
           _statusPill(status.$1, status.$2),
           if (isBot)
             const Padding(
-              padding: EdgeInsets.only(top: 2),
+              padding: EdgeInsets.only(top: 1),
               child: Text('BOT',
                   style: TextStyle(
                       color: Colors.orange,
-                      fontSize: 8,
+                      fontSize: 7,
                       fontWeight: FontWeight.bold)),
             ),
         ]),
@@ -929,11 +933,17 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
         if (!_isSeen) ...[
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold, foregroundColor: Colors.black, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.gold,
+              foregroundColor: Colors.black,
+              minimumSize: const Size(100, 30),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            ),
             onPressed: () { _sendAction('see'); setState(() => _isSeen = true); },
-            child: const Text('See Cards', style: TextStyle(fontWeight: FontWeight.bold)),
+            child: const Text('See Cards', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
         ],
         Row(mainAxisSize: MainAxisSize.min,
           children: [for (var i = 0; i < cards.length; i++) _buildAnimatedCard(cards[i], i, cards.length)]),
