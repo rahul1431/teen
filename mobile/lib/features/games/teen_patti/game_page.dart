@@ -588,11 +588,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
   // ── Seats + Center ─────────────────────────────────────────────────────────
   Widget _buildSeatsAndCenter(Map<String, dynamic>? gs, double w, double h) {
-    final cx = w / 2;
-    final cy = h / 2 - 10;
-    final rx = w * 0.36;
-    final ry = h * 0.30;
-
     final players = (gs?['players'] as List?) ?? [];
     final ordered = List<Map<String, dynamic>>.from(
         players.map((e) => Map<String, dynamic>.from(e as Map)));
@@ -603,33 +598,40 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         ..addAll([...players.sublist(myIdx), ...players.sublist(0, myIdx)]
             .map((e) => Map<String, dynamic>.from(e as Map)));
     }
-    final n = ordered.isEmpty ? 1 : ordered.length;
+
+    final opponents = ordered
+        .where((p) => p['user_id'] != _myUserId && p['userId'] != _myUserId)
+        .toList();
+    final n = opponents.length.clamp(1, 5);
+    final positions = _seatPositions[n] ?? _seatPositions[1]!;
 
     final seats = <Widget>[];
-    for (var i = 0; i < ordered.length; i++) {
-      final p = ordered[i];
-      if (p['user_id'] == _myUserId || p['userId'] == _myUserId) continue;
-      final theta = (math.pi / 2) + (2 * math.pi * i / n);
-      final sx = cx + rx * math.cos(theta);
-      final sy = cy + ry * math.sin(theta);
+
+    for (var i = 0; i < opponents.length && i < positions.length; i++) {
+      final p = opponents[i];
+      final pos = positions[i];
+      final sx = w * pos.$1;
+      final sy = h * pos.$2;
       final uid = (p['user_id'] ?? p['userId']) as String?;
 
       seats.add(Positioned(
         key: ValueKey('seat_$uid'),
-        left: sx - 46, top: sy - 40,
+        left: sx - 55, top: sy,
         child: RepaintBoundary(child: _buildPlayerSeat(p, gs)),
       ));
       seats.add(Positioned(
         key: ValueKey('reaction_$uid'),
-        left: sx - 32, top: sy - 90,
+        left: sx - 32, top: sy - 40,
         child: ValueListenableBuilder<List<_Reaction>>(
           valueListenable: _reactionsNotifier,
           builder: (_, reactions, __) {
             final mine = reactions.where((x) => x.userId == uid).toList();
             return Row(
               mainAxisSize: MainAxisSize.min,
-              children: mine.map((r) => _ReactionBubble(
-                  key: ValueKey(r.id), emoji: r.emoji, isGift: r.isGift)).toList(),
+              children: mine
+                  .map((r) => _ReactionBubble(
+                      key: ValueKey(r.id), emoji: r.emoji, isGift: r.isGift))
+                  .toList(),
             );
           },
         ),
@@ -638,12 +640,13 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
     seats.add(Positioned(
       key: const ValueKey('pot_chip'),
-      left: cx - 70, top: cy - 22,
+      left: w / 2 - 70, top: h / 2 - 28,
       child: SizedBox(width: 140, child: Center(child: _potChip(gs))),
     ));
+
     seats.add(Positioned(
       key: const ValueKey('hostess'),
-      left: cx - 40, top: cy - ry - 75,
+      left: w / 2 - 40, top: h * 0.05,
       child: const _HostessWidget(),
     ));
 
@@ -651,14 +654,28 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   }
 
   Widget _potChip(Map<String, dynamic>? gs) => Container(
+        width: 140,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
-          color: Colors.black54,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
+          color: Colors.black.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+              color: const Color(0xFFFFD700).withValues(alpha: 0.7), width: 1.5),
         ),
-        child: Text('💰 ₹${gs?['pot'] ?? 0}',
-            style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 14)),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('POT',
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.6),
+                  fontSize: 10,
+                  letterSpacing: 1.5,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text('💰 ₹${gs?['pot'] ?? 0}',
+              style: const TextStyle(
+                  color: AppColors.gold,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18)),
+        ]),
       );
 
   Widget _buildPlayerSeat(Map<String, dynamic> player, Map<String, dynamic>? gs) {
@@ -868,17 +885,51 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   }
 
   Widget _buildMyChips(Map<String, dynamic>? gs) {
-    final me = (gs?['players'] as List?)?.where((p) => p['user_id'] == _myUserId).firstOrNull;
+    final me = (gs?['players'] as List?)
+        ?.where((p) => p['user_id'] == _myUserId)
+        .firstOrNull;
     if (me == null) return const SizedBox.shrink();
     final chips = me['chips'] ?? me['balance'] ?? 0;
-    return Positioned(left: 12, bottom: 12, child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20), border: Border.all(color: AppColors.gold.withValues(alpha: 0.7))),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        const Text('You  ', style: TextStyle(color: Colors.white70, fontSize: 11)),
-        Text('💰 $chips', style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
-      ]),
-    ));
+    final isSeen = me['is_seen'] ?? me['isSeen'] ?? _isSeen;
+    return Positioned(
+      bottom: 8, left: 0, right: 0,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0D2E18).withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+                color: const Color(0xFFFFD700).withValues(alpha: 0.7)),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text('💰 $chips',
+                style: const TextStyle(
+                    color: AppColors.gold,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13)),
+            const Text('  You  ',
+                style: TextStyle(color: Colors.white70, fontSize: 11)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: isSeen
+                    ? const Color(0xFF2ECC71)
+                    : Colors.orange.shade700,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                isSeen ? 'SEEN' : 'BLIND',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
   }
 
   Widget _buildCard(String value, String suit) {
