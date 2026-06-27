@@ -37,6 +37,14 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   final _socket = SocketService();
   PracticeEngine? _practice;
 
+  static const _seatPositions = {
+    1: [(0.50, 0.10)],
+    2: [(0.28, 0.12), (0.72, 0.12)],
+    3: [(0.15, 0.22), (0.50, 0.08), (0.85, 0.22)],
+    4: [(0.12, 0.35), (0.32, 0.10), (0.68, 0.10), (0.88, 0.35)],
+    5: [(0.10, 0.45), (0.25, 0.12), (0.50, 0.07), (0.75, 0.12), (0.90, 0.45)],
+  };
+
   // ── ValueNotifiers (no full rebuild on change) ────────────────────────────
   final _gsNotifier        = ValueNotifier<Map<String, dynamic>?>(null);
   final _myTurnNotifier    = ValueNotifier<bool>(false);
@@ -499,8 +507,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           decoration: const BoxDecoration(
             gradient: RadialGradient(
               center: Alignment(0, -0.2), radius: 1.4,
-              colors: [Color(0xFF1E2D5A), Color(0xFF0F1736), Color(0xFF060A1A)],
-              stops:  [0.0, 0.6, 1.0],
+              colors: [Color(0xFF0A1628), Color(0xFF060E1A), Color(0xFF060A1A)],
+              stops: [0.0, 0.6, 1.0],
             ),
           ),
           child: Center(
@@ -510,8 +518,13 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(400),
-                  gradient: const RadialGradient(colors: [Color(0xFF381F17), Color(0xFF1D0E09)]),
-                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.7), blurRadius: 28, offset: const Offset(0, 10), spreadRadius: 4)],
+                  gradient: const RadialGradient(
+                    colors: [Color(0xFF237D45), Color(0xFF0F5C2C)],
+                  ),
+                  boxShadow: [BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.7),
+                    blurRadius: 28, offset: const Offset(0, 10), spreadRadius: 4,
+                  )],
                 ),
                 child: Container(
                   padding: const EdgeInsets.all(4),
@@ -520,19 +533,21 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     gradient: const LinearGradient(
                       begin: Alignment.topLeft, end: Alignment.bottomRight,
                       colors: [Color(0xFFFFDF7A), Color(0xFFB38F24), Color(0xFFFFDF7A), Color(0xFF8C6B12)],
-                      stops:  [0.0, 0.35, 0.7, 1.0],
+                      stops: [0.0, 0.35, 0.7, 1.0],
                     ),
                   ),
                   child: Container(
                     padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(color: const Color(0xFF0F0505), borderRadius: BorderRadius.circular(400)),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0A3D1F),
+                      borderRadius: BorderRadius.circular(400),
+                    ),
                     child: Container(
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(400),
-                        image: const DecorationImage(
-                          image: AssetImage('assets/images/table_felt.png'),
-                          fit: BoxFit.cover,
-                          colorFilter: ColorFilter.mode(Colors.black26, BlendMode.darken),
+                        gradient: const RadialGradient(
+                          center: Alignment(0, -0.1), radius: 1.0,
+                          colors: [Color(0xFF237D45), Color(0xFF1B7A3E)],
                         ),
                       ),
                       child: Stack(children: [
@@ -541,16 +556,22 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                             margin: const EdgeInsets.all(28),
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(400),
-                              border: Border.all(color: const Color(0xFFFFD700).withValues(alpha: 0.08), width: 1.5),
+                              border: Border.all(
+                                color: const Color(0xFF2E9B55).withValues(alpha: 0.20),
+                                width: 1.5,
+                              ),
                             ),
                           ),
                         ),
                         Center(
                           child: Column(mainAxisSize: MainAxisSize.min, children: [
-                            Text('👑', style: TextStyle(fontSize: 32, color: const Color(0xFFFFD700).withValues(alpha: 0.08))),
+                            Text('👑', style: TextStyle(
+                              fontSize: 32,
+                              color: const Color(0xFF2E9B55).withValues(alpha: 0.15),
+                            )),
                             const SizedBox(height: 4),
                             Text('TEEN PATTI', style: TextStyle(
-                              color: const Color(0xFFFFD700).withValues(alpha: 0.12),
+                              color: const Color(0xFF2E9B55).withValues(alpha: 0.18),
                               fontSize: 36, fontWeight: FontWeight.w800, letterSpacing: 8,
                             )),
                           ]),
