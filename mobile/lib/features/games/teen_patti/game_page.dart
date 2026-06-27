@@ -925,7 +925,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   Widget _buildMyHand(List<Map<String, dynamic>> cards, bool isMyTurn) {
     if (cards.isEmpty) return const SizedBox.shrink();
     return Positioned(
-      bottom: isMyTurn ? 104 : 14, left: 0, right: 0,
+      bottom: isMyTurn ? 112 : 18, left: 0, right: 0,
       child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
         if (!_isSeen) ...[
           ElevatedButton(
@@ -1009,38 +1009,57 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   }
 
   Widget _buildCard(String value, String suit) {
-    final color      = (suit == 'H' || suit == 'D') ? AppColors.red : Colors.black;
+    final color =
+        (suit == 'H' || suit == 'D') ? AppColors.red : const Color(0xFF1A1A2A);
     final suitSymbol = {'S': '♠', 'H': '♥', 'D': '♦', 'C': '♣'}[suit] ?? suit;
     return Container(
-      width: 52, height: 74,
+      width: 64, height: 90,
       margin: const EdgeInsets.symmetric(horizontal: 3),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8),
-        boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(1, 3))]),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: const [
+          BoxShadow(color: Colors.black54, blurRadius: 8, offset: Offset(2, 4))
+        ],
+      ),
       child: Stack(children: [
-        Positioned(top: 4, left: 5, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
-          Text(suitSymbol, style: TextStyle(fontSize: 11, color: color)),
-        ])),
-        Center(child: Text(suitSymbol, style: TextStyle(fontSize: 22, color: color.withValues(alpha: 0.15)))),
-        Positioned(bottom: 4, right: 5, child: Transform.rotate(angle: math.pi,
+        Positioned(top: 4, left: 5,
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
-            Text(suitSymbol, style: TextStyle(fontSize: 11, color: color)),
-          ]))),
+            Text(value,
+                style: TextStyle(
+                    fontSize: 15, fontWeight: FontWeight.bold, color: color)),
+            Text(suitSymbol, style: TextStyle(fontSize: 13, color: color)),
+          ])),
+        Center(
+          child: Text(suitSymbol,
+              style: TextStyle(
+                  fontSize: 28, color: color.withValues(alpha: 0.15)))),
+        Positioned(bottom: 4, right: 5,
+          child: Transform.rotate(
+            angle: math.pi,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(value,
+                  style: TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.bold, color: color)),
+              Text(suitSymbol, style: TextStyle(fontSize: 13, color: color)),
+            ]),
+          )),
       ]),
     );
   }
 
   Widget _buildCardBack() => Container(
-        width: 52, height: 74,
+        width: 64, height: 90,
         margin: const EdgeInsets.symmetric(horizontal: 3),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(10),
           image: const DecorationImage(
             image: AssetImage('assets/images/card_back.png'),
             fit: BoxFit.cover,
           ),
-          boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(1, 3))],
+          boxShadow: const [
+            BoxShadow(color: Colors.black54, blurRadius: 8, offset: Offset(2, 4))
+          ],
         ),
       );
 
