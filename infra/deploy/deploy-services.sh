@@ -3,7 +3,7 @@
 set -e
 
 BASE=/opt/teen
-SERVICES=(auth-service user-service wallet-service game-gateway betting-service leaderboard-service notification-service admin-service monitoring-service risk-service)
+SERVICES=(auth-service user-service wallet-service game-gateway betting-service leaderboard-service notification-service admin-service monitoring-service risk-service churn-service bot-learning-service app-monitor-service)
 
 echo "==> Installing dependencies and building Node.js services..."
 for svc in "${SERVICES[@]}"; do
