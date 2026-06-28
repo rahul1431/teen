@@ -2,6 +2,7 @@ import { Redis } from 'ioredis'
 import { Pool } from 'pg'
 import { v4 as uuid } from 'uuid'
 import { RealtimeHub } from './realtime'
+import { getBotProfile, pickBotAction, pickBotDelay } from './bot-profile'
 
 export interface MatchmakingEntry {
   userId: string
@@ -374,15 +375,18 @@ export class MatchmakingService {
     const isBot = bots.some(b => b.userId === (currentPlayer.user_id ?? currentPlayer.userId))
     if (!isBot) return
 
-    // Bot acts after a short delay
+    // Bot acts after a profile-driven delay
+    const gameType = state.gameType ?? state.game_type ?? 'teen_patti'
+    const botDifficulty = state.botDifficulty ?? state.bot_difficulty ?? 'medium'
+    const botProfile = await getBotProfile(this.redis, gameType, botDifficulty)
+    const botAction = pickBotAction(botProfile)
+    const botDelay = pickBotDelay(botProfile)
+
     const timer = setTimeout(async () => {
       this.botTimers.delete(roomId)
       const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
       try {
-        const rand = Math.random()
-        let action = 'call'
-        if (rand < 0.15) action = 'fold'
-        else if (rand > 0.85) action = 'raise'
+        const action = botAction
 
         const minBet = state.min_bet ?? state.MinBet ?? state.stake
         const amount = action === 'raise' ? minBet * 2 : minBet
@@ -422,7 +426,7 @@ export class MatchmakingService {
       } catch (e) {
         console.error('Bot turn error', e)
       }
-    }, 1500 + Math.random() * 1500)
+    }, botDelay)
 
     this.botTimers.set(roomId, { timer, turnIdx: currentIdx })
   }
