@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Table, Tag, Button, Card, Row, Col, Statistic, Form, InputNumber, Space, message, Tooltip } from 'antd'
+import { Table, Tag, Button, Card, Row, Col, Statistic, Form, InputNumber, Space, message, Tooltip, Radio } from 'antd'
 import { ReloadOutlined, BellOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
@@ -16,10 +16,14 @@ interface ChurnUser {
 }
 
 interface ChurnStats {
-  low_count: string
-  medium_count: string
-  high_count: string
-  actions_today: string
+  total_at_risk: number
+  by_level: {
+    low: number
+    medium: number
+    high: number
+  }
+  bonuses_sent_today: number
+  notifications_sent_today: number
 }
 
 interface ChurnConfig {
@@ -106,12 +110,6 @@ export function ChurnTab() {
       dataIndex: 'risk_level',
       key: 'risk_level',
       render: (level: string) => <Tag color={RISK_COLORS[level] ?? 'default'}>{level?.toUpperCase()}</Tag>,
-      filters: [
-        { text: 'High', value: 'high' },
-        { text: 'Medium', value: 'medium' },
-        { text: 'Low', value: 'low' },
-      ],
-      onFilter: (value: boolean | React.Key, record: ChurnUser) => record.risk_level === value,
     },
     {
       title: 'Score',
@@ -125,6 +123,13 @@ export function ChurnTab() {
       dataIndex: 'days_since_deposit',
       key: 'days_since_deposit',
       render: (v: number | null) => v != null ? `${Math.round(v)}d` : '—',
+    },
+    {
+      title: 'Last Deposit',
+      dataIndex: 'last_deposit_at',
+      key: 'last_deposit_at',
+      render: (v: string | null) =>
+        v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A',
     },
     {
       title: 'Last Action',
@@ -149,17 +154,23 @@ export function ChurnTab() {
     <div>
       {/* Stats Bar */}
       <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={6}>
-          <Card><Statistic title="High Risk" value={parseInt(stats?.high_count ?? '0')} valueStyle={{ color: '#cf1322' }} /></Card>
+        <Col span={4}>
+          <Card><Statistic title="Total At-Risk" value={stats?.total_at_risk ?? 0} /></Card>
         </Col>
-        <Col span={6}>
-          <Card><Statistic title="Medium Risk" value={parseInt(stats?.medium_count ?? '0')} valueStyle={{ color: '#d46b08' }} /></Card>
+        <Col span={4}>
+          <Card><Statistic title="Low Risk" value={stats?.by_level?.low ?? 0} valueStyle={{ color: '#d4b106' }} /></Card>
         </Col>
-        <Col span={6}>
-          <Card><Statistic title="Low Risk" value={parseInt(stats?.low_count ?? '0')} valueStyle={{ color: '#d4b106' }} /></Card>
+        <Col span={4}>
+          <Card><Statistic title="Medium Risk" value={stats?.by_level?.medium ?? 0} valueStyle={{ color: '#d46b08' }} /></Card>
         </Col>
-        <Col span={6}>
-          <Card><Statistic title="Actions Today" value={parseInt(stats?.actions_today ?? '0')} /></Card>
+        <Col span={4}>
+          <Card><Statistic title="High Risk" value={stats?.by_level?.high ?? 0} valueStyle={{ color: '#cf1322' }} /></Card>
+        </Col>
+        <Col span={4}>
+          <Card><Statistic title="Bonuses Sent Today" value={stats?.bonuses_sent_today ?? 0} /></Card>
+        </Col>
+        <Col span={4}>
+          <Card><Statistic title="Notifications Sent Today" value={stats?.notifications_sent_today ?? 0} /></Card>
         </Col>
       </Row>
 
@@ -170,6 +181,18 @@ export function ChurnTab() {
             title="At-Risk Users"
             extra={<Button icon={<ReloadOutlined />} onClick={loadAll}>Refresh</Button>}
           >
+            <div style={{ marginBottom: 12 }}>
+              <Radio.Group
+                value={riskFilter ?? 'all'}
+                onChange={e => setRiskFilter(e.target.value === 'all' ? undefined : e.target.value)}
+                buttonStyle="solid"
+              >
+                <Radio.Button value="all">All</Radio.Button>
+                <Radio.Button value="low">Low</Radio.Button>
+                <Radio.Button value="medium">Medium</Radio.Button>
+                <Radio.Button value="high">High</Radio.Button>
+              </Radio.Group>
+            </div>
             <Table
               dataSource={users}
               columns={columns}
