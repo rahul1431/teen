@@ -279,10 +279,55 @@ Proxy routes following the exact `churn-routes.ts` pattern:
 
 ---
 
+## Admin Panel — AI Control Center (5th Tab)
+
+The App Monitor data is surfaced as a **5th tab** in the existing `AIControlCenter.tsx` page (which already has: AI Prompt Console, ML Configuration, Real-Time Workflow, Churn Intelligence).
+
+**New file:** `admin-panel/src/components/AI/AppMonitorTab.tsx`
+
+**Tab:** key `'5'`, label `"App Monitor"`, icon `<MobileOutlined />`, Tag color `"cyan"`
+
+**Layout — 4 sections stacked vertically, auto-refresh every 30 seconds:**
+
+### Section 1 — Stats Bar (top row, 6 cards)
+| Card | Value | Source |
+|---|---|---|
+| Active Sessions | live count | Redis `monitor:active_sessions` |
+| Errors (5 min) | error event count | Redis `monitor:errors:5min` |
+| Avg API Latency | ms | `monitor/stats` |
+| API Error Rate | % | `monitor/stats` |
+| WS Disconnects (1h) | count | `monitor/stats` |
+| Sessions Today | count | `monitor/stats` |
+
+### Section 2 — Error Feed (left 50%) + API Health (right 50%)
+
+**Error Feed** — Table showing grouped errors:
+- Columns: Screen, Error Message (truncated 80 chars), Count, Affected Users, Last Seen
+- Sorted by Count desc, time filter: last 24h (default) / 1h / 7d selector
+- Row color: red if count > 10, orange if > 3
+
+**API Health** — Table showing per-endpoint health:
+- Columns: Endpoint, Method, Total Calls, Error Rate %, Avg ms, P95 ms
+- Color-coded: green (error rate < 1%), orange (1–5%), red (> 5%)
+- Time filter: last 1h / 6h / 24h selector
+
+### Section 3 — Screen Funnel
+- Horizontal bar chart (SVG, same pattern as Dashboard.tsx) showing each screen's visit count
+- Secondary stat: Avg time on screen in seconds
+- Helps identify screens with very short dwell time (possible UX issues) or drop-off
+
+### Section 4 — Recent Sessions
+- Table: Platform (Android/iOS chip), App Version, Started At, Duration, Last Seen, Status (Active/Ended)
+- "Active" = last_seen_at within last 35 seconds
+- Pagination: 10 per page
+
+**`admin-panel/src/pages/AIControlCenter.tsx`:** Add 5th tab importing `AppMonitorTab`.
+
+---
+
 ## What Is NOT in This Spec
 
-- Admin panel UI (Sub-project 2)
-- AI report generation (Sub-project 3)
+- AI report generation (Sub-project 3 — separate spec)
 - Response body logging (PII risk)
 - Query string logging (PII risk — tokens, phone numbers)
 - Replay / session recording
