@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import '../constants/app_config.dart';
 import '../storage/secure_storage.dart';
+import '../monitor/monitor_interceptor.dart';
 
 class ApiClient {
   static final ApiClient _instance = ApiClient._internal();
@@ -37,6 +38,7 @@ class ApiClient {
         handler.next(err);
       },
     ));
+    dio.interceptors.add(MonitorInterceptor());
   }
 
   Future<bool> _refreshToken() async {
