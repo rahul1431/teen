@@ -3,6 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:flutter/foundation.dart';
+import 'core/monitor/monitor_service.dart';
+import 'core/monitor/socket_monitor_wrapper.dart';
+import 'core/socket/socket_service.dart';
 import 'app.dart';
 
 @pragma('vm:entry-point')
@@ -47,6 +51,47 @@ void main() async {
       // Messaging unavailable — ignore.
     }
   }
+
+  // ── App Monitor SDK ──────────────────────────────────────────────────────
+  // Init MonitorService before runApp so the session_id exists from the first frame.
+  await MonitorService.instance.init();
+
+  // Override Flutter framework errors (widget build exceptions, layout errors, etc.)
+  FlutterError.onError = (FlutterErrorDetails details) {
+    MonitorService.instance.enqueue({
+      'event_type': 'error',
+      'screen': MonitorService.instance.currentScreen,
+      'error_message': details.exceptionAsString()
+          .substring(0, details.exceptionAsString().length.clamp(0, 500)),
+      'properties': {
+        'stack': details.stack?.toString().substring(
+              0, details.stack.toString().length.clamp(0, 1000)) ?? '',
+        'source': 'flutter_error',
+      },
+    });
+    // Still show red screen in debug mode
+    if (kDebugMode) FlutterError.presentError(details);
+  };
+
+  // Override platform/isolate errors (async exceptions not caught by Flutter framework)
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+    MonitorService.instance.enqueue({
+      'event_type': 'error',
+      'screen': MonitorService.instance.currentScreen,
+      'error_message': error.toString()
+          .substring(0, error.toString().length.clamp(0, 500)),
+      'properties': {
+        'stack': stack.toString().substring(
+              0, stack.toString().length.clamp(0, 1000)),
+        'source': 'platform_dispatcher',
+      },
+    });
+    return true; // handled
+  };
+
+  // Attach WebSocket event monitoring (no changes to SocketService required)
+  SocketMonitorWrapper(SocketService());
+  // ─────────────────────────────────────────────────────────────────────────
 
   runApp(const MyOnlineJokerApp());
 }
