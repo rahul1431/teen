@@ -35,6 +35,14 @@ app.post<{ Body: Record<string, unknown> }>('/api/monitor/events', async (req, r
     if (payload.events.length > 100) {
       return reply.code(400).send({ success: false, error: 'Batch too large: max 100 events' })
     }
+    // Validate shared secret (skip check when env var not configured — dev only)
+    const expectedKey = process.env.INGEST_SECRET_KEY
+    if (expectedKey) {
+      const providedKey = req.headers['x-monitor-key']
+      if (providedKey !== expectedKey) {
+        return reply.code(401).send({ success: false, error: 'Unauthorized' })
+      }
+    }
     await ingestor.ingestBatch(payload)
     return reply.send({ success: true })
   } catch (err: any) {

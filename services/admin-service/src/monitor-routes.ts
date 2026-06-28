@@ -8,6 +8,9 @@ export async function registerMonitorRoutes(
   authenticate: any,
   requireRole: any
 ) {
+  // All monitor routes are read-only observability data accessible to any
+  // authenticated admin. requireRole is accepted for signature compatibility
+  // but not applied here by design.
   app.get('/api/admin/monitor/stats', { onRequest: [authenticate] }, async (_req, reply) => {
     try {
       const res = await axios.get(`${MONITOR_URL}/api/monitor/stats`)

@@ -14,6 +14,24 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
 }
 
+class _AppLifecycleMonitor extends WidgetsBindingObserver {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      MonitorService.instance.enqueue({
+        'event_type': 'lifecycle',
+        'properties': {'state': state.name},
+      });
+    } else if (state == AppLifecycleState.resumed) {
+      MonitorService.instance.enqueue({
+        'event_type': 'lifecycle',
+        'properties': {'state': 'resumed'},
+      });
+    }
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Hive.initFlutter();
@@ -56,7 +74,11 @@ void main() async {
   // Init MonitorService before runApp so the session_id exists from the first frame.
   await MonitorService.instance.init();
 
+  // Register lifecycle observer to emit session end events
+  WidgetsBinding.instance.addObserver(_AppLifecycleMonitor());
+
   // Override Flutter framework errors (widget build exceptions, layout errors, etc.)
+  final prevFlutterErrorHandler = FlutterError.onError;
   FlutterError.onError = (FlutterErrorDetails details) {
     MonitorService.instance.enqueue({
       'event_type': 'error',
@@ -69,8 +91,11 @@ void main() async {
         'source': 'flutter_error',
       },
     });
-    // Still show red screen in debug mode
-    if (kDebugMode) FlutterError.presentError(details);
+    if (kDebugMode) {
+      FlutterError.presentError(details);
+    } else {
+      prevFlutterErrorHandler?.call(details);
+    }
   };
 
   // Override platform/isolate errors (async exceptions not caught by Flutter framework)
@@ -90,7 +115,8 @@ void main() async {
   };
 
   // Attach WebSocket event monitoring (no changes to SocketService required)
-  SocketMonitorWrapper(SocketService());
+  // ignore: unused_local_variable — listener is kept alive by ValueNotifier reference
+  final socketMonitorWrapper = SocketMonitorWrapper(SocketService());
   // ─────────────────────────────────────────────────────────────────────────
 
   runApp(const MyOnlineJokerApp());

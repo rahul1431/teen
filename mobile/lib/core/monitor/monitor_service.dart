@@ -57,6 +57,12 @@ class MonitorService {
         headers: {'Content-Type': 'application/json'},
       ));
 
+      // Shared secret — set via --dart-define=MONITOR_SECRET_KEY=xxx at build time
+      const monitorKey = String.fromEnvironment('MONITOR_SECRET_KEY');
+      if (monitorKey.isNotEmpty) {
+        _monitorDio!.options.headers['x-monitor-key'] = monitorKey;
+      }
+
       _flushTimer = Timer.periodic(const Duration(seconds: 10), (_) => _flush());
     } catch (_) {
       // MonitorService must never crash the app

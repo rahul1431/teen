@@ -105,6 +105,7 @@ export class MonitorIngestor {
        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
        ON CONFLICT (id) DO UPDATE SET
          last_seen_at = NOW(),
+         ended_at = NULL,
          user_id = COALESCE(EXCLUDED.user_id, app_sessions.user_id)`,
       [session_id, user_id ?? null, device_id, app_version, platform, os_version]
     )
