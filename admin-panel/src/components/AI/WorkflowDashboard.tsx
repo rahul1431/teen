@@ -106,6 +106,15 @@ export function WorkflowDashboard() {
 
   return (
     <div>
+      {/* Status Alert - Phase 1 */}
+      <Alert
+        message="⭐ Phase 1: Fraud Detection Rules Engine - ACTIVE"
+        description="Real-time fraud detection with 4 rules: co-location, win-rate anomalies, velocity checks, referral chains. Rules weight: 30/35/20/15%. Actions: allow (<0.4), slow_lane (0.4-0.85), block (>0.85)."
+        type="success"
+        showIcon
+        style={{ marginBottom: 24 }}
+      />
+
       {/* Training Progress (Left Panel) */}
       <Row gutter={24} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={8}>
@@ -138,10 +147,17 @@ export function WorkflowDashboard() {
                             ETA: {model.eta || '--'}
                           </div>
                         </>
+                      ) : model.status === 'error' ? (
+                        <>
+                          <Progress percent={0} size="small" status="exception" />
+                          <div style={{ fontSize: 12, marginTop: 4, color: '#ff4d4f' }}>
+                            Error - Check logs
+                          </div>
+                        </>
                       ) : (
                         <>
                           <Progress
-                            percent={model.accuracy || 0}
+                            percent={Math.round((model.accuracy || 0) * 100)}
                             size="small"
                             status={
                               (model.accuracy || 0) > 0.8
@@ -151,13 +167,13 @@ export function WorkflowDashboard() {
                           />
                           <div style={{ fontSize: 12, marginTop: 4 }}>
                             Accuracy:{' '}
-                            {(model.accuracy || 0).toFixed(2) * 100}%
+                            {((model.accuracy || 0) * 100).toFixed(1)}%
                           </div>
                         </>
                       )}
 
                       <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>
-                        Last retrain: {model.lastRetrain || 'N/A'}
+                        Last retrain: {model.lastRetrain ? new Date(model.lastRetrain).toLocaleString() : 'N/A'}
                       </div>
                     </div>
                   </List.Item>

@@ -78,12 +78,16 @@ export function AIPromptConsole() {
   }
 
   const exampleQueries = [
+    'show recent fraud alerts from last 24 hours',
+    'analyze fraud detection rule effectiveness',
+    'which players are flagged for co-location',
+    'explain unusual win rate for player_id=xyz',
     'analyze churn for stake=100 users',
-    'explain bot decision for player_id=xyz',
-    'compare churn model accuracy week-over-week',
     'fraud alert: show evidence for player X',
+    'explain bot decision for player_id=abc',
+    'compare churn model accuracy week-over-week',
     'what is the average session length',
-    'show me top 10 churning players',
+    'show me top 10 at-risk players',
   ]
 
   return (

@@ -324,11 +324,53 @@ No new dependencies needed!
    - Currently returns mock metrics
    - Fetch from Redis `ml:metrics:latest` key
 
+## Phase 1: Fraud Detection (Week 1-2) ✅
+
+**Status**: COMPLETE - Ready for Deployment
+
+### Fraud Detection Components Integrated
+
+1. **Risk Service** (New Microservice)
+   - Real-time fraud analysis via Redis Streams
+   - 4 detection rules: co-location, win-rate anomalies, velocity, referral chains
+   - Weighted scoring: 30/35/20/15%
+   - Action thresholds: allow/slow_lane/block
+   - API endpoints: /api/risk/alerts, /api/risk/user/:userId/history, /api/risk/stats
+
+2. **Admin Service - Fraud Endpoints**
+   - GET /api/admin/fraud-alerts - Dashboard alert feed
+   - GET /api/admin/fraud-stats - Aggregated metrics
+   - GET /api/admin/user/:userId/fraud-history - User events
+   - POST /api/admin/user/:userId/fraud-flag - Manual flagging
+   - PATCH /api/admin/fraud-alerts/:id/resolve - Alert resolution
+
+3. **Database Schema (Migration 013)**
+   - fraud_events table with comprehensive indexing
+   - device_fingerprints for co-location detection
+   - user_fraud_flags for manual admin flags
+   - fraud_config_history for audit trail
+   - Materialized view for daily statistics
+
+4. **AI Control Center Updates**
+   - ✅ Tab 2 (ML Config): Fraud detection thresholds editable
+   - ✅ Tab 3 (Workflow): Fraud alerts visible in real-time feed
+   - ✅ Tab 1 (Prompt Console): Example queries for fraud analysis
+
+### Deployment Checklist
+
+- [ ] Apply Migration 013 to PostgreSQL
+- [ ] Deploy Risk Service (port 3006)
+- [ ] Verify monitoring-service → risk-service event flow
+- [ ] Test fraud detection with sample scenarios
+- [ ] Monitor false positive rate (target: <2%)
+- [ ] Integrate fraud dashboard into admin panel
+
 ## Next Steps
 
-1. **Week 1-2**: Fraud Detection Service connects to these endpoints
-2. **Week 4-6**: Analytics Service populates /metrics endpoint
-3. **Week 7+**: ML Service implements `handleQuery()` with real NLP
+1. **Week 2**: Complete deployment, test false positive rate
+2. **Week 2-3**: Bot Decision Logging in game engines
+3. **Week 4-6**: Churn Prediction Model + Analytics Service
+4. **Week 7+**: Advanced features (RTP optimization, engine tuning)
 
 ---
 
