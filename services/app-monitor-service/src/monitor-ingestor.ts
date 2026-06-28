@@ -187,11 +187,20 @@ export class MonitorIngestor {
 
   async getStats(): Promise<MonitorStats> {
     // Active sessions: count Redis keys set by devices in last 35s
-    const sessionKeys = await this.redis.keys('monitor:session:*')
-    const activeSessions = sessionKeys.length
+    let activeSessions = 0
+    const stream = this.redis.scanStream({ match: 'monitor:session:*', count: 100 })
+    await new Promise<void>((resolve, reject) => {
+      stream.on('data', (keys: string[]) => { activeSessions += keys.length })
+      stream.on('end', resolve)
+      stream.on('error', reject)
+    })
 
     // Errors in last 5 min from sorted set
-    const errorsLast5min = await this.redis.zcount('monitor:errors:5min', '-inf', '+inf')
+    const errorsLast5min = await this.redis.zcount(
+      'monitor:errors:5min',
+      Date.now() - 300_000,
+      '+inf'
+    )
 
     // API + WS stats from DB (last 1 hour)
     const statsRes = await this.pool.query(`
@@ -317,7 +326,7 @@ export class MonitorIngestor {
        GROUP BY s.id
        ORDER BY s.last_seen_at DESC
        LIMIT $1 OFFSET $2`,
-      [Math.min(limit, 100), offset]
+      [Math.min(limit, 100), Math.max(0, offset)]
     )
     return res.rows
   }
