@@ -4,6 +4,22 @@ import axios from 'axios'
 const BOT_URL = process.env.BOT_LEARNING_SERVICE_URL || 'http://localhost:3014'
 
 export async function registerBotLearningRoutes(app: FastifyInstance, authenticate: any, requireRole: any) {
+  app.get<{ Querystring: { game_type?: string; difficulty?: string } }>(
+    '/api/admin/bots/profile',
+    { onRequest: [authenticate] },
+    async (req, reply) => {
+      try {
+        const params = new URLSearchParams()
+        if (req.query.game_type) params.set('game_type', req.query.game_type)
+        if (req.query.difficulty) params.set('difficulty', req.query.difficulty)
+        const res = await axios.get(`${BOT_URL}/api/bots/profile?${params.toString()}`)
+        return reply.send(res.data)
+      } catch (err: any) {
+        return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'Bot learning service unavailable' })
+      }
+    }
+  )
+
   app.get('/api/admin/bots/profiles', { onRequest: [authenticate] }, async (_req, reply) => {
     try {
       const res = await axios.get(`${BOT_URL}/api/bots/profiles`)
