@@ -77,6 +77,45 @@ LOG_LEVEL=info
         risk_env_file = sftp.open("/opt/teen/services/risk-service/.env", "w")
         risk_env_file.write(risk_env)
         risk_env_file.close()
+
+        # 4b. Create .env for churn-service
+        churn_env = f"""# Churn Service Configuration
+PORT=3013
+NODE_ENV=production
+DATABASE_URL={db_url_val}
+REDIS_URL={redis_url_val}
+NOTIFICATION_SERVICE_URL=http://127.0.0.1:3007
+WALLET_SERVICE_URL=http://127.0.0.1:3003
+"""
+        print("Writing churn-service .env...")
+        churn_env_file = sftp.open("/opt/teen/services/churn-service/.env", "w")
+        churn_env_file.write(churn_env)
+        churn_env_file.close()
+
+        # 4c. Create .env for bot-learning-service
+        bot_learning_env = f"""# Bot Learning Service Configuration
+PORT=3014
+NODE_ENV=production
+DATABASE_URL={db_url_val}
+REDIS_URL={redis_url_val}
+"""
+        print("Writing bot-learning-service .env...")
+        bot_learning_env_file = sftp.open("/opt/teen/services/bot-learning-service/.env", "w")
+        bot_learning_env_file.write(bot_learning_env)
+        bot_learning_env_file.close()
+
+        # 4d. Create .env for app-monitor-service
+        app_monitor_env = f"""# App Monitor Service Configuration
+PORT=3015
+NODE_ENV=production
+DATABASE_URL={db_url_val}
+REDIS_URL={redis_url_val}
+"""
+        print("Writing app-monitor-service .env...")
+        app_monitor_env_file = sftp.open("/opt/teen/services/app-monitor-service/.env", "w")
+        app_monitor_env_file.write(app_monitor_env)
+        app_monitor_env_file.close()
+
         sftp.close()
 
         # 5. Run deploy services script
@@ -124,6 +163,9 @@ LOG_LEVEL=info
         pm2_cmds = [
             "pm2 delete teen-monitoring || true",
             "pm2 delete teen-risk || true",
+            "pm2 delete teen-churn || true",
+            "pm2 delete teen-bot-learning || true",
+            "pm2 delete teen-app-monitor || true",
             "cd /opt/teen && pm2 start ecosystem.config.js",
             "pm2 save",
             "pm2 status"
