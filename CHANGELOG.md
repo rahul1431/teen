@@ -1,6 +1,6 @@
 # MyOnlineJoker Platform - Changelog
 
-## Current Version: Phase 1 - Fraud Detection & Monitoring
+## Current Version: Phase 3 - Bot Learning (Phase 1 + 2 + 3 complete)
 
 **Release Date**: June 28, 2026  
 **Status**: Development - In Testing
@@ -664,12 +664,18 @@ Admin Panel ← ← ← ← ← ← ← ← ←
 - [x] Admin panel accessible at game.myonlinejoker.com/admin
 - [x] SSL/TLS configured (nginx)
 - [x] Environment variables configured
-- [ ] Phase 1: Fraud Detection (in progress)
-  - [ ] Risk Service deployed
-  - [ ] Fraud detection tested
-  - [ ] Admin alerts integrated
-- [ ] Phase 2: Churn Prediction (pending)
-- [ ] Phase 3: Bot Learning (pending)
+- [x] Phase 1: Fraud Detection ✅
+  - [x] Risk Service deployed
+  - [x] Fraud detection tested
+  - [x] Admin alerts integrated
+- [x] Phase 2: Churn Prediction ✅
+  - [x] Churn Service deployed
+  - [x] Hourly scoring cycle
+  - [x] Admin Churn tab integrated
+- [x] Phase 3: Bot Learning ✅
+  - [x] Bot Learning Service deployed
+  - [x] Nightly profile rebuild
+  - [x] Admin Bot Learning section integrated
 - [ ] Phase 4: Advanced Features (pending)
 
 ### Services Status
@@ -685,6 +691,8 @@ Admin Panel ← ← ← ← ← ← ← ← ←
 | Notification Service | 3007 | ✅ Live | June 26 |
 | Admin Service | 3008 | ✅ Live | June 28 |
 | Betting Service | - | ✅ Live | June 26 |
+| Churn Service | 3013 | ⏳ Pending | - |
+| Bot Learning Service | 3014 | ⏳ Pending | - |
 
 ---
 
