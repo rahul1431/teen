@@ -1717,6 +1717,72 @@ async function start() {
     }
   })
 
+  // --- Bot Stats ---
+  // GET /api/admin/bot-stats - Bot decision statistics for AI dashboard
+  app.get('/api/admin/bot-stats', { onRequest: [authenticate] }, async (req, reply) => {
+    try {
+      const { hours = '24', game_type } = req.query as any
+      const hoursNum = Math.min(parseInt(hours), 168)
+
+      let where = `WHERE created_at > NOW() - INTERVAL '${hoursNum} hours'`
+      const params: any[] = []
+      if (game_type && ['teen_patti', 'ludo'].includes(game_type)) {
+        where += ` AND game_type = $1`
+        params.push(game_type)
+      }
+
+      const stats = await db.query(
+        `SELECT
+           COUNT(*) as total_decisions,
+           COUNT(CASE WHEN outcome = 'win' THEN 1 END) as wins,
+           COUNT(CASE WHEN outcome IS NOT NULL THEN 1 END) as resolved,
+           AVG(CASE WHEN profit_loss IS NOT NULL THEN profit_loss END) as avg_profit_loss,
+           COUNT(DISTINCT room_id) as rooms_played
+         FROM bot_decision_logs ${where}`,
+        params
+      )
+
+      const actions = await db.query(
+        `SELECT action_taken, COUNT(*) as count
+         FROM bot_decision_logs ${where}
+         GROUP BY action_taken
+         ORDER BY count DESC`,
+        params
+      )
+
+      const recent = await db.query(
+        `SELECT user_id, game_type, action_taken, outcome,
+                decision_context->>'pot' as pot,
+                decision_context->>'reason' as reason,
+                created_at
+         FROM bot_decision_logs ${where}
+         ORDER BY created_at DESC LIMIT 10`,
+        params
+      )
+
+      const s = stats.rows[0]
+      const wins = parseInt(s.wins || '0')
+      const resolved = parseInt(s.resolved || '0')
+
+      return reply.send({
+        success: true,
+        data: {
+          timeWindow: `${hoursNum} hours`,
+          gameType: game_type || 'all',
+          totalDecisions: parseInt(s.total_decisions || '0'),
+          winRate: resolved > 0 ? ((wins / resolved) * 100).toFixed(1) + '%' : 'N/A',
+          roomsPlayed: parseInt(s.rooms_played || '0'),
+          avgProfitLoss: parseFloat(s.avg_profit_loss || '0').toFixed(2),
+          actionDistribution: Object.fromEntries(actions.rows.map(r => [r.action_taken, parseInt(r.count)])),
+          recentDecisions: recent.rows,
+          timestamp: new Date().toISOString(),
+        },
+      })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to fetch bot stats' })
+    }
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))
 
   const port = parseInt(process.env.PORT || '3008')

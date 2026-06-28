@@ -257,13 +257,21 @@ export function rollDie(): number {
   return Math.floor(Math.random() * 6) + 1
 }
 
+export type BotDecisionReason = 'capture' | 'advance' | 'no_move'
+
+export interface BotDecision {
+  token: number
+  reason: BotDecisionReason
+}
+
 /**
  * Pick a token for a bot to move from the allowed set. Strategy: prefer a
  * capture, then advancing a token toward home, then leaving base.
+ * Returns both the token index and the reason for logging/ML training.
  */
-export function chooseBotToken(state: LudoState, playerIdx: number, dice: number): number {
+export function chooseBotTokenWithReason(state: LudoState, playerIdx: number, dice: number): BotDecision {
   const movable = movableTokens(state, playerIdx, dice)
-  if (movable.length === 0) return -1
+  if (movable.length === 0) return { token: -1, reason: 'no_move' }
   const player = state.players[playerIdx]
 
   // Prefer a move that captures an opponent.
@@ -275,7 +283,7 @@ export function chooseBotToken(state: LudoState, playerIdx: number, dice: number
       for (let p = 0; p < state.players.length; p++) {
         if (p === playerIdx) continue
         const here = state.players[p].tokens.filter((tp) => absoluteCell(p, tp) === cell)
-        if (here.length === 1) return t
+        if (here.length === 1) return { token: t, reason: 'capture' }
       }
     }
   }
@@ -285,5 +293,10 @@ export function chooseBotToken(state: LudoState, playerIdx: number, dice: number
   for (const t of movable) {
     if (player.tokens[t] > player.tokens[best]) best = t
   }
-  return best
+  return { token: best, reason: 'advance' }
+}
+
+// Keep backward-compatible alias
+export function chooseBotToken(state: LudoState, playerIdx: number, dice: number): number {
+  return chooseBotTokenWithReason(state, playerIdx, dice).token
 }
