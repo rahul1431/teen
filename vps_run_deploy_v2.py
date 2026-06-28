@@ -46,7 +46,7 @@ def run_deploy():
 
         # 3. Create .env for monitoring-service
         monitoring_env = f"""# Monitoring Service Configuration
-PORT=3012
+PORT=3017
 NODE_ENV=production
 LOG_LEVEL=info
 DATABASE_URL={db_url_val}
