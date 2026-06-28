@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Card, Row, Col, Button, Statistic, Tag, Slider, Form, message, Divider, Spin, Tooltip } from 'antd'
+import { Card, Row, Col, Button, Statistic, Tag, Slider, Form, InputNumber, message, Divider, Spin, Tooltip } from 'antd'
 import { SyncOutlined, RobotOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
@@ -15,6 +15,12 @@ interface BotProfile {
   last_rebuilt_at: string | null
 }
 
+interface BotConfig {
+  rebuild_hour: number
+  stream_lookback_days: number
+  min_sample_size: number
+}
+
 const GAME_LABELS: Record<string, string> = {
   teen_patti: 'Teen Patti',
   ludo: 'Ludo',
@@ -28,8 +34,11 @@ export function BotLearningSection() {
   const [loading, setLoading] = useState(true)
   const [rebuilding, setRebuilding] = useState(false)
   const [editingKey, setEditingKey] = useState<string | null>(null)
+  const [config, setConfig] = useState<BotConfig | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [configForm] = Form.useForm()
 
-  useEffect(() => { loadProfiles() }, [])
+  useEffect(() => { loadProfiles(); loadConfig() }, [])
 
   const loadProfiles = async () => {
     setLoading(true)
@@ -48,6 +57,27 @@ export function BotLearningSection() {
       setTimeout(loadProfiles, 5000)
     } catch { message.error('Failed to trigger rebuild') }
     finally { setRebuilding(false) }
+  }
+
+  const loadConfig = async () => {
+    try {
+      const res = await adminApi.get('/api/admin/bots/config')
+      if (res.data.success) {
+        setConfig(res.data.data)
+        configForm.setFieldsValue(res.data.data)
+      }
+    } catch { /* silent */ }
+  }
+
+  const saveConfig = async (values: BotConfig) => {
+    setSaving(true)
+    try {
+      const updates: Record<string, string> = {}
+      for (const [k, v] of Object.entries(values)) updates[k] = String(v)
+      await adminApi.patch('/api/admin/bots/config', updates)
+      message.success('Config saved')
+    } catch { message.error('Failed to save config') }
+    finally { setSaving(false) }
   }
 
   const saveOverride = async (gameType: string, difficulty: string, values: Record<string, unknown>) => {
@@ -112,6 +142,7 @@ export function BotLearningSection() {
                     <Statistic title="Call %" value={Math.round(profile.call_probability * 100)} suffix="%" valueStyle={{ fontSize: 14 }} />
                     <Statistic title="Raise %" value={Math.round(profile.raise_probability * 100)} suffix="%" valueStyle={{ fontSize: 14 }} />
                     <Statistic title="Delay" value={profile.avg_decision_delay_ms} suffix="ms" valueStyle={{ fontSize: 14 }} />
+                    <Statistic title="Aggression" value={profile.aggression_score.toFixed(2)} valueStyle={{ fontSize: 14 }} />
                     <div style={{ fontSize: 11, color: '#888', marginTop: 8 }}>
                       <Tooltip title={profile.last_rebuilt_at ? new Date(profile.last_rebuilt_at).toLocaleString() : 'Never rebuilt'}>
                         Sample: {profile.sample_size === 0 ? 'fallback' : `${profile.sample_size} players`}
@@ -148,6 +179,24 @@ export function BotLearningSection() {
           </Row>
         </div>
       ))}
+
+      <Divider orientation="left">Bot Config</Divider>
+      <Card title="Schedule & Sampling Config" style={{ maxWidth: 480 }}>
+        {config && (
+          <Form form={configForm} layout="vertical" onFinish={saveConfig} initialValues={config}>
+            <Form.Item label="Rebuild hour (0–23 UTC)" name="rebuild_hour">
+              <InputNumber min={0} max={23} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item label="Stream lookback (days)" name="stream_lookback_days">
+              <InputNumber min={1} max={90} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item label="Minimum sample size" name="min_sample_size">
+              <InputNumber min={1} max={10000} style={{ width: '100%' }} />
+            </Form.Item>
+            <Button type="primary" htmlType="submit" loading={saving} block>Save Config</Button>
+          </Form>
+        )}
+      </Card>
     </div>
   )
 }
