@@ -23,8 +23,6 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   String? _balance;
   double? _balanceValue;
   final _stakes = [10.0, 50.0, 100.0, 500.0, 1000.0];
-  StreamSubscription? _roomJoinedSub;
-  StreamSubscription? _errorSub;
 
   String get _variationLabel {
     switch (widget.variation) {
