@@ -41,7 +41,7 @@ class _TeenPattiModesPageState extends State<TeenPattiModesPage> {
                 decoration: BoxDecoration(
                   color: AppColors.feltDark,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.gold.withOpacity(0.6)),
+                  border: Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
                 ),
                 child: Text('₹${_balance ?? '—'}',
                     style: const TextStyle(
@@ -117,9 +117,9 @@ class _TeenPattiModesPageState extends State<TeenPattiModesPage> {
             gradient: LinearGradient(
                 begin: Alignment.topLeft, end: Alignment.bottomRight, colors: gradient),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AppColors.gold.withOpacity(0.5), width: 1.5),
+            border: Border.all(color: AppColors.gold.withValues(alpha: 0.5), width: 1.5),
             boxShadow: [
-              BoxShadow(color: gradient.last.withOpacity(0.5), blurRadius: 16, offset: const Offset(0, 6)),
+              BoxShadow(color: gradient.last.withValues(alpha: 0.5), blurRadius: 16, offset: const Offset(0, 6)),
             ],
           ),
           child: Padding(
@@ -131,7 +131,7 @@ class _TeenPattiModesPageState extends State<TeenPattiModesPage> {
                 Container(
                   width: 48, height: 48,
                   decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(14)),
-                  child: Icon(icon, color: Colors.white.withOpacity(0.9), size: 28),
+                  child: Icon(icon, color: Colors.white.withValues(alpha: 0.9), size: 28),
                 ),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -142,7 +142,7 @@ class _TeenPattiModesPageState extends State<TeenPattiModesPage> {
                             shadows: [Shadow(color: Colors.black38, blurRadius: 4)])),
                     const SizedBox(height: 2),
                     Text(subtitle,
-                        style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.85))),
+                        style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.85))),
                   ],
                 ),
               ],
