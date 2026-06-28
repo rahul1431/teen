@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'core/storage/secure_storage.dart';
+import 'core/monitor/monitor_navigator_observer.dart';
 import 'core/services/push_notification_service.dart';
 import 'shared/theme/app_theme.dart';
 import 'features/auth/pages/splash_page.dart';
@@ -26,6 +27,7 @@ import 'features/notifications/notifications_page.dart';
 
 final GoRouter _router = GoRouter(
   initialLocation: '/splash',
+  observers: [MonitorNavigatorObserver()],
   redirect: (context, state) async {
     final token = await SecureStorage.getAccessToken();
     final isAuth = token != null;
