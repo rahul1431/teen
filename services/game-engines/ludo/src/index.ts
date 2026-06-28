@@ -9,6 +9,7 @@ import {
   applyMove,
   rollDie,
   chooseBotToken,
+  chooseBotTokenWithReason,
   LudoState,
   ActionResult,
 } from './rules'
@@ -107,9 +108,12 @@ async function start() {
     applyRoll(state, dice)
     let result: ActionResult | null = null
     let movedToken = -1
+    let decisionReason = 'no_move'
 
     if (state.awaiting === 'move') {
-      movedToken = chooseBotToken(state, idx, dice)
+      const decision = chooseBotTokenWithReason(state, idx, dice)
+      movedToken = decision.token
+      decisionReason = decision.reason
       if (movedToken >= 0) {
         const r = applyMove(state, movedToken)
         result = r.result
@@ -118,6 +122,26 @@ async function start() {
 
     await saveState(state)
     if (result) void saveCompletedGame(state, result)
+
+    // Log bot decision for ML training (non-blocking)
+    void db.query(
+      `INSERT INTO bot_decision_logs (room_id, user_id, game_type, decision_context, action_taken, outcome)
+       VALUES ($1, $2, 'ludo', $3, $4, $5)`,
+      [
+        body.room_id,
+        body.user_id,
+        JSON.stringify({
+          dice,
+          movable_count: state.movable_tokens?.length ?? 0,
+          token_positions: state.players[idx]?.tokens ?? [],
+          player_count: state.players.length,
+          reason: decisionReason,
+        }),
+        decisionReason,
+        result?.winner_id === body.user_id ? 'win' : result ? 'lose' : null,
+      ]
+    ).catch((err: Error) => console.error('Bot log error', err))
+
     return { state, result, dice, moved_token: movedToken }
   })
 

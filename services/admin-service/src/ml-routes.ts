@@ -9,6 +9,50 @@ import Redis from 'ioredis'
  * GET  /api/admin/ml/metrics - Real-time ML metrics and job status
  */
 
+async function fetchRecentBotDecisions(db: any): Promise<any[]> {
+  try {
+    const result = await db.query(
+      `SELECT id, user_id, game_type, action_taken, outcome, decision_context, created_at
+       FROM bot_decision_logs
+       ORDER BY created_at DESC LIMIT 10`
+    )
+    return result.rows.map((r: any) => ({
+      id: r.id,
+      type: 'bot_decision',
+      target: `${r.game_type} bot (${r.user_id?.slice(0, 8) ?? 'unknown'})`,
+      score: r.outcome === 'win' ? 1 : r.outcome === 'lose' ? 0 : 0.5,
+      confidence: 1,
+      timestamp: r.created_at,
+      action: `${r.action_taken}${r.outcome ? ' → ' + r.outcome : ''}`,
+    }))
+  } catch {
+    return []
+  }
+}
+
+async function fetchRecentFraudAlerts(db: any): Promise<any[]> {
+  try {
+    const result = await db.query(
+      `SELECT id, user_id, fraud_score, confidence, action, rule_triggered, evidence, created_at
+       FROM fraud_events
+       WHERE action IN ('slow_lane', 'block')
+         AND created_at > NOW() - INTERVAL '24 hours'
+       ORDER BY fraud_score DESC LIMIT 5`
+    )
+    return result.rows.map((r: any) => ({
+      id: r.id,
+      type: 'fraud',
+      target: r.user_id,
+      score: parseFloat(r.fraud_score),
+      confidence: parseFloat(r.confidence),
+      timestamp: r.created_at,
+      action: `${r.rule_triggered}: ${r.action}`,
+    }))
+  } catch {
+    return []
+  }
+}
+
 export async function registerMLRoutes(
   app: FastifyInstance,
   redis: Redis,
@@ -185,7 +229,26 @@ export async function registerMLRoutes(
           },
         }
 
-        const metrics = metricsData ? JSON.parse(metricsData) : defaultMetrics
+        // Merge real data from DB into metrics
+        const [botDecisions, fraudAlerts] = await Promise.all([
+          fetchRecentBotDecisions(db),
+          fetchRecentFraudAlerts(db),
+        ])
+
+        const base = metricsData ? JSON.parse(metricsData) : defaultMetrics
+
+        // Replace mock predictions with real data where available
+        const realPredictions = [
+          ...fraudAlerts,
+          ...botDecisions,
+          // Keep mock churn prediction until churn model is built (Phase 2)
+          ...base.predictions.filter((p: any) => p.type === 'churn'),
+        ]
+
+        const metrics = {
+          ...base,
+          predictions: realPredictions.length > 0 ? realPredictions : base.predictions,
+        }
 
         return reply.send({
           success: true,

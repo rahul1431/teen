@@ -378,13 +378,32 @@ export class MatchmakingService {
       this.botTimers.delete(roomId)
       const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
       try {
-        const action = Math.random() > 0.3 ? 'call' : 'fold'
+        // Heuristic: call aggressively early (pot < 3x stake), conservatively late
+        const pot = state.pot ?? state.Pot ?? 0
+        const stake = state.stake ?? state.Stake ?? 0
+        const round = state.round ?? state.Round ?? 0
+        const playerCount = state.players?.length ?? 2
+        const action = (pot < 3 * stake || round < 2) ? 'call' : (Math.random() > 0.4 ? 'call' : 'fold')
+        const botUserId = currentPlayer.user_id ?? currentPlayer.userId
+
+        // Log bot decision for ML training (non-blocking)
+        void this.db.query(
+          `INSERT INTO bot_decision_logs (room_id, user_id, game_type, decision_context, action_taken)
+           VALUES ($1, $2, 'teen_patti', $3, $4)`,
+          [
+            roomId,
+            botUserId,
+            JSON.stringify({ pot, stake, round, player_count: playerCount, min_bet: state.min_bet ?? state.MinBet ?? stake }),
+            action,
+          ]
+        ).catch((err: Error) => console.error('Bot log error', err))
+
         const res = await fetch(`${engineUrl}/action`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             room_id: roomId,
-            user_id: currentPlayer.user_id ?? currentPlayer.userId,
+            user_id: botUserId,
             action,
             amount: state.min_bet ?? state.MinBet ?? state.stake,
             sequence_num: 0,
@@ -400,7 +419,7 @@ export class MatchmakingService {
           this.hub.sendToUser(p.userId, 'game:state_update', {
             room_id: roomId,
             state: { ...newState, players: newState.players?.map((ep: any) => ({ ...ep, cards: undefined })) },
-            last_action: { user_id: currentPlayer.user_id ?? currentPlayer.userId, action },
+            last_action: { user_id: botUserId, action },
             result: data.result ?? null,
           })
         }
@@ -520,6 +539,15 @@ export class MatchmakingService {
 
     const winner = state.players?.find((p: any) => (p.userId ?? p.user_id ?? p.id) === result.winner_id)
     const winnerUsername = winner ? (winner.username ?? 'Player') : 'Unknown'
+
+    // Backfill outcome into bot_decision_logs for this room (non-blocking)
+    void this.db.query(
+      `UPDATE bot_decision_logs
+       SET outcome = CASE WHEN user_id::text = $2 THEN 'win' ELSE 'lose' END,
+           profit_loss = CASE WHEN user_id::text = $2 THEN $3 ELSE -$4 END
+       WHERE room_id = $1 AND outcome IS NULL`,
+      [roomId, result.winner_id, Number(result.prize ?? 0), Number(state.stake ?? 0)]
+    ).catch((err: Error) => console.error('Bot outcome backfill error', err))
 
     // Notify all real players of result
     for (const p of realPlayers) {
