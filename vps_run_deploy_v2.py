@@ -60,7 +60,7 @@ WEBSOCKET_SOURCE_URL=ws://127.0.0.1:3004/ws
 
         # 4. Create .env for risk-service
         risk_env = f"""# Risk Service Configuration
-PORT=3013
+PORT=3016
 HOST=0.0.0.0
 DATABASE_URL={db_url_val}
 REDIS_HOST=127.0.0.1
