@@ -20,7 +20,7 @@ const pool = new Pool({
 });
 
 // Initialize Fastify
-const fastify = Fastify({ logger });
+const fastify = Fastify({ logger: logger as any });
 
 // Event processor
 const processor = new EventProcessor(redis, pool, logger);
@@ -99,8 +99,8 @@ async function handleIncomingEvent(event: any) {
 
 // HTTP endpoint for metrics
 fastify.get('/metrics/events', async (request, reply) => {
-  const gameType = request.query?.game_type || 'all';
-  const interval = request.query?.interval || 'hour'; // minute, hour, day
+  const gameType = (request.query as any)?.game_type || 'all';
+  const interval = (request.query as any)?.interval || 'hour'; // minute, hour, day
 
   try {
     // Fetch aggregated metrics from Redis
@@ -114,7 +114,7 @@ fastify.get('/metrics/events', async (request, reply) => {
 
 // HTTP endpoint for live event stream (Server-Sent Events)
 fastify.get('/events/stream', async (request, reply) => {
-  const gameType = (request.query?.game_type as string) || 'all';
+  const gameType = ((request.query as any)?.game_type as string) || 'all';
 
   reply.raw.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -165,8 +165,8 @@ fastify.get('/metrics/status', async (request, reply) => {
 
 // HTTP endpoint to get recent events from Redis Streams
 fastify.get('/events/recent', async (request, reply) => {
-  const gameType = (request.query?.game_type as string) || 'all';
-  const limit = Math.min(parseInt(request.query?.limit as string) || 100, 1000);
+  const gameType = ((request.query as any)?.game_type as string) || 'all';
+  const limit = Math.min(parseInt((request.query as any)?.limit as string) || 100, 1000);
 
   try {
     const streamKey = `events:${gameType}`;
@@ -216,7 +216,7 @@ fastify.get('/health', async (request, reply) => {
 // Handle HTTP upgrade for WebSocket
 fastify.server.on('upgrade', (request, socket, head) => {
   if (request.url === '/ws') {
-    wsServer.handleUpgrade(request, socket, head, (ws) => {
+    wsServer.handleUpgrade(request, socket, head, (ws: any) => {
       wsServer.emit('connection', ws, request);
     });
   } else {

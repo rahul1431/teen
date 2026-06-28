@@ -186,7 +186,7 @@ export class EventProcessor {
         timestamp: new Date().toISOString(),
         events: result.rows,
         summary: {
-          totalEvents: result.rows.reduce((sum, row) => sum + row.count, 0),
+          totalEvents: result.rows.reduce((sum: number, row: any) => sum + parseInt(row.count || '0'), 0),
           totalPlayers: result.rows[0]?.unique_players || 0,
           activeRooms: result.rows[0]?.active_rooms || 0,
           averageStake: result.rows[0]?.avg_amount || 0,
