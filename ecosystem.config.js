@@ -124,5 +124,15 @@ module.exports = {
       watch: false,
       max_memory_restart: '200M',
     },
+    {
+      name: 'teen-churn',
+      cwd: `${BASE}/churn-service`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('churn-service'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '200M',
+    },
   ],
 }
