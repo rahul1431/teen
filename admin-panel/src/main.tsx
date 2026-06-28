@@ -19,6 +19,9 @@ import Aviator from './pages/games/Aviator'
 import Matka from './pages/games/Matka'
 import Lottery from './pages/games/Lottery'
 import Cricket from './pages/games/Cricket'
+import Analytics from './pages/Analytics'
+import BotHealth from './pages/BotHealth'
+import { AIControlCenter } from './pages/AIControlCenter'
 import { useAuthStore } from './store/auth'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -48,6 +51,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="profile" element={<Profile />} />
           <Route path="risk-center" element={<RiskCenter />} />
           <Route path="support" element={<Support />} />
+          <Route path="analytics" element={<Analytics />} />
+          <Route path="bot-health" element={<BotHealth />} />
+          <Route path="ai-control-center" element={<AIControlCenter />} />
         </Route>
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>
