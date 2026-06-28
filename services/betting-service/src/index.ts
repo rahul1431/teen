@@ -415,6 +415,12 @@ async function start() {
       [id]
     )
 
+    const sessions = await db.query(
+      `SELECT id, label, min_runs, max_runs, odds_yes, odds_no, status, result_runs FROM cricket_sessions 
+       WHERE match_id = $1`,
+      [id]
+    )
+
     const playersRes = await db.query(
       `SELECT mp.*, fp.name, fp.role, fp.team_name 
        FROM cricket_match_players mp
