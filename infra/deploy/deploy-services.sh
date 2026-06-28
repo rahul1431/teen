@@ -3,7 +3,7 @@
 set -e
 
 BASE=/opt/teen
-SERVICES=(auth-service user-service wallet-service game-gateway leaderboard-service notification-service)
+SERVICES=(auth-service user-service wallet-service game-gateway betting-service leaderboard-service notification-service admin-service)
 
 echo "==> Installing dependencies and building Node.js services..."
 for svc in "${SERVICES[@]}"; do
@@ -15,6 +15,11 @@ done
 
 echo "==> Installing Aviator engine dependencies..."
 cd "$BASE/services/game-engines/aviator"
+npm install --production=false
+npm run build
+
+echo "==> Installing Ludo engine dependencies..."
+cd "$BASE/services/game-engines/ludo"
 npm install --production=false
 npm run build
 
@@ -37,8 +42,12 @@ docker compose up -d
 echo "  Waiting for DB to be ready..."
 sleep 10
 
-echo "==> Running DB migrations..."
-docker exec teen_postgres psql -U teen -d teen_db -f /docker-entrypoint-initdb.d/001_initial.sql 2>/dev/null || echo "  Migrations may already be applied"
+echo "==> Running DB migrations (in order)..."
+for mig in "$BASE"/infra/db/migrations/*.sql; do
+  name=$(basename "$mig")
+  echo "  -> $name"
+  docker exec -i teen_postgres psql -U teen -d teen_db < "$mig" 2>/dev/null || echo "     ($name may already be applied)"
+done
 
 echo "==> Starting services with PM2..."
 cd "$BASE"

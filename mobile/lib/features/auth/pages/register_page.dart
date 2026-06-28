@@ -7,34 +7,37 @@ import '../../../shared/theme/app_theme.dart';
 
 class RegisterPage extends StatefulWidget {
   final String phone;
-  const RegisterPage({super.key, required this.phone});
+  final String otp;
+  const RegisterPage({super.key, required this.phone, this.otp = ''});
   @override
   State<RegisterPage> createState() => _RegisterPageState();
 }
 
 class _RegisterPageState extends State<RegisterPage> {
-  final _formKey = GlobalKey<FormState>();
+  final _formKey      = GlobalKey<FormState>();
   final _usernameCtrl = TextEditingController();
-  final _passCtrl = TextEditingController();
-  final _refCtrl = TextEditingController();
-  bool _loading = false;
-  String? _otp;
+  final _passCtrl     = TextEditingController();
+  final _confirmCtrl  = TextEditingController();
+  final _refCtrl      = TextEditingController();
+  bool _loading   = false;
+  bool _obscure   = true;
+  bool _obscure2  = true;
+  String? _errorMsg;
 
   @override
-  void initState() {
-    super.initState();
-    // OTP passed via route query param
-    final uri = Uri.base;
-    _otp = uri.queryParameters['otp'];
+  void dispose() {
+    _usernameCtrl.dispose(); _passCtrl.dispose();
+    _confirmCtrl.dispose(); _refCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _register() async {
     if (!_formKey.currentState!.validate()) return;
-    setState(() => _loading = true);
+    setState(() { _loading = true; _errorMsg = null; });
     try {
       final res = await Dio().post('${AppConfig.apiBaseUrl}/api/auth/register', data: {
-        'phone': widget.phone,
-        'otp': _otp ?? '000000',
+        'phone':    widget.phone,
+        'otp':      widget.otp.isNotEmpty ? widget.otp : '123456',
         'username': _usernameCtrl.text.trim(),
         'password': _passCtrl.text,
         if (_refCtrl.text.isNotEmpty) 'referral_code': _refCtrl.text.trim().toUpperCase(),
@@ -43,48 +46,131 @@ class _RegisterPageState extends State<RegisterPage> {
       await SecureStorage.saveUser(userId: res.data['user']['id'], username: res.data['user']['username']);
       if (mounted) context.go('/home');
     } on DioException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.response?.data?['error'] ?? 'Registration failed'), backgroundColor: AppColors.red));
+      setState(() => _errorMsg = e.response?.data?['error'] ?? 'Registration failed. Please try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  String? _passwordStrength(String? v) {
+    if (v == null || v.isEmpty) return 'Password is required';
+    if (v.length < 6) return 'Minimum 6 characters required';
+    return null;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Complete Registration')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              TextFormField(
-                controller: _usernameCtrl,
-                decoration: const InputDecoration(labelText: 'Choose Username'),
-                validator: (v) => (v?.length ?? 0) >= 3 ? null : 'Min 3 characters',
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _passCtrl,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'Set Password'),
-                validator: (v) => (v?.length ?? 0) >= 6 ? null : 'Min 6 characters',
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _refCtrl,
-                decoration: const InputDecoration(labelText: 'Referral Code (optional)'),
-              ),
-              const SizedBox(height: 32),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _loading ? null : _register,
-                  child: _loading ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black)) : const Text('Create Account'),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Create Your Account',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 6),
+                Text('Registering for +91 ${widget.phone}',
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 14)),
+                const SizedBox(height: 32),
+                TextFormField(
+                  controller: _usernameCtrl,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(
+                    labelText: 'Username',
+                    hintText: 'e.g. lucky_player07',
+                    prefixIcon: Icon(Icons.person_rounded, color: AppColors.textSecondary, size: 20),
+                  ),
+                  validator: (v) {
+                    if ((v?.length ?? 0) < 3) return 'Min 3 characters';
+                    if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(v!)) return 'Only letters, numbers and _ allowed';
+                    return null;
+                  },
                 ),
-              ),
-            ],
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _passCtrl,
+                  obscureText: _obscure,
+                  textInputAction: TextInputAction.next,
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    prefixIcon: const Icon(Icons.lock_rounded, color: AppColors.textSecondary, size: 20),
+                    suffixIcon: IconButton(
+                      icon: Icon(_obscure ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                          color: AppColors.textSecondary, size: 20),
+                      onPressed: () => setState(() => _obscure = !_obscure),
+                    ),
+                  ),
+                  validator: _passwordStrength,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _confirmCtrl,
+                  obscureText: _obscure2,
+                  textInputAction: TextInputAction.next,
+                  decoration: InputDecoration(
+                    labelText: 'Confirm Password',
+                    prefixIcon: const Icon(Icons.lock_outline_rounded, color: AppColors.textSecondary, size: 20),
+                    suffixIcon: IconButton(
+                      icon: Icon(_obscure2 ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                          color: AppColors.textSecondary, size: 20),
+                      onPressed: () => setState(() => _obscure2 = !_obscure2),
+                    ),
+                  ),
+                  validator: (v) => v == _passCtrl.text ? null : 'Passwords do not match',
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _refCtrl,
+                  textCapitalization: TextCapitalization.characters,
+                  textInputAction: TextInputAction.done,
+                  decoration: const InputDecoration(
+                    labelText: 'Referral Code (optional)',
+                    prefixIcon: Icon(Icons.card_giftcard_rounded, color: AppColors.textSecondary, size: 20),
+                    helperText: 'Get ₹50 bonus when your friend deposits',
+                    helperStyle: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  ),
+                ),
+                if (_errorMsg != null) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.red.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.red.withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.error_outline, color: AppColors.red, size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(_errorMsg!, style: const TextStyle(color: AppColors.red, fontSize: 13))),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _loading ? null : _register,
+                    child: _loading
+                        ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                        : const Text('Create Account'),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Center(
+                  child: Text('By registering you agree to our Terms of Service',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -5,10 +5,10 @@ import { adminApi } from '../api/client'
 const GAME_LABELS: Record<string, string> = {
   teen_patti: '🃏 Teen Patti',
   aviator: '✈️ Aviator',
-  rummy: '🎴 Rummy',
   ludo: '🎲 Ludo',
   matka: '🎯 Matka',
   lottery: '🎰 Lottery',
+  cricket: '🏏 Cricket',
 }
 
 export default function GameConfig() {
@@ -24,7 +24,13 @@ export default function GameConfig() {
   const saveConfig = async (gameType: string, values: any) => {
     setSaving(gameType)
     try {
-      await adminApi.patch(`/game-configs/${gameType}`, values)
+      // Pull the Aviator economics fields into the special_rules payload.
+      const { house_edge_percent, max_win, min_bet, max_bet, betting_time_ms, ...rest } = values
+      const payload: any = { ...rest }
+      if (gameType === 'aviator') {
+        payload.special_rules = { house_edge_percent, max_win, min_bet, max_bet, betting_time_ms }
+      }
+      await adminApi.patch(`/game-configs/${gameType}`, payload)
       message.success(`${GAME_LABELS[gameType]} config saved!`)
     } catch {
       message.error('Failed to save config')
@@ -41,7 +47,7 @@ export default function GameConfig() {
           >
             <Form
               layout="vertical"
-              initialValues={cfg}
+              initialValues={{ ...cfg, ...(cfg.special_rules || {}) }}
               onFinish={(values) => saveConfig(cfg.game_type, values)}
             >
               <Form.Item name="is_active" label="Game Active" valuePropName="checked">
@@ -50,6 +56,26 @@ export default function GameConfig() {
               <Form.Item name="rake_percent" label="Rake % (Platform Fee)">
                 <InputNumber min={0} max={20} step={0.5} suffix="%" style={{ width: '100%' }} />
               </Form.Item>
+              {cfg.game_type === 'aviator' && (
+                <>
+                  <Divider>Aviator Economics 💰</Divider>
+                  <Form.Item name="house_edge_percent" label="House Edge % (instant-crash rate → profit margin)">
+                    <InputNumber min={0} max={20} step={0.5} suffix="%" style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Form.Item name="max_win" label="Max Win Cap (₹, 0 = unlimited)">
+                    <InputNumber min={0} step={1000} style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Form.Item name="min_bet" label="Min Bet (₹)">
+                    <InputNumber min={1} step={10} style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Form.Item name="max_bet" label="Max Bet (₹)">
+                    <InputNumber min={10} step={100} style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Form.Item name="betting_time_ms" label="Betting Window (ms)">
+                    <InputNumber min={2000} max={15000} step={500} style={{ width: '100%' }} />
+                  </Form.Item>
+                </>
+              )}
               <Divider>Bot Settings</Divider>
               <Form.Item name="bot_fill_enabled" label="Bot Fill Enabled" valuePropName="checked">
                 <Switch checkedChildren="Yes" unCheckedChildren="No" />

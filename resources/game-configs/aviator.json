@@ -1,0 +1,15 @@
+{
+  "id": "aviator",
+  "displayName": "Aviator",
+  "enabled": true,
+  "houseEdgePercent": 3,
+  "bettingWindowSeconds": 5,
+  "tickIntervalMs": 100,
+  "minBet": 10,
+  "maxBet": 10000,
+  "maxAutoCashoutMultiplier": 100,
+  "provablyFair": {
+    "algorithm": "HMAC-SHA256",
+    "revealServerSeedAfterRound": true
+  }
+}

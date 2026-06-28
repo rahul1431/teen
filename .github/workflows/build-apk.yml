@@ -26,25 +26,45 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.0'
+          flutter-version: '3.27.4'
           channel: stable
           cache: true
 
-      - name: Write google-services.json
+      - name: Verify google-services.json
         working-directory: mobile/android/app
-        env:
-          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-        run: echo "$GOOGLE_SERVICES_JSON" | base64 -d > google-services.json
+        run: |
+          # The valid google-services.json is committed to the repo. We do NOT
+          # overwrite it from a secret, since a malformed secret breaks the
+          # Gradle processReleaseGoogleServices task. Just verify it parses.
+          python3 -c "import json; json.load(open('google-services.json'))" \
+            && echo "Bundled google-services.json is valid JSON." \
+            || { echo "ERROR: bundled google-services.json is invalid"; exit 1; }
+          ls -la google-services.json
 
       - name: Write app config
         working-directory: mobile
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          SOCKET_URL: ${{ secrets.SOCKET_URL }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
         run: |
-          cat > lib/core/constants/app_config.dart << 'EOF'
+          # Fall back to the production HTTPS host when the secret is unset/empty
+          API_BASE_URL="${API_BASE_URL:-https://game.myonlinejoker.com}"
+          SOCKET_URL="${SOCKET_URL:-https://game.myonlinejoker.com}"
+          RAZORPAY_KEY_ID="${RAZORPAY_KEY_ID:-rzp_test_placeholder}"
+          # Strip leading/trailing whitespace — a SOCKET_URL secret with a stray
+          # trailing space compiles fine but makes the socket fail host lookup
+          # (getaddrinfo errno 7) while leaving HTTP/Dio unaffected.
+          API_BASE_URL="$(printf '%s' "$API_BASE_URL" | xargs)"
+          SOCKET_URL="$(printf '%s' "$SOCKET_URL" | xargs)"
+          RAZORPAY_KEY_ID="$(printf '%s' "$RAZORPAY_KEY_ID" | xargs)"
+          cat > lib/core/constants/app_config.dart << EOF
           class AppConfig {
-            static const String apiBaseUrl = '${{ secrets.API_BASE_URL }}';
-            static const String socketUrl = '${{ secrets.SOCKET_URL }}';
-            static const String razorpayKeyId = '${{ secrets.RAZORPAY_KEY_ID }}';
+            static const String apiBaseUrl = '${API_BASE_URL}';
+            static const String socketUrl = '${SOCKET_URL}';
+            static const String razorpayKeyId = '${RAZORPAY_KEY_ID}';
             static const String appName = 'MyOnlineJoker';
+            static const String appVersion = '1.0.0';
           }
           EOF
 

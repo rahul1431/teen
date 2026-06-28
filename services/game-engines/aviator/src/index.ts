@@ -1,8 +1,8 @@
 import 'dotenv/config'
+import '@fastify/jwt'
 import Fastify from 'fastify'
 import { createServer } from 'http'
-import { Server } from 'socket.io'
-import { createAdapter } from '@socket.io/redis-adapter'
+import { WebSocketServer, WebSocket } from 'ws'
 import Redis from 'ioredis'
 import { Pool } from 'pg'
 import crypto from 'crypto'
@@ -10,8 +10,26 @@ import { v4 as uuid } from 'uuid'
 
 const app = Fastify({ logger: false })
 const db = new Pool({ connectionString: process.env.DATABASE_URL!, max: 10 })
-const pubClient = new Redis(process.env.REDIS_URL!)
-const subClient = pubClient.duplicate()
+const pubClient = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
+
+// ── Raw WebSocket transport (replaced socket.io) ──────────────────────────
+interface AvConn { ws: WebSocket; userId: string; username: string }
+const conns = new Set<AvConn>()
+
+function broadcast(event: string, data: unknown): void {
+  const msg = JSON.stringify({ event, data })
+  for (const c of conns) {
+    if (c.ws.readyState === WebSocket.OPEN) {
+      try { c.ws.send(msg) } catch { /* gone */ }
+    }
+  }
+}
+
+function send(ws: WebSocket, event: string, data: unknown): void {
+  if (ws.readyState === WebSocket.OPEN) {
+    try { ws.send(JSON.stringify({ event, data })) } catch { /* gone */ }
+  }
+}
 
 interface RoundState {
   roundId: string
@@ -19,7 +37,7 @@ interface RoundState {
   status: 'betting' | 'flying' | 'crashed'
   crashAt: number
   currentMultiplier: number
-  bets: Record<string, { userId: string; amount: number; cashedOut: boolean; cashoutMultiplier?: number }>
+  bets: Record<string, { userId: string; username: string; amount: number; cashedOut: boolean; betIndex: number; cashoutMultiplier?: number }>
   history: number[]
   startedAt?: number
 }
@@ -27,17 +45,62 @@ interface RoundState {
 let currentRound: RoundState | null = null
 let flyingInterval: NodeJS.Timeout | null = null
 
-// Provably fair crash point using HMAC-SHA256 hash chain
+// ── Admin-configurable economics (loaded from game_configs) ────────────────
+interface AviatorConfig {
+  isActive: boolean
+  houseEdgePercent: number // instant-crash probability → the house margin
+  rakePercent: number      // commission taken from winnings on cashout
+  maxWin: number           // cap on payout per round (0 = unlimited)
+  minBet: number
+  maxBet: number
+  bettingTimeMs: number
+}
+
+const aviatorConfig: AviatorConfig = {
+  isActive: true,
+  houseEdgePercent: 3,
+  rakePercent: 5,
+  maxWin: 0,
+  minBet: 10,
+  maxBet: 5000,
+  bettingTimeMs: 5000,
+}
+
+async function loadConfig(): Promise<void> {
+  try {
+    const res = await db.query(
+      `SELECT is_active, rake_percent, special_rules FROM game_configs WHERE game_type = 'aviator'`
+    )
+    if (res.rows.length === 0) return
+    const row = res.rows[0]
+    const sr = row.special_rules || {}
+    aviatorConfig.isActive = row.is_active
+    aviatorConfig.rakePercent = Number(row.rake_percent ?? aviatorConfig.rakePercent)
+    aviatorConfig.houseEdgePercent = Number(sr.house_edge_percent ?? aviatorConfig.houseEdgePercent)
+    aviatorConfig.maxWin = Number(sr.max_win ?? aviatorConfig.maxWin)
+    aviatorConfig.minBet = Number(sr.min_bet ?? aviatorConfig.minBet)
+    aviatorConfig.maxBet = Number(sr.max_bet ?? aviatorConfig.maxBet)
+    aviatorConfig.bettingTimeMs = Number(sr.betting_time_ms ?? aviatorConfig.bettingTimeMs)
+  } catch (err) {
+    console.error('Failed to load aviator config, using current values', err)
+  }
+}
+
+// Provably fair crash point using HMAC-SHA256 hash chain.
+// The house edge sets the probability of an instant 1.00x crash.
 function generateCrashPoint(serverSeed: string, roundId: string): number {
   const hash = crypto.createHmac('sha256', serverSeed).update(roundId).digest('hex')
   const h = parseInt(hash.slice(0, 8), 16)
-  if (h % 33 === 0) return 1.00 // house edge ~3%
   const e = Math.pow(2, 32)
+  // Instant-crash band sized to the configured house edge (e.g. 3% → 3% of rounds bust at 1.00x).
+  const instantCrashCutoff = Math.floor((e * aviatorConfig.houseEdgePercent) / 100)
+  if (h < instantCrashCutoff) return 1.00
   const crash = Math.floor((100 * e - h) / (e - h)) / 100
   return Math.max(1.00, crash)
 }
 
-async function startBettingPhase(io: Server) {
+async function startBettingPhase() {
+  await loadConfig() // pick up live admin changes each round
   const roundId = uuid()
   const serverSeed = crypto.randomBytes(32).toString('hex')
   const crashAt = generateCrashPoint(serverSeed, roundId)
@@ -54,43 +117,43 @@ async function startBettingPhase(io: Server) {
 
   await pubClient.setex(`aviator:round:${roundId}`, 600, JSON.stringify(currentRound))
 
-  io.emit('aviator:round_start', {
+  broadcast('aviator:round_start', {
     round_id: roundId,
-    betting_time_ms: 5000,
+    betting_time_ms: aviatorConfig.bettingTimeMs,
     history: currentRound.history,
   })
 
-  setTimeout(() => startFlyingPhase(io), 5000)
+  setTimeout(() => startFlyingPhase(), aviatorConfig.bettingTimeMs)
 }
 
-async function startFlyingPhase(io: Server) {
+async function startFlyingPhase() {
   if (!currentRound) return
   currentRound.status = 'flying'
   currentRound.startedAt = Date.now()
   const crashAt = currentRound.crashAt
 
-  io.emit('aviator:flying_start', { round_id: currentRound.roundId })
+  broadcast('aviator:flying_start', { round_id: currentRound.roundId })
 
-  let multiplier = 1.00
+  let rawMultiplier = 1.00
   flyingInterval = setInterval(async () => {
-    multiplier += 0.01 * multiplier * 0.07 // exponential growth curve
-    multiplier = Math.round(multiplier * 100) / 100
+    rawMultiplier += 0.012 * rawMultiplier // exponential growth curve
+    const multiplier = Math.round(rawMultiplier * 100) / 100
 
     if (currentRound) currentRound.currentMultiplier = multiplier
 
-    io.emit('aviator:multiplier_tick', {
+    broadcast('aviator:multiplier_tick', {
       round_id: currentRound?.roundId,
       multiplier,
     })
 
     if (multiplier >= crashAt) {
       clearInterval(flyingInterval!)
-      await crashRound(io, crashAt)
+      await crashRound(crashAt)
     }
   }, 100)
 }
 
-async function crashRound(io: Server, crashAt: number) {
+async function crashRound(crashAt: number) {
   if (!currentRound) return
   currentRound.status = 'crashed'
 
@@ -98,9 +161,11 @@ async function crashRound(io: Server, crashAt: number) {
   for (const bet of Object.values(currentRound.bets)) {
     if (bet.cashedOut && bet.cashoutMultiplier) {
       const prize = bet.amount * bet.cashoutMultiplier
-      const rake = prize * 0.05
-      const net = prize - rake - bet.amount // net profit after returning stake
-      await creditWallet(bet.userId, bet.amount + net, currentRound.roundId)
+      const rake = prize * (aviatorConfig.rakePercent / 100)
+      let payout = prize - rake
+      // Apply the admin max-win cap (0 = unlimited) to limit tail-risk payouts.
+      if (aviatorConfig.maxWin > 0) payout = Math.min(payout, aviatorConfig.maxWin)
+      await creditWallet(bet.userId, payout, currentRound.roundId, bet.betIndex)
     }
   }
 
@@ -108,7 +173,7 @@ async function crashRound(io: Server, crashAt: number) {
   await pubClient.lpush('aviator:history', crashAt.toString())
   await pubClient.ltrim('aviator:history', 0, 49)
 
-  io.emit('aviator:crashed', {
+  broadcast('aviator:crashed', {
     round_id: currentRound.roundId,
     crash_at: crashAt,
     server_seed: currentRound.serverSeed, // revealed after crash for provable fairness
@@ -117,10 +182,10 @@ async function crashRound(io: Server, crashAt: number) {
   currentRound = null
 
   // Start next round after 3 seconds
-  setTimeout(() => startBettingPhase(io), 3000)
+  setTimeout(() => startBettingPhase(), 3000)
 }
 
-async function creditWallet(userId: string, amount: number, referenceId: string) {
+async function creditWallet(userId: string, amount: number, referenceId: string, betIndex: number) {
   try {
     await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit`, {
       method: 'POST',
@@ -130,7 +195,7 @@ async function creditWallet(userId: string, amount: number, referenceId: string)
         amount: Math.round(amount * 100) / 100,
         type: 'game_credit',
         reference_id: referenceId,
-        idempotency_key: `aviator_cashout_${userId}_${referenceId}`,
+        idempotency_key: `aviator_cashout_${userId}_${referenceId}_${betIndex}`,
       }),
     })
   } catch (err) {
@@ -148,31 +213,30 @@ async function start() {
   await app.register(require('@fastify/cors'), { origin: true })
 
   const httpServer = createServer(app.server)
-  const io = new Server(httpServer, {
-    cors: { origin: '*', methods: ['GET', 'POST'] },
-    path: '/aviator',
-  })
+  if (pubClient.status === 'wait') await pubClient.connect()
 
-  await Promise.all([pubClient.connect(), subClient.connect()])
-  io.adapter(createAdapter(pubClient, subClient))
+  const wss = new WebSocketServer({ server: httpServer, path: '/ws/aviator' })
 
-  io.use(async (socket, next) => {
+  wss.on('connection', (ws: WebSocket, req) => {
+    let userId: string, username: string
     try {
-      const token = socket.handshake.auth.token
-      if (!token) return next(new Error('No token'))
+      const u = new URL(req.url || '', 'http://localhost')
+      const token = u.searchParams.get('token') || req.headers.authorization?.split(' ')[1]
+      if (!token) { ws.close(4001, 'No token'); return }
       const payload = (app.jwt as any).verify(token) as any
-      socket.data.userId = payload.sub
-      socket.data.username = payload.username
-      next()
+      userId = payload.sub
+      username = payload.username
     } catch {
-      next(new Error('Invalid token'))
+      ws.close(4001, 'Invalid token')
+      return
     }
-  })
 
-  io.on('connection', (socket) => {
+    const conn: AvConn = { ws, userId, username }
+    conns.add(conn)
+
     // Send current round state on connect
     if (currentRound) {
-      socket.emit('aviator:round_state', {
+      send(ws, 'aviator:round_state', {
         round_id: currentRound.roundId,
         status: currentRound.status,
         multiplier: currentRound.currentMultiplier,
@@ -180,67 +244,92 @@ async function start() {
       })
     }
 
-    socket.on('aviator:place_bet', async ({ amount }: any) => {
-      if (!currentRound || currentRound.status !== 'betting') {
-        return socket.emit('error', { message: 'Betting phase not active' })
-      }
-      if (!amount || amount < 10) return socket.emit('error', { message: 'Min bet is ₹10' })
+    ws.on('message', async (raw) => {
+      let msg: any
+      try { msg = JSON.parse(raw.toString()) } catch { return }
+      const { event, data } = msg || {}
 
-      // Deduct from wallet
-      try {
-        const res = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-          body: JSON.stringify({ user_id: socket.data.userId, amount, room_id: currentRound.roundId }),
-        })
-        if (!res.ok) {
-          const err = await res.json() as any
-          return socket.emit('error', { message: err.error || 'Insufficient balance' })
+      if (event === 'aviator:place_bet') {
+        const amount = data?.amount
+        const betIndex = Number(data?.bet_index ?? 1)
+        if (betIndex !== 1 && betIndex !== 2) {
+          return send(ws, 'error', { message: 'Invalid bet index' })
         }
-      } catch {
-        return socket.emit('error', { message: 'Wallet service unavailable' })
+        if (!currentRound || currentRound.status !== 'betting') {
+          return send(ws, 'error', { message: 'Betting phase not active' })
+        }
+        if (!amount || amount < aviatorConfig.minBet) {
+          return send(ws, 'error', { message: `Min bet is ₹${aviatorConfig.minBet}` })
+        }
+        if (amount > aviatorConfig.maxBet) {
+          return send(ws, 'error', { message: `Max bet is ₹${aviatorConfig.maxBet}` })
+        }
+        try {
+          const res = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+            body: JSON.stringify({ user_id: userId, amount, room_id: `${currentRound.roundId}_${betIndex}` }),
+          })
+          if (!res.ok) {
+            const err = await res.json() as any
+            return send(ws, 'error', { message: err.error || 'Insufficient balance' })
+          }
+        } catch {
+          return send(ws, 'error', { message: 'Wallet service unavailable' })
+        }
+
+        const betKey = `${userId}_${betIndex}`
+        currentRound.bets[betKey] = { userId, username, amount, cashedOut: false, betIndex }
+        send(ws, 'aviator:bet_placed', { amount, round_id: currentRound.roundId, bet_index: betIndex })
+        broadcast('aviator:live_bets', {
+          bets: Object.values(currentRound.bets).map(b => ({
+            username: b.username,
+            amount: b.amount,
+            cashed_out: b.cashedOut,
+            cashout_multiplier: b.cashoutMultiplier,
+          })),
+        })
+        return
       }
 
-      currentRound.bets[socket.data.userId] = {
-        userId: socket.data.userId,
-        amount,
-        cashedOut: false,
-      }
+      if (event === 'aviator:cashout') {
+        if (!currentRound || currentRound.status !== 'flying') {
+          return send(ws, 'error', { message: 'Not in flying phase' })
+        }
+        const betIndex = Number(data?.bet_index ?? 1)
+        const betKey = `${userId}_${betIndex}`
+        const bet = currentRound.bets[betKey]
+        if (!bet || bet.cashedOut) return send(ws, 'error', { message: `No active bet for panel ${betIndex}` })
 
-      socket.emit('aviator:bet_placed', { amount, round_id: currentRound.roundId })
-      io.emit('aviator:live_bets', {
-        bets: Object.values(currentRound.bets).map(b => ({
-          username: socket.data.username,
-          amount: b.amount,
-          cashed_out: b.cashedOut,
-          cashout_multiplier: b.cashoutMultiplier,
-        }))
-      })
+        const multiplier = currentRound.currentMultiplier
+        bet.cashedOut = true
+        bet.cashoutMultiplier = multiplier
+        const prize = bet.amount * multiplier
+        send(ws, 'aviator:cashed_out', { multiplier, prize, amount: bet.amount, bet_index: betIndex })
+        
+        broadcast('aviator:live_bets', {
+          bets: Object.values(currentRound.bets).map(b => ({
+            username: b.username,
+            amount: b.amount,
+            cashed_out: b.cashedOut,
+            cashout_multiplier: b.cashoutMultiplier,
+          })),
+        })
+        return
+      }
     })
 
-    socket.on('aviator:cashout', async () => {
-      if (!currentRound || currentRound.status !== 'flying') {
-        return socket.emit('error', { message: 'Not in flying phase' })
-      }
-      const bet = currentRound.bets[socket.data.userId]
-      if (!bet || bet.cashedOut) return socket.emit('error', { message: 'No active bet' })
-
-      const multiplier = currentRound.currentMultiplier
-      bet.cashedOut = true
-      bet.cashoutMultiplier = multiplier
-
-      const prize = bet.amount * multiplier
-      socket.emit('aviator:cashed_out', { multiplier, prize, amount: bet.amount })
-    })
+    ws.on('close', () => { conns.delete(conn) })
+    ws.on('error', () => { conns.delete(conn) })
   })
 
   app.get('/health', async () => ({ status: 'ok', service: 'aviator-engine' }))
 
   const port = parseInt(process.env.PORT || '3005')
   httpServer.listen(port, '0.0.0.0', () => {
-    console.log(`Aviator engine running on port ${port}`)
+    console.log(`Aviator engine running on port ${port} (raw WebSocket /ws/aviator)`)
     // Start first round
-    setTimeout(() => startBettingPhase(io), 2000)
+    setTimeout(() => startBettingPhase(), 2000)
   })
 }
 

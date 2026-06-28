@@ -1,0 +1,289 @@
+// ── Ludo rules engine (pure, no I/O) ──────────────────────────────────────
+//
+// Board model (standard 4-player Ludo):
+//  - One shared 52-cell main track, absolute cells 0..51.
+//  - Each seat has a fixed start offset on that track:
+//      seat 0 → 0, seat 1 → 13, seat 2 → 26, seat 3 → 39.
+//  - A token's per-player "progress" runs 0..57:
+//      -1            → in base (yard), needs a 6 to enter play
+//       0..50        → on the main track; absolute cell = (offset + progress) % 52
+//       51..56       → in the 6-cell home column (private to that seat)
+//       57           → HOME (finished); reached only by an exact roll
+//  - Safe cells (no capture): every seat start (0,13,26,39) and the four
+//    star squares (8,21,34,47), all in absolute-cell terms.
+
+export const MAIN_TRACK = 52
+export const HOME_PROGRESS = 57
+export const TOKENS_PER_PLAYER = 4
+export const START_OFFSETS = [0, 13, 26, 39]
+export const SAFE_CELLS = new Set([0, 8, 13, 21, 26, 34, 39, 47])
+export const COLORS = ['red', 'green', 'yellow', 'blue']
+
+export interface LudoPlayer {
+  user_id: string
+  username: string
+  seat: number          // 1-based seat number from the gateway
+  is_bot: boolean
+  color: string
+  tokens: number[]       // progress for each of the 4 tokens
+  finished: number       // count of tokens that reached HOME
+  status: string         // 'active' | 'finished'
+}
+
+export interface LudoState {
+  room_id: string
+  game_type: 'ludo'
+  stake: number
+  players: LudoPlayer[]
+  status: 'active' | 'completed'
+  current_turn: number   // index into players[]
+  dice: number | null    // last rolled value (null before a roll)
+  movable_tokens: number[] // token indices the current player may move now
+  awaiting: 'roll' | 'move'
+  consecutive_sixes: number
+  winner_id: string | null
+  round: number
+  created_at: number
+}
+
+export interface ActionResult {
+  winner_id: string
+  prize: number
+  rake_fee: number
+  rankings: { user_id: string; finished: number }[]
+}
+
+/** Absolute main-track cell for a token, or -1 if in base/home column. */
+export function absoluteCell(seatIndex: number, progress: number): number {
+  if (progress < 0 || progress > 50) return -1
+  return (START_OFFSETS[seatIndex % 4] + progress) % MAIN_TRACK
+}
+
+export function createInitialState(
+  roomId: string,
+  stake: number,
+  players: { user_id: string; username: string; seat: number; is_bot: boolean }[],
+): LudoState {
+  return {
+    room_id: roomId,
+    game_type: 'ludo',
+    stake,
+    players: players.map((p, i) => ({
+      user_id: p.user_id,
+      username: p.username,
+      seat: p.seat,
+      is_bot: p.is_bot,
+      color: COLORS[i % 4],
+      tokens: [-1, -1, -1, -1],
+      finished: 0,
+      status: 'active',
+    })),
+    status: 'active',
+    current_turn: 0,
+    dice: null,
+    movable_tokens: [],
+    awaiting: 'roll',
+    consecutive_sixes: 0,
+    winner_id: null,
+    round: 1,
+    created_at: Date.now(),
+  }
+}
+
+/** Which of a player's tokens can legally move with the given dice value. */
+export function movableTokens(state: LudoState, playerIdx: number, dice: number): number[] {
+  const player = state.players[playerIdx]
+  const movable: number[] = []
+  for (let t = 0; t < player.tokens.length; t++) {
+    const prog = player.tokens[t]
+    if (prog === HOME_PROGRESS) continue          // already home
+    if (prog === -1) {
+      if (dice === 6) movable.push(t)              // only a 6 leaves base
+      continue
+    }
+    if (prog + dice <= HOME_PROGRESS) movable.push(t) // must not overshoot home
+  }
+  return movable
+}
+
+/**
+ * Apply a dice roll for the current player. Returns the updated state and a
+ * flag describing what happens next:
+ *  - awaiting 'move'  → player must choose a token (movable_tokens populated)
+ *  - awaiting 'roll'  → no legal move; turn passed to the next player
+ */
+export function applyRoll(state: LudoState, dice: number): LudoState {
+  const idx = state.current_turn
+  state.dice = dice
+
+  // Three consecutive 6s forfeits the turn (anti-stalling rule).
+  if (dice === 6) {
+    state.consecutive_sixes += 1
+    if (state.consecutive_sixes >= 3) {
+      state.consecutive_sixes = 0
+      passTurn(state)
+      return state
+    }
+  }
+
+  const movable = movableTokens(state, idx, dice)
+  if (movable.length === 0) {
+    // No move possible. A 6 with nothing to move still ends the turn.
+    if (dice !== 6) state.consecutive_sixes = 0
+    passTurn(state)
+    return state
+  }
+
+  state.movable_tokens = movable
+  state.awaiting = 'move'
+  return state
+}
+
+/**
+ * Move one token of the current player. Returns { state, result } where result
+ * is non-null once a player has gotten all four tokens home.
+ */
+export function applyMove(
+  state: LudoState,
+  tokenIndex: number,
+): { state: LudoState; result: ActionResult | null } {
+  const idx = state.current_turn
+  const player = state.players[idx]
+  const dice = state.dice ?? 0
+
+  if (!state.movable_tokens.includes(tokenIndex)) {
+    // Illegal pick — leave state untouched for the caller to reject.
+    return { state, result: null }
+  }
+
+  let capturedSomething = false
+  const prog = player.tokens[tokenIndex]
+
+  if (prog === -1) {
+    // Enter play onto the seat's start cell.
+    player.tokens[tokenIndex] = 0
+  } else {
+    player.tokens[tokenIndex] = prog + dice
+  }
+
+  const newProg = player.tokens[tokenIndex]
+  let reachedHome = false
+
+  if (newProg === HOME_PROGRESS) {
+    player.finished += 1
+    reachedHome = true
+    if (player.finished >= TOKENS_PER_PLAYER) player.status = 'finished'
+  } else {
+    // Capture: if we landed on a non-safe main-track cell holding exactly one
+    // opponent token, send that token back to base.
+    const landedCell = absoluteCell(idx, newProg)
+    if (landedCell !== -1 && !SAFE_CELLS.has(landedCell)) {
+      capturedSomething = captureAt(state, idx, landedCell)
+    }
+  }
+
+  // Decide the next turn. A 6, a capture, or sending a token home grants an
+  // extra roll; otherwise play passes on.
+  const extraTurn = dice === 6 || capturedSomething || reachedHome
+
+  state.dice = null
+  state.movable_tokens = []
+  state.awaiting = 'roll'
+
+  // Win: first player to bring all four tokens home takes the pot.
+  if (player.status === 'finished') {
+    return { state, result: buildResult(state, player) }
+  }
+
+  if (!extraTurn) {
+    state.consecutive_sixes = 0
+    passTurn(state)
+  }
+
+  return { state, result: null }
+}
+
+/** Send any single opponent token on `cell` back to base. Returns true if so. */
+function captureAt(state: LudoState, moverIdx: number, cell: number): boolean {
+  for (let p = 0; p < state.players.length; p++) {
+    if (p === moverIdx) continue
+    const other = state.players[p]
+    const here: number[] = []
+    for (let t = 0; t < other.tokens.length; t++) {
+      if (absoluteCell(p, other.tokens[t]) === cell) here.push(t)
+    }
+    // A blockade (2+ tokens) is not capturable.
+    if (here.length === 1) {
+      other.tokens[here[0]] = -1
+      return true
+    }
+  }
+  return false
+}
+
+function passTurn(state: LudoState): void {
+  state.awaiting = 'roll'
+  state.dice = null
+  state.movable_tokens = []
+  const n = state.players.length
+  let next = state.current_turn
+  // Skip players who have already finished all four tokens.
+  for (let i = 0; i < n; i++) {
+    next = (next + 1) % n
+    if (state.players[next].status !== 'finished') break
+  }
+  if (next <= state.current_turn) state.round += 1
+  state.current_turn = next
+}
+
+function buildResult(state: LudoState, winner: LudoPlayer): ActionResult {
+  const pot = state.stake * state.players.length
+  const rakeFee = Math.round(pot * 0.05 * 100) / 100
+  const prize = Math.round((pot - rakeFee) * 100) / 100
+  state.status = 'completed'
+  state.winner_id = winner.user_id
+  return {
+    winner_id: winner.user_id,
+    prize,
+    rake_fee: rakeFee,
+    rankings: [...state.players]
+      .sort((a, b) => b.finished - a.finished)
+      .map(p => ({ user_id: p.user_id, finished: p.finished })),
+  }
+}
+
+/** Crypto-free fair die (1..6). The engine is server-authoritative. */
+export function rollDie(): number {
+  return Math.floor(Math.random() * 6) + 1
+}
+
+/**
+ * Pick a token for a bot to move from the allowed set. Strategy: prefer a
+ * capture, then advancing a token toward home, then leaving base.
+ */
+export function chooseBotToken(state: LudoState, playerIdx: number, dice: number): number {
+  const movable = movableTokens(state, playerIdx, dice)
+  if (movable.length === 0) return -1
+  const player = state.players[playerIdx]
+
+  // Prefer a move that captures an opponent.
+  for (const t of movable) {
+    const prog = player.tokens[t]
+    if (prog === -1) continue
+    const cell = absoluteCell(playerIdx, prog + dice)
+    if (cell !== -1 && !SAFE_CELLS.has(cell)) {
+      for (let p = 0; p < state.players.length; p++) {
+        if (p === playerIdx) continue
+        const here = state.players[p].tokens.filter((tp) => absoluteCell(p, tp) === cell)
+        if (here.length === 1) return t
+      }
+    }
+  }
+
+  // Otherwise advance the most-progressed movable token.
+  let best = movable[0]
+  for (const t of movable) {
+    if (player.tokens[t] > player.tokens[best]) best = t
+  }
+  return best
+}

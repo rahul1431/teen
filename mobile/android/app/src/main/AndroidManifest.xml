@@ -5,6 +5,7 @@
     <application
         android:label="MyOnlineJoker"
         android:name="${applicationName}"
+        android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
@@ -25,8 +26,9 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="myonlinejoker"/>
             </intent-filter>
+            <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme"/>
         </activity>
-        <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme"/>
+        <meta-data android:name="flutterEmbedding" android:value="2"/>
         <service android:name="com.google.firebase.messaging.FirebaseMessagingService" android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT"/>
@@ -34,5 +36,6 @@
         </service>
         <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@mipmap/ic_launcher"/>
         <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/notification_color"/>
+        <meta-data android:name="io.flutter.embedding.android.EnableHardwareAcceleration" android:value="true" />
     </application>
 </manifest>

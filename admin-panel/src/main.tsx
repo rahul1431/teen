@@ -6,10 +6,19 @@ import Login from './pages/Login'
 import AdminLayout from './pages/Layout'
 import Dashboard from './pages/Dashboard'
 import Users from './pages/Users'
-import GameRooms from './pages/GameRooms'
+import Bots from './pages/Bots'
 import Finance from './pages/Finance'
 import Notifications from './pages/Notifications'
-import GameConfig from './pages/GameConfig'
+import AdminUsers from './pages/AdminUsers'
+import Profile from './pages/Profile'
+import RiskCenter from './pages/RiskCenter'
+import Support from './pages/Support'
+import TeenPatti from './pages/games/TeenPatti'
+import Ludo from './pages/games/Ludo'
+import Aviator from './pages/games/Aviator'
+import Matka from './pages/games/Matka'
+import Lottery from './pages/games/Lottery'
+import Cricket from './pages/games/Cricket'
 import { useAuthStore } from './store/auth'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -20,16 +29,25 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <ConfigProvider theme={{ algorithm: theme.defaultAlgorithm, token: { colorPrimary: '#d4af37', borderRadius: 8 } }}>
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.VITE_ROUTER_BASE || undefined}>
       <Routes>
         <Route path="/admin/login" element={<Login />} />
         <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
           <Route index element={<Dashboard />} />
           <Route path="users" element={<Users />} />
-          <Route path="game-rooms" element={<GameRooms />} />
+          <Route path="bots" element={<Bots />} />
           <Route path="finance" element={<Finance />} />
           <Route path="notifications" element={<Notifications />} />
-          <Route path="game-config" element={<GameConfig />} />
+          <Route path="games/teen-patti" element={<TeenPatti />} />
+          <Route path="games/ludo" element={<Ludo />} />
+          <Route path="games/aviator" element={<Aviator />} />
+          <Route path="games/matka" element={<Matka />} />
+          <Route path="games/lottery" element={<Lottery />} />
+          <Route path="games/cricket" element={<Cricket />} />
+          <Route path="admin-users" element={<AdminUsers />} />
+          <Route path="profile" element={<Profile />} />
+          <Route path="risk-center" element={<RiskCenter />} />
+          <Route path="support" element={<Support />} />
         </Route>
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>

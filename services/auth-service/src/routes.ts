@@ -14,8 +14,9 @@ export async function authRoutes(app: FastifyInstance) {
   // POST /auth/send-otp
   app.post('/auth/send-otp', async (req, reply) => {
     const body = z.object({ phone: z.string().regex(/^\d{10}$/) }).parse(req.body)
-    await sendOtp(body.phone)
-    return reply.send({ success: true, message: 'OTP sent' })
+    const devOtp = await sendOtp(body.phone)
+    // devOtp is only non-null in dev mode (OTP_PROVIDER != msg91)
+    return reply.send({ success: true, message: 'OTP sent', ...(devOtp ? { otp: devOtp } : {}) })
   })
 
   // POST /auth/register
@@ -135,6 +136,14 @@ export async function authRoutes(app: FastifyInstance) {
   app.post('/auth/logout', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as any
     await redis.del(`session:${user.sub}`)
+    return reply.send({ success: true })
+  })
+
+  // PUT /auth/fcm-token — register or refresh FCM push token
+  app.put('/auth/fcm-token', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as any
+    const { token } = z.object({ token: z.string().min(1) }).parse(req.body)
+    await db.query('UPDATE users SET fcm_token = $1, updated_at = NOW() WHERE id = $2', [token, user.sub])
     return reply.send({ success: true })
   })
 }

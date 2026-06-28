@@ -10,7 +10,7 @@ class ApiClient {
 
   ApiClient._internal() {
     dio = Dio(BaseOptions(
-      baseUrl: AppConfig.apiBaseUrl,
+      baseUrl: AppConfig.apiBaseUrl.trim(),
       connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 15),
       headers: {'Content-Type': 'application/json'},
@@ -43,7 +43,7 @@ class ApiClient {
     try {
       final refreshToken = await SecureStorage.getRefreshToken();
       if (refreshToken == null) return false;
-      final res = await Dio().post('${AppConfig.apiBaseUrl}/api/auth/refresh', data: {'refresh_token': refreshToken});
+      final res = await Dio().post('${AppConfig.apiBaseUrl.trim()}/api/auth/refresh', data: {'refresh_token': refreshToken});
       await SecureStorage.saveTokens(
         accessToken: res.data['access_token'],
         refreshToken: refreshToken,

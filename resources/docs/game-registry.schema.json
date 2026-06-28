@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Game Registry",
+  "type": "object",
+  "required": ["games"],
+  "properties": {
+    "games": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "type", "status", "engine"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "type": { "enum": ["multiplayer", "solo-crash"] },
+          "status": { "enum": ["live", "planned", "disabled"] },
+          "engine": { "type": "string" },
+          "minPlayers": { "type": "integer", "minimum": 1 },
+          "maxPlayers": { "type": "integer", "minimum": 1 },
+          "config": { "type": "string" },
+          "supportsBots": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

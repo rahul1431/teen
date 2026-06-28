@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+**/dist/
+build/
+*.tsbuildinfo
+
+# Go binaries
+services/game-engines/teen-patti/teen-patti-engine
+
+# Env / secrets
+.env
+**/.env
+*.env.local
+# Flutter
+mobile/.dart_tool/
+mobile/android/local.properties
+mobile/android/.gradle/
+mobile/android/app/release/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/build/
+mobile/.pub-cache/
+mobile/android/.gradle/
+*.apk
+
+# Runtime user uploads — keep the directory layout, ignore the content
+uploads/**/*
+!uploads/**/.gitkeep
+!uploads/**/README.md
+!uploads/README.md
+
+# Logs / OS
+*.log
+.DS_Store
+npm-debug.log*
+
+# IDE
+.idea/
+.vscode/

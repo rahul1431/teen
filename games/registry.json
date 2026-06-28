@@ -1,0 +1,49 @@
+{
+  "$schema": "../resources/docs/game-registry.schema.json",
+  "games": [
+    {
+      "id": "teen-patti",
+      "name": "Teen Patti",
+      "type": "multiplayer",
+      "status": "live",
+      "engine": "services/game-engines/teen-patti",
+      "minPlayers": 2,
+      "maxPlayers": 6,
+      "config": "resources/game-configs/teen-patti.json",
+      "supportsBots": true
+    },
+    {
+      "id": "aviator",
+      "name": "Aviator",
+      "type": "solo-crash",
+      "status": "live",
+      "engine": "services/game-engines/aviator",
+      "minPlayers": 1,
+      "maxPlayers": 1,
+      "config": "resources/game-configs/aviator.json",
+      "supportsBots": false
+    },
+    {
+      "id": "rummy",
+      "name": "Rummy",
+      "type": "multiplayer",
+      "status": "planned",
+      "engine": "services/game-engines/rummy",
+      "minPlayers": 2,
+      "maxPlayers": 6,
+      "config": "resources/game-configs/rummy.json",
+      "supportsBots": true
+    },
+    {
+      "id": "ludo",
+      "name": "Ludo",
+      "type": "multiplayer",
+      "status": "planned",
+      "engine": "services/game-engines/ludo",
+      "minPlayers": 2,
+      "maxPlayers": 4,
+      "config": "resources/game-configs/ludo.json",
+      "supportsBots": true
+    }
+  ]
+}

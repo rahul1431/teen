@@ -1,0 +1,664 @@
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import '../../../core/audio/sound_service.dart';
+import '../../../core/socket/socket_service.dart';
+import '../../../core/constants/socket_events.dart';
+import '../../../shared/theme/app_theme.dart';
+import 'ludo_engine.dart';
+import 'ludo_board.dart';
+
+/// Ludo table. One widget serves both:
+///  - **offline practice** (`offline: true`) — local [LudoEngine] vs 3 bots,
+///  - **online** (`roomId` + `initialData` from room:joined) — server-driven
+///    over /ws; this page only renders state and sends roll/move actions.
+class LudoGamePage extends StatefulWidget {
+  final bool offline;
+  final String roomId;
+  final Map<String, dynamic>? initialData;
+  const LudoGamePage({
+    super.key,
+    this.offline = false,
+    this.roomId = 'PRACTICE',
+    this.initialData,
+  });
+
+  @override
+  State<LudoGamePage> createState() => _LudoGamePageState();
+}
+
+class _LudoGamePageState extends State<LudoGamePage>
+    with TickerProviderStateMixin {
+  final _engine = LudoEngine();
+  final _socket = SocketService();
+  final _subs = <StreamSubscription>[];
+
+  LudoState? _state;
+  int _mySeatIndex = 0;
+  bool _rolling = false;
+  bool _botBusy = false;
+  String? _banner;
+
+  late final AnimationController _diceCtrl = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 500));
+
+  @override
+  void initState() {
+    super.initState();
+    SoundService.instance.init();
+    widget.offline ? _initOffline() : _initOnline();
+  }
+
+  @override
+  void dispose() {
+    _diceCtrl.dispose();
+    for (final s in _subs) {
+      s.cancel();
+    }
+    super.dispose();
+  }
+
+  // ── Offline practice ──────────────────────────────────────────────────────
+  void _initOffline() {
+    final players = [
+      LudoPlayer(
+          userId: 'me',
+          username: 'You',
+          seat: 1,
+          isBot: false,
+          color: kColors[0],
+          tokens: [-1, -1, -1, -1]),
+      LudoPlayer(
+          userId: 'bot1',
+          username: 'Riya',
+          seat: 2,
+          isBot: true,
+          color: kColors[1],
+          tokens: [-1, -1, -1, -1]),
+      LudoPlayer(
+          userId: 'bot2',
+          username: 'Arjun',
+          seat: 3,
+          isBot: true,
+          color: kColors[2],
+          tokens: [-1, -1, -1, -1]),
+      LudoPlayer(
+          userId: 'bot3',
+          username: 'Sam',
+          seat: 4,
+          isBot: true,
+          color: kColors[3],
+          tokens: [-1, -1, -1, -1]),
+    ];
+    _state = _engine.createGame(roomId: 'PRACTICE', stake: 0, players: players);
+    _mySeatIndex = 0;
+    setState(() => _banner = 'Your turn — roll the dice');
+  }
+
+  Future<void> _offlineRoll() async {
+    final s = _state;
+    if (s == null || _rolling || _botBusy) return;
+    if (s.currentTurn != _mySeatIndex || s.awaiting != 'roll') return;
+    setState(() => _rolling = true);
+    SoundService.instance.play(Sfx.diceRoll);
+    _diceCtrl.forward(from: 0);
+    final dice = _engine.rollDie();
+    await Future.delayed(const Duration(milliseconds: 480));
+    final canMove = _engine.applyRoll(s, dice);
+    setState(() {
+      _rolling = false;
+      _banner = canMove
+          ? 'You rolled $dice — tap a token'
+          : 'You rolled $dice — no move';
+    });
+    if (!canMove) _maybeDriveBots();
+  }
+
+  Future<void> _offlineMove(int tokenIndex) async {
+    final s = _state;
+    if (s == null) return;
+    if (s.currentTurn != _mySeatIndex || s.awaiting != 'move') return;
+    final res = _engine.applyMove(s, tokenIndex);
+    _playMoveSounds(res);
+    setState(() {});
+    if (res['win'] == true) return _finish(s.winnerId);
+    _maybeDriveBots();
+  }
+
+  Future<void> _maybeDriveBots() async {
+    final s = _state;
+    if (s == null || _botBusy) return;
+    _botBusy = true;
+    while (mounted &&
+        s.status == 'active' &&
+        s.players[s.currentTurn].isBot) {
+      setState(() => _banner = '${s.players[s.currentTurn].username} is playing…');
+      await Future.delayed(const Duration(milliseconds: 900));
+      final dice = _engine.rollDie();
+      SoundService.instance.play(Sfx.diceRoll);
+      _diceCtrl.forward(from: 0);
+      await Future.delayed(const Duration(milliseconds: 450));
+      final canMove = _engine.applyRoll(s, dice);
+      if (canMove) {
+        final tok = _engine.chooseBotToken(s, s.currentTurn, dice);
+        await Future.delayed(const Duration(milliseconds: 350));
+        final res = _engine.applyMove(s, tok);
+        _playMoveSounds(res);
+        if (res['win'] == true) {
+          setState(() {});
+          _botBusy = false;
+          return _finish(s.winnerId);
+        }
+      }
+      if (mounted) setState(() {});
+    }
+    _botBusy = false;
+    if (mounted && s.status == 'active') {
+      setState(() => _banner = 'Your turn — roll the dice');
+      SoundService.instance.play(Sfx.yourTurn);
+    }
+  }
+
+  // ── Online ────────────────────────────────────────────────────────────────
+  void _initOnline() {
+    final data = widget.initialData;
+    if (data != null && data['state'] != null) {
+      _state = LudoState.fromJson(Map<String, dynamic>.from(data['state']));
+      final yourSeat = data['your_seat'];
+      if (yourSeat is int) {
+        _mySeatIndex = _state!.players.indexWhere((p) => p.seat == yourSeat);
+        if (_mySeatIndex < 0) _mySeatIndex = 0;
+      }
+      _banner = _isMyTurn ? 'Your turn — roll the dice' : 'Waiting…';
+    }
+
+    _subs.add(_socket.on(SocketEvents.gameStateUpdate).listen((d) {
+      if (!mounted || d == null || d['state'] == null) return;
+      final prevPlayers = _state?.players;
+      final newState = LudoState.fromJson(Map<String, dynamic>.from(d['state']));
+      // Infer capture for SFX: a token went back to base since last update.
+      final captured = _detectCapture(prevPlayers, newState.players);
+      setState(() {
+        _state = newState;
+        _banner = _isMyTurn
+            ? (newState.awaiting == 'move'
+                ? 'Tap a token'
+                : 'Your turn — roll')
+            : '${newState.players[newState.currentTurn].username} is playing…';
+      });
+      final la = d['last_action'];
+      if (la != null && la['dice'] != null) {
+        SoundService.instance.play(Sfx.diceRoll);
+        _diceCtrl.forward(from: 0);
+      }
+      if (captured) SoundService.instance.play(Sfx.tokenCapture);
+      else SoundService.instance.play(Sfx.tokenMove);
+      if (d['result'] != null) _finish(d['result']['winner_id']);
+    }));
+
+    _subs.add(_socket.on(SocketEvents.gameResult).listen((d) {
+      if (!mounted) return;
+      _finish(d?['winner_id']);
+    }));
+  }
+
+  bool _detectCapture(List<LudoPlayer>? before, List<LudoPlayer> after) {
+    if (before == null) return false;
+    var beforeBase = 0, afterBase = 0;
+    for (final p in before) {
+      beforeBase += p.tokens.where((t) => t == -1).length;
+    }
+    for (final p in after) {
+      afterBase += p.tokens.where((t) => t == -1).length;
+    }
+    return afterBase > beforeBase;
+  }
+
+  void _onlineRoll() {
+    if (!_isMyTurn || _state?.awaiting != 'roll') return;
+    _socket.emit(SocketEvents.gameAction,
+        {'room_id': widget.roomId, 'action': 'roll_dice'});
+  }
+
+  void _onlineMove(int tokenIndex) {
+    if (!_isMyTurn || _state?.awaiting != 'move') return;
+    _socket.emit(SocketEvents.gameAction, {
+      'room_id': widget.roomId,
+      'action': 'move_token',
+      'token_index': tokenIndex,
+    });
+  }
+
+  // ── Shared ────────────────────────────────────────────────────────────────
+  bool get _isMyTurn => _state != null && _state!.currentTurn == _mySeatIndex;
+
+  void _playMoveSounds(Map<String, bool> res) {
+    if (res['captured'] == true) {
+      SoundService.instance.play(Sfx.tokenCapture);
+    } else if (res['home'] == true) {
+      SoundService.instance.play(Sfx.tokenHome);
+    } else {
+      SoundService.instance.play(Sfx.tokenMove);
+    }
+  }
+
+  void _onRoll() => widget.offline ? _offlineRoll() : _onlineRoll();
+  void _onTokenTap(int playerIdx, int tokenIndex) {
+    if (playerIdx != _mySeatIndex) return;
+    widget.offline ? _offlineMove(tokenIndex) : _onlineMove(tokenIndex);
+  }
+
+  void _finish(String? winnerId) {
+    final won = winnerId == (widget.offline ? 'me' : _myUserId);
+    SoundService.instance.play(won ? Sfx.win : Sfx.lose);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.cardBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text(won ? '🏆 You Win!' : 'Game Over',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                color: won ? AppColors.gold : Colors.white,
+                fontWeight: FontWeight.w900)),
+        content: Text(
+            won
+                ? 'You got all your tokens home first!'
+                : 'Better luck next time.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppColors.textSecondary)),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                if (mounted) context.pop();
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold),
+              child: const Text('Back to Lobby'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String? get _myUserId =>
+      _state != null && _mySeatIndex < _state!.players.length
+          ? _state!.players[_mySeatIndex].userId
+          : null;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = _state;
+    return Scaffold(
+      body: s == null
+          ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
+          : Container(
+              decoration: const BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment(0, -0.2),
+                  radius: 1.3,
+                  colors: [
+                    Color(0xFF1E2D5A), // Bright spotlight center
+                    Color(0xFF0F1736), // Deep navy
+                    Color(0xFF060A1A), // Dark shadow corners
+                  ],
+                  stops: [0.0, 0.6, 1.0],
+                ),
+              ),
+              child: SafeArea(
+                child: Column(
+                  children: [
+                    _buildAppBar(context),
+                    _playersBar(s),
+                    Expanded(
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          child: AspectRatio(
+                            aspectRatio: 1,
+                            child: LudoBoard(
+                              state: s,
+                              mySeatIndex: _mySeatIndex,
+                              onTokenTap: _onTokenTap,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    _controlBar(s),
+                  ],
+                ),
+              ),
+            ),
+    );
+  }
+
+  Widget _buildAppBar(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            widget.offline ? 'LUDO · PRACTICE' : 'LUDO LIVE',
+            style: const TextStyle(
+              color: AppColors.gold,
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.5,
+            ),
+          ),
+          const Spacer(),
+          if (!widget.offline)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.black38,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.gold.withOpacity(0.3)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('🪙 ', style: TextStyle(fontSize: 11)),
+                  Text(
+                    formatCurrency(_state?.stake ?? 0),
+                    style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _playersBar(LudoState s) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: List.generate(s.players.length, (i) {
+          final p = s.players[i];
+          final active = i == s.currentTurn;
+          final color = [
+            AppColors.ludoRed,
+            AppColors.ludoGreen,
+            AppColors.ludoYellow,
+            AppColors.ludoBlue
+          ][(p.seat - 1) % 4];
+          
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: active ? color.withOpacity(0.18) : const Color(0xFF161F38).withOpacity(0.6),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: active ? color : Colors.white.withOpacity(0.05), 
+                width: active ? 1.8 : 1.0,
+              ),
+              boxShadow: active ? [
+                BoxShadow(
+                  color: color.withOpacity(0.2),
+                  blurRadius: 8,
+                  spreadRadius: 1,
+                )
+              ] : [],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: color, 
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(color: color.withOpacity(0.6), blurRadius: 4, spreadRadius: 0.5)
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      p.username,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: active ? FontWeight.w900 : FontWeight.bold,
+                        color: active ? Colors.white : AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.black26,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'HOME ${p.finished}/4',
+                    style: TextStyle(
+                      fontSize: 9, 
+                      fontWeight: FontWeight.bold,
+                      color: active ? AppColors.gold : AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _controlBar(LudoState s) {
+    final canRoll = _isMyTurn && s.awaiting == 'roll' && !_rolling && !_botBusy;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F1322),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        border: Border.all(color: Colors.white.withOpacity(0.04)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.35),
+            blurRadius: 12,
+            offset: const Offset(0, -3),
+          )
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              _banner ?? '',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppColors.goldLight, 
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _DiceWidget(value: s.dice ?? 1, controller: _diceCtrl),
+              const SizedBox(width: 28),
+              Container(
+                decoration: canRoll ? BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.gold.withOpacity(0.25),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    )
+                  ],
+                ) : null,
+                child: ElevatedButton.icon(
+                  onPressed: canRoll ? _onRoll : null,
+                  icon: const Icon(Icons.casino_rounded, size: 18),
+                  label: Text(
+                    s.awaiting == 'move' && _isMyTurn
+                        ? 'TAP A TOKEN'
+                        : 'ROLL DICE',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.gold,
+                    foregroundColor: Colors.black,
+                    disabledBackgroundColor: Colors.white.withOpacity(0.05),
+                    disabledForegroundColor: Colors.white30,
+                    padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 15),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    elevation: 0,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Animated dice — tumbles (rotate + scale) while the controller runs, then
+/// settles showing [value] pips.
+class _DiceWidget extends StatelessWidget {
+  final int value;
+  final AnimationController controller;
+  const _DiceWidget({required this.value, required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final t = controller.value;
+        final angle = t * 4 * 3.14159; // two full spins
+        final scale = 1 + 0.25 * (t < 0.5 ? t * 2 : (1 - t) * 2);
+        return Transform.scale(
+          scale: scale,
+          child: Transform.rotate(
+            angle: angle,
+            child: _face(value),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _face(int v) {
+    return Container(
+      width: 58,
+      height: 58,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFFFFFFFF),
+            Color(0xFFF5F5F0), // Off-white ivory look
+            Color(0xFFE0DCD3),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          stops: [0.0, 0.4, 1.0],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE0D8C8), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.55),
+            blurRadius: 8,
+            offset: const Offset(1, 4),
+          ),
+          BoxShadow(
+            color: Colors.white.withOpacity(0.45),
+            blurRadius: 2,
+            offset: const Offset(-1, -1),
+            spreadRadius: -0.5,
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(5),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white.withOpacity(0.5), width: 1.0),
+          ),
+          child: CustomPaint(painter: _PipsPainter(v)),
+        ),
+      ),
+    );
+  }
+}
+
+class _PipsPainter extends CustomPainter {
+  final int value;
+  _PipsPainter(this.value);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Red color for 1 and 4, dark gray/black for others (standard casino style)
+    final isRed = value == 1 || value == 4;
+    
+    final r = size.width * 0.095;
+    final cells = {
+      'tl': Offset(size.width * 0.28, size.height * 0.28),
+      'tr': Offset(size.width * 0.72, size.height * 0.28),
+      'cl': Offset(size.width * 0.28, size.height * 0.5),
+      'cr': Offset(size.width * 0.72, size.height * 0.5),
+      'c': Offset(size.width * 0.5, size.height * 0.5),
+      'bl': Offset(size.width * 0.28, size.height * 0.72),
+      'br': Offset(size.width * 0.72, size.height * 0.72),
+    };
+    final layout = <int, List<String>>{
+      1: ['c'],
+      2: ['tl', 'br'],
+      3: ['tl', 'c', 'br'],
+      4: ['tl', 'tr', 'bl', 'br'],
+      5: ['tl', 'tr', 'c', 'bl', 'br'],
+      6: ['tl', 'tr', 'cl', 'cr', 'bl', 'br'],
+    };
+    for (final key in layout[value] ?? ['c']) {
+      final center = cells[key]!;
+      canvas.drawCircle(center, r, Paint()..shader = RadialGradient(
+        colors: isRed 
+            ? [const Color(0xFFFF5252), const Color(0xFFB71C1C)] 
+            : [const Color(0xFF424242), const Color(0xFF000000)],
+        center: const Alignment(-0.35, -0.35),
+      ).createShader(Rect.fromCircle(center: center, radius: r)));
+      
+      // Highlight dot
+      canvas.drawCircle(Offset(center.dx - r * 0.35, center.dy - r * 0.35), r * 0.2, Paint()..color = Colors.white70);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PipsPainter old) => old.value != value;
+}

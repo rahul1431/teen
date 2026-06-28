@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:go_router/go_router.dart';
@@ -13,81 +14,161 @@ class OtpPage extends StatefulWidget {
 
 class _OtpPageState extends State<OtpPage> {
   final _phoneCtrl = TextEditingController();
-  final _otpCtrl = TextEditingController();
-  bool _otpSent = false;
-  bool _loading = false;
+  final _otpCtrl   = TextEditingController();
+  bool _otpSent  = false;
+  bool _loading  = false;
+  int  _resendIn = 0;
+  Timer? _timer;
+  String? _errorMsg;
+
+  @override
+  void initState() {
+    super.initState();
+    _phoneCtrl.text = widget.phone;
+  }
+
+  @override
+  void dispose() { _phoneCtrl.dispose(); _otpCtrl.dispose(); _timer?.cancel(); super.dispose(); }
+
+  void _startResendTimer() {
+    _resendIn = 60;
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) { t.cancel(); return; }
+      setState(() { _resendIn--; if (_resendIn <= 0) t.cancel(); });
+    });
+  }
 
   Future<void> _sendOtp() async {
     final phone = _phoneCtrl.text.trim();
-    if (phone.length != 10) return _showError('Enter valid 10-digit number');
-    setState(() => _loading = true);
+    if (phone.length != 10 || !RegExp(r'^[6-9]\d{9}$').hasMatch(phone)) {
+      setState(() => _errorMsg = 'Enter a valid 10-digit Indian mobile number');
+      return;
+    }
+    setState(() { _loading = true; _errorMsg = null; });
     try {
-      await Dio().post('${AppConfig.apiBaseUrl}/api/auth/send-otp', data: {'phone': phone});
-      setState(() { _otpSent = true; _loading = false; });
-      _showSuccess('OTP sent to +91$phone');
+      final res = await Dio().post('${AppConfig.apiBaseUrl}/api/auth/send-otp', data: {'phone': phone});
+      final devOtp = res.data?['otp'] as String?;
+      setState(() {
+        _otpSent = true;
+        _loading = false;
+        _otpCtrl.text = devOtp ?? '123456';
+      });
+      _startResendTimer();
+      AppSnackBar.show(context, devOtp != null ? 'OTP: $devOtp (auto-filled for testing)' : 'OTP sent to +91$phone', success: true);
     } on DioException catch (e) {
-      _showError(e.response?.data?['error'] ?? 'Failed to send OTP');
-      setState(() => _loading = false);
+      setState(() { _errorMsg = e.response?.data?['error'] ?? 'Failed to send OTP'; _loading = false; });
     }
   }
 
-  Future<void> _verifyAndContinue() async {
-    setState(() => _loading = true);
-    try {
-      context.push('/auth/register?phone=${_phoneCtrl.text.trim()}&otp=${_otpCtrl.text.trim()}');
-    } finally {
-      if (mounted) setState(() => _loading = false);
+  void _verifyAndContinue() {
+    final phone = _phoneCtrl.text.trim();
+    final otp   = _otpCtrl.text.trim();
+    if (otp.length != 6) {
+      setState(() => _errorMsg = 'Enter the 6-digit OTP');
+      return;
     }
+    context.push('/auth/register?phone=$phone&otp=$otp');
   }
-
-  void _showError(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: AppColors.red));
-  void _showSuccess(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: AppColors.green));
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Create Account')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Enter Your Mobile Number', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            const Text('We\'ll send you an OTP to verify', style: TextStyle(color: AppColors.textSecondary)),
-            const SizedBox(height: 32),
-            TextFormField(
-              controller: _phoneCtrl,
-              keyboardType: TextInputType.phone,
-              maxLength: 10,
-              enabled: !_otpSent,
-              decoration: const InputDecoration(labelText: 'Mobile Number', prefixText: '+91 '),
-            ),
-            if (_otpSent) ...[
-              const SizedBox(height: 16),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Verify Mobile Number',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 6),
+              Text(
+                _otpSent
+                    ? 'OTP sent to +91 ${_phoneCtrl.text.trim()}'
+                    : 'Enter your mobile number to get started',
+                style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
+              ),
+              const SizedBox(height: 32),
               TextFormField(
-                controller: _otpCtrl,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                decoration: const InputDecoration(labelText: 'Enter OTP'),
+                controller: _phoneCtrl,
+                keyboardType: TextInputType.phone,
+                maxLength: 10,
+                enabled: !_otpSent,
+                decoration: const InputDecoration(
+                  labelText: 'Mobile Number',
+                  prefixText: '+91  ',
+                  prefixIcon: Icon(Icons.phone_rounded, color: AppColors.textSecondary, size: 20),
+                  counterText: '',
+                ),
               ),
+              if (_otpSent) ...[
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _otpCtrl,
+                  keyboardType: TextInputType.number,
+                  maxLength: 6,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Enter OTP',
+                    prefixIcon: Icon(Icons.lock_open_rounded, color: AppColors.textSecondary, size: 20),
+                    counterText: '',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    if (_resendIn > 0)
+                      Text('Resend in ${_resendIn}s', style: const TextStyle(color: AppColors.textSecondary, fontSize: 13))
+                    else
+                      GestureDetector(
+                        onTap: () { setState(() => _otpSent = false); _sendOtp(); },
+                        child: const Text('Resend OTP', style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
+                      ),
+                  ],
+                ),
+              ],
+              if (_errorMsg != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.red.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.red.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, color: AppColors.red, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(_errorMsg!, style: const TextStyle(color: AppColors.red, fontSize: 13))),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _loading ? null : (_otpSent ? _verifyAndContinue : _sendOtp),
+                  child: _loading
+                      ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                      : Text(_otpSent ? 'Continue' : 'Send OTP'),
+                ),
+              ),
+              if (_otpSent) ...[
+                const SizedBox(height: 12),
+                Center(
+                  child: TextButton(
+                    onPressed: () => setState(() { _otpSent = false; _errorMsg = null; _timer?.cancel(); }),
+                    child: const Text('Change number', style: TextStyle(color: AppColors.textSecondary)),
+                  ),
+                ),
+              ],
             ],
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _loading ? null : (_otpSent ? _verifyAndContinue : _sendOtp),
-                child: _loading
-                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
-                    : Text(_otpSent ? 'Continue' : 'Send OTP'),
-              ),
-            ),
-            if (_otpSent)
-              TextButton(
-                onPressed: () => setState(() => _otpSent = false),
-                child: const Text('Change number', style: TextStyle(color: AppColors.textSecondary)),
-              ),
-          ],
+          ),
         ),
       ),
     );

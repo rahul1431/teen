@@ -2,10 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'app.dart';
-
-final FlutterLocalNotificationsPlugin localNotifications = FlutterLocalNotificationsPlugin();
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -14,6 +12,9 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  await Hive.openBox('settings');
+  await Hive.openBox('wallet');
 
   // Lock to portrait mode
   await SystemChrome.setPreferredOrientations([
@@ -26,24 +27,26 @@ void main() async {
     statusBarIconBrightness: Brightness.light,
   ));
 
-  // Firebase
+  // Firebase — optional. If google-services.json isn't bundled, every
+  // Firebase call (including FirebaseMessaging.instance) throws, so guard all
+  // of it behind a single flag and never let it crash startup.
+  bool firebaseReady = false;
   try {
     await Firebase.initializeApp();
-    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    firebaseReady = true;
   } catch (_) {
-    // Firebase not configured yet — continue without it
+    // Firebase not configured — continue without push notifications.
   }
 
-  // Local notifications
-  await localNotifications.initialize(
-    const InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-      iOS: DarwinInitializationSettings(),
-    ),
-  );
-
-  // Request notification permission
-  await FirebaseMessaging.instance.requestPermission(alert: true, badge: true, sound: true);
+  if (firebaseReady) {
+    try {
+      FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+      await FirebaseMessaging.instance
+          .requestPermission(alert: true, badge: true, sound: true);
+    } catch (_) {
+      // Messaging unavailable — ignore.
+    }
+  }
 
   runApp(const MyOnlineJokerApp());
 }

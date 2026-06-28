@@ -160,11 +160,78 @@ export class WalletService {
   }
 
   // Release locked funds back (on game cancel / player exit)
-  async unlockFunds(userId: string, amount: number): Promise<void> {
-    await this.db.query(
-      'UPDATE wallets SET real_balance = real_balance + $1, locked_balance = locked_balance - $1 WHERE user_id = $2',
-      [amount, userId]
-    )
+  async unlockFunds(userId: string, amount: number, client?: PoolClient): Promise<void> {
+    const c = client || await this.db.connect()
+    const shouldRelease = !client
+    try {
+      if (!client) await c.query('BEGIN')
+      
+      const walletRes = await c.query(
+        'SELECT locked_balance, real_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
+        [userId]
+      )
+      if (!walletRes.rows.length) throw new Error('Wallet not found')
+      const wallet = walletRes.rows[0]
+      const locked = parseFloat(wallet.locked_balance)
+      if (locked < amount) throw new Error('Insufficient locked balance')
+
+      const balanceBefore = parseFloat(wallet.real_balance)
+      const balanceAfter = balanceBefore + amount
+
+      await c.query(
+        'UPDATE wallets SET real_balance = real_balance + $1, locked_balance = locked_balance - $2, updated_at = NOW() WHERE user_id = $3',
+        [amount, amount, userId]
+      )
+
+      await c.query(
+        `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, status, description)
+         VALUES ($1, 'game_credit', 'real', $2, $3, $4, 'completed', 'Locked funds unlocked/refunded')`,
+        [userId, amount, balanceBefore, balanceAfter]
+      )
+
+      if (!client) await c.query('COMMIT')
+    } catch (err) {
+      if (!client) await c.query('ROLLBACK')
+      throw err
+    } finally {
+      if (shouldRelease) c.release()
+    }
+  }
+
+  // Consume locked funds when a game is successfully completed (debits from locked_balance)
+  async consumeLockedFunds(userId: string, amount: number, client?: PoolClient): Promise<void> {
+    const c = client || await this.db.connect()
+    const shouldRelease = !client
+    try {
+      if (!client) await c.query('BEGIN')
+      
+      const walletRes = await c.query(
+        'SELECT locked_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
+        [userId]
+      )
+      if (!walletRes.rows.length) throw new Error('Wallet not found')
+      const wallet = walletRes.rows[0]
+      const locked = parseFloat(wallet.locked_balance)
+      if (locked < amount) throw new Error('Insufficient locked balance')
+
+      await c.query(
+        'UPDATE wallets SET locked_balance = locked_balance - $1, updated_at = NOW() WHERE user_id = $2',
+        [amount, userId]
+      )
+
+      await c.query(
+        `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, status, description)
+         VALUES ($1, 'game_debit', 'real', $2, 0, 0, 'completed', 'Locked funds consumed by gameplay')`,
+        [userId, amount]
+      )
+
+      if (!client) await c.query('COMMIT')
+    } catch (err) {
+      if (!client) await c.query('ROLLBACK')
+      throw err
+    } finally {
+      if (shouldRelease) c.release()
+    }
   }
 
   async getTransactions(userId: string, limit = 20, offset = 0) {

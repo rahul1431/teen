@@ -126,14 +126,11 @@ func evaluateHand(cards []Card) HandResult {
 	}
 
 	// Pair
-	if ranks[0] == ranks[1] || ranks[1] == ranks[2] {
-		pairRank := ranks[1] // middle is always part of pair in sorted
-		kicker := ranks[0]
-		if ranks[1] == ranks[2] {
-			pairRank = ranks[1]
-			kicker = ranks[0]
-		}
-		return HandResult{Rank: Pair, Score: pairRank*100 + kicker}
+	if ranks[0] == ranks[1] {
+		return HandResult{Rank: Pair, Score: ranks[0]*100 + ranks[2]}
+	}
+	if ranks[1] == ranks[2] {
+		return HandResult{Rank: Pair, Score: ranks[1]*100 + ranks[0]}
 	}
 
 	return HandResult{Rank: HighCard, Score: ranks[0]*100 + ranks[1]*10 + ranks[2]}
@@ -272,14 +269,43 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 		state.Pot += callAmount
 	case "raise":
 		raiseAmount := req.Amount
-		if raiseAmount < state.MinBet {
-			http.Error(w, "raise amount too small", 400)
+		isSeen := state.Players[playerIdx].IsSeen
+		if isSeen {
+			if raiseAmount < state.MinBet*2 {
+				http.Error(w, "raise amount too small for seen player", 400)
+				return
+			}
+			state.Players[playerIdx].Bet += raiseAmount
+			state.Pot += raiseAmount
+			state.MinBet = raiseAmount / 2.0
+		} else {
+			if raiseAmount < state.MinBet {
+				http.Error(w, "raise amount too small for blind player", 400)
+				return
+			}
+			state.Players[playerIdx].Bet += raiseAmount
+			state.Pot += raiseAmount
+			state.MinBet = raiseAmount
+		}
+	case "show":
+		activeCount := 0
+		for _, p := range state.Players {
+			if p.Status != "folded" {
+				activeCount++
+			}
+		}
+		if activeCount != 2 {
+			http.Error(w, "Show is only allowed when exactly 2 active players remain", 400)
 			return
 		}
-		state.Players[playerIdx].Bet += raiseAmount
-		state.Pot += raiseAmount
-		state.MinBet = raiseAmount
-	case "show":
+		showCost := state.MinBet
+		if state.Players[playerIdx].IsSeen {
+			showCost = state.MinBet * 2
+		}
+		state.Players[playerIdx].Bet += showCost
+		state.Pot += showCost
+		state.Players[playerIdx].IsSeen = true
+	case "see":
 		state.Players[playerIdx].IsSeen = true
 	}
 
@@ -300,7 +326,7 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 
 		// Save completed game to DB
 		go s.saveCompletedGame(req.RoomID, gameResult)
-	} else {
+	} else if req.Action != "see" {
 		// Next active player
 		next := (state.CurrentTurn + 1) % len(state.Players)
 		for state.Players[next].Status != "active" {
@@ -321,8 +347,25 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// loadRakePct reads the admin-configured platform fee for Teen Patti from
+// game_configs.rake_percent (a percentage, e.g. 5 = 5%) and returns it as a
+// fraction. Falls back to 5% if the config is missing or out of range.
+func (s *Server) loadRakePct() float64 {
+	const def = 0.05
+	if s.db == nil {
+		return def
+	}
+	var pct float64
+	err := s.db.QueryRow(context.Background(),
+		`SELECT rake_percent FROM game_configs WHERE game_type = 'teen_patti'`).Scan(&pct)
+	if err != nil || pct < 0 || pct > 50 {
+		return def
+	}
+	return pct / 100.0
+}
+
 func (s *Server) determineWinner(state *GameState) *GameResult {
-	rakePct := 0.05
+	rakePct := s.loadRakePct()
 	rake := state.Pot * rakePct
 	prize := state.Pot - rake
 
@@ -345,6 +388,21 @@ func (s *Server) determineWinner(state *GameState) *GameResult {
 		if bestPlayer == nil || compareHands(hand, bestHand) > 0 {
 			bestPlayer = p
 			bestHand = hand
+		} else if compareHands(hand, bestHand) == 0 {
+			// Tiebreaker:
+			// 1. Blind player wins over Seen player
+			// 2. If both blind or both seen, the player who did NOT request the show wins (defender wins)
+			// Note: state.Players[state.CurrentTurn] is the one who requested the show.
+			requesterID := state.Players[state.CurrentTurn].UserID
+			if !p.IsSeen && bestPlayer.IsSeen {
+				bestPlayer = p
+				bestHand = hand
+			} else if p.IsSeen == bestPlayer.IsSeen {
+				if p.UserID != requesterID && bestPlayer.UserID == requesterID {
+					bestPlayer = p
+					bestHand = hand
+				}
+			}
 		}
 	}
 

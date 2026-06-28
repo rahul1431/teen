@@ -1,40 +1,129 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../../../core/network/api_client.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../shared/theme/app_theme.dart';
 
 class TeenPattiLobbyPage extends StatefulWidget {
-  const TeenPattiLobbyPage({super.key});
+  final String variation;
+  const TeenPattiLobbyPage({super.key, this.variation = 'classic'});
   @override
   State<TeenPattiLobbyPage> createState() => _TeenPattiLobbyPageState();
 }
 
 class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   final _socket = SocketService();
+  StreamSubscription? _roomJoinedSub;
+  StreamSubscription? _errorSub;
   double _selectedStake = 10;
   bool _searching = false;
+  String? _balance;
+  double? _balanceValue;
   final _stakes = [10.0, 50.0, 100.0, 500.0, 1000.0];
+
+  String get _variationLabel {
+    switch (widget.variation) {
+      case 'ak47': return 'AK47';
+      default:     return 'Classic';
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     _socket.connect();
-    _socket.on(SocketEvents.roomJoined).listen((data) {
+    _loadBalance();
+    _roomJoinedSub = _socket.on(SocketEvents.roomJoined).listen((data) {
       if (!mounted) return;
       setState(() => _searching = false);
       context.push('/games/teen-patti/play/${data['room_id']}', extra: data);
     });
-    _socket.on(SocketEvents.errorEvent).listen((data) {
+    _errorSub = _socket.on(SocketEvents.errorEvent).listen((data) {
       if (!mounted) return;
       setState(() => _searching = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(data['message'] ?? 'Error'), backgroundColor: AppColors.red));
     });
+    // Re-join matchmaking queue after socket reconnects (preserves searching state)
+    _socket.onReconnect(() {
+      if (!mounted || !_searching) return;
+      _socket.emit(SocketEvents.joinMatchmaking, {
+        'game_type': 'teen_patti',
+        'stake': _selectedStake,
+        'variation': widget.variation,
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _roomJoinedSub?.cancel();
+    _errorSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadBalance() async {
+    try {
+      final res = await ApiClient().dio.get('/api/wallet/balance');
+      if (!mounted) return;
+      final value = double.parse(res.data['real_balance'].toString());
+      setState(() {
+        _balanceValue = value;
+        _balance = value.toStringAsFixed(0);
+      });
+    } catch (_) {/* offline / no auth — leave as '—' */}
   }
 
   void _joinMatchmaking() {
+    // Gate: block join when balance is unknown or below the selected stake.
+    if (_balanceValue == null || _balanceValue! < _selectedStake) {
+      _showLowBalanceDialog();
+      return;
+    }
     setState(() => _searching = true);
-    _socket.emit(SocketEvents.joinMatchmaking, {'game_type': 'teen_patti', 'stake': _selectedStake});
+    _socket.emit(SocketEvents.joinMatchmaking, {
+      'game_type': 'teen_patti',
+      'stake': _selectedStake,
+      'variation': widget.variation,
+    });
+  }
+
+  void _showLowBalanceDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.cardBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: const [
+            Icon(Icons.account_balance_wallet_rounded, color: AppColors.orange, size: 22),
+            SizedBox(width: 8),
+            Text('Low Balance', style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(
+          'You need ₹${_selectedStake.toInt()} to join this table.\n'
+          'Your balance is ₹${_balance ?? '0'}.\n\nAdd money to start playing.',
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          ElevatedButton.icon(
+            onPressed: () { Navigator.pop(ctx); context.push('/wallet'); },
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('Add Money'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.gold,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _cancelSearch() {
@@ -45,12 +134,47 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Teen Patti')),
+      appBar: AppBar(
+        title: Text('Teen Patti · $_variationLabel'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.feltDark,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
+                ),
+                child: Text('₹${_balance ?? '—'}',
+                    style: const TextStyle(
+                        color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
+              ),
+            ),
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Quick Match hero — quickest path to the table at the chosen stake
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _searching ? null : _joinMatchmaking,
+                icon: const Icon(Icons.flash_on, color: Colors.black),
+                label: Text('Quick Match — ₹${_selectedStake.toInt()}',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.gold,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
             const Text('Select Stake', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
             Wrap(
@@ -61,17 +185,33 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                 return GestureDetector(
                   onTap: _searching ? null : () => setState(() => _selectedStake = stake),
                   child: Container(
-                    width: 80, height: 60,
+                    width: 88,
+                    height: 50,
+                    alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: selected ? AppColors.gold : AppColors.cardBg,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: selected ? AppColors.gold : AppColors.border, width: 2),
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: selected
+                            ? const [Color(0xFFE6213A), Color(0xFFB11226), Color(0xFF7A0C1A)]
+                            : const [Color(0xFF3A2230), Color(0xFF24121C)],
+                      ),
+                      borderRadius: BorderRadius.circular(28),
+                      border: Border.all(
+                        color: selected ? AppColors.gold : AppColors.gold.withValues(alpha: 0.35),
+                        width: selected ? 2.5 : 1.5,
+                      ),
+                      boxShadow: selected
+                          ? [BoxShadow(color: AppColors.gold.withValues(alpha: 0.45), blurRadius: 12, spreadRadius: 1)]
+                          : null,
                     ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text('₹${stake.toInt()}', style: TextStyle(color: selected ? Colors.black : AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 16)),
-                      ],
+                    child: Text(
+                      '₹${stake.toInt()}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          shadows: [Shadow(color: Colors.black54, blurRadius: 3)]),
                     ),
                   ),
                 );
@@ -94,6 +234,8 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+            _buildSocketDebugPanel(),
             const Spacer(),
             if (_searching)
               Column(
@@ -111,15 +253,58 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                     ),
                   ),
                 ],
-              )
-            else
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _joinMatchmaking,
-                  child: Text('Join Table — ₹${_selectedStake.toInt()}'),
-                ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Live socket diagnostics — visible on-device so connection failures are
+  // observable without adb/server logs. Tap to force a reconnect.
+  Widget _buildSocketDebugPanel() {
+    return GestureDetector(
+      onTap: () => _socket.connect(),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.gold.withValues(alpha: 0.4)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(Icons.bug_report, size: 14, color: AppColors.gold),
+                SizedBox(width: 6),
+                Text('Socket Debug (tap to reconnect)',
+                    style: TextStyle(color: AppColors.gold, fontSize: 11, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text('URL: ${_socket.url}',
+                style: const TextStyle(color: Colors.white70, fontSize: 10)),
+            Text('Token: ${_socket.tokenPresent ? "present" : "MISSING"}',
+                style: TextStyle(
+                    color: _socket.tokenPresent ? Colors.greenAccent : Colors.redAccent,
+                    fontSize: 10)),
+            ValueListenableBuilder<String>(
+              valueListenable: _socket.status,
+              builder: (_, status, __) => Text('Status: $status',
+                  style: TextStyle(
+                      color: status == 'connected' ? Colors.greenAccent : Colors.orangeAccent,
+                      fontSize: 10, fontWeight: FontWeight.bold)),
+            ),
+            ValueListenableBuilder<String>(
+              valueListenable: _socket.lastError,
+              builder: (_, err, __) => err.isEmpty
+                  ? const SizedBox.shrink()
+                  : Text('Error: $err',
+                      style: const TextStyle(color: Colors.redAccent, fontSize: 10)),
+            ),
           ],
         ),
       ),
