@@ -190,7 +190,7 @@ export function AppMonitorTab() {
           >
             <Table<ErrorGroup>
               dataSource={errors}
-              rowKey={(r, i) => `${r.error_message}-${i}`}
+              rowKey={(r) => `${r.screen ?? 'null'}-${(r.error_message ?? '').substring(0, 50)}`}
               size="small"
               pagination={{ pageSize: 8, size: 'small' }}
               rowClassName={r => errorRowColor(r.count) ? 'error-row' : ''}
@@ -210,6 +210,12 @@ export function AppMonitorTab() {
                 },
                 { title: 'Count', dataIndex: 'count', width: 60, sorter: (a, b) => a.count - b.count },
                 { title: 'Users', dataIndex: 'affected_users', width: 55 },
+                {
+                  title: 'Last Seen',
+                  dataIndex: 'last_seen',
+                  width: 120,
+                  render: (v: string) => new Date(v).toLocaleString(),
+                },
               ]}
             />
           </Card>
