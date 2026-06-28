@@ -3,7 +3,7 @@
 # Edit each file with your actual credentials after running
 
 BASE=/opt/teen
-SERVICES=(auth-service user-service wallet-service game-gateway betting-service leaderboard-service notification-service admin-service)
+SERVICES=(auth-service user-service wallet-service game-gateway betting-service leaderboard-service notification-service admin-service monitoring-service risk-service analytics-service)
 
 # Generate ONE value per shared secret so every service agrees. A mismatched
 # JWT_SECRET between auth-service (signs tokens) and game-gateway (verifies

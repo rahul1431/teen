@@ -1,9 +1,9 @@
 import { Layout, Menu, Typography, Avatar, Dropdown, Button } from 'antd'
 import {
   DashboardOutlined, UserOutlined, PlayCircleOutlined, DollarOutlined,
-  BellOutlined, SettingOutlined, LogoutOutlined, TrophyOutlined, SafetyOutlined,
+  BellOutlined, LogoutOutlined, TrophyOutlined, SafetyOutlined,
   TeamOutlined, ProfileOutlined, WarningOutlined, CustomerServiceOutlined,
-  FundOutlined, RobotOutlined,
+  RobotOutlined, LineChartOutlined, BarChartOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
@@ -14,6 +14,8 @@ const menuItems = [
   { key: '/admin', icon: <DashboardOutlined />, label: 'Dashboard' },
   { key: '/admin/users', icon: <UserOutlined />, label: 'Users' },
   { key: '/admin/bots', icon: <RobotOutlined />, label: 'Bot Management' },
+  { key: '/admin/bot-health', icon: <BarChartOutlined />, label: 'Bot Health' },
+  { key: '/admin/analytics', icon: <LineChartOutlined />, label: 'Analytics' },
   {
     key: 'games',
     icon: <PlayCircleOutlined />,
@@ -31,6 +33,7 @@ const menuItems = [
   { key: '/admin/notifications', icon: <BellOutlined />, label: 'Notifications' },
   { key: '/admin/admin-users', icon: <TeamOutlined />, label: 'Admin Users' },
   { key: '/admin/risk-center', icon: <WarningOutlined />, label: 'Risk Center' },
+  { key: '/admin/ai-control-center', icon: <RobotOutlined />, label: 'AI Control Center' },
   { key: '/admin/support', icon: <CustomerServiceOutlined />, label: 'Support & CMS' },
   { key: '/admin/leaderboard', icon: <TrophyOutlined />, label: 'Leaderboard' },
   { key: '/admin/security', icon: <SafetyOutlined />, label: 'Security' },

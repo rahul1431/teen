@@ -1783,6 +1783,133 @@ async function start() {
     }
   })
 
+  // ---- Analytics Endpoints (Phase 2) ----
+
+  const ANALYTICS_URL = process.env.ANALYTICS_SERVICE_URL || 'http://localhost:3007'
+
+  // GET /api/admin/analytics/summary — live GGR, DAU, active players
+  app.get('/api/admin/analytics/summary', { onRequest: [authenticate] }, async (_req, reply) => {
+    try {
+      const res = await fetch(`${ANALYTICS_URL}/summary`)
+      const data = await res.json() as any
+      return reply.send(data)
+    } catch {
+      // Fallback: compute directly from DB
+      const [ggrToday, active, retention] = await Promise.all([
+        db.query(`SELECT COALESCE(SUM(platform_fee),0)::float AS ggr, COALESCE(SUM(prize_pool),0)::float AS wagered, COUNT(*)::int AS games
+                  FROM game_rooms WHERE status='completed' AND ended_at > CURRENT_DATE`),
+        db.query(`SELECT COUNT(DISTINCT gp.user_id)::int AS active FROM game_participants gp
+                  JOIN game_rooms gr ON gr.id=gp.room_id WHERE gr.started_at > NOW()-INTERVAL '1 hour'`),
+        db.query(`SELECT COUNT(*) FILTER (WHERE created_at > CURRENT_DATE)::int AS new_today,
+                         COUNT(*) FILTER (WHERE last_login > NOW()-INTERVAL '24 hours')::int AS dau
+                  FROM users WHERE is_bot=false`),
+      ])
+      return reply.send({
+        success: true,
+        data: {
+          ggr_today: ggrToday.rows[0].ggr,
+          wagered_today: ggrToday.rows[0].wagered,
+          games_today: ggrToday.rows[0].games,
+          active_players_1h: active.rows[0].active,
+          new_players_today: retention.rows[0].new_today,
+          dau: retention.rows[0].dau,
+          timestamp: new Date().toISOString(),
+        },
+      })
+    }
+  })
+
+  // GET /api/admin/analytics/ggr?days=7 — GGR trend by day
+  app.get('/api/admin/analytics/ggr', { onRequest: [authenticate] }, async (req, reply) => {
+    const days = Math.min(parseInt((req.query as any).days || '7'), 90)
+    try {
+      const res = await db.query(
+        `SELECT DATE_TRUNC('day', ended_at)::text AS day,
+                game_type,
+                COUNT(*)::int AS games_played,
+                COALESCE(SUM(platform_fee),0)::float AS ggr,
+                COALESCE(SUM(prize_pool),0)::float AS total_wagered,
+                COUNT(DISTINCT winner_id)::int AS unique_winners
+         FROM game_rooms
+         WHERE status='completed' AND ended_at > NOW() - ($1 || ' days')::interval
+         GROUP BY 1,2 ORDER BY 1 ASC, 2`,
+        [days]
+      )
+      return reply.send({ success: true, data: res.rows })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message })
+    }
+  })
+
+  // GET /api/admin/analytics/breakdown — per-game GGR for today
+  app.get('/api/admin/analytics/breakdown', { onRequest: [authenticate] }, async (_req, reply) => {
+    try {
+      const res = await db.query(
+        `SELECT game_type,
+                COUNT(*)::int AS games,
+                COALESCE(SUM(platform_fee),0)::float AS rake,
+                COALESCE(SUM(prize_pool),0)::float AS wagered,
+                COUNT(DISTINCT winner_id)::int AS unique_winners
+         FROM game_rooms
+         WHERE status='completed' AND ended_at > CURRENT_DATE
+         GROUP BY game_type ORDER BY rake DESC`
+      )
+      return reply.send({ success: true, data: res.rows })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message })
+    }
+  })
+
+  // GET /api/admin/analytics/churn — churn risk users (inactive >=7 days)
+  app.get('/api/admin/analytics/churn', { onRequest: [authenticate] }, async (req, reply) => {
+    const limit = Math.min(parseInt((req.query as any).limit || '20'), 100)
+    try {
+      const res = await db.query(
+        `SELECT u.id, u.username, u.email,
+                MAX(gr.ended_at)::text AS last_played_at,
+                COUNT(gp.id)::int AS total_games,
+                COALESCE(SUM(gp.prize_won),0)::float AS total_prize_won,
+                EXTRACT(EPOCH FROM (NOW() - MAX(gr.ended_at)))::int AS inactive_seconds
+         FROM users u
+         JOIN game_participants gp ON gp.user_id = u.id
+         JOIN game_rooms gr ON gr.id = gp.room_id
+         WHERE gr.ended_at < NOW() - INTERVAL '7 days' AND u.is_bot = false
+         GROUP BY u.id, u.username, u.email
+         HAVING MAX(gr.ended_at) < NOW() - INTERVAL '7 days'
+         ORDER BY MAX(gr.ended_at) ASC
+         LIMIT $1`,
+        [limit]
+      )
+      return reply.send({ success: true, data: res.rows })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message })
+    }
+  })
+
+  // GET /api/admin/analytics/hourly?game_type=teen_patti — 24h trend from analytics_hourly
+  app.get('/api/admin/analytics/hourly', { onRequest: [authenticate] }, async (req, reply) => {
+    const { game_type } = req.query as any
+    try {
+      const params: any[] = []
+      let gameFilter = ''
+      if (game_type && game_type !== 'all') {
+        params.push(game_type)
+        gameFilter = 'AND game_type = $1'
+      }
+      const res = await db.query(
+        `SELECT hour::text, game_type, active_players, games_started, games_completed,
+                total_stake::float, total_rake::float
+         FROM analytics_hourly
+         WHERE hour > NOW() - INTERVAL '24 hours' ${gameFilter}
+         ORDER BY hour ASC`,
+        params
+      )
+      return reply.send({ success: true, data: res.rows })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message })
+    }
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))
 
   const port = parseInt(process.env.PORT || '3008')
