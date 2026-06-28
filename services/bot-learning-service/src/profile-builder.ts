@@ -33,11 +33,16 @@ const DIFFICULTIES = ['easy', 'medium', 'hard'] as const
 const PROFILE_CACHE_TTL = 3600 // 1 hour
 
 export class ProfileBuilder {
+  private configOverrides: Partial<BotLearningConfig>
+
   constructor(
     private pool: Pool,
     private redis: Redis,
-    private logger: Logger
-  ) {}
+    private logger: Logger,
+    config?: Partial<BotLearningConfig>
+  ) {
+    this.configOverrides = config ?? {}
+  }
 
   async getConfig(): Promise<BotLearningConfig> {
     const res = await this.pool.query('SELECT key, value FROM bot_learning_config')
