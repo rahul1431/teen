@@ -1,0 +1,124 @@
+import 'dotenv/config'
+import Fastify from 'fastify'
+import Redis from 'ioredis'
+import { Pool } from 'pg'
+import pino from 'pino'
+import cron from 'node-cron'
+import { ProfileBuilder } from './profile-builder'
+
+const logger = pino()
+
+async function start() {
+  const app = Fastify({ logger: true })
+
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+  const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
+  if (redis.status === 'wait') await redis.connect()
+
+  const builder = new ProfileBuilder(pool, redis, logger)
+
+  // Schedule nightly rebuild at 2 AM (or configured hour)
+  const cfg = await builder.getConfig().catch(() => ({ rebuild_hour: 2 }))
+  cron.schedule(`0 ${cfg.rebuild_hour} * * *`, () => {
+    builder.runRebuild().catch(err => logger.error({ err }, 'Nightly rebuild failed'))
+  })
+  logger.info({ hour: cfg.rebuild_hour }, 'Bot profile rebuild cron scheduled')
+
+  // Health
+  app.get('/health', async (_req, reply) => {
+    return reply.send({ success: true, data: { status: 'ok', service: 'bot-learning-service', timestamp: new Date().toISOString() } })
+  })
+
+  // GET /api/bots/profile?game_type=&difficulty=
+  app.get<{ Querystring: { game_type?: string; difficulty?: string } }>(
+    '/api/bots/profile',
+    async (request, reply) => {
+      const { game_type, difficulty } = request.query
+      if (!game_type || !difficulty) {
+        return reply.code(400).send({ success: false, error: 'game_type and difficulty are required' })
+      }
+      try {
+        const profile = await builder.getProfile(game_type, difficulty)
+        if (!profile) return reply.code(404).send({ success: false, error: 'Profile not found' })
+        return reply.send({ success: true, data: profile })
+      } catch (err) {
+        logger.error({ err }, 'Failed to fetch bot profile')
+        return reply.code(500).send({ success: false, error: 'Failed to fetch bot profile' })
+      }
+    }
+  )
+
+  // GET /api/bots/profiles
+  app.get('/api/bots/profiles', async (_req, reply) => {
+    try {
+      const profiles = await builder.getProfiles()
+      return reply.send({ success: true, data: { profiles, count: profiles.length } })
+    } catch (err) {
+      logger.error({ err }, 'Failed to fetch profiles')
+      return reply.code(500).send({ success: false, error: 'Failed to fetch profiles' })
+    }
+  })
+
+  // POST /api/bots/rebuild
+  app.post('/api/bots/rebuild', async (_req, reply) => {
+    // Non-blocking: start rebuild in background, return immediately
+    builder.runRebuild().catch(err => logger.error({ err }, 'Manual rebuild failed'))
+    return reply.send({ success: true, data: { status: 'started', game_types: ['teen_patti', 'ludo', 'aviator'] } })
+  })
+
+  // GET /api/bots/config
+  app.get('/api/bots/config', async (_req, reply) => {
+    try {
+      const config = await builder.getConfig()
+      return reply.send({ success: true, data: config })
+    } catch (err) {
+      logger.error({ err }, 'Failed to fetch bot config')
+      return reply.code(500).send({ success: false, error: 'Failed to fetch bot config' })
+    }
+  })
+
+  // PATCH /api/bots/config
+  app.patch<{ Body: Record<string, string> }>('/api/bots/config', async (request, reply) => {
+    try {
+      await builder.updateConfig(request.body)
+      const updated = await builder.getConfig()
+      return reply.send({ success: true, data: updated })
+    } catch (err) {
+      logger.error({ err }, 'Failed to update bot config')
+      return reply.code(500).send({ success: false, error: 'Failed to update bot config' })
+    }
+  })
+
+  // PATCH /api/bots/profiles/:gameType/:difficulty
+  app.patch<{
+    Params: { gameType: string; difficulty: string }
+    Body: Record<string, number>
+  }>('/api/bots/profiles/:gameType/:difficulty', async (request, reply) => {
+    try {
+      await builder.overrideProfile(request.params.gameType, request.params.difficulty, request.body)
+      const profile = await builder.getProfile(request.params.gameType, request.params.difficulty)
+      return reply.send({ success: true, data: profile })
+    } catch (err) {
+      logger.error({ err }, 'Failed to override bot profile')
+      return reply.code(500).send({ success: false, error: 'Failed to override profile' })
+    }
+  })
+
+  const port = parseInt(process.env.PORT ?? '3014')
+  await app.listen({ port, host: '0.0.0.0' })
+  logger.info(`Bot learning service started on :${port}`)
+
+  // Run initial rebuild on startup (non-blocking)
+  builder.runRebuild().catch(err => logger.error({ err }, 'Initial rebuild failed'))
+
+  const shutdown = async () => {
+    await app.close()
+    await redis.quit()
+    await pool.end()
+    process.exit(0)
+  }
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
+}
+
+start().catch(err => { logger.error(err); process.exit(1) })
