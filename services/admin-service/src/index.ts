@@ -14,6 +14,7 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { pipeline } from 'stream/promises'
+import { registerMLRoutes } from './ml-routes'
 
 // QR images for payment methods are stored here, served by nginx at /uploads/qr/.
 const QR_UPLOAD_DIR = process.env.QR_UPLOAD_DIR || '/opt/teen/uploads/qr'
@@ -57,6 +58,12 @@ async function start() {
     const r = (req.user as any)?.role
     if (!hasRole(r, role)) return reply.code(403).send({ error: `Forbidden — requires ${role} role` })
   }
+
+  app.decorate('authenticate', authenticate)
+  app.decorate('requireRole', requireRole)
+
+  // Register ML routes
+  await registerMLRoutes(app, redis, db)
 
   // POST /api/admin/auth/login
   // If the admin has 2FA enabled, the call must include `totp_code`. If it's
@@ -1823,3 +1830,10 @@ async function start() {
 }
 
 start().catch(err => { console.error(err); process.exit(1) })
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    authenticate: any;
+    requireRole: (role: any) => any;
+  }
+}

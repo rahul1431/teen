@@ -20,7 +20,7 @@ export async function registerMLRoutes(
     '/api/admin/ml/query',
     { onRequest: [app.authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const { query } = request.body
+      const { query } = request.body as any
 
       if (!query || typeof query !== 'string') {
         return reply.code(400).send({
@@ -72,7 +72,7 @@ export async function registerMLRoutes(
           `INSERT INTO admin_config (key, value, updated_by, updated_at)
            VALUES ($1, $2, $3, NOW())
            ON CONFLICT (key) DO UPDATE SET value = $2, updated_by = $3, updated_at = NOW()`,
-          [configKey, JSON.stringify(config), request.user?.id]
+          [configKey, JSON.stringify(config), (request.user as any)?.sub]
         )
 
         // Notify ML service of config change
