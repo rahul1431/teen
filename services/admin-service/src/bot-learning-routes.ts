@@ -1,0 +1,58 @@
+import { FastifyInstance } from 'fastify'
+import axios from 'axios'
+
+const BOT_URL = process.env.BOT_LEARNING_SERVICE_URL || 'http://localhost:3014'
+
+export async function registerBotLearningRoutes(app: FastifyInstance, authenticate: any, requireRole: any) {
+  app.get('/api/admin/bots/profiles', { onRequest: [authenticate] }, async (_req, reply) => {
+    try {
+      const res = await axios.get(`${BOT_URL}/api/bots/profiles`)
+      return reply.send(res.data)
+    } catch (err: any) {
+      return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'Bot learning service unavailable' })
+    }
+  })
+
+  app.post('/api/admin/bots/rebuild', { onRequest: [authenticate, requireRole('superadmin')] }, async (_req, reply) => {
+    try {
+      const res = await axios.post(`${BOT_URL}/api/bots/rebuild`)
+      return reply.send(res.data)
+    } catch (err: any) {
+      return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'Bot learning service unavailable' })
+    }
+  })
+
+  app.get('/api/admin/bots/config', { onRequest: [authenticate] }, async (_req, reply) => {
+    try {
+      const res = await axios.get(`${BOT_URL}/api/bots/config`)
+      return reply.send(res.data)
+    } catch (err: any) {
+      return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'Bot learning service unavailable' })
+    }
+  })
+
+  app.patch('/api/admin/bots/config', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    try {
+      const res = await axios.patch(`${BOT_URL}/api/bots/config`, req.body)
+      return reply.send(res.data)
+    } catch (err: any) {
+      return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'Bot learning service unavailable' })
+    }
+  })
+
+  app.patch<{ Params: { gameType: string; difficulty: string } }>(
+    '/api/admin/bots/profiles/:gameType/:difficulty',
+    { onRequest: [authenticate, requireRole('superadmin')] },
+    async (req, reply) => {
+      try {
+        const res = await axios.patch(
+          `${BOT_URL}/api/bots/profiles/${req.params.gameType}/${req.params.difficulty}`,
+          req.body
+        )
+        return reply.send(res.data)
+      } catch (err: any) {
+        return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'Bot learning service unavailable' })
+      }
+    }
+  )
+}
