@@ -1,6 +1,8 @@
 -- infra/db/migrations/016_bot_learning.sql
 -- Phase 3: Bot Learning — difficulty-tier profiles and config
 
+BEGIN;
+
 CREATE TABLE IF NOT EXISTS bot_profiles (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   game_type             VARCHAR(30) NOT NULL,
@@ -55,3 +57,5 @@ INSERT INTO bot_learning_config (key, value) VALUES
   ('medium_percentile_max',   '60'),
   ('hard_percentile_min',     '75')
 ON CONFLICT (key) DO NOTHING;
+
+COMMIT;
