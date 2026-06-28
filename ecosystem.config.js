@@ -144,5 +144,19 @@ module.exports = {
       watch: false,
       max_memory_restart: '200M',
     },
+    {
+      name: 'teen-app-monitor',
+      cwd: `${BASE}/app-monitor-service`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('app-monitor-service'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '200M',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3015,
+      },
+    },
   ],
 }
