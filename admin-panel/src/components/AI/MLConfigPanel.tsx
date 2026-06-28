@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Card, Form, Slider, InputNumber, Switch, Button, Space, message, Divider, Alert, Row, Col } from 'antd'
 import { SaveOutlined, ReloadOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
+import { BotLearningSection } from './BotLearningSection'
 
 interface MLConfig {
   fraudDetection: {
@@ -364,6 +365,8 @@ export function MLConfigPanel() {
           </Button>
         </Space>
       </Form>
+
+      <BotLearningSection />
     </div>
   )
 }
