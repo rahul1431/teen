@@ -17,6 +17,7 @@ import { pipeline } from 'stream/promises'
 import { registerMLRoutes } from './ml-routes'
 import { registerChurnRoutes } from './churn-routes'
 import { registerBotLearningRoutes } from './bot-learning-routes'
+import { registerMonitorRoutes } from './monitor-routes'
 
 // QR images for payment methods are stored here, served by nginx at /uploads/qr/.
 const QR_UPLOAD_DIR = process.env.QR_UPLOAD_DIR || '/opt/teen/uploads/qr'
@@ -72,6 +73,9 @@ async function start() {
 
   // Register Bot Learning proxy routes
   await registerBotLearningRoutes(app, authenticate, requireRole)
+
+  // Register Monitor proxy routes
+  await registerMonitorRoutes(app, authenticate, requireRole)
 
   // POST /api/admin/auth/login
   // If the admin has 2FA enabled, the call must include `totp_code`. If it's
