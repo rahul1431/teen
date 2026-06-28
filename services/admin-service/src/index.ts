@@ -1528,6 +1528,195 @@ async function start() {
     }
   })
 
+  // --- Fraud Detection Routes ---
+  // GET /api/admin/fraud-alerts - Get recent fraud alerts
+  app.get('/api/admin/fraud-alerts', { onRequest: [authenticate] }, async (req, reply) => {
+    try {
+      const { limit = '50', action } = req.query as any
+      const limitNum = Math.min(parseInt(limit), 500)
+
+      let query = `
+        SELECT id, user_id, game_type, rule_triggered, fraud_score, confidence,
+               evidence, action, resolved, created_at
+        FROM fraud_events
+        WHERE created_at > NOW() - INTERVAL '24 hours'
+      `
+      const params: any[] = []
+
+      if (action && ['allow', 'slow_lane', 'block'].includes(action)) {
+        query += ` AND action = $${params.length + 1}`
+        params.push(action)
+      }
+
+      query += ` ORDER BY fraud_score DESC, created_at DESC LIMIT $${params.length + 1}`
+      params.push(limitNum)
+
+      const result = await db.query(query, params)
+
+      return reply.send({
+        success: true,
+        data: {
+          alerts: result.rows,
+          count: result.rows.length,
+          timestamp: new Date().toISOString(),
+        },
+      })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to fetch fraud alerts' })
+    }
+  })
+
+  // GET /api/admin/fraud-stats - Get fraud detection statistics
+  app.get('/api/admin/fraud-stats', { onRequest: [authenticate] }, async (req, reply) => {
+    try {
+      const { hours = '24' } = req.query as any
+      const hoursNum = Math.min(parseInt(hours), 168)
+
+      const result = await db.query(
+        `SELECT
+           COUNT(*) as total_alerts,
+           COUNT(CASE WHEN action = 'block' THEN 1 END) as blocks,
+           COUNT(CASE WHEN action = 'slow_lane' THEN 1 END) as slow_lanes,
+           AVG(fraud_score) as avg_score,
+           MAX(fraud_score) as max_score,
+           COUNT(DISTINCT user_id) as unique_users
+         FROM fraud_events
+         WHERE created_at > NOW() - INTERVAL '${hoursNum} hours'`,
+        []
+      )
+
+      const stats = result.rows[0]
+
+      return reply.send({
+        success: true,
+        data: {
+          timeWindow: `${hoursNum} hours`,
+          stats: {
+            totalAlerts: parseInt(stats.total_alerts || '0'),
+            blocks: parseInt(stats.blocks || '0'),
+            slowLanes: parseInt(stats.slow_lanes || '0'),
+            avgScore: parseFloat(stats.avg_score || '0').toFixed(2),
+            maxScore: parseFloat(stats.max_score || '0').toFixed(2),
+            uniqueUsers: parseInt(stats.unique_users || '0'),
+          },
+          timestamp: new Date().toISOString(),
+        },
+      })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to fetch fraud statistics' })
+    }
+  })
+
+  // GET /api/admin/user/:userId/fraud-history - Get fraud history for a user
+  app.get('/api/admin/user/:userId/fraud-history', { onRequest: [authenticate] }, async (req, reply) => {
+    try {
+      const { userId } = req.params as any
+      const { limit = '50' } = req.query as any
+      const limitNum = Math.min(parseInt(limit), 500)
+
+      const result = await db.query(
+        `SELECT id, user_id, game_type, rule_triggered, fraud_score, confidence,
+                evidence, action, resolved, created_at
+         FROM fraud_events
+         WHERE user_id = $1
+         ORDER BY created_at DESC
+         LIMIT $2`,
+        [userId, limitNum]
+      )
+
+      return reply.send({
+        success: true,
+        data: {
+          userId,
+          events: result.rows,
+          count: result.rows.length,
+        },
+      })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to fetch fraud history' })
+    }
+  })
+
+  // POST /api/admin/user/:userId/fraud-flag - Manually flag/unflag a user
+  app.post('/api/admin/user/:userId/fraud-flag', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    try {
+      const { userId } = req.params as any
+      const { isFlagged, reason } = z.object({
+        isFlagged: z.boolean(),
+        reason: z.string(),
+      }).parse(req.body)
+      const admin = req.user as any
+
+      if (isFlagged) {
+        await db.query(
+          `INSERT INTO user_fraud_flags (user_id, is_flagged, reason, flagged_by, created_at)
+           VALUES ($1, true, $2, $3, NOW())
+           ON CONFLICT (user_id) DO UPDATE SET is_flagged = true, reason = $2, flagged_by = $3, updated_at = NOW()`,
+          [userId, reason, admin.sub]
+        )
+
+        // Cache in Redis for quick lookup
+        await redis.setex(`fraud:flagged:${userId}`, 604800, JSON.stringify({ reason, flaggedAt: new Date().toISOString() }))
+      } else {
+        await db.query(
+          `UPDATE user_fraud_flags SET is_flagged = false, updated_at = NOW() WHERE user_id = $1`,
+          [userId]
+        )
+
+        // Remove from Redis cache
+        await redis.del(`fraud:flagged:${userId}`)
+      }
+
+      return reply.send({
+        success: true,
+        data: {
+          userId,
+          flagged: isFlagged,
+          message: `User ${isFlagged ? 'flagged' : 'unflagged'} successfully`,
+        },
+      })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to update fraud flag' })
+    }
+  })
+
+  // PATCH /api/admin/fraud-alerts/:alertId/resolve - Resolve a fraud alert
+  app.patch('/api/admin/fraud-alerts/:alertId/resolve', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    try {
+      const { alertId } = req.params as any
+      const { resolved, notes } = z.object({
+        resolved: z.boolean(),
+        notes: z.string().optional(),
+      }).parse(req.body)
+      const admin = req.user as any
+
+      const result = await db.query(
+        `UPDATE fraud_events
+         SET resolved = $1, resolved_at = CASE WHEN $1 THEN NOW() ELSE NULL END,
+             resolved_by = CASE WHEN $1 THEN $2 ELSE NULL END,
+             resolution_notes = $3, updated_at = NOW()
+         WHERE id = $4
+         RETURNING id, user_id, fraud_score, action`,
+        [resolved, admin.sub, notes || null, alertId]
+      )
+
+      if (!result.rows.length) {
+        return reply.code(404).send({ success: false, error: 'Alert not found' })
+      }
+
+      return reply.send({
+        success: true,
+        data: {
+          alertId,
+          resolved,
+          message: `Alert ${resolved ? 'resolved' : 'reopened'}`,
+        },
+      })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to resolve alert' })
+    }
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))
 
   const port = parseInt(process.env.PORT || '3008')
