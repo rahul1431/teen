@@ -30,7 +30,7 @@ async function start() {
 
   // Health
   app.get('/health', async (_req, reply) => {
-    return reply.send({ status: 'ok', service: 'churn-service', timestamp: new Date().toISOString() })
+    return reply.send({ success: true, data: { status: 'ok', service: 'churn-service', timestamp: new Date().toISOString() } })
   })
 
   // GET /api/churn/users
