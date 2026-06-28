@@ -31,6 +31,7 @@ const menuItems = [
   { key: '/admin/notifications', icon: <BellOutlined />, label: 'Notifications' },
   { key: '/admin/admin-users', icon: <TeamOutlined />, label: 'Admin Users' },
   { key: '/admin/risk-center', icon: <WarningOutlined />, label: 'Risk Center' },
+  { key: '/admin/ai-control', icon: <FundOutlined />, label: 'AI Control Center' },
   { key: '/admin/support', icon: <CustomerServiceOutlined />, label: 'Support & CMS' },
   { key: '/admin/leaderboard', icon: <TrophyOutlined />, label: 'Leaderboard' },
   { key: '/admin/security', icon: <SafetyOutlined />, label: 'Security' },

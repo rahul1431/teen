@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Tabs, Card, Alert, Button, Space, Tag, Divider } from 'antd'
-import { BrainOutlined, SettingOutlined, DashboardOutlined, SyncOutlined } from '@ant-design/icons'
+import { RobotOutlined, SettingOutlined, DashboardOutlined, SyncOutlined } from '@ant-design/icons'
 import { AIPromptConsole } from '../components/AI/AIPromptConsole'
 import { MLConfigPanel } from '../components/AI/MLConfigPanel'
 import { WorkflowDashboard } from '../components/AI/WorkflowDashboard'
@@ -21,7 +21,7 @@ export function AIControlCenter() {
       key: '1',
       label: (
         <span>
-          <BrainOutlined />
+          <RobotOutlined />
           AI Prompt Console
         </span>
       ),
@@ -57,7 +57,7 @@ export function AIControlCenter() {
       <Card
         title={
           <Space>
-            <BrainOutlined style={{ fontSize: 24, color: '#1890ff' }} />
+            <RobotOutlined style={{ fontSize: 24, color: '#1890ff' }} />
             <span>AI Control Center</span>
           </Space>
         }

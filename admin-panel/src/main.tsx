@@ -22,6 +22,7 @@ import Cricket from './pages/games/Cricket'
 import Leaderboard from './pages/Leaderboard'
 import Security from './pages/Security'
 import Changelog from './pages/Changelog'
+import { AIControlCenter } from './pages/AIControlCenter'
 import { useAuthStore } from './store/auth'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -50,6 +51,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="admin-users" element={<AdminUsers />} />
           <Route path="profile" element={<Profile />} />
           <Route path="risk-center" element={<RiskCenter />} />
+          <Route path="ai-control" element={<AIControlCenter />} />
           <Route path="support" element={<Support />} />
           <Route path="leaderboard" element={<Leaderboard />} />
           <Route path="security" element={<Security />} />
