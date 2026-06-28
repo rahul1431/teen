@@ -61,7 +61,16 @@ export class ProfileBuilder {
   }
 
   async updateConfig(updates: Record<string, string>): Promise<void> {
+    // C2: Validate numeric keys before persisting — reject non-integer strings
+    const numericKeys = [
+      'rebuild_hour', 'stream_lookback_days', 'history_lookback_days', 'min_sample_size',
+      'easy_percentile_max', 'medium_percentile_min', 'medium_percentile_max', 'hard_percentile_min',
+    ]
     for (const [key, value] of Object.entries(updates)) {
+      if (numericKeys.includes(key)) {
+        const parsed = parseInt(value, 10)
+        if (isNaN(parsed)) throw new Error(`Invalid numeric value for config key '${key}': ${value}`)
+      }
       await this.pool.query(
         `INSERT INTO bot_learning_config (key, value, updated_at)
          VALUES ($1, $2, NOW())
@@ -115,7 +124,7 @@ export class ProfileBuilder {
        WHERE gr.game_type = $1
          AND u.is_bot = false
          AND u.status = 'active'
-         AND gp.joined_at > NOW() - INTERVAL '${cfg.history_lookback_days} days'
+         AND gp.joined_at > NOW() - INTERVAL '${parseInt(String(cfg.history_lookback_days), 10)} days'
        GROUP BY gp.user_id
        HAVING COUNT(gp.id) >= $2
        ORDER BY total_profit ASC`,
@@ -205,30 +214,9 @@ export class ProfileBuilder {
     }
   }
 
-  private async getStreamActionData(gameType: string, lookbackDays: number): Promise<Record<string, any>> {
-    // Read recent game action events from Redis stream
-    // Returns aggregated fold/call/raise ratios and avg timing by rough skill bucket
-    try {
-      const cutoff = Date.now() - lookbackDays * 24 * 60 * 60 * 1000
-      const events = await this.redis.xrevrange('events:all', '+', cutoff.toString(), 'COUNT', '1000')
-
-      // Parse events — they are stored as [id, [field, value, ...]] pairs
-      for (const [_id, fields] of events) {
-        const dataIdx = fields.indexOf('data')
-        if (dataIdx === -1) continue
-        let event: any
-        try { event = JSON.parse(fields[dataIdx + 1]) } catch { continue }
-        if (event.game_type !== gameType || event.event_type !== 'gameAction') continue
-        if (!event.action || !event.user_id) continue
-        // Difficulty bucketing from stream events alone is not reliable without per-user profiles
-        // Primary data source is the DB quartile query; stream just enriches timing if needed
-      }
-
-      return {}
-    } catch (err) {
-      this.logger.warn({ err }, 'Stream data unavailable — using DB-only profiles')
-      return {}
-    }
+  private async getStreamActionData(_gameType: string, _lookbackDays: number): Promise<Record<string, any>> {
+    // Phase 4: enrich profiles from Redis stream events
+    return {}
   }
 
   private deriveFromWinRate(winRate: number, type: 'fold' | 'call'): number {

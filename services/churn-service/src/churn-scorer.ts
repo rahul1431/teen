@@ -15,6 +15,7 @@ export interface ChurnConfig {
   high_bonus_amount: number
   action_cooldown_days: number
   grace_period_days: number
+  cron_interval_minutes: number  // I2: expose cron cadence in config
 }
 
 export interface ChurnScore {
@@ -44,11 +45,21 @@ export class ChurnScorer {
       high_bonus_amount:     parseFloat(raw.high_bonus_amount     ?? '50'),
       action_cooldown_days:  parseFloat(raw.action_cooldown_days  ?? '7'),
       grace_period_days:     parseFloat(raw.grace_period_days     ?? '3'),
+      cron_interval_minutes: parseFloat(raw.cron_interval_minutes ?? '60'),  // I2
     }
   }
 
   async updateConfig(updates: Record<string, string>): Promise<void> {
+    // C2: Validate numeric keys before persisting — reject non-integer strings
+    const numericKeys = [
+      'low_threshold_days', 'medium_threshold_days', 'high_threshold_days',
+      'high_bonus_amount', 'action_cooldown_days', 'grace_period_days', 'cron_interval_minutes',
+    ]
     for (const [key, value] of Object.entries(updates)) {
+      if (numericKeys.includes(key)) {
+        const parsed = parseInt(value, 10)
+        if (isNaN(parsed)) throw new Error(`Invalid numeric value for config key '${key}': ${value}`)
+      }
       await this.pool.query(
         `INSERT INTO churn_config (key, value, updated_at)
          VALUES ($1, $2, NOW())
@@ -61,6 +72,9 @@ export class ChurnScorer {
   async runScoringCycle(): Promise<void> {
     this.logger.info('Churn scoring cycle started')
     const cfg = await this.getConfig()
+
+    // C2: parseInt ensures only an integer can enter the SQL INTERVAL literal
+    const graceDays = parseInt(String(cfg.grace_period_days), 10)
 
     // Fetch all eligible users: active, not suspended/banned, account older than grace period, has made at least 1 deposit
     const usersRes = await this.pool.query(
@@ -76,7 +90,7 @@ export class ChurnScorer {
        JOIN wallet_transactions wt ON wt.user_id = u.id AND wt.txn_type = 'deposit'
        WHERE u.status = 'active'
          AND u.is_bot = false
-         AND u.created_at < NOW() - INTERVAL '${cfg.grace_period_days} days'
+         AND u.created_at < NOW() - INTERVAL '${graceDays} days'
        GROUP BY u.id, u.created_at
        HAVING COUNT(wt.id) > 0`,
       []
@@ -120,14 +134,13 @@ export class ChurnScorer {
     }
 
     // Frequency drop score (0-30)
+    // I6: Removed dead else-if branch — the first branch already covers depositsLast14 === 0
     let frequencyScore = 0
     const depositsLast14 = user.deposits_last_14 as number
     const depositsPrior14 = user.deposits_prior_14 as number
     if (depositsPrior14 > 0 && depositsLast14 < depositsPrior14) {
       const dropRate = (depositsPrior14 - depositsLast14) / depositsPrior14
       frequencyScore = dropRate * 30
-    } else if (depositsPrior14 > 0 && depositsLast14 === 0) {
-      frequencyScore = 30
     }
 
     const totalScore = Math.min(Math.round(inactivityScore + frequencyScore), 100)
@@ -154,36 +167,60 @@ export class ChurnScorer {
     // Auto-actions only for medium/high, respecting cooldown
     if (riskLevel === 'none' || riskLevel === 'low') return
 
-    const cooldownKey = `churn:action_sent:${user.id}`
-    const alreadySent = await this.redis.get(cooldownKey)
-    if (alreadySent) return
+    // I1: Atomically acquire the cooldown lock with NX before acting to prevent startup-scan
+    // and hourly-cron from both firing for the same user simultaneously.
+    const lockKey = 'churn:action_sent:' + user.id
+    const acquired = await this.redis.set(lockKey, '1', 'EX', Math.round(cfg.action_cooldown_days * 86400), 'NX')
+    if (!acquired) return // cooldown active — skip
 
+    // I7: Pass cfg to avoid a second getConfig() round-trip inside reEngageUser
     if (riskLevel === 'high') {
-      await this.reEngageUser(user.id, true, true)
+      await this.reEngageUser(user.id, true, true, cfg)
     } else if (riskLevel === 'medium') {
-      await this.reEngageUser(user.id, false, true)
+      await this.reEngageUser(user.id, false, true, cfg)
     }
-
-    // Set cooldown
-    const cooldownSeconds = cfg.action_cooldown_days * 24 * 60 * 60
-    await this.redis.setex(cooldownKey, cooldownSeconds, '1')
+    // No separate cooldown set needed — set atomically via NX above (I1)
   }
 
-  async reEngageUser(userId: string, sendBonus: boolean, sendNotification: boolean): Promise<void> {
-    let actionTaken = ''
+  // I7: Optional cfg parameter — when provided (internal call), skips the extra getConfig() round-trip
+  //     and skips the per-call cooldown check (caller already acquired the NX lock).
+  async reEngageUser(userId: string, sendBonus: boolean, sendNotification: boolean, cfg?: ChurnConfig): Promise<void> {
+    // C1: Validate the user is actually in the churn risk list
+    const userCheck = await this.pool.query('SELECT id FROM user_churn_scores WHERE user_id = $1', [userId])
+    if (!userCheck.rows.length) throw new Error('User not in churn risk list')
+
+    const isExternalCall = !cfg
+    let resolvedCfg: ChurnConfig
+
+    if (isExternalCall) {
+      // C1: Guard direct API calls with a cooldown check
+      const alreadySent = await this.redis.get('churn:action_sent:' + userId)
+      if (alreadySent) throw new Error('Action cooldown active')
+      resolvedCfg = await this.getConfig()
+    } else {
+      // Internal call from scoreAndActOnUser — NX lock already acquired, cfg already loaded
+      resolvedCfg = cfg as ChurnConfig
+    }
+
+    // I4: Track each sub-action independently so partial failures are recorded
+    let bonusCredited = false
 
     if (sendBonus) {
       try {
-        const cfg = await this.getConfig()
         await axios.post(`${this.config.walletServiceUrl}/internal/wallet/credit`, {
           userId,
-          amount: cfg.high_bonus_amount,
+          amount: resolvedCfg.high_bonus_amount,
           type: 'bonus',
           reference: `churn_reengagement_${Date.now()}`,
           description: 'Re-engagement bonus',
         })
-        actionTaken = 'bonus'
-        this.logger.info({ userId, amount: cfg.high_bonus_amount }, 'Re-engagement bonus credited')
+        bonusCredited = true
+        // I4: Persist bonus success immediately
+        await this.pool.query(
+          `UPDATE user_churn_scores SET action_taken = 'bonus_credited', action_taken_at = NOW() WHERE user_id = $1`,
+          [userId]
+        )
+        this.logger.info({ userId, amount: resolvedCfg.high_bonus_amount }, 'Re-engagement bonus credited')
       } catch (err) {
         this.logger.error({ err, userId }, 'Failed to credit re-engagement bonus')
       }
@@ -199,19 +236,25 @@ export class ChurnScorer {
             : 'Come back and join the action! New games are waiting for you.',
           type: 'reengagement',
         })
-        actionTaken = actionTaken ? `${actionTaken}+notification` : 'notification'
+        // I4: Persist notification success immediately, reflecting whether bonus also landed
+        const newAction = bonusCredited ? 'bonus+notification' : 'notification'
+        await this.pool.query(
+          `UPDATE user_churn_scores SET action_taken = $2, action_taken_at = NOW() WHERE user_id = $1`,
+          [userId, newAction]
+        )
         this.logger.info({ userId }, 'Re-engagement notification sent')
       } catch (err) {
         this.logger.error({ err, userId }, 'Failed to send re-engagement notification')
       }
     }
 
-    if (actionTaken) {
-      await this.pool.query(
-        `UPDATE user_churn_scores
-         SET action_taken = $2, action_taken_at = NOW()
-         WHERE user_id = $1`,
-        [userId, actionTaken]
+    // C1: Set the cooldown key for external API calls (internal calls already set it via NX)
+    if (isExternalCall) {
+      await this.redis.set(
+        'churn:action_sent:' + userId,
+        '1',
+        'EX',
+        Math.round(resolvedCfg.action_cooldown_days * 86400)
       )
     }
   }

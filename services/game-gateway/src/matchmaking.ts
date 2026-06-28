@@ -241,6 +241,7 @@ export class MatchmakingService {
       pot: allPlayers.length * stake,
       round: 1,
       createdAt: Date.now(),
+      botDifficulty: 'medium',  // I3: default bot difficulty written into room state
     }
 
     let engineState: any = null
@@ -377,7 +378,8 @@ export class MatchmakingService {
 
     // Bot acts after a profile-driven delay
     const gameType = state.gameType ?? state.game_type ?? 'teen_patti'
-    const botDifficulty = state.botDifficulty ?? state.bot_difficulty ?? 'medium'
+    // I3: Ensure botDifficulty always resolves to a typed string before reaching getBotProfile
+    const botDifficulty = (state.botDifficulty ?? state.bot_difficulty ?? 'medium') as 'easy' | 'medium' | 'hard'
     const botProfile = await getBotProfile(this.redis, gameType, botDifficulty)
     const botAction = pickBotAction(botProfile)
     const botDelay = pickBotDelay(botProfile)
@@ -385,12 +387,14 @@ export class MatchmakingService {
     const timer = setTimeout(async () => {
       this.botTimers.delete(roomId)
       const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
-      try {
-        const action = botAction
 
-        const minBet = state.min_bet ?? state.MinBet ?? state.stake
-        const amount = action === 'raise' ? minBet * 2 : minBet
+      // Hoist action/amount so the catch block can use them in the retry (I5)
+      const action = botAction
+      const minBet = state.min_bet ?? state.MinBet ?? state.stake
+      const amount = action === 'raise' ? minBet * 2 : minBet
 
+      // I5: Extract the engine call + state-broadcast into a reusable closure so we can retry once
+      const doAction = async () => {
         const res = await fetch(`${engineUrl}/action`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -403,7 +407,7 @@ export class MatchmakingService {
           }),
           signal: AbortSignal.timeout(5000),
         })
-        if (!res.ok) return
+        if (!res.ok) throw new Error(`Bot engine returned ${res.status}`)
         const data = await res.json()
         const newState = data.state ?? data
 
@@ -423,8 +427,20 @@ export class MatchmakingService {
         } else {
           await this.handleGameEnd(roomId, data.result, realPlayers, newState)
         }
+      }
+
+      try {
+        await doAction()
       } catch (e) {
         console.error('Bot turn error', e)
+        // I5: Retry once after 2 s; on second failure settle/refund all players so they're not stuck
+        await new Promise(r => setTimeout(r, 2000))
+        try {
+          await doAction()
+        } catch (retryErr) {
+          console.error('Bot turn error on retry — ending game to unblock players', retryErr)
+          await this.handleGameEnd(roomId, { winner_id: null, prize: 0 }, realPlayers, state)
+        }
       }
     }, botDelay)
 

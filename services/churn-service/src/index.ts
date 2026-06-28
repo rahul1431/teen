@@ -4,7 +4,7 @@ import Redis from 'ioredis'
 import { Pool } from 'pg'
 import pino from 'pino'
 import cron from 'node-cron'
-import { ChurnScorer } from './churn-scorer'
+import { ChurnScorer, ChurnConfig } from './churn-scorer'
 
 const logger = pino()
 
@@ -21,8 +21,17 @@ async function start() {
   })
 
   // Hourly cron (runs at minute 0 of every hour)
-  const cfg = await scorer.getConfig().catch(() => ({ cron_interval_minutes: 60 })) as any
-  const cronExpr = `0 */${Math.max(1, Math.floor((cfg.cron_interval_minutes ?? 60) / 60))} * * *`
+  // I2: cfg is now fully typed — no `as any` needed since ChurnConfig includes cron_interval_minutes
+  const cfg = await scorer.getConfig().catch((): ChurnConfig => ({
+    cron_interval_minutes: 60,
+    low_threshold_days: 3,
+    medium_threshold_days: 7,
+    high_threshold_days: 14,
+    high_bonus_amount: 50,
+    action_cooldown_days: 7,
+    grace_period_days: 3,
+  }))
+  const cronExpr = `0 */${Math.max(1, Math.floor(cfg.cron_interval_minutes / 60))} * * *`
   cron.schedule(cronExpr, () => {
     scorer.runScoringCycle().catch(err => logger.error({ err }, 'Cron scoring failed'))
   })
