@@ -494,18 +494,21 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                   : const SizedBox.shrink(),
             ),
 
-            // ⑨ Result — AnimatedSwitcher prevents hard flash
-                ValueListenableBuilder<String?>(
-                  valueListenable: _resultNotifier,
-                  builder: (_, result, __) => AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 420),
-                    transitionBuilder: (child, anim) => FadeTransition(
-                      opacity: anim,
-                      child: ScaleTransition(scale: anim, child: child),
+            // ⑨ Result — Positioned.fill here so _buildResult child can be
+            //    wrapped by ScaleTransition without breaking StackParentData.
+                Positioned.fill(
+                  child: ValueListenableBuilder<String?>(
+                    valueListenable: _resultNotifier,
+                    builder: (_, result, __) => AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 420),
+                      transitionBuilder: (child, anim) => FadeTransition(
+                        opacity: anim,
+                        child: ScaleTransition(scale: anim, child: child),
+                      ),
+                      child: (result != null && result.isNotEmpty)
+                          ? _buildResult(result)
+                          : const SizedBox.shrink(),
                     ),
-                    child: (result != null && result.isNotEmpty)
-                        ? _buildResult(result)
-                        : const SizedBox.shrink(),
                   ),
                 ),
               ]);
@@ -1253,10 +1256,13 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   // ── Result Overlay ─────────────────────────────────────────────────────────
   Widget _buildResult(String message) {
     final won = message.contains('Won');
-    return Positioned.fill(key: const ValueKey('result'), child: Container(
+    // Returns a plain Container — caller (AnimatedSwitcher) is already inside
+    // Positioned.fill so this must NOT itself be Positioned (ScaleTransition
+    // would break StackParentData if Positioned is not a direct Stack child).
+    return Container(key: const ValueKey('result'),
       color: Colors.black.withOpacity(0.75),
       child: Stack(children: [
-        if (won) RepaintBoundary(child: const Positioned.fill(child: CoinRainWidget(active: true))),
+        if (won) Positioned.fill(child: RepaintBoundary(child: const CoinRainWidget(active: true))),
         Center(child: Container(
           margin: const EdgeInsets.all(24), padding: const EdgeInsets.all(28),
           decoration: BoxDecoration(
@@ -1301,7 +1307,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           ]),
         )),
       ]),
-    ));
+    );
   }
 }
 
