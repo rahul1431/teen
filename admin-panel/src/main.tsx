@@ -23,6 +23,7 @@ import Leaderboard from './pages/Leaderboard'
 import Security from './pages/Security'
 import Changelog from './pages/Changelog'
 import { AIControlCenter } from './pages/AIControlCenter'
+import AppMonitor from './pages/AppMonitor'
 import { useAuthStore } from './store/auth'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -56,6 +57,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="leaderboard" element={<Leaderboard />} />
           <Route path="security" element={<Security />} />
           <Route path="changelog" element={<Changelog />} />
+          <Route path="app-monitor" element={<AppMonitor />} />
         </Route>
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>

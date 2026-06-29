@@ -3,7 +3,7 @@ import {
   DashboardOutlined, UserOutlined, PlayCircleOutlined, DollarOutlined,
   BellOutlined, SettingOutlined, LogoutOutlined, TrophyOutlined, SafetyOutlined,
   TeamOutlined, ProfileOutlined, WarningOutlined, CustomerServiceOutlined,
-  FundOutlined, RobotOutlined, HistoryOutlined,
+  FundOutlined, RobotOutlined, HistoryOutlined, MonitorOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
@@ -36,6 +36,7 @@ const menuItems = [
   { key: '/admin/leaderboard', icon: <TrophyOutlined />, label: 'Leaderboard' },
   { key: '/admin/security', icon: <SafetyOutlined />, label: 'Security' },
   { key: '/admin/changelog', icon: <HistoryOutlined />, label: 'Changelog' },
+  { key: '/admin/app-monitor', icon: <MonitorOutlined />, label: 'App Monitor' },
 ]
 
 export default function AdminLayout() {
