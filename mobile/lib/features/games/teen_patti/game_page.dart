@@ -209,8 +209,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   Future<void> _loadConfig() async {
     try {
       final res = await Future.wait([
-        _api.dio.get('/config/emojis'),
-        _api.dio.get('/config/gifts'),
+        _api.dio.get('/api/admin/config/emojis'),
+        _api.dio.get('/api/admin/config/gifts'),
       ]);
       final emojis = (res[0].data as List?)?.cast<String>();
       final gifts  = (res[1].data as List?)?.cast<Map<String, dynamic>>();

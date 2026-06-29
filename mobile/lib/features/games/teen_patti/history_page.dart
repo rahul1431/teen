@@ -40,7 +40,7 @@ class _TeenPattiHistoryPageState extends State<TeenPattiHistoryPage> {
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
     try {
-      final res = await _api.dio.get('/wallet/game-history',
+      final res = await _api.dio.get('/api/wallet/game-history',
           queryParameters: {'game_type': 'teen_patti', 'limit': 20, 'offset': 0});
       final rows = (res.data as List?) ?? [];
       setState(() {
@@ -58,7 +58,7 @@ class _TeenPattiHistoryPageState extends State<TeenPattiHistoryPage> {
     if (_loadingMore || !_hasMore) return;
     setState(() => _loadingMore = true);
     try {
-      final res = await _api.dio.get('/wallet/game-history',
+      final res = await _api.dio.get('/api/wallet/game-history',
           queryParameters: {'game_type': 'teen_patti', 'limit': 20, 'offset': _offset});
       final rows = (res.data as List?) ?? [];
       setState(() {

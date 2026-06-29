@@ -1836,8 +1836,8 @@ async function start() {
 
   // â”€â”€ Emoji management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  // GET /admin/emojis â€” list all emojis
-  app.get('/admin/emojis', { onRequest: [authenticate] }, async (_req, reply) => {
+  // GET /api/admin/emojis — list all emojis
+  app.get('/api/admin/emojis', { onRequest: [authenticate] }, async (_req, reply) => {
     const res = await db.query(
       `SELECT id, emoji, label, is_active, sort_order, created_at
        FROM game_emojis ORDER BY sort_order ASC, created_at ASC`
@@ -1845,8 +1845,8 @@ async function start() {
     return reply.send(res.rows)
   })
 
-  // POST /admin/emojis â€” add new emoji
-  app.post('/admin/emojis', { onRequest: [authenticate] }, async (req, reply) => {
+  // POST /api/admin/emojis — add new emoji
+  app.post('/api/admin/emojis', { onRequest: [authenticate] }, async (req, reply) => {
     const { emoji, label = '', sort_order = 0 } = req.body as any
     if (!emoji) return reply.code(400).send({ error: 'emoji required' })
     const res = await db.query(
@@ -1856,8 +1856,8 @@ async function start() {
     return reply.code(201).send(res.rows[0])
   })
 
-  // PATCH /admin/emojis/:id â€” update (toggle active / reorder)
-  app.patch('/admin/emojis/:id', { onRequest: [authenticate] }, async (req, reply) => {
+  // PATCH /api/admin/emojis/:id — update (toggle active / reorder)
+  app.patch('/api/admin/emojis/:id', { onRequest: [authenticate] }, async (req, reply) => {
     const { id } = req.params as any
     const { is_active, sort_order, label } = req.body as any
     const fields: string[] = []
@@ -1874,8 +1874,8 @@ async function start() {
     return reply.send(res.rows[0])
   })
 
-  // DELETE /admin/emojis/:id
-  app.delete('/admin/emojis/:id', { onRequest: [authenticate] }, async (req, reply) => {
+  // DELETE /api/admin/emojis/:id
+  app.delete('/api/admin/emojis/:id', { onRequest: [authenticate] }, async (req, reply) => {
     const { id } = req.params as any
     await db.query('DELETE FROM game_emojis WHERE id = $1', [id])
     return reply.send({ success: true })
@@ -1883,8 +1883,8 @@ async function start() {
 
   // â”€â”€ Gift management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  // GET /admin/gifts â€” list all gifts
-  app.get('/admin/gifts', { onRequest: [authenticate] }, async (_req, reply) => {
+  // GET /api/admin/gifts — list all gifts
+  app.get('/api/admin/gifts', { onRequest: [authenticate] }, async (_req, reply) => {
     const res = await db.query(
       `SELECT id, icon, name, price, is_active, sort_order, created_at
        FROM game_gifts ORDER BY sort_order ASC, price ASC`
@@ -1893,7 +1893,7 @@ async function start() {
   })
 
   // POST /admin/gifts â€” add gift with price
-  app.post('/admin/gifts', { onRequest: [authenticate] }, async (req, reply) => {
+  app.post('/api/admin/gifts', { onRequest: [authenticate] }, async (req, reply) => {
     const { icon, name, price, sort_order = 0 } = req.body as any
     if (!icon || !name) return reply.code(400).send({ error: 'icon and name required' })
     const numPrice = parseFloat(price)
@@ -1906,7 +1906,7 @@ async function start() {
   })
 
   // PATCH /admin/gifts/:id â€” update price / toggle / reorder
-  app.patch('/admin/gifts/:id', { onRequest: [authenticate] }, async (req, reply) => {
+  app.patch('/api/admin/gifts/:id', { onRequest: [authenticate] }, async (req, reply) => {
     const { id } = req.params as any
     const { price, is_active, sort_order, name, icon } = req.body as any
     const fields: string[] = []
@@ -1930,7 +1930,7 @@ async function start() {
   })
 
   // DELETE /admin/gifts/:id
-  app.delete('/admin/gifts/:id', { onRequest: [authenticate] }, async (req, reply) => {
+  app.delete('/api/admin/gifts/:id', { onRequest: [authenticate] }, async (req, reply) => {
     const { id } = req.params as any
     await db.query('DELETE FROM game_gifts WHERE id = $1', [id])
     return reply.send({ success: true })
@@ -1939,7 +1939,7 @@ async function start() {
   // â”€â”€ Public config (emojis/gifts for mobile game) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   // GET /config/emojis â€” active emojis for game use (no auth)
-  app.get('/config/emojis', async (_req, reply) => {
+  app.get('/api/admin/config/emojis', async (_req, reply) => {
     const res = await db.query(
       `SELECT emoji, label FROM game_emojis WHERE is_active = true ORDER BY sort_order ASC`
     )
@@ -1947,7 +1947,7 @@ async function start() {
   })
 
   // GET /config/gifts â€” active gifts with prices for game use (no auth)
-  app.get('/config/gifts', async (_req, reply) => {
+  app.get('/api/admin/config/gifts', async (_req, reply) => {
     const res = await db.query(
       `SELECT id, icon, name, price FROM game_gifts WHERE is_active = true ORDER BY sort_order ASC`
     )
@@ -1969,3 +1969,4 @@ declare module 'fastify' {
     requireRole: (role: any) => any;
   }
 }
+

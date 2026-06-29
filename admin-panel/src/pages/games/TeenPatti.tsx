@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag, Badge,
-  Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col
+  Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col,
+  Input, Popconfirm, Modal, Typography
 } from 'antd'
-import { ReloadOutlined, EyeOutlined } from '@ant-design/icons'
+import { ReloadOutlined, EyeOutlined, PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
+
+const { Text } = Typography
 
 export default function TeenPatti() {
   const [config, setConfig] = useState<any>(null)
@@ -15,6 +18,22 @@ export default function TeenPatti() {
   const [loadingRooms, setLoadingRooms] = useState(false)
   const [statusFilter, setStatusFilter] = useState('active')
   const [selectedRoom, setSelectedRoom] = useState<any>(null)
+
+  // Emojis state
+  const [emojis, setEmojis] = useState<any[]>([])
+  const [loadingEmojis, setLoadingEmojis] = useState(false)
+  const [emojiModalOpen, setEmojiModalOpen] = useState(false)
+  const [newEmoji, setNewEmoji] = useState('')
+  const [newEmojiLabel, setNewEmojiLabel] = useState('')
+  const [savingEmoji, setSavingEmoji] = useState(false)
+
+  // Gifts state
+  const [gifts, setGifts] = useState<any[]>([])
+  const [loadingGifts, setLoadingGifts] = useState(false)
+  const [giftModalOpen, setGiftModalOpen] = useState(false)
+  const [editingGift, setEditingGift] = useState<any>(null)
+  const [giftForm, setGiftForm] = useState({ icon: '', name: '', price: '' })
+  const [savingGift, setSavingGift] = useState(false)
 
   const loadConfig = () => {
     setLoadingConfig(true)
@@ -43,20 +62,155 @@ export default function TeenPatti() {
     setLoadingRooms(true)
     try {
       const res = await adminApi.get('/game-rooms', { params: { status: statusFilter } })
-      // Filter for Teen Patti rooms on the client
       setRooms(res.data.filter((r: any) => r.game_type === 'teen_patti'))
     } finally {
       setLoadingRooms(false)
     }
   }
 
-  useEffect(() => {
-    loadConfig()
-  }, [])
+  // ── Emoji management ──────────────────────────────────────────
+  const fetchEmojis = async () => {
+    setLoadingEmojis(true)
+    try {
+      const res = await adminApi.get('/emojis')
+      setEmojis(res.data)
+    } catch { message.error('Failed to load emojis') }
+    finally { setLoadingEmojis(false) }
+  }
 
-  useEffect(() => {
-    fetchRooms()
-  }, [statusFilter])
+  const addEmoji = async () => {
+    if (!newEmoji.trim()) { message.warning('Enter an emoji'); return }
+    setSavingEmoji(true)
+    try {
+      await adminApi.post('/emojis', { emoji: newEmoji.trim(), label: newEmojiLabel.trim() })
+      message.success('Emoji added!')
+      setNewEmoji(''); setNewEmojiLabel('')
+      setEmojiModalOpen(false)
+      fetchEmojis()
+    } catch { message.error('Failed to add emoji') }
+    finally { setSavingEmoji(false) }
+  }
+
+  const toggleEmoji = async (id: string, is_active: boolean) => {
+    try {
+      await adminApi.patch(`/emojis/${id}`, { is_active })
+      fetchEmojis()
+    } catch { message.error('Failed to update emoji') }
+  }
+
+  const deleteEmoji = async (id: string) => {
+    try {
+      await adminApi.delete(`/emojis/${id}`)
+      message.success('Emoji deleted')
+      fetchEmojis()
+    } catch { message.error('Failed to delete emoji') }
+  }
+
+  // ── Gift management ───────────────────────────────────────────
+  const fetchGifts = async () => {
+    setLoadingGifts(true)
+    try {
+      const res = await adminApi.get('/gifts')
+      setGifts(res.data)
+    } catch { message.error('Failed to load gifts') }
+    finally { setLoadingGifts(false) }
+  }
+
+  const openAddGift = () => {
+    setEditingGift(null)
+    setGiftForm({ icon: '', name: '', price: '' })
+    setGiftModalOpen(true)
+  }
+
+  const openEditGift = (g: any) => {
+    setEditingGift(g)
+    setGiftForm({ icon: g.icon, name: g.name, price: String(g.price) })
+    setGiftModalOpen(true)
+  }
+
+  const saveGift = async () => {
+    if (!giftForm.icon.trim() || !giftForm.name.trim()) { message.warning('Icon and name are required'); return }
+    const price = parseFloat(giftForm.price)
+    if (isNaN(price) || price < 0) { message.warning('Enter a valid price (≥ 0)'); return }
+    setSavingGift(true)
+    try {
+      if (editingGift) {
+        await adminApi.patch(`/gifts/${editingGift.id}`, { icon: giftForm.icon.trim(), name: giftForm.name.trim(), price })
+        message.success('Gift updated!')
+      } else {
+        await adminApi.post('/gifts', { icon: giftForm.icon.trim(), name: giftForm.name.trim(), price })
+        message.success('Gift added!')
+      }
+      setGiftModalOpen(false)
+      fetchGifts()
+    } catch { message.error('Failed to save gift') }
+    finally { setSavingGift(false) }
+  }
+
+  const toggleGift = async (id: string, is_active: boolean) => {
+    try {
+      await adminApi.patch(`/gifts/${id}`, { is_active })
+      fetchGifts()
+    } catch { message.error('Failed to update gift') }
+  }
+
+  const deleteGift = async (id: string) => {
+    try {
+      await adminApi.delete(`/gifts/${id}`)
+      message.success('Gift deleted')
+      fetchGifts()
+    } catch { message.error('Failed to delete gift') }
+  }
+
+  useEffect(() => { loadConfig(); fetchEmojis(); fetchGifts() }, [])
+  useEffect(() => { fetchRooms() }, [statusFilter])
+
+  const emojiColumns = [
+    { title: 'Emoji', dataIndex: 'emoji', render: (e: string) => <span style={{ fontSize: 24 }}>{e}</span> },
+    { title: 'Label', dataIndex: 'label', render: (l: string) => l || <Text type="secondary">—</Text> },
+    { title: 'Order', dataIndex: 'sort_order' },
+    {
+      title: 'Active', dataIndex: 'is_active',
+      render: (v: boolean, r: any) => (
+        <Switch checked={v} size="small" onChange={(checked) => toggleEmoji(r.id, checked)} />
+      )
+    },
+    {
+      title: '', key: 'del',
+      render: (r: any) => (
+        <Popconfirm title="Delete this emoji?" onConfirm={() => deleteEmoji(r.id)} okText="Delete" okType="danger">
+          <Button size="small" danger icon={<DeleteOutlined />} />
+        </Popconfirm>
+      )
+    },
+  ]
+
+  const giftColumns = [
+    { title: 'Icon', dataIndex: 'icon', render: (e: string) => <span style={{ fontSize: 24 }}>{e}</span> },
+    { title: 'Name', dataIndex: 'name' },
+    {
+      title: 'Price (₹)', dataIndex: 'price',
+      render: (p: any) => <Text strong style={{ color: '#d4af37' }}>₹{parseFloat(p).toFixed(2)}</Text>
+    },
+    { title: 'Order', dataIndex: 'sort_order' },
+    {
+      title: 'Active', dataIndex: 'is_active',
+      render: (v: boolean, r: any) => (
+        <Switch checked={v} size="small" onChange={(checked) => toggleGift(r.id, checked)} />
+      )
+    },
+    {
+      title: '', key: 'actions',
+      render: (r: any) => (
+        <Space>
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEditGift(r)} />
+          <Popconfirm title="Delete this gift?" onConfirm={() => deleteGift(r.id)} okText="Delete" okType="danger">
+            <Button size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      )
+    },
+  ]
 
   const roomColumns = [
     { title: 'Room ID', dataIndex: 'id', render: (id: string) => id.slice(0, 12) + '...' },
@@ -138,6 +292,133 @@ export default function TeenPatti() {
           </Card>
         </Col>
       </Row>
+
+      {/* Emoji & Gift Management */}
+      <Row gutter={[24, 24]} style={{ marginTop: 24 }}>
+        <Col xs={24} lg={12}>
+          <Card
+            title="😀 Game Emojis"
+            extra={
+              <Space>
+                <Button icon={<ReloadOutlined />} size="small" onClick={fetchEmojis} />
+                <Button type="primary" icon={<PlusOutlined />} size="small" onClick={() => setEmojiModalOpen(true)}>
+                  Add Emoji
+                </Button>
+              </Space>
+            }
+            loading={loadingEmojis}
+          >
+            <Table
+              dataSource={emojis}
+              columns={emojiColumns}
+              rowKey="id"
+              size="small"
+              pagination={{ pageSize: 10 }}
+            />
+          </Card>
+        </Col>
+
+        <Col xs={24} lg={12}>
+          <Card
+            title="🎁 Game Gifts"
+            extra={
+              <Space>
+                <Button icon={<ReloadOutlined />} size="small" onClick={fetchGifts} />
+                <Button type="primary" icon={<PlusOutlined />} size="small" onClick={openAddGift}>
+                  Add Gift
+                </Button>
+              </Space>
+            }
+            loading={loadingGifts}
+          >
+            <Table
+              dataSource={gifts}
+              columns={giftColumns}
+              rowKey="id"
+              size="small"
+              pagination={{ pageSize: 10 }}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      {/* Add Emoji Modal */}
+      <Modal
+        title="Add New Emoji"
+        open={emojiModalOpen}
+        onOk={addEmoji}
+        onCancel={() => { setEmojiModalOpen(false); setNewEmoji(''); setNewEmojiLabel('') }}
+        confirmLoading={savingEmoji}
+        okText="Add"
+      >
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', marginBottom: 4 }}>Emoji character</label>
+          <Input
+            value={newEmoji}
+            onChange={e => setNewEmoji(e.target.value)}
+            placeholder="Paste emoji here, e.g. 🎉"
+            maxLength={8}
+            style={{ fontSize: 24, width: 120 }}
+          />
+        </div>
+        <div>
+          <label style={{ display: 'block', marginBottom: 4 }}>Label (optional)</label>
+          <Input
+            value={newEmojiLabel}
+            onChange={e => setNewEmojiLabel(e.target.value)}
+            placeholder="e.g. Party"
+            maxLength={32}
+          />
+        </div>
+        {newEmoji && (
+          <div style={{ marginTop: 16, fontSize: 40, textAlign: 'center' }}>{newEmoji}</div>
+        )}
+      </Modal>
+
+      {/* Add / Edit Gift Modal */}
+      <Modal
+        title={editingGift ? 'Edit Gift' : 'Add New Gift'}
+        open={giftModalOpen}
+        onOk={saveGift}
+        onCancel={() => setGiftModalOpen(false)}
+        confirmLoading={savingGift}
+        okText={editingGift ? 'Save' : 'Add'}
+      >
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', marginBottom: 4 }}>Icon (emoji)</label>
+          <Input
+            value={giftForm.icon}
+            onChange={e => setGiftForm(f => ({ ...f, icon: e.target.value }))}
+            placeholder="e.g. 🌹"
+            maxLength={8}
+            style={{ fontSize: 24, width: 120 }}
+          />
+          {giftForm.icon && (
+            <span style={{ marginLeft: 12, fontSize: 36 }}>{giftForm.icon}</span>
+          )}
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', marginBottom: 4 }}>Gift name</label>
+          <Input
+            value={giftForm.name}
+            onChange={e => setGiftForm(f => ({ ...f, name: e.target.value }))}
+            placeholder="e.g. Rose"
+            maxLength={32}
+          />
+        </div>
+        <div>
+          <label style={{ display: 'block', marginBottom: 4 }}>Price (₹)</label>
+          <Input
+            value={giftForm.price}
+            onChange={e => setGiftForm(f => ({ ...f, price: e.target.value }))}
+            placeholder="e.g. 25"
+            prefix="₹"
+            type="number"
+            min={0}
+            style={{ width: 140 }}
+          />
+        </div>
+      </Modal>
 
       <Drawer title="Room Details" open={!!selectedRoom} onClose={() => setSelectedRoom(null)} width={480}>
         {selectedRoom && (
