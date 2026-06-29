@@ -38,6 +38,10 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
     _loadBalance();
     _roomJoinedSub = _socket.on(SocketEvents.roomJoined).listen((data) {
       if (!mounted) return;
+      // Cancel before navigating — push() keeps lobby alive in the stack, so
+      // without this the listener fires again when the game page re-emits joinRoom.
+      _roomJoinedSub?.cancel();
+      _roomJoinedSub = null;
       setState(() => _searching = false);
       context.push('/games/teen-patti/play/${data['room_id']}', extra: data);
     });

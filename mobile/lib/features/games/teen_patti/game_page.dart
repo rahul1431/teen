@@ -60,6 +60,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   double  _betAmount   = 0; // keep for _sendAction read; _betNotifier drives the UI
   Timer?  _turnTimer;
   StreamSubscription? _reconnectSub;
+  StreamSubscription? _roomJoinedSub;
+  StreamSubscription? _gameStateSub;
+  StreamSubscription? _gameResultSub;
+  StreamSubscription? _roomChatSub;
   bool _ready        = false;
   bool _showChat     = false;
   bool _showGiftTray = false;
@@ -100,6 +104,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   void dispose() {
     SoundService.instance.stopAmbience();
     _reconnectSub?.cancel();
+    _roomJoinedSub?.cancel();
+    _gameStateSub?.cancel();
+    _gameResultSub?.cancel();
+    _roomChatSub?.cancel();
     _turnTimer?.cancel();
     _practice?.dispose();
     _chatInput.dispose();
@@ -208,10 +216,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
     if (mounted) setState(() => _ready = true);
 
-    _socket.on(SocketEvents.roomJoined).listen((data) =>
+    _roomJoinedSub = _socket.on(SocketEvents.roomJoined).listen((data) =>
         _applyRoomJoinedData(Map<String, dynamic>.from(data)));
 
-    _socket.on(SocketEvents.gameStateUpdate).listen((data) {
+    _gameStateSub = _socket.on(SocketEvents.gameStateUpdate).listen((data) {
       if (!mounted) return;
       final inner   = data['state'] as Map<String, dynamic>? ?? data;
       final players = _mapPlayers(inner['players'] as List? ?? []);
@@ -242,7 +250,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       }
     });
 
-    _socket.on(SocketEvents.gameResult).listen((data) {
+    _gameResultSub = _socket.on(SocketEvents.gameResult).listen((data) {
       if (!mounted) return;
       _turnTimer?.cancel();
       final won = data['winner_id'] == _myUserId;
@@ -261,7 +269,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       }
     });
 
-    _socket.on(SocketEvents.roomChatMsg).listen((data) {
+    _roomChatSub = _socket.on(SocketEvents.roomChatMsg).listen((data) {
       if (!mounted || data is! Map) return;
       final type = (data['type'] ?? 'text').toString();
       final msg  = _ChatMsg(
