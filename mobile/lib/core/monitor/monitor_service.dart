@@ -76,6 +76,46 @@ class MonitorService {
     _userId = userId;
   }
 
+  /// Track a UX interaction (button tap, game action, user gesture).
+  void ux(String action, {Map<String, dynamic>? properties}) {
+    enqueue({
+      'event_type': 'ux',
+      'screen': currentScreen,
+      'action': action,
+      if (properties != null) 'properties': properties,
+    });
+  }
+
+  /// Track a performance measurement (slow render, latency, duration).
+  void perf(String label, int durationMs, {Map<String, dynamic>? properties}) {
+    enqueue({
+      'event_type': 'perf',
+      'screen': currentScreen,
+      'label': label,
+      'duration_ms': durationMs,
+      if (properties != null) 'properties': properties,
+    });
+  }
+
+  /// Track a WebSocket message sent or received (event name only, no payload).
+  void wsMessage(String direction, String eventName) {
+    enqueue({
+      'event_type': 'ws_message',
+      'screen': currentScreen,
+      'properties': {'direction': direction, 'ws_event': eventName},
+    });
+  }
+
+  /// Track a business-level game event (join, action, result).
+  void game(String gameEvent, {Map<String, dynamic>? properties}) {
+    enqueue({
+      'event_type': 'game_event',
+      'screen': currentScreen,
+      'action': gameEvent,
+      if (properties != null) 'properties': properties,
+    });
+  }
+
   /// Add an event to the queue. Silently drops if not initialized or queue is full.
   void enqueue(Map<String, dynamic> event) {
     if (!_initialized) return;

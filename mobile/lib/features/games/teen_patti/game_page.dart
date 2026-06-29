@@ -8,6 +8,7 @@ import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/monitor/monitor_service.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'practice_engine.dart';
 import 'coin_rain.dart';
@@ -221,6 +222,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   Future<void> _init() async {
     _myUserId = await SecureStorage.getUserId();
     _loadConfig(); // fire-and-forget, updates emojis/gifts when available
+    MonitorService.instance.game('tp_join_room', properties: {'room_id': widget.roomId});
     _socket.emit(SocketEvents.joinRoom, {'room_id': widget.roomId});
     _reconnectSub = _socket.on('reconnect').listen((_) =>
         _socket.emit(SocketEvents.joinRoom, {'room_id': widget.roomId}));
@@ -253,6 +255,11 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       if (!mounted) return;
       _turnTimer?.cancel();
       final won = data['winner_id'] == _myUserId;
+      MonitorService.instance.game('tp_result', properties: {
+        'won': won,
+        'prize': data['prize']?.toString() ?? '0',
+        'room_id': widget.roomId,
+      });
       _resultNotifier.value = won
           ? '🎉 You Won ₹${double.parse(data['prize'].toString()).toStringAsFixed(2)}!'
           : '😔 You Lost. Winner: ${data['winner_username'] ?? 'Unknown'}';
@@ -303,11 +310,14 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _myTurnNotifier.value = false;
     if (action == 'show') _isSeen = true;
     SoundService.instance.play(action == 'fold' ? Sfx.buttonTap : Sfx.chipBet);
+    MonitorService.instance.game('tp_action',
+        properties: {'action': action, if (amount != null) 'amount': amount});
     if (widget.demo) {
       HapticFeedback.mediumImpact();
       _practice?.playerAction(action, amount);
       return;
     }
+    MonitorService.instance.wsMessage('send', SocketEvents.gameAction);
     _socket.emit(SocketEvents.gameAction, {
       'room_id': widget.roomId,
       'action':  action,
