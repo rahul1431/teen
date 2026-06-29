@@ -1,3 +1,34 @@
+# App Monitor SDK — Final Fix Report (6-Issue Pass)
+
+**Date:** 2026-06-28
+**Branch:** claude/confident-archimedes-e2dd1k
+**Commit:** 717453f
+
+## Status: DONE
+
+All 6 critical/important findings fixed. All three verification commands pass clean.
+
+## Fixes Applied
+
+| # | Severity | Description | Files Changed |
+|---|----------|-------------|---------------|
+| 1 | Critical | Shared-secret guard (`x-monitor-key` header) on `POST /api/monitor/events`; `INGEST_SECRET_KEY` added to `.env.example`; Flutter `_monitorDio` wires `--dart-define=MONITOR_SECRET_KEY` at build time | `index.ts`, `.env.example`, `monitor_service.dart` |
+| 2 | Critical | `_AppLifecycleMonitor extends WidgetsBindingObserver` added to `main.dart`; registered with `WidgetsBinding.instance.addObserver()` after SDK init; emits lifecycle events on pause/detach/resume | `main.dart` |
+| 3 | Important | `ended_at = NULL` added to session upsert `ON CONFLICT` clause so a resumed session clears its end timestamp | `monitor-ingestor.ts` |
+| 4 | Important | `SocketMonitorWrapper` stored in named local variable with `// ignore: unused_local_variable` annotation to prevent premature GC | `main.dart` |
+| 5 | Important | Captured prior `FlutterError.onError` before overriding; non-debug path forwards to previous handler (chain preserved) | `main.dart` |
+| 6 | Important | Design-intent comment added inside `registerMonitorRoutes` explaining why `requireRole` is accepted but not applied | `monitor-routes.ts` |
+
+## Verification Results
+
+| Command | Result |
+|---------|--------|
+| `cd services/app-monitor-service && npx tsc --noEmit` | Clean (no output) |
+| `cd services/admin-service && npm run build` | Clean |
+| `cd mobile && flutter analyze lib/main.dart lib/core/monitor/` | No issues found |
+
+---
+
 # Final Code Review — Fix Report (Phase 2 + 3)
 
 **Date:** 2026-06-28  
