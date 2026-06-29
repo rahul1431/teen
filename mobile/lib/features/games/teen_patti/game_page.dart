@@ -45,14 +45,15 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   final _socket = SocketService();
   PracticeEngine? _practice;
 
-  // Seat positions: (fractionX, fractionY) of screen size, centre of each box.
-  // Designed for portrait. fractionX=0 is left edge, fractionY=0 is top.
-  static const _seats = {
-    1: [(0.50, 0.19)],
-    2: [(0.13, 0.33), (0.87, 0.33)],
-    3: [(0.13, 0.33), (0.50, 0.17), (0.87, 0.33)],
-    4: [(0.25, 0.18), (0.75, 0.18), (0.10, 0.36), (0.90, 0.36)],
-    5: [(0.25, 0.18), (0.75, 0.18), (0.09, 0.38), (0.50, 0.40), (0.91, 0.38)],
+  // Seat positions: (fractionX, fractionY) relative to TABLE rect, not screen.
+  // (0,0) = table top-left, (1,1) = table bottom-right.
+  // cx = tableLeft + tableW * fx,  cy = tableTop + tableH * fy
+  static const _tableSeats = {
+    1: [(0.50, 0.14)],
+    2: [(0.08, 0.38), (0.92, 0.38)],
+    3: [(0.08, 0.38), (0.50, 0.14), (0.92, 0.38)],
+    4: [(0.25, 0.12), (0.75, 0.12), (0.06, 0.44), (0.94, 0.44)],
+    5: [(0.25, 0.12), (0.75, 0.12), (0.05, 0.46), (0.95, 0.46), (0.50, 0.48)],
   };
 
   // ── ValueNotifiers ────────────────────────────────────────────────────────
@@ -418,50 +419,66 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
               : LayoutBuilder(builder: (context, box) {
                   final w = box.maxWidth;
                   final h = box.maxHeight;
+                  // Table geometry — computed from real status-bar height so the
+                  // table is always fully below the top bar, never behind it.
+                  final statusH = MediaQuery.of(context).padding.top;
+                  final tw = w * 0.92;
+                  final th = math.min(
+                    tw * 1.42,                      // max aspect: slightly taller than wide
+                    h - statusH - 52 - 88,          // leave room for top-bar + action-bar
+                  );
+                  final tl = (w - tw) / 2;
+                  final tt = statusH + 52.0;        // sits just below the icon row
+                  final tb = tt + th;               // table bottom pixel
+
                   return Stack(children: [
                     // ① Ambient background
                     _buildBackground(w, h),
 
-                    // ② Poker table oval
-                    _buildTableOval(w, h),
+                    // ② Poker table oval — explicit coords, no helpers needed
+                    _buildTableOval(tl, tt, tw, th),
 
-                    // ③ Dealer hostess (top of table)
-                    _buildDealerHostess(w, h),
-
-                    // ④ Opponent seats (rebuilt only on game-state change)
-                    ValueListenableBuilder<Map<String, dynamic>?>(
-                      valueListenable: _gsNotifier,
-                      builder: (_, gs, __) => _buildOpponentSeats(gs, w, h),
+                    // ③ Dealer hostess — top-centre INSIDE the table
+                    Positioned(
+                      left: w / 2 - 40, top: tt + 6,
+                      child: const _HostessWidget(),
                     ),
 
-                    // ⑤ Center: user cards + See Cards btn
+                    // ④ Opponent seats
+                    ValueListenableBuilder<Map<String, dynamic>?>(
+                      valueListenable: _gsNotifier,
+                      builder: (_, gs, __) =>
+                          _buildOpponentSeats(gs, w, h, tl, tt, tw, th),
+                    ),
+
+                    // ⑤ User cards + See Cards btn — centred on lower table
                     ValueListenableBuilder<List<Map<String, dynamic>>>(
                       valueListenable: _myCardsNotifier,
                       builder: (_, cards, __) =>
                           ValueListenableBuilder<bool>(
                             valueListenable: _myTurnNotifier,
                             builder: (_, isMyTurn, __) =>
-                                _buildUserCards(cards, isMyTurn, w, h),
+                                _buildUserCards(cards, isMyTurn, w, tl, tt, tw, th),
                           ),
                     ),
 
-                    // ⑥ Pot chip
+                    // ⑥ Pot chip — below user cards, inside table
                     ValueListenableBuilder<Map<String, dynamic>?>(
                       valueListenable: _gsNotifier,
-                      builder: (_, gs, __) => _buildPotChip(gs, w, h),
+                      builder: (_, gs, __) => _buildPotChip(gs, w, tt, tw, th),
                     ),
 
-                    // ⑦ My chips strip
+                    // ⑦ My chips strip — just below the table
                     ValueListenableBuilder<Map<String, dynamic>?>(
                       valueListenable: _gsNotifier,
-                      builder: (_, gs, __) => _buildMyChips(gs, w, h),
+                      builder: (_, gs, __) => _buildMyChips(gs, w, tb),
                     ),
 
                     // ⑧ Top bar
                     _buildTopBar(w),
 
                     // ⑨ Right emoji panel
-                    _buildRightPanel(w, h),
+                    _buildRightPanel(w, h, tt),
 
                     // ⑩ Floating reactions
                     ValueListenableBuilder<List<_Reaction>>(
@@ -479,7 +496,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                               : const SizedBox.shrink(),
                     ),
 
-                    // ⑫ Action bar (only on my turn, before result)
+                    // ⑫ Action bar
                     ValueListenableBuilder<bool>(
                       valueListenable: _myTurnNotifier,
                       builder: (_, isMyTurn, __) =>
@@ -506,8 +523,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                         builder: (_, msgs, __) => _buildChatPanel(msgs, w, h),
                       ),
 
-                    // ⑮ Result overlay — Positioned.fill here so _buildResult
-                    //    returns a plain Container (safe inside ScaleTransition).
+                    // ⑮ Result overlay
                     Positioned.fill(
                       child: ValueListenableBuilder<String?>(
                         valueListenable: _resultNotifier,
@@ -549,19 +565,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         ),
       );
 
-  // ② Oval poker table
-  //    tableW = 92% of width, tableH ≈ 48% of height, centred, starts at 8% top.
-  double _tableW(double w)    => w * 0.92;
-  double _tableH(double w, double h) => math.min(w * 0.92, h * 0.50);
-  double _tableLeft(double w) => (w - _tableW(w)) / 2;
-  double _tableTop(double h)  => h * 0.085;
-
-  Widget _buildTableOval(double w, double h) {
-    final tw = _tableW(w);
-    final th = _tableH(w, h);
-    final tl = _tableLeft(w);
-    final tt = _tableTop(h);
-    final radius = BorderRadius.circular(th / 2);
+  // ② Oval poker table — tl/tt/tw/th passed in from LayoutBuilder
+  Widget _buildTableOval(double tl, double tt, double tw, double th) {
+    final radius = BorderRadius.circular(math.min(tw, th) / 2);
     return Positioned(
       left: tl, top: tt, width: tw, height: th,
       child: RepaintBoundary(
@@ -596,7 +602,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                 'TEEN PATTI',
                 style: TextStyle(
                   color: const Color(0xFF2E9B55).withOpacity(0.14),
-                  fontSize: tw * 0.09,
+                  fontSize: tw * 0.08,
                   fontWeight: FontWeight.w900,
                   letterSpacing: 6,
                 ),
@@ -608,33 +614,26 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ③ Dealer / hostess at top-centre of the table
-  Widget _buildDealerHostess(double w, double h) {
-    final cx = w / 2;
-    final ty = _tableTop(h);
-    return Positioned(
-      left: cx - 40, top: ty - 28,
-      child: const _HostessWidget(),
-    );
-  }
-
-  // ④ Opponent seats positioned around the table
-  Widget _buildOpponentSeats(Map<String, dynamic>? gs, double w, double h) {
+  // ④ Opponent seats positioned around the table using TABLE-relative fractions.
+  //    cx = tl + tw*fx,  cy = tt + th*fy  — so seats stay inside the oval.
+  Widget _buildOpponentSeats(
+    Map<String, dynamic>? gs, double w, double h,
+    double tl, double tt, double tw, double th,
+  ) {
     final allPlayers = (gs?['players'] as List? ?? [])
         .map((p) => Map<String, dynamic>.from(p as Map))
         .toList();
     final opponents = allPlayers
         .where((p) => (p['user_id'] ?? p['userId']) != _myUserId)
         .toList();
-
     if (opponents.isEmpty) return const SizedBox.shrink();
 
     final n       = opponents.length.clamp(1, 5);
-    final posList = _seats[n] ?? _seats[1]!;
+    final posList = _tableSeats[n] ?? _tableSeats[1]!;
 
     return Stack(children: [
       for (var i = 0; i < opponents.length && i < posList.length; i++)
-        _positionedSeat(opponents[i], gs, posList[i], w, h),
+        _positionedSeat(opponents[i], gs, posList[i], w, h, tl, tt, tw, th),
     ]);
   }
 
@@ -642,19 +641,22 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     Map<String, dynamic> p,
     Map<String, dynamic>? gs,
     (double, double) frac,
-    double w,
-    double h,
+    double w, double h,
+    double tl, double tt, double tw, double th,
   ) {
-    const seatW = 110.0;
+    const seatW = 106.0;
     const seatH = 148.0;
-    final cx = w * frac.$1;
-    final cy = h * frac.$2;
+    // Centre of seat in screen pixels, table-relative
+    final cx = tl + tw * frac.$1;
+    final cy = tt + th * frac.$2;
+    // Clamp so seat box stays within screen bounds (4dp margin each side)
+    final sl = (cx - seatW / 2).clamp(4.0, w - seatW - 4.0);
+    // Clamp top: must be below status-bar area (tt - seatH/2 minimum = tt - 74)
+    final st = (cy - seatH / 2).clamp(tt - 10.0, h - seatH - 4.0);
 
     return Positioned(
       key: ValueKey('seat_${p['user_id'] ?? p['userId']}'),
-      left: (cx - seatW / 2).clamp(0, w - seatW),
-      top:  (cy - seatH / 2).clamp(0, h - seatH),
-      width: seatW,
+      left: sl, top: st, width: seatW,
       child: RepaintBoundary(child: _buildSeatWidget(p, gs)),
     );
   }
@@ -834,14 +836,13 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
   // ⑤ User's own cards — centred on the table
   Widget _buildUserCards(
-      List<Map<String, dynamic>> cards, bool isMyTurn, double w, double h) {
+      List<Map<String, dynamic>> cards, bool isMyTurn,
+      double w, double tl, double tt, double tw, double th) {
     if (cards.isEmpty) return const SizedBox.shrink();
 
-    final th = _tableH(w, h);
-    final tt = _tableTop(h);
-    // Cards sit at 55% down the table, "See Cards" btn slightly above
-    final cardsTop = tt + th * 0.52;
-    final btnTop   = tt + th * 0.36;
+    // Cards sit at 60% down the table; "See Cards" btn at 46%
+    final cardsTop = tt + th * 0.60;
+    final btnTop   = tt + th * 0.46;
 
     return Stack(children: [
       // "See Cards" button (only when blind and cards exist)
@@ -901,12 +902,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑥ Pot chip — below the user cards
-  Widget _buildPotChip(Map<String, dynamic>? gs, double w, double h) {
-    final tt = _tableTop(h);
-    final th = _tableH(w, h);
+  // ⑥ Pot chip — below the user cards, inside table
+  Widget _buildPotChip(Map<String, dynamic>? gs, double w, double tt, double tw, double th) {
     return Positioned(
-      left: w / 2 - 52, top: tt + th * 0.79,
+      left: w / 2 - 52, top: tt + th * 0.80,
       child: Container(
         width: 104,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -932,8 +931,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑦ My chips strip — just above the action bar
-  Widget _buildMyChips(Map<String, dynamic>? gs, double w, double h) {
+  // ⑦ My chips strip — just below the table (tb = tableBottom pixel)
+  Widget _buildMyChips(Map<String, dynamic>? gs, double w, double tb) {
     final me = (gs?['players'] as List?)
         ?.where((p) => (p['user_id'] ?? p['userId']) == _myUserId)
         .firstOrNull;
@@ -941,7 +940,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final chips  = me['chips'] ?? me['balance'] ?? 0;
     final isSeen = me['is_seen'] ?? me['isSeen'] ?? _isSeen;
     return Positioned(
-      left: 0, right: 0, bottom: 90,
+      left: 0, right: 0, top: tb + 10,
       child: Center(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -1040,11 +1039,11 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑨ Right emoji panel + gift button
-  Widget _buildRightPanel(double w, double h) {
+  // ⑨ Right emoji panel + gift button (tt = table top pixel)
+  Widget _buildRightPanel(double w, double h, double tt) {
     return Positioned(
       right: 6,
-      top: h * 0.20,
+      top: tt + 10,
       child: RepaintBoundary(
         child: Column(
           mainAxisSize: MainAxisSize.min,
