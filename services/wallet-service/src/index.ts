@@ -43,7 +43,7 @@ async function start() {
 
   const authenticateInternal = async (req: any, reply: any) => {
     const key = req.headers['x-internal-key']
-    if (key !== process.env.INTERNAL_SERVICE_KEY) reply.code(403).send({ error: 'Forbidden' })
+    if (key !== process.env.INTERNAL_SERVICE_KEY) return reply.code(403).send({ error: 'Forbidden' })
   }
 
   // GET /wallet/balance
@@ -388,10 +388,12 @@ async function start() {
   // Alias used by game-gateway: POST /internal/wallet/credit-game-win
   app.post('/internal/wallet/credit-game-win', { onRequest: [authenticateInternal] }, async (req, reply) => {
     const { user_id, amount, room_id } = req.body as any
-    if (!user_id || !amount) return reply.code(400).send({ error: 'user_id and amount required' })
+    if (!user_id || amount == null) return reply.code(400).send({ error: 'user_id and amount required' })
+    const numAmount = Number(amount)
+    if (isNaN(numAmount) || numAmount <= 0) return reply.code(400).send({ error: 'amount must be a positive number' })
     await walletSvc.credit({
       userId: user_id,
-      amount: Number(amount),
+      amount: numAmount,
       type: 'game_credit',
       walletType: 'real',
       referenceId: room_id,

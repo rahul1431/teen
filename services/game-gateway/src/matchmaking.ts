@@ -529,10 +529,11 @@ export class MatchmakingService {
       )
       const players = parts.rows.filter(r => !r.is_bot).map(r => ({
         user_id: r.user_id,
-        entry_fee: parseFloat(r.entry_fee_deducted)
+        entry_fee: parseFloat(r.entry_fee_deducted) || 0  // NULL → 0
       }))
 
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/settle-game`, {
+      const walletUrl = process.env.WALLET_SERVICE_URL || 'http://localhost:3003'
+      const settleRes = await fetch(`${walletUrl}/internal/wallet/settle-game`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
         body: JSON.stringify({
@@ -542,6 +543,10 @@ export class MatchmakingService {
           players,
         }),
       })
+      if (!settleRes.ok) {
+        const errBody = await settleRes.text().catch(() => '(unreadable)')
+        console.error(`[gateway] settle-game failed ${settleRes.status} for room ${roomId}:`, errBody)
+      }
     } catch (e) {
       console.error('Failed to settle Teen Patti game', e)
     }

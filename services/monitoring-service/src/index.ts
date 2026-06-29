@@ -13,7 +13,6 @@ const logger = pino({
 
 // Initialize Redis
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
-const redisPub = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
 // Initialize PostgreSQL
 const pool = new Pool({
@@ -72,14 +71,13 @@ async function handleIncomingEvent(event: any) {
     const normalized = processor.normalizeEvent(event);
 
     // Log to Redis Streams (for real-time consumers)
-    await redis.xadd(
-      `events:${normalized.game_type}`,
-      '*',
-      JSON.stringify(normalized)
-    );
+    const serialized = JSON.stringify(normalized);
+    await redis.xadd(`events:${normalized.game_type}`, '*', 'data', serialized);
+    await redis.xadd('events:all', '*', 'data', serialized);
 
-    // Also log to global stream
-    await redis.xadd('events:all', '*', JSON.stringify(normalized));
+    // Publish to Pub/Sub channels so SSE subscribers receive live events
+    redis.publish(`pubsub:events:${normalized.game_type}`, serialized);
+    redis.publish('pubsub:events:all', serialized);
 
     // Persist to PostgreSQL (async, non-blocking)
     processor.persistEvent(normalized).catch((err) => {
@@ -125,18 +123,19 @@ fastify.get('/events/stream', async (request, reply) => {
 
   // Subscribe to Redis Pub/Sub
   const subscriber = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
-  const channel = `events:${gameType}`;
+  const channel = `pubsub:events:${gameType}`;
 
   logger.info({ channel }, 'SSE client connected');
 
   subscriber.subscribe(channel, (err) => {
     if (err) {
       logger.error({ err }, 'Failed to subscribe to Redis channel');
+      subscriber.disconnect();
       reply.raw.end();
     }
   });
 
-  subscriber.on('message', (channel, message) => {
+  subscriber.on('message', (_channel, message) => {
     try {
       reply.raw.write(`data: ${message}\n\n`);
     } catch (err) {
@@ -173,10 +172,12 @@ fastify.get('/events/recent', async (request, reply) => {
     const streamKey = `events:${gameType}`;
     const events = await redis.xrevrange(streamKey, '+', '-', 'COUNT', limit);
 
-    const formatted = events.map(([id, data]) => {
+    const formatted = events.map(([id, fields]) => {
       const obj: any = {};
-      for (let i = 0; i < data.length; i += 2) {
-        obj[data[i]] = data[i + 1];
+      for (let i = 0; i < fields.length; i += 2) {
+        const k = fields[i];
+        const v = fields[i + 1];
+        obj[k] = k === 'data' ? (() => { try { return JSON.parse(v); } catch { return v; } })() : v;
       }
       return { stream_id: id, ...obj };
     });
@@ -197,20 +198,20 @@ fastify.get('/health', async (request, reply) => {
     // Check PostgreSQL
     const result = await pool.query('SELECT NOW()');
 
-    return {
+    return reply.send({
       success: true,
       data: {
         redis: 'connected',
         postgres: 'connected',
         timestamp: result.rows[0].now,
       },
-    };
+    });
   } catch (err) {
     logger.error({ err }, 'Health check failed');
-    return {
+    return reply.code(503).send({
       success: false,
       error: 'Service health check failed',
-    };
+    });
   }
 });
 
@@ -226,7 +227,7 @@ fastify.server.on('upgrade', (request, socket, head) => {
 });
 
 // Start server
-const PORT = parseInt(process.env.PORT || '3005');
+const PORT = parseInt(process.env.PORT || '3017');
 
 fastify.listen({ port: PORT, host: '0.0.0.0' }, (err, address) => {
   if (err) {
@@ -241,7 +242,6 @@ process.on('SIGTERM', async () => {
   logger.info('SIGTERM received, shutting down gracefully');
   await fastify.close();
   redis.disconnect();
-  redisPub.disconnect();
   await pool.end();
   process.exit(0);
 });

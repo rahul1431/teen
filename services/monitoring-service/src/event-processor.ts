@@ -150,17 +150,15 @@ export class EventProcessor {
       }
 
       // Calculate from PostgreSQL
-      let whereClause = 'WHERE created_at > NOW() - INTERVAL ';
-      if (interval === 'minute') {
-        whereClause += "'1 minute'";
-      } else if (interval === 'hour') {
-        whereClause += "'1 hour'";
-      } else {
-        whereClause += "'1 day'";
-      }
+      const intervalLiteral =
+        interval === 'minute' ? '1 minute' :
+        interval === 'hour'   ? '1 hour'   : '1 day';
 
+      const params: unknown[] = [];
+      let gameTypeFilter = '';
       if (gameType !== 'all') {
-        whereClause += ` AND game_type = '${gameType}'`;
+        params.push(gameType);
+        gameTypeFilter = `AND game_type = $${params.length}`;
       }
 
       const query = `
@@ -173,12 +171,13 @@ export class EventProcessor {
           COUNT(DISTINCT user_id) as unique_players,
           COUNT(DISTINCT room_id) as active_rooms
         FROM game_events
-        ${whereClause}
+        WHERE created_at > NOW() - INTERVAL '${intervalLiteral}'
+          ${gameTypeFilter}
         GROUP BY game_type, event_type
         ORDER BY count DESC;
       `;
 
-      const result = await this.pool.query(query);
+      const result = await this.pool.query(query, params);
 
       const metrics = {
         interval,

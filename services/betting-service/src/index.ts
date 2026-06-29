@@ -29,7 +29,7 @@ async function start() {
   }
   const internal = async (req: any, reply: any) => {
     if (req.headers['x-internal-key'] !== process.env.INTERNAL_SERVICE_KEY) {
-      reply.code(403).send({ error: 'Forbidden' })
+      return reply.code(403).send({ error: 'Forbidden' })
     }
   }
 

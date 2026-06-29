@@ -82,9 +82,12 @@ async function start() {
   // GET /users/search?q=username (admin/leaderboard use)
   app.get('/users/search', { onRequest: [authenticate] }, async (req, reply) => {
     const { q } = req.query as any
+    if (typeof q !== 'string' || q.trim().length < 2) {
+      return reply.code(400).send({ error: 'q must be at least 2 characters' })
+    }
     const res = await db.query(
       `SELECT id, username, avatar_url FROM users WHERE username ILIKE $1 AND is_bot = false LIMIT 20`,
-      [`%${q}%`]
+      [`%${q.trim()}%`]
     )
     return reply.send(res.rows)
   })
