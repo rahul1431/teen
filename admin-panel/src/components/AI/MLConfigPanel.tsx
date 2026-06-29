@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+﻿import { useState, useEffect } from 'react'
 import { Card, Form, Slider, InputNumber, Switch, Button, Space, message, Divider, Alert, Row, Col } from 'antd'
 import { SaveOutlined, ReloadOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
@@ -8,7 +8,7 @@ interface MLConfig {
   fraudDetection: {
     coLocationThreshold: number // 3+ accounts
     winRateAnomalyThreshold: number // 95%+
-    velocityLimitHours: number // ₹10k in X hours
+    velocityLimitHours: number // â‚¹10k in X hours
     referralChainDepth: number // How deep to check
     enabled: boolean
   }
@@ -48,7 +48,7 @@ export function MLConfigPanel() {
   const loadConfig = async () => {
     setLoading(true)
     try {
-      const response = await adminApi.get('/api/admin/ml/config')
+      const response = await adminApi.get('ml/config')
       if (response.data.success) {
         setConfig(response.data.data)
         form.setFieldsValue(response.data.data)
@@ -65,7 +65,7 @@ export function MLConfigPanel() {
       const values = await form.validateFields()
       setSaving(true)
 
-      const response = await adminApi.post('/api/admin/ml/config', values)
+      const response = await adminApi.post('ml/config', values)
       if (response.data.success) {
         setConfig(values)
         message.success('Configuration saved successfully')
@@ -99,7 +99,7 @@ export function MLConfigPanel() {
 
       <Form form={form} layout="vertical" onFinish={handleSave}>
         {/* Fraud Detection */}
-        <Card title="🔍 Fraud Detection Rules" style={{ marginBottom: 24 }}>
+        <Card title="ðŸ” Fraud Detection Rules" style={{ marginBottom: 24 }}>
           <Row gutter={24}>
             <Col xs={24} sm={12}>
               <Form.Item
@@ -126,7 +126,7 @@ export function MLConfigPanel() {
               <Form.Item
                 label="Velocity Limit (hours)"
                 name={['fraudDetection', 'velocityLimitHours']}
-                tooltip="Flag if user deposits/withdraws ₹10k in <X hours"
+                tooltip="Flag if user deposits/withdraws â‚¹10k in <X hours"
               >
                 <InputNumber min={1} max={24} style={{ width: '100%' }} />
               </Form.Item>
@@ -152,7 +152,7 @@ export function MLConfigPanel() {
         </Card>
 
         {/* Churn Prediction */}
-        <Card title="📉 Churn Prediction Model" style={{ marginBottom: 24 }}>
+        <Card title="ðŸ“‰ Churn Prediction Model" style={{ marginBottom: 24 }}>
           <Row gutter={24}>
             <Col xs={24} sm={12}>
               <Form.Item
@@ -221,7 +221,7 @@ export function MLConfigPanel() {
         </Card>
 
         {/* Bot Settings */}
-        <Card title="🤖 Bot Settings" style={{ marginBottom: 24 }}>
+        <Card title="ðŸ¤– Bot Settings" style={{ marginBottom: 24 }}>
           <Row gutter={24}>
             <Col xs={24} sm={12}>
               <Form.Item
@@ -295,7 +295,7 @@ export function MLConfigPanel() {
         </Card>
 
         {/* RTP Optimizer */}
-        <Card title="💰 RTP / Revenue Optimizer" style={{ marginBottom: 24 }}>
+        <Card title="ðŸ’° RTP / Revenue Optimizer" style={{ marginBottom: 24 }}>
           <Row gutter={24}>
             <Col xs={24} sm={12}>
               <Form.Item
@@ -370,3 +370,4 @@ export function MLConfigPanel() {
     </div>
   )
 }
+

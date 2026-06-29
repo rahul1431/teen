@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+﻿import { useState, useEffect } from 'react'
 import { Card, Row, Col, Button, Statistic, Tag, Slider, Form, InputNumber, message, Divider, Spin, Tooltip } from 'antd'
 import { SyncOutlined, RobotOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
@@ -43,7 +43,7 @@ export function BotLearningSection() {
   const loadProfiles = async () => {
     setLoading(true)
     try {
-      const res = await adminApi.get('/api/admin/bots/profiles')
+      const res = await adminApi.get('bots/profiles')
       if (res.data.success) setProfiles(res.data.data.profiles)
     } catch { message.error('Failed to load bot profiles') }
     finally { setLoading(false) }
@@ -52,8 +52,8 @@ export function BotLearningSection() {
   const triggerRebuild = async () => {
     setRebuilding(true)
     try {
-      await adminApi.post('/api/admin/bots/rebuild')
-      message.success('Rebuild started — profiles will update in ~1 minute')
+      await adminApi.post('bots/rebuild')
+      message.success('Rebuild started â€” profiles will update in ~1 minute')
       setTimeout(loadProfiles, 5000)
     } catch { message.error('Failed to trigger rebuild') }
     finally { setRebuilding(false) }
@@ -61,7 +61,7 @@ export function BotLearningSection() {
 
   const loadConfig = async () => {
     try {
-      const res = await adminApi.get('/api/admin/bots/config')
+      const res = await adminApi.get('bots/config')
       if (res.data.success) {
         setConfig(res.data.data)
         configForm.setFieldsValue(res.data.data)
@@ -74,7 +74,7 @@ export function BotLearningSection() {
     try {
       const updates: Record<string, string> = {}
       for (const [k, v] of Object.entries(values)) updates[k] = String(v)
-      await adminApi.patch('/api/admin/bots/config', updates)
+      await adminApi.patch('bots/config', updates)
       message.success('Config saved')
     } catch { message.error('Failed to save config') }
     finally { setSaving(false) }
@@ -184,7 +184,7 @@ export function BotLearningSection() {
       <Card title="Schedule & Sampling Config" style={{ maxWidth: 480 }}>
         {config && (
           <Form form={configForm} layout="vertical" onFinish={saveConfig} initialValues={config}>
-            <Form.Item label="Rebuild hour (0–23 UTC)" name="rebuild_hour">
+            <Form.Item label="Rebuild hour (0â€“23 UTC)" name="rebuild_hour">
               <InputNumber min={0} max={23} style={{ width: '100%' }} />
             </Form.Item>
             <Form.Item label="Stream lookback (days)" name="stream_lookback_days">
@@ -200,3 +200,4 @@ export function BotLearningSection() {
     </div>
   )
 }
+

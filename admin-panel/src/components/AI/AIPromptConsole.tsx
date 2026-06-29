@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+﻿import { useState, useEffect } from 'react'
 import { Input, Button, Card, Tag, Space, Spin, Result, Empty, Divider } from 'antd'
 import { SendOutlined, CopyOutlined, ClearOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
@@ -44,7 +44,7 @@ export function AIPromptConsole() {
     setError(null)
 
     try {
-      const response = await adminApi.post('/api/admin/ml/query', {
+      const response = await adminApi.post('ml/query', {
         query: input,
       })
 
@@ -226,10 +226,11 @@ export function AIPromptConsole() {
 
       <Card size="small" title="Info">
         <p style={{ fontSize: 12, margin: 0 }}>
-          💡 Ask questions in natural language. The AI will analyze your platform data
+          ðŸ’¡ Ask questions in natural language. The AI will analyze your platform data
           and provide insights, explain predictions, and help debug issues.
         </p>
       </Card>
     </div>
   )
 }
+

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+﻿import { useState, useEffect } from 'react'
 import { Card, Row, Col, Progress, Tag, List, Empty, Spin, Alert, Statistic, Divider } from 'antd'
 import { CheckCircleOutlined, SyncOutlined, ClockCircleOutlined, AlertOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
@@ -57,7 +57,7 @@ export function WorkflowDashboard() {
   const loadDashboard = async () => {
     setLoading(true)
     try {
-      const response = await adminApi.get('/api/admin/ml/metrics')
+      const response = await adminApi.get('ml/metrics')
       if (response.data.success) {
         const data = response.data.data
         setModels(data.models || [])
@@ -108,7 +108,7 @@ export function WorkflowDashboard() {
     <div>
       {/* Status Alert - Phase 1 */}
       <Alert
-        message="⭐ Phase 1: Fraud Detection Rules Engine - ACTIVE"
+        message="â­ Phase 1: Fraud Detection Rules Engine - ACTIVE"
         description="Real-time fraud detection with 4 rules: co-location, win-rate anomalies, velocity checks, referral chains. Rules weight: 30/35/20/15%. Actions: allow (<0.4), slow_lane (0.4-0.85), block (>0.85)."
         type="success"
         showIcon
@@ -118,7 +118,7 @@ export function WorkflowDashboard() {
       {/* Training Progress (Left Panel) */}
       <Row gutter={24} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={8}>
-          <Card title="📊 Model Training Status" size="small">
+          <Card title="ðŸ“Š Model Training Status" size="small">
             {models.length === 0 ? (
               <Empty description="No models training" />
             ) : (
@@ -185,7 +185,7 @@ export function WorkflowDashboard() {
 
         {/* Active Jobs (Center Panel) */}
         <Col xs={24} sm={8}>
-          <Card title="⚙️ Active ML Jobs" size="small">
+          <Card title="âš™ï¸ Active ML Jobs" size="small">
             {jobs.length === 0 ? (
               <Empty description="No active jobs" />
             ) : (
@@ -243,7 +243,7 @@ export function WorkflowDashboard() {
 
         {/* System Health (Right Panel) */}
         <Col xs={24} sm={8}>
-          <Card title="🖥️ System Health" size="small">
+          <Card title="ðŸ–¥ï¸ System Health" size="small">
             {systemHealth ? (
               <>
                 <Row gutter={8}>
@@ -295,7 +295,7 @@ export function WorkflowDashboard() {
       <Divider />
 
       {/* Predictions Feed (Bottom) */}
-      <Card title="🎯 Real-Time Predictions & Alerts">
+      <Card title="ðŸŽ¯ Real-Time Predictions & Alerts">
         <Row gutter={24}>
           {/* Churn Risk Alerts */}
           <Col xs={24} md={12}>
@@ -379,7 +379,7 @@ export function WorkflowDashboard() {
             renderItem={(pred) => (
               <List.Item>
                 <List.Item.Meta
-                  title={`${pred.target} → ${pred.action}`}
+                  title={`${pred.target} â†’ ${pred.action}`}
                   description={`Confidence: ${(pred.confidence * 100).toFixed(0)}% | ${new Date(pred.timestamp).toLocaleTimeString()}`}
                 />
               </List.Item>
@@ -390,3 +390,4 @@ export function WorkflowDashboard() {
     </div>
   )
 }
+

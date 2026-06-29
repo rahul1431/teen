@@ -57,7 +57,7 @@ export function ChurnTab() {
     setLoading(true)
     try {
       const params = riskFilter ? { risk_level: riskFilter } : {}
-      const res = await adminApi.get('/api/admin/churn/users', { params })
+      const res = await adminApi.get('/churn/users', { params })
       if (res.data.success) setUsers(res.data.data.users)
     } catch { message.error('Failed to load at-risk users') }
     finally { setLoading(false) }
@@ -65,14 +65,14 @@ export function ChurnTab() {
 
   const loadStats = async () => {
     try {
-      const res = await adminApi.get('/api/admin/churn/stats')
+      const res = await adminApi.get('/churn/stats')
       if (res.data.success) setStats(res.data.data)
     } catch { /* silent */ }
   }
 
   const loadConfig = async () => {
     try {
-      const res = await adminApi.get('/api/admin/churn/config')
+      const res = await adminApi.get('/churn/config')
       if (res.data.success) {
         setConfig(res.data.data)
         form.setFieldsValue(res.data.data)
@@ -85,7 +85,7 @@ export function ChurnTab() {
     try {
       const updates: Record<string, string> = {}
       for (const [k, v] of Object.entries(values)) updates[k] = String(v)
-      await adminApi.patch('/api/admin/churn/config', updates)
+      await adminApi.patch('/churn/config', updates)
       message.success('Config saved')
     } catch { message.error('Failed to save config') }
     finally { setSaving(false) }
@@ -93,7 +93,7 @@ export function ChurnTab() {
 
   const reEngage = async (userId: string, sendBonus: boolean) => {
     try {
-      await adminApi.post(`/api/admin/churn/re-engage/${userId}`, {
+      await adminApi.post(`/churn/re-engage/${userId}`, {
         send_bonus: sendBonus,
         send_notification: true,
       })
