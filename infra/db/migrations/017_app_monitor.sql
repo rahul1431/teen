@@ -7,9 +7,9 @@ CREATE TABLE IF NOT EXISTS app_sessions (
   id            VARCHAR(36) PRIMARY KEY,
   user_id       UUID REFERENCES users(id) ON DELETE SET NULL,
   device_id     VARCHAR(100),
-  app_version   VARCHAR(20),
+  app_version   VARCHAR(50),
   platform      VARCHAR(10) CHECK (platform IN ('android', 'ios')),
-  os_version    VARCHAR(20),
+  os_version    VARCHAR(100),
   started_at    TIMESTAMPTZ DEFAULT NOW(),
   ended_at      TIMESTAMPTZ,
   last_seen_at  TIMESTAMPTZ DEFAULT NOW()

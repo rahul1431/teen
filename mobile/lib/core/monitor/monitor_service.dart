@@ -47,7 +47,8 @@ class MonitorService {
       _appVersion = info.version;
       _platform = Platform.isAndroid ? 'android' : 'ios';
       // e.g. "Android 14" or "iOS 17.0"
-      _osVersion = Platform.operatingSystemVersion.split(' ').take(2).join(' ');
+      final rawOs = Platform.operatingSystemVersion;
+      _osVersion = rawOs.length > 80 ? rawOs.substring(0, 80) : rawOs;
 
       // Separate Dio instance — no auth interceptors, no monitor interceptor (avoids loops)
       _monitorDio = Dio(BaseOptions(
