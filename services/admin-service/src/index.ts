@@ -66,7 +66,7 @@ async function start() {
   app.decorate('requireRole', requireRole)
 
   // Register ML routes
-  await registerMLRoutes(app, redis, db)
+  await registerMLRoutes(app, redis, db, authenticate)
 
   // Register Churn proxy routes
   await registerChurnRoutes(app, authenticate, requireRole)

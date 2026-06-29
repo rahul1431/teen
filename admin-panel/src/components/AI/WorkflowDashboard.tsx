@@ -57,7 +57,7 @@ export function WorkflowDashboard() {
   const loadDashboard = async () => {
     setLoading(true)
     try {
-      const response = await adminApi.get('ml/metrics')
+      const response = await adminApi.get('/ml/metrics')
       if (response.data.success) {
         const data = response.data.data
         setModels(data.models || [])
@@ -390,4 +390,5 @@ export function WorkflowDashboard() {
     </div>
   )
 }
+
 

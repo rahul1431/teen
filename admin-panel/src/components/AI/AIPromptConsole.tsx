@@ -44,7 +44,7 @@ export function AIPromptConsole() {
     setError(null)
 
     try {
-      const response = await adminApi.post('ml/query', {
+      const response = await adminApi.post('/ml/query', {
         query: input,
       })
 
@@ -233,4 +233,5 @@ export function AIPromptConsole() {
     </div>
   )
 }
+
 

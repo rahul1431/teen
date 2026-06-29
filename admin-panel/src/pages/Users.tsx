@@ -33,8 +33,10 @@ export default function Users() {
       const res = await adminApi.get('/users', {
         params: { page: p, limit: 20, search, status: statusFilter, is_bot: false },
       })
-      setUsers(res.data.users)
-      setTotal(res.data.total)
+      setUsers(res.data.users ?? [])
+      setTotal(res.data.total ?? 0)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to load users')
     } finally { setLoading(false) }
   }
 

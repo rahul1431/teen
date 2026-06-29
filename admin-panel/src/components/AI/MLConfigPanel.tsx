@@ -48,7 +48,7 @@ export function MLConfigPanel() {
   const loadConfig = async () => {
     setLoading(true)
     try {
-      const response = await adminApi.get('ml/config')
+      const response = await adminApi.get('/ml/config')
       if (response.data.success) {
         setConfig(response.data.data)
         form.setFieldsValue(response.data.data)
@@ -65,7 +65,7 @@ export function MLConfigPanel() {
       const values = await form.validateFields()
       setSaving(true)
 
-      const response = await adminApi.post('ml/config', values)
+      const response = await adminApi.post('/ml/config', values)
       if (response.data.success) {
         setConfig(values)
         message.success('Configuration saved successfully')
@@ -370,4 +370,5 @@ export function MLConfigPanel() {
     </div>
   )
 }
+
 
