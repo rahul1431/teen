@@ -1,4 +1,4 @@
-import 'dotenv/config'
+﻿import 'dotenv/config'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
@@ -59,7 +59,7 @@ async function start() {
   // Role-gate factory. Use as: { onRequest: [authenticate, requireRole('finance')] }
   const requireRole = (role: Role) => async (req: any, reply: any) => {
     const r = (req.user as any)?.role
-    if (!hasRole(r, role)) return reply.code(403).send({ error: `Forbidden — requires ${role} role` })
+    if (!hasRole(r, role)) return reply.code(403).send({ error: `Forbidden â€” requires ${role} role` })
   }
 
   app.decorate('authenticate', authenticate)
@@ -107,7 +107,7 @@ async function start() {
     })
   })
 
-  // POST /api/admin/auth/2fa/setup — generate a fresh TOTP secret + QR for the calling admin
+  // POST /api/admin/auth/2fa/setup â€” generate a fresh TOTP secret + QR for the calling admin
   app.post('/api/admin/auth/2fa/setup', { onRequest: [authenticate] }, async (req, reply) => {
     const me = req.user as any
     const secret = totp.generateSecret()
@@ -119,7 +119,7 @@ async function start() {
     return reply.send({ secret, otpauth, qr_data_url })
   })
 
-  // POST /api/admin/auth/2fa/verify — confirm the generated secret with a live code; flips totp_enabled = true
+  // POST /api/admin/auth/2fa/verify â€” confirm the generated secret with a live code; flips totp_enabled = true
   app.post('/api/admin/auth/2fa/verify', { onRequest: [authenticate] }, async (req, reply) => {
     const me = req.user as any
     const { code } = z.object({ code: z.string().min(6).max(8) }).parse(req.body)
@@ -127,14 +127,14 @@ async function start() {
     const secret = res.rows[0]?.totp_secret
     if (!secret) return reply.code(400).send({ error: 'Call /2fa/setup first' })
     if (!totp.verify({ token: code, secret })) {
-      return reply.code(401).send({ error: 'Invalid code — clock skew or wrong app?' })
+      return reply.code(401).send({ error: 'Invalid code â€” clock skew or wrong app?' })
     }
     await db.query('UPDATE admin_users SET totp_enabled = true WHERE id = $1', [me.sub])
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, '2fa_enabled', 'admin_user', $1)`, [me.sub])
     return reply.send({ success: true })
   })
 
-  // POST /api/admin/auth/2fa/disable — requires a fresh code so a stolen session alone can't disable it
+  // POST /api/admin/auth/2fa/disable â€” requires a fresh code so a stolen session alone can't disable it
   app.post('/api/admin/auth/2fa/disable', { onRequest: [authenticate] }, async (req, reply) => {
     const me = req.user as any
     const { code } = z.object({ code: z.string().min(6).max(8) }).parse(req.body)
@@ -148,7 +148,7 @@ async function start() {
     return reply.send({ success: true })
   })
 
-  // GET /api/admin/auth/me — current admin profile
+  // GET /api/admin/auth/me â€” current admin profile
   app.get('/api/admin/auth/me', { onRequest: [authenticate] }, async (req, reply) => {
     const me = req.user as any
     const res = await db.query(
@@ -171,7 +171,7 @@ async function start() {
     return reply.send(res.rows)
   })
 
-  // POST /api/admin/admin-users — create new admin
+  // POST /api/admin/admin-users â€” create new admin
   app.post('/api/admin/admin-users', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const me = req.user as any
     const body = z.object({
@@ -196,7 +196,7 @@ async function start() {
     }
   })
 
-  // PATCH /api/admin/admin-users/:id — change role / activate / deactivate
+  // PATCH /api/admin/admin-users/:id â€” change role / activate / deactivate
   app.patch('/api/admin/admin-users/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const me = req.user as any
     const { id } = req.params as any
@@ -221,7 +221,7 @@ async function start() {
     return reply.send({ success: true })
   })
 
-  // POST /api/admin/admin-users/:id/reset-password — superadmin resets another admin's password
+  // POST /api/admin/admin-users/:id/reset-password â€” superadmin resets another admin's password
   app.post('/api/admin/admin-users/:id/reset-password', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const me = req.user as any
     const { id } = req.params as any
@@ -233,7 +233,7 @@ async function start() {
     return reply.send({ success: true })
   })
 
-  // POST /api/admin/auth/change-password — any admin changes their own password (requires current pw)
+  // POST /api/admin/auth/change-password â€” any admin changes their own password (requires current pw)
   app.post('/api/admin/auth/change-password', { onRequest: [authenticate] }, async (req, reply) => {
     const me = req.user as any
     const { current_password, new_password } = z.object({
@@ -356,7 +356,7 @@ async function start() {
     return reply.send({ success: true })
   })
 
-  // GET /api/admin/users/:id/transactions — ledger entries
+  // GET /api/admin/users/:id/transactions â€” ledger entries
   app.get('/api/admin/users/:id/transactions', { onRequest: [authenticate] }, async (req, reply) => {
     const { id } = req.params as any
     const { limit = '50' } = req.query as any
@@ -368,7 +368,7 @@ async function start() {
     return reply.send(res.rows)
   })
 
-  // GET /api/admin/users/:id/games — recent rooms played
+  // GET /api/admin/users/:id/games â€” recent rooms played
   app.get('/api/admin/users/:id/games', { onRequest: [authenticate] }, async (req, reply) => {
     const { id } = req.params as any
     const res = await db.query(
@@ -382,7 +382,7 @@ async function start() {
     return reply.send(res.rows)
   })
 
-  // GET /api/admin/users/:id/kyc — kyc docs
+  // GET /api/admin/users/:id/kyc â€” kyc docs
   app.get('/api/admin/users/:id/kyc', { onRequest: [authenticate] }, async (req, reply) => {
     const { id } = req.params as any
     const res = await db.query(
@@ -394,7 +394,7 @@ async function start() {
     return reply.send(res.rows)
   })
 
-  // PATCH /api/admin/users/:id/kyc — set overall kyc_status; optionally reject reason
+  // PATCH /api/admin/users/:id/kyc â€” set overall kyc_status; optionally reject reason
   app.patch('/api/admin/users/:id/kyc', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
@@ -411,8 +411,8 @@ async function start() {
     // Push notification to user
     if (status === 'approved' || status === 'rejected') {
       const kycNotif = status === 'approved'
-        ? { title: 'KYC Approved ✅', body: 'Your KYC verification has been approved. You can now make withdrawals.', type: 'kyc_approved' }
-        : { title: 'KYC Rejected ❌', body: `Your KYC was rejected.${reason ? ` Reason: ${reason}` : ''} Please re-submit your documents.`, type: 'kyc_rejected' }
+        ? { title: 'KYC Approved âœ…', body: 'Your KYC verification has been approved. You can now make withdrawals.', type: 'kyc_approved' }
+        : { title: 'KYC Rejected âŒ', body: `Your KYC was rejected.${reason ? ` Reason: ${reason}` : ''} Please re-submit your documents.`, type: 'kyc_rejected' }
       fetch(`${process.env.NOTIFICATION_SERVICE_URL}/internal/notifications/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
@@ -450,7 +450,7 @@ async function start() {
     return reply.send({ success: true, id: res.rows[0].id, created_at: res.rows[0].created_at })
   })
 
-  // GET /api/admin/users/:id/audit — admin actions targeting this user
+  // GET /api/admin/users/:id/audit â€” admin actions targeting this user
   app.get('/api/admin/users/:id/audit', { onRequest: [authenticate] }, async (req, reply) => {
     const { id } = req.params as any
     const res = await db.query(
@@ -585,7 +585,7 @@ async function start() {
     return reply.send(res.rows)
   })
 
-  // PATCH /api/admin/finance/withdrawals/:id — approve (paid) or reject (refunded)
+  // PATCH /api/admin/finance/withdrawals/:id â€” approve (paid) or reject (refunded)
   // On 'paid', stores the UTR / payment reference in metadata.
   // On 'refunded', returns the held amount to the user's wallet via the wallet service.
   app.patch('/api/admin/finance/withdrawals/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
@@ -629,8 +629,8 @@ async function start() {
     // Push notification to user
     const amt = parseFloat(row.rows[0].amount)
     const notifPayload = status === 'paid'
-      ? { title: 'Withdrawal Processed ✅', body: `Your withdrawal of ₹${amt.toFixed(2)} has been paid.${reference ? ` UTR: ${reference}` : ''}`, type: 'withdrawal_paid' }
-      : { title: 'Withdrawal Rejected ❌', body: `Your withdrawal of ₹${amt.toFixed(2)} was rejected.${reason ? ` Reason: ${reason}` : ''} Amount refunded to wallet.`, type: 'withdrawal_rejected' }
+      ? { title: 'Withdrawal Processed âœ…', body: `Your withdrawal of â‚¹${amt.toFixed(2)} has been paid.${reference ? ` UTR: ${reference}` : ''}`, type: 'withdrawal_paid' }
+      : { title: 'Withdrawal Rejected âŒ', body: `Your withdrawal of â‚¹${amt.toFixed(2)} was rejected.${reason ? ` Reason: ${reason}` : ''} Amount refunded to wallet.`, type: 'withdrawal_rejected' }
     fetch(`${process.env.NOTIFICATION_SERVICE_URL}/internal/notifications/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
@@ -640,7 +640,7 @@ async function start() {
     return reply.send({ success: true })
   })
 
-  // GET /api/admin/finance/deposits — list deposit orders with filters
+  // GET /api/admin/finance/deposits â€” list deposit orders with filters
   app.get('/api/admin/finance/deposits', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const { status, gateway, page = '1', limit = '50' } = req.query as any
     const conditions = [`po.type = 'deposit'`]
@@ -660,7 +660,7 @@ async function start() {
     return reply.send({ deposits: rows.rows, total: parseInt(count.rows[0].count) })
   })
 
-  // PATCH /api/admin/finance/deposits/:id — manual reconciliation of failed/stuck deposits
+  // PATCH /api/admin/finance/deposits/:id â€” manual reconciliation of failed/stuck deposits
   // Used when a payment landed in the gateway but didn't credit the wallet (webhook failed, etc.)
   app.patch('/api/admin/finance/deposits/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const admin = req.user as any
@@ -707,8 +707,8 @@ async function start() {
     // Push notification to user
     const dAmt = parseFloat(row.rows[0].amount)
     const dNotif = action === 'mark_paid_and_credit'
-      ? { title: 'Deposit Approved ✅', body: `Your deposit of ₹${dAmt.toFixed(2)} has been credited to your wallet.`, type: 'deposit_approved' }
-      : { title: 'Deposit Failed ❌', body: `Your deposit of ₹${dAmt.toFixed(2)} could not be processed.${reason ? ` Reason: ${reason}` : ''}`, type: 'deposit_failed' }
+      ? { title: 'Deposit Approved âœ…', body: `Your deposit of â‚¹${dAmt.toFixed(2)} has been credited to your wallet.`, type: 'deposit_approved' }
+      : { title: 'Deposit Failed âŒ', body: `Your deposit of â‚¹${dAmt.toFixed(2)} could not be processed.${reason ? ` Reason: ${reason}` : ''}`, type: 'deposit_failed' }
     fetch(`${process.env.NOTIFICATION_SERVICE_URL}/internal/notifications/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
@@ -720,7 +720,7 @@ async function start() {
 
   // ---- Payment methods (manual deposit destinations: UPI / bank / QR) ----
 
-  // POST /api/admin/uploads/qr — upload a QR image, returns its public URL
+  // POST /api/admin/uploads/qr â€” upload a QR image, returns its public URL
   app.post('/api/admin/uploads/qr', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const file = await (req as any).file()
     if (!file) return reply.code(400).send({ error: 'No file uploaded' })
@@ -733,13 +733,13 @@ async function start() {
     return reply.send({ url: `/uploads/qr/${fname}` })
   })
 
-  // GET /api/admin/payment-methods — list all (active + inactive)
+  // GET /api/admin/payment-methods â€” list all (active + inactive)
   app.get('/api/admin/payment-methods', { onRequest: [authenticate, requireRole('finance')] }, async (_req, reply) => {
     const res = await db.query(`SELECT * FROM payment_methods ORDER BY sort_order ASC, created_at ASC`)
     return reply.send(res.rows)
   })
 
-  // POST /api/admin/payment-methods — create
+  // POST /api/admin/payment-methods â€” create
   app.post('/api/admin/payment-methods', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const admin = req.user as any
     const b = z.object({
@@ -771,7 +771,7 @@ async function start() {
     return reply.send(res.rows[0])
   })
 
-  // PATCH /api/admin/payment-methods/:id — update any field
+  // PATCH /api/admin/payment-methods/:id â€” update any field
   app.patch('/api/admin/payment-methods/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
@@ -814,7 +814,7 @@ async function start() {
     return reply.send({ success: true })
   })
 
-  // GET /api/admin/finance/ledger — global ledger view with filters
+  // GET /api/admin/finance/ledger â€” global ledger view with filters
   app.get('/api/admin/finance/ledger', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const { type, wallet_type, user_id, from, to, page = '1', limit = '50' } = req.query as any
     const conditions: string[] = []
@@ -838,7 +838,7 @@ async function start() {
     return reply.send({ entries: rows.rows, total: parseInt(count.rows[0].count) })
   })
 
-  // GET /api/admin/finance/reconciliation — daily totals broken out by gateway + type
+  // GET /api/admin/finance/reconciliation â€” daily totals broken out by gateway + type
   app.get('/api/admin/finance/reconciliation', { onRequest: [authenticate] }, async (req, reply) => {
     const { days = '7' } = req.query as any
     const d = Math.min(parseInt(days), 90)
@@ -930,7 +930,7 @@ async function start() {
 
   // ---- Risk Center / Anti-Cheat ----
 
-  // GET /api/admin/risk/overview — KPI summary for Risk Center dashboard
+  // GET /api/admin/risk/overview â€” KPI summary for Risk Center dashboard
   app.get('/api/admin/risk/overview', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
     const [flagged, suspendedToday, winRateAlerts, manualCredits] = await Promise.all([
       db.query(`SELECT COUNT(*) FROM users WHERE status = 'suspicious' AND is_bot = false`),
@@ -957,7 +957,7 @@ async function start() {
     })
   })
 
-  // GET /api/admin/risk/flagged-users — paginated list with computed risk signals
+  // GET /api/admin/risk/flagged-users â€” paginated list with computed risk signals
   app.get('/api/admin/risk/flagged-users', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const { page = '1', limit = '20' } = req.query as any
     const offset = (parseInt(page) - 1) * parseInt(limit)
@@ -1005,7 +1005,7 @@ async function start() {
     return reply.send({ users: res.rows, total: parseInt(countRes.rows[0].count) })
   })
 
-  // GET /api/admin/risk/device-links — users sharing device fingerprints
+  // GET /api/admin/risk/device-links â€” users sharing device fingerprints
   app.get('/api/admin/risk/device-links', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
     const res = await db.query(`
       SELECT device_fingerprint,
@@ -1022,7 +1022,7 @@ async function start() {
     return reply.send(res.rows)
   })
 
-  // GET /api/admin/risk/win-rate-anomalies — users with >1.5x win rate vs wagered in last 30d
+  // GET /api/admin/risk/win-rate-anomalies â€” users with >1.5x win rate vs wagered in last 30d
   app.get('/api/admin/risk/win-rate-anomalies', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
     const res = await db.query(`
       WITH stats AS (
@@ -1050,7 +1050,7 @@ async function start() {
     return reply.send(res.rows)
   })
 
-  // GET /api/admin/risk/colluding-pairs — real players sharing 3+ game rooms
+  // GET /api/admin/risk/colluding-pairs â€” real players sharing 3+ game rooms
   app.get('/api/admin/risk/colluding-pairs', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
     const res = await db.query(`
       SELECT a.user_id AS user_a_id, ua.username AS user_a,
@@ -1069,7 +1069,7 @@ async function start() {
     return reply.send(res.rows)
   })
 
-  // POST /api/admin/risk/flag/:userId — mark user status as 'suspicious' + auto-note
+  // POST /api/admin/risk/flag/:userId â€” mark user status as 'suspicious' + auto-note
   app.post('/api/admin/risk/flag/:userId', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const admin = req.user as any
     const { userId } = req.params as any
@@ -1087,7 +1087,7 @@ async function start() {
 
   // ---- Support Helpdesk ----
 
-  // GET /api/admin/support/tickets — list with optional status filter
+  // GET /api/admin/support/tickets â€” list with optional status filter
   app.get('/api/admin/support/tickets', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const { status, page = '1', limit = '20' } = req.query as any
     const conditions: string[] = []
@@ -1115,7 +1115,7 @@ async function start() {
     return reply.send({ tickets: rows.rows, total: parseInt(count.rows[0].count) })
   })
 
-  // GET /api/admin/support/tickets/:id — detail + messages
+  // GET /api/admin/support/tickets/:id â€” detail + messages
   app.get('/api/admin/support/tickets/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const { id } = req.params as any
     const [ticket, messages] = await Promise.all([
@@ -1137,7 +1137,7 @@ async function start() {
     return reply.send({ ticket: ticket.rows[0], messages: messages.rows })
   })
 
-  // POST /api/admin/support/tickets/:id/messages — admin reply
+  // POST /api/admin/support/tickets/:id/messages â€” admin reply
   app.post('/api/admin/support/tickets/:id/messages', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const me = req.user as any
     const { id } = req.params as any
@@ -1153,7 +1153,7 @@ async function start() {
     return reply.send({ success: true, id: res.rows[0].id, created_at: res.rows[0].created_at })
   })
 
-  // PATCH /api/admin/support/tickets/:id — update status/priority/assigned_to
+  // PATCH /api/admin/support/tickets/:id â€” update status/priority/assigned_to
   app.patch('/api/admin/support/tickets/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const me = req.user as any
     const { id } = req.params as any
@@ -1313,7 +1313,7 @@ async function start() {
     return reply.send({ success: true })
   })
 
-  // ═══════════════════ BETTING GAMES (Matka / Lottery / Cricket) ═══════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• BETTING GAMES (Matka / Lottery / Cricket) â•â•â•â•â•â•â•â•â•â•â•
   // The admin panel manages these here; write actions proxy to the
   // betting-service internal endpoints (which hold the result-settlement
   // logic and wallet payouts) using the shared internal key.
@@ -1832,6 +1832,126 @@ async function start() {
     } catch (err: any) {
       return reply.code(500).send({ success: false, error: err.message || 'Failed to resolve alert' })
     }
+  })
+
+  // â”€â”€ Emoji management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+  // GET /admin/emojis â€” list all emojis
+  app.get('/admin/emojis', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query(
+      `SELECT id, emoji, label, is_active, sort_order, created_at
+       FROM game_emojis ORDER BY sort_order ASC, created_at ASC`
+    )
+    return reply.send(res.rows)
+  })
+
+  // POST /admin/emojis â€” add new emoji
+  app.post('/admin/emojis', { onRequest: [authenticate] }, async (req, reply) => {
+    const { emoji, label = '', sort_order = 0 } = req.body as any
+    if (!emoji) return reply.code(400).send({ error: 'emoji required' })
+    const res = await db.query(
+      `INSERT INTO game_emojis (emoji, label, sort_order) VALUES ($1, $2, $3) RETURNING *`,
+      [emoji.trim(), label.trim(), parseInt(sort_order) || 0]
+    )
+    return reply.code(201).send(res.rows[0])
+  })
+
+  // PATCH /admin/emojis/:id â€” update (toggle active / reorder)
+  app.patch('/admin/emojis/:id', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const { is_active, sort_order, label } = req.body as any
+    const fields: string[] = []
+    const vals: unknown[] = []
+    if (is_active !== undefined) { fields.push(`is_active = $${vals.push(is_active)}`); }
+    if (sort_order !== undefined) { fields.push(`sort_order = $${vals.push(parseInt(sort_order))}`); }
+    if (label !== undefined) { fields.push(`label = $${vals.push(label)}`); }
+    if (!fields.length) return reply.code(400).send({ error: 'nothing to update' })
+    vals.push(id)
+    const res = await db.query(
+      `UPDATE game_emojis SET ${fields.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals
+    )
+    if (!res.rows.length) return reply.code(404).send({ error: 'Not found' })
+    return reply.send(res.rows[0])
+  })
+
+  // DELETE /admin/emojis/:id
+  app.delete('/admin/emojis/:id', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    await db.query('DELETE FROM game_emojis WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+  // â”€â”€ Gift management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+  // GET /admin/gifts â€” list all gifts
+  app.get('/admin/gifts', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query(
+      `SELECT id, icon, name, price, is_active, sort_order, created_at
+       FROM game_gifts ORDER BY sort_order ASC, price ASC`
+    )
+    return reply.send(res.rows)
+  })
+
+  // POST /admin/gifts â€” add gift with price
+  app.post('/admin/gifts', { onRequest: [authenticate] }, async (req, reply) => {
+    const { icon, name, price, sort_order = 0 } = req.body as any
+    if (!icon || !name) return reply.code(400).send({ error: 'icon and name required' })
+    const numPrice = parseFloat(price)
+    if (isNaN(numPrice) || numPrice < 0) return reply.code(400).send({ error: 'price must be >= 0' })
+    const res = await db.query(
+      `INSERT INTO game_gifts (icon, name, price, sort_order) VALUES ($1, $2, $3, $4) RETURNING *`,
+      [icon.trim(), name.trim(), numPrice, parseInt(sort_order) || 0]
+    )
+    return reply.code(201).send(res.rows[0])
+  })
+
+  // PATCH /admin/gifts/:id â€” update price / toggle / reorder
+  app.patch('/admin/gifts/:id', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const { price, is_active, sort_order, name, icon } = req.body as any
+    const fields: string[] = []
+    const vals: unknown[] = []
+    if (price !== undefined) {
+      const p = parseFloat(price)
+      if (isNaN(p) || p < 0) return reply.code(400).send({ error: 'invalid price' })
+      fields.push(`price = $${vals.push(p)}`)
+    }
+    if (is_active !== undefined) fields.push(`is_active = $${vals.push(is_active)}`)
+    if (sort_order !== undefined) fields.push(`sort_order = $${vals.push(parseInt(sort_order))}`)
+    if (name !== undefined) fields.push(`name = $${vals.push(name)}`)
+    if (icon !== undefined) fields.push(`icon = $${vals.push(icon)}`)
+    if (!fields.length) return reply.code(400).send({ error: 'nothing to update' })
+    vals.push(id)
+    const res = await db.query(
+      `UPDATE game_gifts SET ${fields.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals
+    )
+    if (!res.rows.length) return reply.code(404).send({ error: 'Not found' })
+    return reply.send(res.rows[0])
+  })
+
+  // DELETE /admin/gifts/:id
+  app.delete('/admin/gifts/:id', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    await db.query('DELETE FROM game_gifts WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+  // â”€â”€ Public config (emojis/gifts for mobile game) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+  // GET /config/emojis â€” active emojis for game use (no auth)
+  app.get('/config/emojis', async (_req, reply) => {
+    const res = await db.query(
+      `SELECT emoji, label FROM game_emojis WHERE is_active = true ORDER BY sort_order ASC`
+    )
+    return reply.send(res.rows.map((r: any) => r.emoji))
+  })
+
+  // GET /config/gifts â€” active gifts with prices for game use (no auth)
+  app.get('/config/gifts', async (_req, reply) => {
+    const res = await db.query(
+      `SELECT id, icon, name, price FROM game_gifts WHERE is_active = true ORDER BY sort_order ASC`
+    )
+    return reply.send(res.rows)
   })
 
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))

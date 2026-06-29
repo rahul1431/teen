@@ -7,6 +7,7 @@ import '../../../core/audio/sound_service.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../core/storage/secure_storage.dart';
+import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'practice_engine.dart';
 import 'coin_rain.dart';
@@ -43,6 +44,7 @@ class TeenPattiGamePage extends StatefulWidget {
 class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     with TickerProviderStateMixin {
   final _socket = SocketService();
+  final _api = ApiClient();
   PracticeEngine? _practice;
 
   // Seat positions: (fractionX, fractionY) relative to TABLE rect — landscape oval.
@@ -79,11 +81,14 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   bool _showGiftTray = false;
   int  _reactionId   = 0;
 
-  static const _quickEmojis = ['😀', '😂', '😎', '😮', '😭', '🔥', '👏', '🤔'];
-  static const _gifts = [
-    {'icon': '🌹', 'name': 'Rose'},    {'icon': '🎁', 'name': 'Gift'},
-    {'icon': '💎', 'name': 'Diamond'}, {'icon': '🍺', 'name': 'Beer'},
-    {'icon': '👑', 'name': 'Crown'},   {'icon': '💣', 'name': 'Bomb'},
+  List<String> _quickEmojis = ['😀', '😂', '😎', '😮', '😭', '🔥', '👏', '🤔'];
+  List<Map<String, dynamic>> _gifts = [
+    {'icon': '🌹', 'name': 'Rose', 'price': 5.0},
+    {'icon': '🎁', 'name': 'Gift', 'price': 10.0},
+    {'icon': '💎', 'name': 'Diamond', 'price': 50.0},
+    {'icon': '🍺', 'name': 'Beer', 'price': 15.0},
+    {'icon': '👑', 'name': 'Crown', 'price': 100.0},
+    {'icon': '🚀', 'name': 'Rocket', 'price': 25.0},
   ];
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -200,8 +205,22 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     SoundService.instance.play(Sfx.cardDeal);
   }
 
+  Future<void> _loadConfig() async {
+    try {
+      final res = await Future.wait([
+        _api.dio.get('/config/emojis'),
+        _api.dio.get('/config/gifts'),
+      ]);
+      final emojis = (res[0].data as List?)?.cast<String>();
+      final gifts  = (res[1].data as List?)?.cast<Map<String, dynamic>>();
+      if (emojis != null && emojis.isNotEmpty && mounted) setState(() => _quickEmojis = emojis);
+      if (gifts  != null && gifts.isNotEmpty  && mounted) setState(() => _gifts = gifts);
+    } catch (_) { /* keep defaults on error */ }
+  }
+
   Future<void> _init() async {
     _myUserId = await SecureStorage.getUserId();
+    _loadConfig(); // fire-and-forget, updates emojis/gifts when available
     _socket.emit(SocketEvents.joinRoom, {'room_id': widget.roomId});
     _reconnectSub = _socket.on('reconnect').listen((_) =>
         _socket.emit(SocketEvents.joinRoom, {'room_id': widget.roomId}));
@@ -1183,20 +1202,27 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
             const SizedBox(height: 8),
             Wrap(
               spacing: 8, runSpacing: 8,
-              children: _gifts.map((g) => GestureDetector(
-                onTap: () => _sendGift(g['icon']!),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                      color: Colors.white10,
-                      borderRadius: BorderRadius.circular(10)),
-                  child: Column(children: [
-                    Text(g['icon']!, style: const TextStyle(fontSize: 22)),
-                    Text(g['name']!,
-                        style: const TextStyle(color: Colors.white70, fontSize: 9)),
-                  ]),
-                ),
-              )).toList(),
+              children: _gifts.map((g) {
+                final price = double.tryParse(g['price']?.toString() ?? '0') ?? 0;
+                return GestureDetector(
+                  onTap: () => _sendGift(g['icon']?.toString() ?? ''),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                        color: Colors.white10,
+                        borderRadius: BorderRadius.circular(10)),
+                    child: Column(children: [
+                      Text(g['icon']?.toString() ?? '', style: const TextStyle(fontSize: 22)),
+                      Text(g['name']?.toString() ?? '',
+                          style: const TextStyle(color: Colors.white70, fontSize: 9)),
+                      if (price > 0)
+                        Text('₹${price.toInt()}',
+                            style: const TextStyle(color: AppColors.gold, fontSize: 9,
+                                fontWeight: FontWeight.bold)),
+                    ]),
+                  ),
+                );
+              }).toList(),
             ),
           ]),
         ),

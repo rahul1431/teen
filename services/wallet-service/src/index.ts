@@ -53,6 +53,32 @@ async function start() {
     return reply.send(balance)
   })
 
+  // GET /wallet/game-history?game_type=teen_patti&limit=20&offset=0
+  app.get('/wallet/game-history', { onRequest: [authenticate] }, async (req, reply) => {
+    const user = req.user as any
+    const { game_type, limit = '20', offset = '0' } = req.query as any
+    const lim = Math.min(parseInt(limit) || 20, 100)
+    const off = parseInt(offset) || 0
+    const params: unknown[] = [user.sub, lim, off]
+    const gameFilter = game_type && game_type !== 'all'
+      ? `AND gr.game_type = $${params.push(game_type)}`
+      : ''
+    const res = await db.query(
+      `SELECT gp.id, gr.id AS room_id, gr.game_type, gr.entry_fee,
+              gp.entry_fee_deducted, gp.prize_won, gp.final_rank,
+              COALESCE(gp.prize_won,0) - COALESCE(gp.entry_fee_deducted,0) AS net_result,
+              gr.started_at, gr.ended_at
+       FROM game_participants gp
+       JOIN game_rooms gr ON gr.id = gp.room_id
+       WHERE gp.user_id = $1 AND gp.is_bot = false AND gr.status = 'completed'
+             ${gameFilter}
+       ORDER BY gr.ended_at DESC NULLS LAST
+       LIMIT $2 OFFSET $3`,
+      params
+    )
+    return reply.send(res.rows)
+  })
+
   // GET /wallet/transactions
   app.get('/wallet/transactions', { onRequest: [authenticate] }, async (req, reply) => {
     const user = req.user as any

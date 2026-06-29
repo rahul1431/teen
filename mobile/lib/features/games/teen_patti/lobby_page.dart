@@ -6,6 +6,7 @@ import '../../../core/network/api_client.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../shared/theme/app_theme.dart';
+import 'history_page.dart';
 
 class TeenPattiLobbyPage extends StatefulWidget {
   final String variation;
@@ -142,8 +143,14 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       appBar: AppBar(
         title: Text('Teen Patti · $_variationLabel'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.history_rounded, color: AppColors.gold),
+            tooltip: 'Game History',
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const TeenPattiHistoryPage())),
+          ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
+            padding: const EdgeInsets.only(right: 14),
             child: Center(
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
