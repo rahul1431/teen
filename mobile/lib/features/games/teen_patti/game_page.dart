@@ -436,8 +436,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
               if (w < h || !_ready) return const SizedBox.expand();
 
               return Stack(children: [
-                // ① Felt — wrapped in RepaintBoundary: never repaints
-                RepaintBoundary(child: _buildFelt()),
+                // ① Felt — RepaintBoundary is INSIDE Positioned (see _buildFelt)
+                _buildFelt(),
 
                 // ② Seats + pot — only on gameState change
                 ValueListenableBuilder<Map<String, dynamic>?>(
@@ -445,8 +445,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                   builder: (_, gs, __) => _buildSeatsAndCenter(gs, w, h),
                 ),
 
-            // ③ Top bar
-            RepaintBoundary(child: _buildTopBar()),
+            // ③ Top bar — RepaintBoundary is INSIDE Positioned (see _buildTopBar)
+            _buildTopBar(),
 
             // ④ My hand — only on card/turn change
             ValueListenableBuilder<List<Map<String, dynamic>>>(
@@ -478,8 +478,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
               ),
             ),
 
-            // ⑦ Social
-            RepaintBoundary(child: _buildSocialButtons()),
+            // ⑦ Social — RepaintBoundary is INSIDE Positioned (see _buildSocialButtons)
+            _buildSocialButtons(),
             if (_showGiftTray) _buildGiftTray(),
             if (_showChat) ValueListenableBuilder<List<_ChatMsg>>(
               valueListenable: _chatNotifier,
@@ -518,7 +518,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
   // ── Felt table (painted once, RepaintBoundary isolates it) ─────────────────
   Widget _buildFelt() => Positioned.fill(
-        child: Container(
+        child: RepaintBoundary(child: Container(
           decoration: const BoxDecoration(
             gradient: RadialGradient(
               center: Alignment(0, -0.2), radius: 1.4,
@@ -598,8 +598,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
               ),
             ),
           ),
-        ),
-      );
+        )));
 
   // ── Seats + Center ─────────────────────────────────────────────────────────
   Widget _buildSeatsAndCenter(Map<String, dynamic>? gs, double w, double h) {
@@ -900,7 +899,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   // ── Top Bar ────────────────────────────────────────────────────────────────
   Widget _buildTopBar() => Positioned(
         top: 6, left: 8, right: 8,
-        child: Row(children: [
+        child: RepaintBoundary(child: Row(children: [
           _circleBtn(Icons.arrow_back, _confirmExit, size: 36),
           const SizedBox(width: 8),
           Container(
@@ -933,8 +932,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
               () => setState(() => SoundService.instance.toggleMute()), size: 36),
           const SizedBox(width: 6),
           _circleBtn(Icons.settings, () {}, size: 36),
-        ]),
-      );
+        ])));
 
   // ── My Hand ────────────────────────────────────────────────────────────────
   Widget _buildMyHand(List<Map<String, dynamic>> cards, bool isMyTurn) {
@@ -1173,7 +1171,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       );
 
   // ── Social ─────────────────────────────────────────────────────────────────
-  Widget _buildSocialButtons() => Positioned(right: 8, top: 52, child: Column(children: [
+  Widget _buildSocialButtons() => Positioned(right: 8, top: 52, child: RepaintBoundary(child: Column(children: [
         _circleBtn(Icons.card_giftcard, () => setState(() { _showGiftTray = !_showGiftTray; _showChat = false; })),
         const SizedBox(height: 8),
         Container(
@@ -1184,7 +1182,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
             child: Padding(padding: const EdgeInsets.symmetric(vertical: 3), child: Text(e, style: const TextStyle(fontSize: 20))),
           )).toList()),
         ),
-      ]));
+      ])));
 
   Widget _circleBtn(IconData icon, VoidCallback onTap, {double size = 38}) => GestureDetector(
         onTap: onTap,
