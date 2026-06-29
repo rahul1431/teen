@@ -143,7 +143,7 @@ class SocketService {
   void _scheduleReconnect() {
     if (_manuallyClosed) return;
     _reconnectTimer?.cancel();
-    if (_reconnectAttempts >= 10) {
+    if (_reconnectAttempts >= 20) {
       status.value = 'reconnect-failed';
       return;
     }
@@ -154,6 +154,17 @@ class SocketService {
       _channel = null;
       connect();
     });
+  }
+
+  /// Force-restart the reconnect cycle (resets attempt counter).
+  /// Call this from UI when status == 'reconnect-failed'.
+  void reconnectNow() {
+    _reconnectTimer?.cancel();
+    _reconnectAttempts = 0;
+    _manuallyClosed = false;
+    _channel = null;
+    status.value = 'reconnecting…';
+    connect();
   }
 
   void _startPing() {

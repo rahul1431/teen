@@ -45,15 +45,15 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   final _socket = SocketService();
   PracticeEngine? _practice;
 
-  // Seat positions: (fractionX, fractionY) relative to TABLE rect, not screen.
-  // (0,0) = table top-left, (1,1) = table bottom-right.
+  // Seat positions: (fractionX, fractionY) relative to TABLE rect — landscape oval.
+  // (0,0)=table top-left, (1,1)=table bottom-right.
   // cx = tableLeft + tableW * fx,  cy = tableTop + tableH * fy
   static const _tableSeats = {
-    1: [(0.50, 0.14)],
-    2: [(0.08, 0.38), (0.92, 0.38)],
-    3: [(0.08, 0.38), (0.50, 0.14), (0.92, 0.38)],
-    4: [(0.25, 0.12), (0.75, 0.12), (0.06, 0.44), (0.94, 0.44)],
-    5: [(0.25, 0.12), (0.75, 0.12), (0.05, 0.46), (0.95, 0.46), (0.50, 0.48)],
+    1: [(0.50, 0.12)],
+    2: [(0.22, 0.09), (0.78, 0.09)],
+    3: [(0.07, 0.50), (0.50, 0.08), (0.93, 0.50)],
+    4: [(0.07, 0.46), (0.30, 0.08), (0.70, 0.08), (0.93, 0.46)],
+    5: [(0.07, 0.46), (0.24, 0.08), (0.50, 0.06), (0.76, 0.08), (0.93, 0.46)],
   };
 
   // ── ValueNotifiers ────────────────────────────────────────────────────────
@@ -62,7 +62,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   final _timerNotifier     = ValueNotifier<int>(30);
   final _resultNotifier    = ValueNotifier<String?>(null);
   final _myCardsNotifier   = ValueNotifier<List<Map<String, dynamic>>>([]);
-  final _chatNotifier      = ValueNotifier<List<_ChatMsg>>([]);
   final _reactionsNotifier = ValueNotifier<List<_Reaction>>([]);
   late  final _betNotifier = ValueNotifier<double>(0);
 
@@ -77,9 +76,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   StreamSubscription? _gameResultSub;
   StreamSubscription? _roomChatSub;
   bool _ready        = false;
-  bool _showChat     = false;
   bool _showGiftTray = false;
-  final _chatInput   = TextEditingController();
   int  _reactionId   = 0;
 
   static const _quickEmojis = ['😀', '😂', '😎', '😮', '😭', '🔥', '👏', '🤔'];
@@ -94,9 +91,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   void initState() {
     super.initState();
     SoundService.instance.init();
-    // Portrait mode — no orientation lock; remove landscape constraint.
+    // Lock to landscape for the game table.
     SystemChrome.setPreferredOrientations(
-        [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
+        [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     widget.demo ? _initDemo() : _init();
     SoundService.instance.loopAmbience('casino_bgm.mp3');
@@ -119,11 +116,14 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _roomChatSub?.cancel();
     _turnTimer?.cancel();
     _practice?.dispose();
-    _chatInput.dispose();
     for (final n in [
       _gsNotifier, _myTurnNotifier, _timerNotifier, _resultNotifier,
-      _myCardsNotifier, _chatNotifier, _reactionsNotifier, _betNotifier,
+      _myCardsNotifier, _reactionsNotifier, _betNotifier,
     ]) { n.dispose(); }
+    // Restore portrait when leaving the game
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp, DeviceOrientation.portraitDown,
+    ]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
@@ -154,14 +154,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           HapticFeedback.mediumImpact();
         }
       },
-      onChat: (uid, name, text) {
-        if (!mounted) return;
-        _pushChat(_ChatMsg(userId: uid, username: name, text: text, type: 'text'));
-      },
+      onChat: (uid, name, text) {},
     );
-    _chatNotifier.value = [
-      _ChatMsg(userId: 'b1', username: 'Steven P.', text: 'Good luck! 🍀', type: 'text'),
-    ];
     _ready = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _practice!.startHand();
@@ -233,16 +227,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       if (isMe && !wasMyTurn) _startTurnTimer();
       else if (!isMe) _turnTimer?.cancel();
 
-      final la = data['last_action'] as Map?;
-      if (la != null) {
-        final actorId = la['user_id']?.toString() ?? '';
-        final actor   = players.firstWhere(
-            (p) => (p['userId'] ?? p['user_id']) == actorId,
-            orElse: () => <String, dynamic>{});
-        _pushChat(_ChatMsg(
-            userId: actorId, username: actor['username'] ?? 'Player',
-            text: la['action']?.toString().toUpperCase() ?? '', type: 'text'));
-      }
+      // last_action available for future overlay if needed
     });
 
     _gameResultSub = _socket.on(SocketEvents.gameResult).listen((data) {
@@ -272,21 +257,13 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           username: data['username']?.toString() ?? 'Player',
           text:     data['message']?.toString()  ?? '',
           type:     type);
-      if (type == 'text') {
-        _pushChat(msg);
-      } else if (msg.userId != _myUserId) {
+      if (msg.userId != _myUserId && type != 'text') {
         _spawnReaction(msg.userId, msg.text, isGift: type == 'gift');
       }
     });
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-  void _pushChat(_ChatMsg msg) {
-    final list = List<_ChatMsg>.from(_chatNotifier.value)..add(msg);
-    if (list.length > 50) list.removeAt(0);
-    _chatNotifier.value = list;
-  }
-
   void _startTurnTimer() {
     _turnTimer?.cancel();
     _timerNotifier.value = 30;
@@ -319,18 +296,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       'sequence_num': ++_turnSeq,
     });
     HapticFeedback.mediumImpact();
-  }
-
-  void _sendChat(String text) {
-    final t = text.trim();
-    if (t.isEmpty) return;
-    if (widget.demo) {
-      _pushChat(_ChatMsg(userId: 'me', username: 'You', text: t, type: 'text'));
-    } else {
-      _socket.emit(SocketEvents.roomChat,
-          {'room_id': widget.roomId, 'message': t, 'type': 'text'});
-    }
-    _chatInput.clear();
   }
 
   void _sendEmoji(String emoji) {
@@ -419,17 +384,13 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
               : LayoutBuilder(builder: (context, box) {
                   final w = box.maxWidth;
                   final h = box.maxHeight;
-                  // Table geometry — computed from real status-bar height so the
-                  // table is always fully below the top bar, never behind it.
-                  final statusH = MediaQuery.of(context).padding.top;
-                  final tw = w * 0.92;
-                  final th = math.min(
-                    tw * 1.42,                      // max aspect: slightly taller than wide
-                    h - statusH - 52 - 88,          // leave room for top-bar + action-bar
-                  );
-                  final tl = (w - tw) / 2;
-                  final tt = statusH + 52.0;        // sits just below the icon row
-                  final tb = tt + th;               // table bottom pixel
+                  // Landscape layout: top bar 40px, right action panel 172px
+                  const topBarH = 40.0;
+                  const rightPanelW = 172.0;
+                  final tw = w - rightPanelW - 2;   // table fills left area
+                  final th = h - topBarH - 2;        // fills full height below top bar
+                  const tl = 0.0;
+                  const tt = topBarH;
 
                   return Stack(children: [
                     // ① Ambient background
@@ -438,9 +399,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     // ② Poker table oval — explicit coords, no helpers needed
                     _buildTableOval(tl, tt, tw, th),
 
-                    // ③ Dealer hostess — top-centre INSIDE the table
+                    // ③ Dealer hostess — top-centre of the table oval
                     Positioned(
-                      left: w / 2 - 40, top: tt + 6,
+                      left: tw / 2 - 40, top: tt + 6,
                       child: const _HostessWidget(),
                     ),
 
@@ -471,7 +432,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     // ⑦ My chips strip — just below the table
                     ValueListenableBuilder<Map<String, dynamic>?>(
                       valueListenable: _gsNotifier,
-                      builder: (_, gs, __) => _buildMyChips(gs, w, tb),
+                      builder: (_, gs, __) => _buildMyChips(gs),
                     ),
 
                     // ⑧ Top bar
@@ -516,12 +477,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     // ⑬ Gift tray
                     if (_showGiftTray) _buildGiftTray(w, h),
 
-                    // ⑭ Chat panel
-                    if (_showChat)
-                      ValueListenableBuilder<List<_ChatMsg>>(
-                        valueListenable: _chatNotifier,
-                        builder: (_, msgs, __) => _buildChatPanel(msgs, w, h),
-                      ),
 
                     // ⑮ Result overlay
                     Positioned.fill(
@@ -747,7 +702,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     Positioned(
                       left: 0, top: 0,
                       child: GestureDetector(
-                        onTap: () => setState(() { _showGiftTray = true; _showChat = false; }),
+                        onTap: () => setState(() { _showGiftTray = true; }),
                         child: Container(
                           width: 18, height: 18, alignment: Alignment.center,
                           decoration: const BoxDecoration(
@@ -931,16 +886,17 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑦ My chips strip — just below the table (tb = tableBottom pixel)
-  Widget _buildMyChips(Map<String, dynamic>? gs, double w, double tb) {
+  // ⑦ My chips strip — anchored to bottom-left in landscape
+  Widget _buildMyChips(Map<String, dynamic>? gs) {
     final me = (gs?['players'] as List?)
         ?.where((p) => (p['user_id'] ?? p['userId']) == _myUserId)
         .firstOrNull;
     if (me == null) return const SizedBox.shrink();
     final chips  = me['chips'] ?? me['balance'] ?? 0;
     final isSeen = me['is_seen'] ?? me['isSeen'] ?? _isSeen;
+    // In landscape, table fills most of the screen, so show chips at bottom inside table
     return Positioned(
-      left: 0, right: 0, top: tb + 10,
+      left: 0, right: 174, bottom: 12,
       child: Center(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -974,11 +930,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑧ Top bar
+  // ⑧ Top bar (landscape: compact 40px, stops before right panel)
   Widget _buildTopBar(double w) {
     return Positioned(
-      top: MediaQuery.of(context).padding.top + 4,
-      left: 8, right: 8,
+      top: 0, left: 0, right: 172, height: 40,
       child: RepaintBoundary(
         child: Row(children: [
           // Back button
@@ -1023,9 +978,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           // Icon actions
           _iconBtn(Icons.info_outline, () {}),
           const SizedBox(width: 5),
-          _iconBtn(Icons.chat_bubble_outline,
-              () => setState(() { _showChat = !_showChat; _showGiftTray = false; })),
-          const SizedBox(width: 5),
           _iconBtn(Icons.person_add_alt_1, () {}),
           const SizedBox(width: 5),
           _iconBtn(
@@ -1039,77 +991,111 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑨ Right emoji panel + gift button (tt = table top pixel)
+  // ⑨ Right panel — emojis + gift, anchored to right edge for landscape
   Widget _buildRightPanel(double w, double h, double tt) {
     return Positioned(
-      right: 6,
-      top: tt + 10,
+      right: 0, top: 0, bottom: 0, width: 172,
       child: RepaintBoundary(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _iconBtn(Icons.card_giftcard,
-                () => setState(() { _showGiftTray = !_showGiftTray; _showChat = false; }),
-                size: 38),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 3),
-              decoration: BoxDecoration(
-                  color: Colors.black54, borderRadius: BorderRadius.circular(22)),
-              child: Column(
-                children: _quickEmojis.take(5).map((e) => GestureDetector(
-                  onTap: () => _sendEmoji(e),
-                  child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 3),
-                      child: Text(e, style: const TextStyle(fontSize: 22))),
-                )).toList(),
+        child: Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF050C1A),
+            border: Border(left: BorderSide(color: Colors.white12)),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const SizedBox(height: 8),
+              // Gift button at top of right panel
+              _iconBtn(Icons.card_giftcard,
+                  () => setState(() { _showGiftTray = !_showGiftTray; }),
+                  size: 36),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
+                decoration: BoxDecoration(
+                    color: Colors.black38, borderRadius: BorderRadius.circular(22)),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: _quickEmojis.take(6).map((e) => GestureDetector(
+                    onTap: () => _sendEmoji(e),
+                    child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Text(e, style: const TextStyle(fontSize: 24))),
+                  )).toList(),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  // ⑩ Floating reactions
+  // ⑩ Floating reactions (centered in table area, not right panel)
   Widget _buildReactions(List<_Reaction> reactions, double w, double h) {
     if (reactions.isEmpty) return const SizedBox.shrink();
+    final tableW = w - 174.0;
     return Stack(children: reactions.map((r) {
       return Positioned(
         key: ValueKey('rx_${r.id}'),
-        left: w * 0.5 - 20 + (r.id % 5 - 2) * 18.0,
+        left: tableW * 0.5 - 20 + (r.id % 5 - 2) * 18.0,
         top: h * 0.45,
         child: _ReactionBubble(emoji: r.emoji, isGift: r.isGift),
       );
     }).toList());
   }
 
-  // ⑪ Reconnect banner
-  Widget _buildReconnectBanner(String status) => Positioned(
-        top: 60, left: 16, right: 16,
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                  colors: [Color(0xFFFFD700), Color(0xFFDAA520)]),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
+  // ⑪ Reconnect banner (below compact top bar, inside table area)
+  Widget _buildReconnectBanner(String sv) {
+    final failed = sv == 'reconnect-failed';
+    return Positioned(
+      top: 44, left: 8, right: 180,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+                colors: failed
+                    ? [const Color(0xFFCC3333), const Color(0xFF991111)]
+                    : [const Color(0xFFFFD700), const Color(0xFFDAA520)]),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (!failed)
               const SizedBox(
                 width: 14, height: 14,
                 child: CircularProgressIndicator(
                     strokeWidth: 2,
                     valueColor: AlwaysStoppedAnimation(Colors.black)),
               ),
+            if (!failed) const SizedBox(width: 8),
+            Text(
+              failed ? 'Connection lost' : 'Reconnecting…',
+              style: TextStyle(
+                  color: failed ? Colors.white : Colors.black,
+                  fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+            if (failed) ...[
               const SizedBox(width: 10),
-              Text('Reconnecting: $status…',
-                  style: const TextStyle(
-                      color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold)),
-            ]),
-          ),
+              GestureDetector(
+                onTap: () => _socket.reconnectNow(),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(12)),
+                  child: const Text('Retry',
+                      style: TextStyle(color: Colors.white, fontSize: 11,
+                          fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ]),
         ),
-      );
+      ),
+    );
+  }
 
   // ⑫ Bottom action bar: Pack | − | Chaal | +
   //    Pinned to bottom; SafeArea handles system nav bar.
@@ -1121,11 +1107,11 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final activeCount = players.where((p) => (p as Map)['status'] == 'active').length;
 
     return Positioned(
-      left: 0, right: 0, bottom: 0,
+      left: 0, right: 174, bottom: 0,
       child: SafeArea(
         top: false,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [Colors.black.withOpacity(0.0), Colors.black.withOpacity(0.88)],
@@ -1180,9 +1166,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑬ Gift tray
+  // ⑬ Gift tray (positioned inside table area in landscape)
   Widget _buildGiftTray(double w, double h) => Positioned(
-        right: 50, top: h * 0.22,
+        right: 180, top: h * 0.22,
         child: Container(
           width: 190,
           padding: const EdgeInsets.all(12),
@@ -1212,83 +1198,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                 ),
               )).toList(),
             ),
-          ]),
-        ),
-      );
-
-  // ⑭ Chat panel
-  Widget _buildChatPanel(List<_ChatMsg> msgs, double w, double h) =>
-      Positioned(
-        right: 50, top: h * 0.14, bottom: 100,
-        child: Container(
-          width: 240,
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-              color: Colors.black87,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.gold.withOpacity(0.4))),
-          child: Column(children: [
-            const Text('Table Chat',
-                style: TextStyle(
-                    color: AppColors.gold, fontWeight: FontWeight.bold)),
-            const Divider(color: Colors.white24, height: 12),
-            Expanded(
-              child: msgs.isEmpty
-                  ? const Center(
-                      child: Text('Say hi 👋',
-                          style: TextStyle(color: Colors.white38, fontSize: 12)))
-                  : ListView.builder(
-                      reverse: true,
-                      itemCount: msgs.length,
-                      itemBuilder: (_, i) {
-                        final m = msgs[msgs.length - 1 - i];
-                        final mine = m.userId == _myUserId;
-                        return Align(
-                          alignment: mine
-                              ? Alignment.centerRight
-                              : Alignment.centerLeft,
-                          child: Container(
-                            margin: const EdgeInsets.symmetric(vertical: 2),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: mine
-                                  ? AppColors.gold.withOpacity(0.85)
-                                  : Colors.white12,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              mine ? m.text : '${m.username}: ${m.text}',
-                              style: TextStyle(
-                                  color: mine ? Colors.black : Colors.white,
-                                  fontSize: 12),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-            Row(children: [
-              Expanded(
-                child: TextField(
-                  controller: _chatInput,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: _sendChat,
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    hintText: 'Message…',
-                    hintStyle: TextStyle(color: Colors.white38, fontSize: 12),
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  ),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.send, color: AppColors.gold, size: 20),
-                onPressed: () => _sendChat(_chatInput.text),
-              ),
-            ]),
           ]),
         ),
       );
