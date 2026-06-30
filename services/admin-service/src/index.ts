@@ -2162,6 +2162,71 @@ async function start() {
     return reply.send({ ok: true })
   })
 
+  // ── KYC Admin ──────────────────────────────────────────────────────────────
+
+  // GET /api/admin/kyc — list all KYC submissions with user info
+  app.get('/api/admin/kyc', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { status, page = '1', limit = '20' } = req.query as any
+    const offset = (parseInt(page) - 1) * parseInt(limit)
+    const whereClause = status ? `WHERE kd.status = $3` : ''
+    const values: any[] = [parseInt(limit), offset]
+    if (status) values.push(status)
+
+    const res = await db.query(
+      `SELECT kd.user_id, kd.doc_type, kd.status, kd.rejection_reason,
+              kd.submitted_at, kd.reviewed_at,
+              kd.s3_front_key AS front_url, kd.s3_back_key AS back_url,
+              kd.selfie_path AS selfie_url,
+              u.username, u.phone, u.email, u.kyc_status AS user_kyc_status
+       FROM kyc_documents kd
+       JOIN users u ON u.id = kd.user_id
+       ${whereClause}
+       ORDER BY kd.submitted_at DESC
+       LIMIT $1 OFFSET $2`,
+      values
+    )
+    const countRes = await db.query(
+      `SELECT COUNT(*) FROM kyc_documents kd ${whereClause}`,
+      status ? [status] : []
+    )
+    return reply.send({ submissions: res.rows, total: parseInt(countRes.rows[0].count) })
+  })
+
+  // GET /api/admin/kyc/stats — summary counts
+  app.get('/api/admin/kyc/stats', { onRequest: [app.authenticate] }, async (_req, reply) => {
+    const res = await db.query(
+      `SELECT status, COUNT(*) AS count FROM kyc_documents GROUP BY status`
+    )
+    const stats: Record<string, number> = { pending: 0, under_review: 0, approved: 0, rejected: 0 }
+    for (const row of res.rows) stats[row.status] = parseInt(row.count)
+    return reply.send(stats)
+  })
+
+  // PUT /api/admin/kyc/:userId/review — approve or reject
+  app.put('/api/admin/kyc/:userId/review', {
+    onRequest: [app.authenticate, app.requireRole('support')],
+  }, async (req, reply) => {
+    const { userId } = req.params as any
+    const admin = req.user as any
+    const body = z.object({
+      action: z.enum(['approve', 'reject']),
+      rejection_reason: z.string().optional(),
+    }).parse(req.body)
+
+    const newStatus = body.action === 'approve' ? 'approved' : 'rejected'
+
+    await db.query(
+      `UPDATE kyc_documents SET status = $1, reviewed_by = $2, reviewed_at = NOW(), rejection_reason = $3
+       WHERE user_id = $4`,
+      [newStatus, admin.sub, body.rejection_reason || null, userId]
+    )
+    await db.query(
+      `UPDATE users SET kyc_status = $1 WHERE id = $2`,
+      [newStatus, userId]
+    )
+    return reply.send({ ok: true, status: newStatus })
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))
 
   const port = parseInt(process.env.PORT || '3008')

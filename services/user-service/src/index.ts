@@ -3,8 +3,17 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import jwt from '@fastify/jwt'
+import multipart from '@fastify/multipart'
 import { Pool } from 'pg'
 import { z } from 'zod'
+import fs from 'fs'
+import path from 'path'
+import { pipeline } from 'stream/promises'
+import crypto from 'crypto'
+
+const AVATAR_UPLOAD_DIR = process.env.AVATAR_UPLOAD_DIR || '/opt/teen/uploads/avatars'
+const KYC_UPLOAD_DIR = process.env.KYC_UPLOAD_DIR || '/opt/teen/uploads/kyc'
+const APP_URL = process.env.APP_URL || 'https://game.myonlinejoker.com'
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
@@ -13,6 +22,11 @@ async function start() {
   await app.register(helmet)
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.JWT_SECRET! })
+  await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } }) // 10MB
+
+  // Ensure upload dirs exist
+  fs.mkdirSync(AVATAR_UPLOAD_DIR, { recursive: true })
+  fs.mkdirSync(KYC_UPLOAD_DIR, { recursive: true })
 
   const authenticate = async (req: any, reply: any) => {
     try { await req.jwtVerify() } catch { reply.code(401).send({ error: 'Unauthorized' }) }
@@ -292,6 +306,85 @@ async function start() {
       [now]
     )
     return reply.send(res.rows)
+  })
+
+  // POST /users/me/avatar — upload profile photo
+  app.post('/users/me/avatar', { onRequest: [authenticate] }, async (req, reply) => {
+    const user = req.user as any
+    const data = await (req as any).file()
+    if (!data) return reply.code(400).send({ error: 'No file uploaded' })
+
+    const ext = path.extname(data.filename || '.jpg').toLowerCase()
+    const allowed = ['.jpg', '.jpeg', '.png', '.webp']
+    if (!allowed.includes(ext)) return reply.code(400).send({ error: 'Only jpg/png/webp allowed' })
+
+    const filename = `${user.sub}_${crypto.randomBytes(6).toString('hex')}${ext}`
+    const filePath = path.join(AVATAR_UPLOAD_DIR, filename)
+    await pipeline(data.file, fs.createWriteStream(filePath))
+
+    const avatar_url = `${APP_URL}/uploads/avatars/${filename}`
+    await db.query('UPDATE users SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [avatar_url, user.sub])
+    return reply.send({ avatar_url })
+  })
+
+  // POST /users/kyc/submit — upload KYC documents
+  app.post('/users/kyc/submit', { onRequest: [authenticate] }, async (req, reply) => {
+    const user = req.user as any
+    const userDir = path.join(KYC_UPLOAD_DIR, user.sub)
+    fs.mkdirSync(userDir, { recursive: true })
+
+    const files: Record<string, string> = {}
+    const parts = (req as any).parts()
+    for await (const part of parts) {
+      if (part.type !== 'file') continue
+      const key = part.fieldname // aadhaar_front | aadhaar_back | selfie
+      const allowed = ['aadhaar_front', 'aadhaar_back', 'selfie']
+      if (!allowed.includes(key)) continue
+      const ext = path.extname(part.filename || '.jpg').toLowerCase()
+      const filename = `${key}${ext}`
+      const filePath = path.join(userDir, filename)
+      await pipeline(part.file, fs.createWriteStream(filePath))
+      files[key] = `${APP_URL}/uploads/kyc/${user.sub}/${filename}`
+    }
+
+    if (!files['aadhaar_front'] || !files['aadhaar_back'] || !files['selfie']) {
+      return reply.code(400).send({ error: 'Please upload aadhaar_front, aadhaar_back, and selfie' })
+    }
+
+    // Upsert kyc_documents
+    await db.query(
+      `INSERT INTO kyc_documents (user_id, doc_type, s3_front_key, s3_back_key, selfie_path, status, submitted_at)
+       VALUES ($1, 'aadhaar', $2, $3, $4, 'under_review', NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         s3_front_key = EXCLUDED.s3_front_key,
+         s3_back_key  = EXCLUDED.s3_back_key,
+         selfie_path  = EXCLUDED.selfie_path,
+         status       = 'under_review',
+         submitted_at = NOW(),
+         rejection_reason = NULL`,
+      [user.sub, files['aadhaar_front'], files['aadhaar_back'], files['selfie']]
+    )
+    // Update user kyc_status
+    await db.query(`UPDATE users SET kyc_status = 'under_review' WHERE id = $1`, [user.sub])
+
+    return reply.send({ success: true, status: 'under_review' })
+  })
+
+  // GET /users/kyc/status — get KYC status for current user
+  app.get('/users/kyc/status', { onRequest: [authenticate] }, async (req, reply) => {
+    const user = req.user as any
+    const [userRes, kycRes] = await Promise.all([
+      db.query(`SELECT kyc_status FROM users WHERE id = $1`, [user.sub]),
+      db.query(
+        `SELECT doc_type, status, rejection_reason, submitted_at, reviewed_at,
+                s3_front_key AS front_url, s3_back_key AS back_url, selfie_path AS selfie_url
+         FROM kyc_documents WHERE user_id = $1`,
+        [user.sub]
+      ),
+    ])
+    const kyc_status = userRes.rows[0]?.kyc_status || 'pending'
+    const doc = kycRes.rows[0] || null
+    return reply.send({ kyc_status, document: doc })
   })
 
   app.get('/health', async () => ({ status: 'ok', service: 'user' }))

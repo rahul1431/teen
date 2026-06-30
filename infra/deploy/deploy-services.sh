@@ -35,6 +35,13 @@ npm run build
 cp -rf "$BASE/admin-panel/dist/." /home/admin/web/game.myonlinejoker.com/public_html/admin/
 echo "  Admin panel deployed to webroot."
 
+echo "==> Setting up upload and download directories..."
+mkdir -p /opt/teen/uploads/avatars
+mkdir -p /opt/teen/uploads/banners
+mkdir -p /opt/teen/uploads/kyc
+mkdir -p /opt/teen/downloads
+echo "  Directories created."
+
 echo "==> Setting up Nginx..."
 mkdir -p /etc/nginx/snippets
 cp "$BASE/infra/nginx/proxy-headers.conf" /etc/nginx/snippets/

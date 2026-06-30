@@ -38,6 +38,8 @@ class _LudoGamePageState extends State<LudoGamePage>
   bool _rolling = false;
   bool _botBusy = false;
   String? _banner;
+  String? _rollNotif;
+  bool _showRollNotif = false;
 
   late final AnimationController _diceCtrl = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 500));
@@ -107,11 +109,10 @@ class _LudoGamePageState extends State<LudoGamePage>
     final dice = _engine.rollDie();
     await Future.delayed(const Duration(milliseconds: 480));
     final canMove = _engine.applyRoll(s, dice);
+    _showRoll('You', dice);
     setState(() {
       _rolling = false;
-      _banner = canMove
-          ? 'You rolled $dice — tap a token'
-          : 'You rolled $dice — no move';
+      _banner = canMove ? 'Tap a token to move' : 'No valid move — passing';
     });
     if (!canMove) _maybeDriveBots();
   }
@@ -141,6 +142,7 @@ class _LudoGamePageState extends State<LudoGamePage>
       _diceCtrl.forward(from: 0);
       await Future.delayed(const Duration(milliseconds: 450));
       final canMove = _engine.applyRoll(s, dice);
+      _showRoll(s.players[s.currentTurn].username, dice);
       if (canMove) {
         final tok = _engine.chooseBotToken(s, s.currentTurn, dice);
         await Future.delayed(const Duration(milliseconds: 350));
@@ -192,6 +194,11 @@ class _LudoGamePageState extends State<LudoGamePage>
       if (la != null && la['dice'] != null) {
         SoundService.instance.play(Sfx.diceRoll);
         _diceCtrl.forward(from: 0);
+        final rollerIdx = newState.currentTurn == _mySeatIndex
+            ? (newState.currentTurn + (newState.awaiting == 'move' ? 0 : -1)) % newState.players.length
+            : newState.currentTurn;
+        final rollerName = newState.players[rollerIdx.clamp(0, newState.players.length - 1)].username;
+        _showRoll(rollerName, la['dice'] as int);
       }
       if (captured) SoundService.instance.play(Sfx.tokenCapture);
       else SoundService.instance.play(Sfx.tokenMove);
@@ -242,6 +249,17 @@ class _LudoGamePageState extends State<LudoGamePage>
     } else {
       SoundService.instance.play(Sfx.tokenMove);
     }
+  }
+
+  void _showRoll(String playerName, int dice) {
+    final emojis = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+    setState(() {
+      _rollNotif = '$playerName rolled ${emojis[dice.clamp(1, 6)]} $dice';
+      _showRollNotif = true;
+    });
+    Future.delayed(const Duration(milliseconds: 1600), () {
+      if (mounted) setState(() => _showRollNotif = false);
+    });
   }
 
   void _onRoll() => widget.offline ? _offlineRoll() : _onlineRoll();
@@ -381,18 +399,56 @@ class _LudoGamePageState extends State<LudoGamePage>
                     _buildAppBar(context),
                     _playersBar(s),
                     Expanded(
-                      child: Center(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          child: AspectRatio(
-                            aspectRatio: 1,
-                            child: LudoBoard(
-                              state: s,
-                              mySeatIndex: _mySeatIndex,
-                              onTokenTap: _onTokenTap,
+                      child: Stack(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                            child: AspectRatio(
+                              aspectRatio: 1,
+                              child: LudoBoard(
+                                state: s,
+                                mySeatIndex: _mySeatIndex,
+                                onTokenTap: _onTokenTap,
+                              ),
                             ),
                           ),
-                        ),
+                          // Dice roll notification overlay
+                          if (_rollNotif != null)
+                            Positioned(
+                              top: 16,
+                              left: 0,
+                              right: 0,
+                              child: Center(
+                                child: AnimatedOpacity(
+                                  opacity: _showRollNotif ? 1.0 : 0.0,
+                                  duration: const Duration(milliseconds: 280),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF0F1322).withOpacity(0.92),
+                                      borderRadius: BorderRadius.circular(24),
+                                      border: Border.all(color: AppColors.gold.withOpacity(0.4)),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.5),
+                                          blurRadius: 12,
+                                          offset: const Offset(0, 4),
+                                        )
+                                      ],
+                                    ),
+                                    child: Text(
+                                      _rollNotif!,
+                                      style: const TextStyle(
+                                        color: AppColors.goldLight,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                     _controlBar(s),
@@ -569,78 +625,114 @@ class _LudoGamePageState extends State<LudoGamePage>
 
   Widget _controlBar(LudoState s) {
     final canRoll = _isMyTurn && s.awaiting == 'roll' && !_rolling && !_botBusy;
+    final myTurn = _isMyTurn;
+    final activePlayer = s.players[s.currentTurn];
+    final seatColors = [AppColors.ludoRed, AppColors.ludoGreen, AppColors.ludoYellow, AppColors.ludoBlue];
+    final activeColor = seatColors[(activePlayer.seat - 1) % 4];
+
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 22),
       decoration: BoxDecoration(
-        color: const Color(0xFF0F1322),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        border: Border.all(color: Colors.white.withOpacity(0.04)),
+        color: const Color(0xFF0B0F1E),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+        border: Border(top: BorderSide(color: activeColor.withOpacity(0.3), width: 1.5)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.35),
-            blurRadius: 12,
-            offset: const Offset(0, -3),
-          )
+            color: Colors.black.withOpacity(0.5),
+            blurRadius: 16,
+            offset: const Offset(0, -4),
+          ),
+          if (myTurn) BoxShadow(
+            color: AppColors.gold.withOpacity(0.08),
+            blurRadius: 20,
+            offset: const Offset(0, -2),
+          ),
         ],
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.03),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              _banner ?? '',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AppColors.goldLight, 
-                fontWeight: FontWeight.w800,
-                fontSize: 12,
-                letterSpacing: 0.5,
-              ),
+          // Dice
+          _DiceWidget(value: s.dice ?? 1, controller: _diceCtrl),
+          const SizedBox(width: 16),
+          // Middle info
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (myTurn)
+                  Row(
+                    children: [
+                      Container(
+                        width: 8, height: 8,
+                        decoration: const BoxDecoration(color: Colors.greenAccent, shape: BoxShape.circle),
+                      ),
+                      const SizedBox(width: 6),
+                      const Text('YOUR TURN',
+                          style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.w900, fontSize: 12, letterSpacing: 1)),
+                    ],
+                  )
+                else
+                  Row(
+                    children: [
+                      Container(
+                        width: 8, height: 8,
+                        decoration: BoxDecoration(color: activeColor, shape: BoxShape.circle),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '${activePlayer.username} playing…',
+                          style: TextStyle(color: activeColor, fontWeight: FontWeight.w700, fontSize: 12),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                const SizedBox(height: 3),
+                Text(
+                  _banner ?? '',
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 14),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _DiceWidget(value: s.dice ?? 1, controller: _diceCtrl),
-              const SizedBox(width: 28),
-              Container(
-                decoration: canRoll ? BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.gold.withOpacity(0.25),
-                      blurRadius: 10,
-                      offset: const Offset(0, 2),
-                    )
-                  ],
-                ) : null,
-                child: ElevatedButton.icon(
-                  onPressed: canRoll ? _onRoll : null,
-                  icon: const Icon(Icons.casino_rounded, size: 18),
-                  label: Text(
-                    s.awaiting == 'move' && _isMyTurn
-                        ? 'TAP A TOKEN'
-                        : 'ROLL DICE',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5),
+          const SizedBox(width: 12),
+          // Roll button
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            decoration: canRoll ? BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [BoxShadow(color: AppColors.gold.withOpacity(0.4), blurRadius: 14, offset: const Offset(0, 3))],
+            ) : null,
+            child: myTurn && s.awaiting == 'move'
+                ? Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                    decoration: BoxDecoration(
+                      color: activeColor.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: activeColor.withOpacity(0.5)),
+                    ),
+                    child: Text(
+                      'TAP TOKEN',
+                      style: TextStyle(color: activeColor, fontWeight: FontWeight.w900, fontSize: 12, letterSpacing: 0.5),
+                    ),
+                  )
+                : ElevatedButton.icon(
+                    onPressed: canRoll ? _onRoll : null,
+                    icon: const Icon(Icons.casino_rounded, size: 18),
+                    label: const Text('ROLL', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.gold,
+                      foregroundColor: Colors.black,
+                      disabledBackgroundColor: Colors.white.withOpacity(0.04),
+                      disabledForegroundColor: Colors.white24,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      elevation: 0,
+                    ),
                   ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.gold,
-                    foregroundColor: Colors.black,
-                    disabledBackgroundColor: Colors.white.withOpacity(0.05),
-                    disabledForegroundColor: Colors.white30,
-                    padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 15),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    elevation: 0,
-                  ),
-                ),
-              ),
-            ],
           ),
         ],
       ),
