@@ -345,9 +345,17 @@ async function start() {
   })
 
   // Internal: POST /internal/wallet/lock (called by game-gateway)
+  // lock_id must be a unique ID per individual lock call so retries are safe
+  // but different bets in the same room each succeed.
   app.post('/internal/wallet/lock', { onRequest: [authenticateInternal] }, async (req, reply) => {
-    const body = z.object({ user_id: z.string().uuid(), amount: z.number(), room_id: z.string() }).parse(req.body)
-    await walletSvc.lockForGame(body.user_id, body.amount, body.room_id)
+    const body = z.object({
+      user_id: z.string().uuid(),
+      amount: z.number(),
+      room_id: z.string(),
+      lock_id: z.string().optional(),
+    }).parse(req.body)
+    const lockId = body.lock_id || crypto.randomUUID()
+    await walletSvc.lockForGame(body.user_id, body.amount, body.room_id, lockId)
     return reply.send({ success: true })
   })
 

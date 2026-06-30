@@ -4,7 +4,8 @@ import cors from '@fastify/cors'
 import jwt from '@fastify/jwt'
 import { Pool } from 'pg'
 import { z } from 'zod'
-import { debitStake } from './wallet'
+import crypto from 'crypto'
+import { debitStake, creditPrize } from './wallet'
 import {
   MATKA_MULTIPLIERS,
   validateMatkaBet,
@@ -90,25 +91,27 @@ async function start() {
     if (body.session === 'open' && draw.open_panna) {
       return reply.code(409).send({ error: 'Open session already declared' })
     }
+    if (body.session === 'close' && draw.close_panna) {
+      return reply.code(409).send({ error: 'Close session already declared' })
+    }
 
     const multiplier = MATKA_MULTIPLIERS[body.bet_type]
     const potential = Math.round(body.amount * multiplier * 100) / 100
 
-    const inserted = await db.query(
-      `INSERT INTO matka_bets (user_id, draw_id, bet_type, session, number, amount, multiplier, potential_payout)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-      [uid(req), draw.id, body.bet_type, body.session, body.number, body.amount, multiplier, potential],
-    )
-    const betId = inserted.rows[0].id
-
+    // Debit wallet FIRST, then insert bet record. This ensures we never have
+    // an orphan bet record if the server crashes after insert but before debit.
+    const betId = crypto.randomUUID()
     const debit = await debitStake({
       userId: uid(req), amount: body.amount, referenceId: betId,
       idempotencyKey: `matka_stake_${betId}`, description: 'Matka bet',
     })
-    if (!debit.ok) {
-      await db.query('DELETE FROM matka_bets WHERE id = $1', [betId])
-      return reply.code(400).send({ error: debit.error })
-    }
+    if (!debit.ok) return reply.code(400).send({ error: debit.error })
+
+    await db.query(
+      `INSERT INTO matka_bets (id, user_id, draw_id, bet_type, session, number, amount, multiplier, potential_payout)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [betId, uid(req), draw.id, body.bet_type, body.session, body.number, body.amount, multiplier, potential],
+    )
     return { success: true, bet_id: betId, potential_payout: potential }
   })
 
@@ -145,21 +148,19 @@ async function start() {
       return reply.code(400).send({ error: `Ticket must be ${draw.digits} digits` })
     }
 
-    const inserted = await db.query(
-      `INSERT INTO lottery_tickets (draw_id, user_id, ticket_number, amount)
-       VALUES ($1,$2,$3,$4) RETURNING id`,
-      [body.draw_id, uid(req), body.ticket_number, draw.ticket_price],
-    )
-    const ticketId = inserted.rows[0].id
-
+    // Debit wallet FIRST to prevent orphan tickets on server crash
+    const ticketId = crypto.randomUUID()
     const debit = await debitStake({
       userId: uid(req), amount: Number(draw.ticket_price), referenceId: ticketId,
       idempotencyKey: `lottery_buy_${ticketId}`, description: `Lottery: ${draw.name}`,
     })
-    if (!debit.ok) {
-      await db.query('DELETE FROM lottery_tickets WHERE id = $1', [ticketId])
-      return reply.code(400).send({ error: debit.error })
-    }
+    if (!debit.ok) return reply.code(400).send({ error: debit.error })
+
+    await db.query(
+      `INSERT INTO lottery_tickets (id, draw_id, user_id, ticket_number, amount)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [ticketId, body.draw_id, uid(req), body.ticket_number, draw.ticket_price],
+    )
     return { success: true, ticket_id: ticketId }
   })
 
@@ -210,21 +211,19 @@ async function start() {
     const odds = Number(option.odds)
     const potential = Math.round(body.amount * odds * 100) / 100
 
-    const inserted = await db.query(
-      `INSERT INTO cricket_bets (user_id, match_id, market_id, option_key, option_label, odds, amount, potential_payout)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-      [uid(req), market.match_id, market.id, option.key, option.label, odds, body.amount, potential],
-    )
-    const betId = inserted.rows[0].id
-
+    // Debit wallet FIRST to prevent orphan bet records on server crash
+    const betId = crypto.randomUUID()
     const debit = await debitStake({
       userId: uid(req), amount: body.amount, referenceId: betId,
       idempotencyKey: `cricket_stake_${betId}`, description: 'Cricket bet',
     })
-    if (!debit.ok) {
-      await db.query('DELETE FROM cricket_bets WHERE id = $1', [betId])
-      return reply.code(400).send({ error: debit.error })
-    }
+    if (!debit.ok) return reply.code(400).send({ error: debit.error })
+
+    await db.query(
+      `INSERT INTO cricket_bets (id, user_id, match_id, market_id, option_key, option_label, odds, amount, potential_payout)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [betId, uid(req), market.match_id, market.id, option.key, option.label, odds, body.amount, potential],
+    )
     return { success: true, bet_id: betId, odds, potential_payout: potential }
   })
 
@@ -369,28 +368,41 @@ async function start() {
     if (entryRes.rows.length) return reply.code(409).send({ error: 'You have already joined this league' })
 
     const entryId = crypto.randomUUID()
+
+    // Debit wallet BEFORE opening the DB transaction so the FOR UPDATE
+    // lock on the league row is not held during the HTTP call to wallet service.
+    const debit = await debitStake({
+      userId: uid(req),
+      amount: Number(league.entry_fee),
+      referenceId: entryId,
+      idempotencyKey: `cricket_fantasy_stake_${entryId}`,
+      description: `Joined fantasy league: ${league.name}`
+    })
+    if (!debit.ok) return reply.code(400).send({ error: debit.error || 'Debit failed' })
+
     const client = await db.connect()
     try {
       await client.query('BEGIN')
+
+      // Re-check capacity atomically under lock (brief window — wallet already debited)
+      const leagueCheck = await client.query(
+        'SELECT current_entries, max_entries, status FROM cricket_fantasy_leagues WHERE id = $1 FOR UPDATE',
+        [body.league_id]
+      )
+      const lc = leagueCheck.rows[0]
+      if (lc.status !== 'open' || lc.current_entries >= lc.max_entries) {
+        await client.query('ROLLBACK')
+        client.release()
+        // Refund the already-debited stake — wallet is idempotent so this is safe
+        await creditPrize({ userId: uid(req), amount: Number(league.entry_fee), referenceId: entryId, idempotencyKey: `cricket_fantasy_refund_${entryId}` })
+        return reply.code(409).send({ error: 'League is full or closed' })
+      }
 
       await client.query(
         `INSERT INTO cricket_fantasy_entries (id, league_id, team_id, user_id, points, payout_received, status)
          VALUES ($1, $2, $3, $4, 0.0, 0.0, 'joined')`,
         [entryId, body.league_id, body.team_id, uid(req)]
       )
-
-      const debit = await debitStake({
-        userId: uid(req),
-        amount: Number(league.entry_fee),
-        referenceId: entryId,
-        idempotencyKey: `cricket_fantasy_stake_${entryId}`,
-        description: `Joined fantasy league: ${league.name}`
-      })
-
-      if (!debit.ok) {
-        throw new Error(debit.error || 'Debit failed')
-      }
-
       await client.query('UPDATE cricket_fantasy_leagues SET current_entries = current_entries + 1 WHERE id = $1', [body.league_id])
       await client.query('COMMIT')
       return { success: true, entry_id: entryId }
@@ -459,21 +471,19 @@ async function start() {
     const bracket = body.selection === 'yes' ? session.max_runs : session.min_runs
     const potential = Math.round(body.amount * odds * 100) / 100
 
-    const inserted = await db.query(
-      `INSERT INTO cricket_session_bets (user_id, match_id, session_id, selection, runs_bracket, amount, potential_payout)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-      [uid(req), session.match_id, session.id, body.selection, bracket, body.amount, potential],
-    )
-    const betId = inserted.rows[0].id
-
+    // Debit wallet FIRST to prevent orphan session bet records on server crash
+    const betId = crypto.randomUUID()
     const debit = await debitStake({
       userId: uid(req), amount: body.amount, referenceId: betId,
       idempotencyKey: `cricket_session_stake_${betId}`, description: 'Cricket session bet',
     })
-    if (!debit.ok) {
-      await db.query('DELETE FROM cricket_session_bets WHERE id = $1', [betId])
-      return reply.code(400).send({ error: debit.error })
-    }
+    if (!debit.ok) return reply.code(400).send({ error: debit.error })
+
+    await db.query(
+      `INSERT INTO cricket_session_bets (id, user_id, match_id, session_id, selection, runs_bracket, amount, potential_payout)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [betId, uid(req), session.match_id, session.id, body.selection, bracket, body.amount, potential],
+    )
     return { success: true, bet_id: betId, potential_payout: potential }
   })
 

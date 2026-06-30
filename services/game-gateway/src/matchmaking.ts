@@ -1,6 +1,7 @@
 import { Redis } from 'ioredis'
 import { Pool } from 'pg'
 import { v4 as uuid } from 'uuid'
+import crypto from 'crypto'
 import { RealtimeHub } from './realtime'
 import { getBotProfile, pickBotAction, pickBotDelay } from './bot-profile'
 
@@ -177,7 +178,7 @@ export class MatchmakingService {
           const lockRes = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-            body: JSON.stringify({ user_id: p.userId, amount: stake, room_id: roomId }),
+            body: JSON.stringify({ user_id: p.userId, amount: stake, room_id: roomId, lock_id: crypto.randomUUID() }),
           })
           if (!lockRes.ok) {
             const msg = await lockRes.text()
@@ -491,21 +492,33 @@ export class MatchmakingService {
         'SELECT user_id, entry_fee_deducted, is_bot FROM game_participants WHERE room_id = $1',
         [roomId]
       )
-      const players = parts.rows.filter(r => !r.is_bot).map(r => ({
+      const realParticipants = parts.rows.filter(r => !r.is_bot)
+      const players = realParticipants.map(r => ({
         user_id: r.user_id,
         entry_fee: parseFloat(r.entry_fee_deducted)
       }))
 
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/settle-game`, {
+      // Only credit if the winner is a real player — bots can't receive wallet payments
+      const winnerIsReal = realParticipants.some(r => r.user_id === result?.winner_id)
+      const effectiveWinnerId = winnerIsReal ? result.winner_id : null
+      const effectivePrize    = winnerIsReal ? Number(result.prize) : 0
+
+      console.log(`[gateway] handleLudoEnd room=${roomId} winner=${result?.winner_id} isReal=${winnerIsReal} prize=${effectivePrize}`)
+
+      const settleRes = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/settle-game`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
         body: JSON.stringify({
           room_id: roomId,
-          winner_id: result?.winner_id || null,
-          prize: result?.winner_id ? Number(result.prize) : 0,
+          winner_id: effectiveWinnerId,
+          prize: effectivePrize,
           players,
         }),
       })
+      if (!settleRes.ok) {
+        const errBody = await settleRes.text().catch(() => '(unreadable)')
+        console.error(`[gateway] settle-game failed ${settleRes.status} for Ludo room ${roomId}:`, errBody)
+      }
     } catch (e) {
       console.error('Failed to settle Ludo game', e)
     }

@@ -56,6 +56,8 @@ export async function settleMatkaSession(
   const client = await db.connect()
   let settled = 0
   let winners = 0
+  const winnerPayouts: { userId: string; amount: number; betId: string }[] = []
+
   try {
     await client.query('BEGIN')
 
@@ -76,7 +78,6 @@ export async function settleMatkaSession(
       )
     }
 
-    // Which pending bets does this session settle?
     const betsRes = await client.query(
       `SELECT * FROM matka_bets WHERE draw_id = $1 AND status = 'pending'`,
       [drawId],
@@ -91,18 +92,10 @@ export async function settleMatkaSession(
       let settleNow = false
 
       if (bet.bet_type === 'jodi') {
-        // Jodi only settles once the close digit exists.
-        if (session === 'close') {
-          settleNow = true
-          won = bet.number === jodi
-        }
+        if (session === 'close') { settleNow = true; won = bet.number === jodi }
       } else if (bet.session === session) {
         settleNow = true
-        if (bet.bet_type === 'single') {
-          won = parseInt(bet.number, 10) === digit
-        } else {
-          won = bet.number === panna
-        }
+        won = bet.bet_type === 'single' ? parseInt(bet.number, 10) === digit : bet.number === panna
       }
 
       if (!settleNow) continue
@@ -111,21 +104,15 @@ export async function settleMatkaSession(
       if (won) {
         winners++
         const payout = Number(bet.potential_payout)
-        await client.query(
-          `UPDATE matka_bets SET status = 'won', payout = $1 WHERE id = $2`,
-          [payout, bet.id],
-        )
-        await creditPrize({
-          userId: bet.user_id,
-          amount: payout,
-          referenceId: bet.id,
-          idempotencyKey: `matka_payout_${bet.id}`,
-        })
+        await client.query(`UPDATE matka_bets SET status = 'won', payout = $1 WHERE id = $2`, [payout, bet.id])
+        // Collect payouts — credited AFTER commit so DB lock on draw is released first
+        winnerPayouts.push({ userId: bet.user_id, amount: payout, betId: bet.id })
       } else {
         await client.query(`UPDATE matka_bets SET status = 'lost' WHERE id = $1`, [bet.id])
       }
     }
 
+    // Commit bet status updates first — release the FOR UPDATE lock on matka_draws
     await client.query('COMMIT')
   } catch (err) {
     await client.query('ROLLBACK')
@@ -133,5 +120,18 @@ export async function settleMatkaSession(
   } finally {
     client.release()
   }
+
+  // Credit winners outside the DB transaction so the draw lock is not held
+  // during HTTP calls to wallet service. Idempotency keys ensure no double-pay
+  // if settlement is retried.
+  for (const w of winnerPayouts) {
+    await creditPrize({
+      userId: w.userId,
+      amount: w.amount,
+      referenceId: w.betId,
+      idempotencyKey: `matka_payout_${w.betId}`,
+    })
+  }
+
   return { settled, winners }
 }

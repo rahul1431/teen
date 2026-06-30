@@ -6,6 +6,7 @@ import { createServer } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
 import { Pool } from 'pg'
 import Redis from 'ioredis'
+import crypto from 'crypto'
 import { MatchmakingService } from './matchmaking'
 import { RealtimeHub, Conn } from './realtime'
 
@@ -296,12 +297,13 @@ async function start() {
     }
 
     let locked = false
+    const lockId = crypto.randomUUID()
     if (extraBet > 0) {
       try {
         const lockRes = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-          body: JSON.stringify({ user_id: conn.userId, amount: extraBet, room_id }),
+          body: JSON.stringify({ user_id: conn.userId, amount: extraBet, room_id, lock_id: lockId }),
         })
         if (!lockRes.ok) {
           const msg = await lockRes.text()

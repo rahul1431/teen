@@ -15,6 +15,8 @@ export async function settleCricketMarket(
   let settled = 0
   let winners = 0
   let paid = 0
+  const credits: { userId: string; amount: number; betId: string; ikey: string }[] = []
+
   try {
     await client.query('BEGIN')
 
@@ -35,40 +37,34 @@ export async function settleCricketMarket(
     for (const bet of betsRes.rows) {
       settled++
       if (isVoid) {
-        // Refund the stake.
         await client.query(`UPDATE cricket_bets SET status = 'void', payout = $1 WHERE id = $2`,
           [Number(bet.amount), bet.id])
-        await creditPrize({
-          userId: bet.user_id,
-          amount: Number(bet.amount),
-          referenceId: bet.id,
-          idempotencyKey: `cricket_refund_${bet.id}`,
-        })
+        credits.push({ userId: bet.user_id, amount: Number(bet.amount), betId: bet.id, ikey: `cricket_refund_${bet.id}` })
         continue
       }
       if (bet.option_key === resultKey) {
         winners++
         const payout = Number(bet.potential_payout)
         paid += payout
-        await client.query(`UPDATE cricket_bets SET status = 'won', payout = $1 WHERE id = $2`,
-          [payout, bet.id])
-        await creditPrize({
-          userId: bet.user_id,
-          amount: payout,
-          referenceId: bet.id,
-          idempotencyKey: `cricket_payout_${bet.id}`,
-        })
+        await client.query(`UPDATE cricket_bets SET status = 'won', payout = $1 WHERE id = $2`, [payout, bet.id])
+        credits.push({ userId: bet.user_id, amount: payout, betId: bet.id, ikey: `cricket_payout_${bet.id}` })
       } else {
         await client.query(`UPDATE cricket_bets SET status = 'lost' WHERE id = $1`, [bet.id])
       }
     }
 
+    // Commit bet statuses — release the FOR UPDATE lock before HTTP calls
     await client.query('COMMIT')
   } catch (err) {
     await client.query('ROLLBACK')
     throw err
   } finally {
     client.release()
+  }
+
+  // Credit outside the DB transaction — idempotency keys protect against retries
+  for (const c of credits) {
+    await creditPrize({ userId: c.userId, amount: c.amount, referenceId: c.betId, idempotencyKey: c.ikey })
   }
   return { settled, winners, paid }
 }
@@ -230,6 +226,8 @@ export async function settleCricketSession(
   let settled = 0
   let winners = 0
   let paid = 0
+  const credits: { userId: string; amount: number; betId: string; ikey: string }[] = []
+
   try {
     await client.query('BEGIN')
 
@@ -252,45 +250,34 @@ export async function settleCricketSession(
       if (isVoid) {
         await client.query(`UPDATE cricket_session_bets SET status = 'void', payout = $1 WHERE id = $2`,
           [Number(bet.amount), bet.id])
-        await creditPrize({
-          userId: bet.user_id,
-          amount: Number(bet.amount),
-          referenceId: bet.id,
-          idempotencyKey: `cricket_session_refund_${bet.id}`,
-        })
+        credits.push({ userId: bet.user_id, amount: Number(bet.amount), betId: bet.id, ikey: `cricket_session_refund_${bet.id}` })
         continue
       }
 
-      let won = false
-      if (bet.selection === 'yes') {
-        won = resultRuns >= bet.runs_bracket
-      } else {
-        won = resultRuns < bet.runs_bracket
-      }
+      const won = bet.selection === 'yes' ? resultRuns >= bet.runs_bracket : resultRuns < bet.runs_bracket
 
       if (won) {
         winners++
         const payout = Number(bet.potential_payout)
         paid += payout
-        await client.query(`UPDATE cricket_session_bets SET status = 'won', payout = $1 WHERE id = $2`,
-          [payout, bet.id])
-        await creditPrize({
-          userId: bet.user_id,
-          amount: payout,
-          referenceId: bet.id,
-          idempotencyKey: `cricket_session_payout_${bet.id}`,
-        })
+        await client.query(`UPDATE cricket_session_bets SET status = 'won', payout = $1 WHERE id = $2`, [payout, bet.id])
+        credits.push({ userId: bet.user_id, amount: payout, betId: bet.id, ikey: `cricket_session_payout_${bet.id}` })
       } else {
         await client.query(`UPDATE cricket_session_bets SET status = 'lost' WHERE id = $1`, [bet.id])
       }
     }
 
+    // Commit before HTTP wallet calls
     await client.query('COMMIT')
   } catch (err) {
     await client.query('ROLLBACK')
     throw err
   } finally {
     client.release()
+  }
+
+  for (const c of credits) {
+    await creditPrize({ userId: c.userId, amount: c.amount, referenceId: c.betId, idempotencyKey: c.ikey })
   }
   return { settled, winners, paid }
 }

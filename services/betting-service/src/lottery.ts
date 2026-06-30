@@ -15,6 +15,8 @@ export async function settleLottery(
   let tickets = 0
   let winners = 0
   let paid = 0
+  const winnerPayouts: { userId: string; prize: number; ticketId: string }[] = []
+
   try {
     await client.query('BEGIN')
 
@@ -43,15 +45,11 @@ export async function settleLottery(
           `UPDATE lottery_tickets SET is_winner = true, prize = $1 WHERE id = $2`,
           [prize, t.id],
         )
-        await creditPrize({
-          userId: t.user_id,
-          amount: prize,
-          referenceId: t.id,
-          idempotencyKey: `lottery_payout_${t.id}`,
-        })
+        winnerPayouts.push({ userId: t.user_id, prize, ticketId: t.id })
       }
     }
 
+    // Commit ticket status updates and release the FOR UPDATE lock on lottery_draws
     await client.query('COMMIT')
   } catch (err) {
     await client.query('ROLLBACK')
@@ -59,5 +57,16 @@ export async function settleLottery(
   } finally {
     client.release()
   }
+
+  // Credit winners outside the DB transaction — idempotency keys protect retries
+  for (const w of winnerPayouts) {
+    await creditPrize({
+      userId: w.userId,
+      amount: w.prize,
+      referenceId: w.ticketId,
+      idempotencyKey: `lottery_payout_${w.ticketId}`,
+    })
+  }
+
   return { tickets, winners, paid }
 }
