@@ -1954,6 +1954,75 @@ async function start() {
     return reply.send(res.rows)
   })
 
+  // ── Daily Login Bonus Config ──────────────────────────────────────────────────
+
+  // GET /api/admin/bonus/login-config — fetch current day schedule
+  app.get('/api/admin/bonus/login-config', { onRequest: [app.authenticate] }, async (_req, reply) => {
+    const res = await db.query(
+      `SELECT * FROM login_bonus_config ORDER BY day_number ASC`
+    )
+    return reply.send(res.rows)
+  })
+
+  // PUT /api/admin/bonus/login-config — upsert one or many day configs (superadmin/finance)
+  app.put('/api/admin/bonus/login-config', {
+    onRequest: [app.authenticate, app.requireRole('finance')],
+  }, async (req, reply) => {
+    const body = z.array(z.object({
+      day_number:   z.number().int().min(1).max(30),
+      bonus_amount: z.number().min(0),
+      bonus_type:   z.enum(['real', 'bonus']).default('real'),
+      label:        z.string().max(100).optional(),
+      emoji:        z.string().max(10).optional(),
+      is_special:   z.boolean().default(false),
+      is_active:    z.boolean().default(true),
+    })).parse(req.body)
+
+    for (const d of body) {
+      await db.query(
+        `INSERT INTO login_bonus_config (day_number, bonus_amount, bonus_type, label, emoji, is_special, is_active, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+         ON CONFLICT (day_number) DO UPDATE SET
+           bonus_amount = EXCLUDED.bonus_amount,
+           bonus_type   = EXCLUDED.bonus_type,
+           label        = EXCLUDED.label,
+           emoji        = EXCLUDED.emoji,
+           is_special   = EXCLUDED.is_special,
+           is_active    = EXCLUDED.is_active,
+           updated_at   = NOW()`,
+        [d.day_number, d.bonus_amount, d.bonus_type, d.label ?? `Day ${d.day_number}`,
+         d.emoji ?? '🎁', d.is_special, d.is_active]
+      )
+    }
+    const res = await db.query(`SELECT * FROM login_bonus_config ORDER BY day_number ASC`)
+    return reply.send({ success: true, config: res.rows })
+  })
+
+  // GET /api/admin/bonus/stats — today's claim stats
+  app.get('/api/admin/bonus/stats', { onRequest: [app.authenticate] }, async (_req, reply) => {
+    const todayDate = new Date().toISOString().slice(0, 10)
+    const [todayRes, totalRes, streakRes] = await Promise.all([
+      db.query(
+        `SELECT COUNT(*) AS claimed_today, SUM(b.amount) AS distributed_today
+         FROM bonuses b WHERE b.type = 'daily_login' AND b.created_at::date = $1`, [todayDate]
+      ),
+      db.query(
+        `SELECT COUNT(*) AS total_claims, SUM(amount) AS total_distributed
+         FROM bonuses WHERE type = 'daily_login'`
+      ),
+      db.query(
+        `SELECT MAX(current_streak) AS max_streak, AVG(current_streak) AS avg_streak,
+                COUNT(*) AS active_streaks
+         FROM user_login_streaks WHERE current_streak > 0`
+      ),
+    ])
+    return reply.send({
+      today: todayRes.rows[0],
+      all_time: totalRes.rows[0],
+      streaks: streakRes.rows[0],
+    })
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))
 
   const port = parseInt(process.env.PORT || '3008')

@@ -3,7 +3,7 @@ import {
   DashboardOutlined, UserOutlined, PlayCircleOutlined, DollarOutlined,
   BellOutlined, SettingOutlined, LogoutOutlined, TrophyOutlined, SafetyOutlined,
   TeamOutlined, ProfileOutlined, WarningOutlined, CustomerServiceOutlined,
-  FundOutlined, RobotOutlined, HistoryOutlined, MonitorOutlined,
+  FundOutlined, RobotOutlined, HistoryOutlined, MonitorOutlined, GiftOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
@@ -27,6 +27,7 @@ const menuItems = [
       { key: '/admin/games/cricket', label: '🏏 Cricket' },
     ]
   },
+  { key: '/admin/daily-bonus', icon: <GiftOutlined />, label: 'Daily Bonus' },
   { key: '/admin/finance', icon: <DollarOutlined />, label: 'Finance' },
   { key: '/admin/notifications', icon: <BellOutlined />, label: 'Notifications' },
   { key: '/admin/admin-users', icon: <TeamOutlined />, label: 'Admin Users' },

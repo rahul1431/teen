@@ -29,7 +29,6 @@ class _HomePageState extends State<HomePage>
   bool _hasError = false;
 
   // Animations
-  late final AnimationController _wheelCtrl;
   late final AnimationController _pulseCtrl;
   late final AnimationController _heroCtrl;
   late final Animation<double> _heroFade;
@@ -53,7 +52,6 @@ class _HomePageState extends State<HomePage>
   @override
   void initState() {
     super.initState();
-    _wheelCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 8))..repeat();
     _pulseCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))
       ..repeat(reverse: true);
     _heroCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 700));
@@ -70,7 +68,6 @@ class _HomePageState extends State<HomePage>
 
   @override
   void dispose() {
-    _wheelCtrl.dispose();
     _pulseCtrl.dispose();
     _heroCtrl.dispose();
     _balanceCtrl.dispose();
@@ -150,7 +147,6 @@ class _HomePageState extends State<HomePage>
                 ],
               ),
             ),
-            Positioned(bottom: 16, right: 16, child: _buildSpinWinFab()),
           ],
         ),
       ),
@@ -470,10 +466,7 @@ class _HomePageState extends State<HomePage>
       children: [
         _promoCard('🎁', 'Daily Login\nBonus', 'Claim ₹100 Now!',
           [const Color(0xFF1A4C2E), const Color(0xFF0D2E19)], AppColors.green,
-          onTap: () => _comingSoon('Daily Bonus')),
-        _promoCard('🌀', 'Spin &\nWin', 'Try Your Luck!',
-          [const Color(0xFF1E1255), const Color(0xFF0B0A33)], AppColors.purple,
-          onTap: () => _comingSoon('Spin & Win')),
+          onTap: () => context.push('/daily-bonus')),
         _promoCard('👥', 'Refer &\nEarn', 'Get ₹50 Per Ref',
           [const Color(0xFF4A1A00), const Color(0xFF2A0E00)], AppColors.orange,
           onTap: () => context.push('/referral')),
@@ -857,41 +850,6 @@ class _HomePageState extends State<HomePage>
           ),
         ],
       ),
-    ),
-  );
-
-  // ─── Spin & Win FAB ───────────────────────────────────────────────────────────
-
-  Widget _buildSpinWinFab() => GestureDetector(
-    onTap: () => _comingSoon('Spin & Win'),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            boxShadow: [BoxShadow(color: AppColors.gold.withOpacity(0.5), blurRadius: 16, spreadRadius: 2)],
-          ),
-          child: RotationTransition(
-            turns: _wheelCtrl,
-            child: Container(
-              width: 56, height: 56,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: const SweepGradient(colors: [
-                  AppColors.feltRed, AppColors.gold, Color(0xFF0E5C2F),
-                  Color(0xFF1E3A8A), AppColors.gold, AppColors.feltRed,
-                ]),
-                border: Border.all(color: AppColors.gold, width: 2.5),
-              ),
-              child: const Icon(Icons.adjust_rounded, color: Colors.white, size: 24),
-            ),
-          ),
-        ),
-        const SizedBox(height: 4),
-        const Text('SPIN',
-          style: TextStyle(color: AppColors.gold, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
-      ],
     ),
   );
 

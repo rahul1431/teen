@@ -31,7 +31,7 @@ class _ReferralPageState extends State<ReferralPage> with SingleTickerProviderSt
   Future<void> _load() async {
     setState(() { _loading = true; _hasError = false; });
     try {
-      final res = await ApiClient().dio.get('/api/referrals/my-stats');
+      final res = await ApiClient().dio.get('/api/users/referrals/my-stats');
       if (!mounted) return;
       setState(() { _data = res.data; _loading = false; });
     } catch (_) {
