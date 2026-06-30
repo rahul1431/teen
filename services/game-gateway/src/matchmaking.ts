@@ -205,7 +205,7 @@ export class MatchmakingService {
           await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-            body: JSON.stringify({ user_id: uid, amount: stake }),
+            body: JSON.stringify({ user_id: uid, amount: stake, room_id: roomId }),
           })
           console.log(`Rollback-unlocked user=${uid} amount=${stake} due to game start failure`)
         } catch (unlockErr) {

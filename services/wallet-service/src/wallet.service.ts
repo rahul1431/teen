@@ -34,11 +34,10 @@ export class WalletService {
     try {
       if (!client) await c.query('BEGIN')
 
-      // Check idempotency
+      // Idempotency: skip if already processed
       const existing = await c.query('SELECT id FROM wallet_transactions WHERE idempotency_key = $1', [ikey])
       if (existing.rows.length > 0) return
 
-      // Lock wallet row
       const walletRes = await c.query(
         'SELECT real_balance, bonus_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
         [opts.userId]
@@ -133,23 +132,42 @@ export class WalletService {
     }
   }
 
-  // Lock funds before game starts (moves to locked_balance)
-  async lockForGame(userId: string, amount: number, roomId: string): Promise<void> {
+  // Lock funds before game starts (moves real_balance → locked_balance).
+  // Idempotent: same roomId+userId+betSeq combo is a no-op on retry.
+  async lockForGame(userId: string, amount: number, roomId: string, betSeq = 0): Promise<void> {
+    const ikey = `lock:${roomId}:${userId}:${betSeq}`
     const client = await this.db.connect()
     try {
       await client.query('BEGIN')
+
+      // Idempotency: skip if already locked for this bet in this room
+      const existing = await client.query(
+        'SELECT id FROM wallet_transactions WHERE idempotency_key = $1', [ikey]
+      )
+      if (existing.rows.length > 0) { await client.query('COMMIT'); return }
+
       const res = await client.query(
         'SELECT real_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
         [userId]
       )
       if (!res.rows.length) throw new Error('Wallet not found')
-      const balance = parseFloat(res.rows[0].real_balance)
-      if (balance < amount) throw new Error('Insufficient balance')
+      const balanceBefore = parseFloat(res.rows[0].real_balance)
+      if (balanceBefore < amount) throw new Error('Insufficient balance')
+      const balanceAfter = balanceBefore - amount
 
       await client.query(
         'UPDATE wallets SET real_balance = real_balance - $1, locked_balance = locked_balance + $1 WHERE user_id = $2',
         [amount, userId]
       )
+
+      // Log every lock in wallet_transactions for full audit trail
+      await client.query(
+        `INSERT INTO wallet_transactions
+           (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
+         VALUES ($1, 'game_debit', 'real', $2, $3, $4, $5, $6, 'pending', 'Funds locked for game')`,
+        [userId, amount, balanceBefore, balanceAfter, roomId, ikey]
+      )
+
       await client.query('COMMIT')
     } catch (err) {
       await client.query('ROLLBACK')
@@ -159,12 +177,18 @@ export class WalletService {
     }
   }
 
-  // Release locked funds back (on game cancel / player exit)
-  async unlockFunds(userId: string, amount: number, client?: PoolClient): Promise<void> {
+  // Release locked funds back to real_balance (game cancelled / player disconnected).
+  // Idempotent: roomId+userId key means safe to retry.
+  async unlockFunds(userId: string, amount: number, roomId: string, client?: PoolClient): Promise<void> {
     const c = client || await this.db.connect()
     const shouldRelease = !client
+    const ikey = `unlock:${roomId}:${userId}`
     try {
       if (!client) await c.query('BEGIN')
+
+      // Idempotency check
+      const existing = await c.query('SELECT id FROM wallet_transactions WHERE idempotency_key = $1', [ikey])
+      if (existing.rows.length > 0) { if (!client) await c.query('COMMIT'); return }
 
       const walletRes = await c.query(
         'SELECT locked_balance, real_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
@@ -173,20 +197,28 @@ export class WalletService {
       if (!walletRes.rows.length) throw new Error('Wallet not found')
       const wallet = walletRes.rows[0]
       const locked = parseFloat(wallet.locked_balance)
-      if (locked < amount) throw new Error('Insufficient locked balance')
+
+      // Clamp — avoid throwing on minor rounding discrepancies
+      const toUnlock = Math.min(locked, amount)
+      if (toUnlock <= 0) { if (!client) await c.query('COMMIT'); return }
+
+      if (locked < amount) {
+        console.warn(`[wallet] unlockFunds: user=${userId} locked=${locked} < amount=${amount} — unlocking ${toUnlock} (clamped)`)
+      }
 
       const balanceBefore = parseFloat(wallet.real_balance)
-      const balanceAfter = balanceBefore + amount
+      const balanceAfter = balanceBefore + toUnlock
 
       await c.query(
         'UPDATE wallets SET real_balance = real_balance + $1, locked_balance = locked_balance - $2, updated_at = NOW() WHERE user_id = $3',
-        [amount, amount, userId]
+        [toUnlock, toUnlock, userId]
       )
 
       await c.query(
-        `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, idempotency_key, status, description)
-         VALUES ($1, 'game_credit', 'real', $2, $3, $4, $5, 'completed', 'Locked funds unlocked/refunded')`,
-        [userId, amount, balanceBefore, balanceAfter, crypto.randomUUID()]
+        `INSERT INTO wallet_transactions
+           (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
+         VALUES ($1, 'game_credit', 'real', $2, $3, $4, $5, $6, 'completed', 'Locked funds unlocked/refunded')`,
+        [userId, toUnlock, balanceBefore, balanceAfter, roomId, ikey]
       )
 
       if (!client) await c.query('COMMIT')
@@ -198,35 +230,33 @@ export class WalletService {
     }
   }
 
-  // Consume locked funds when a game is successfully completed (debits from locked_balance).
-  // roomId is used as part of the idempotency key so retries don't double-debit.
+  // Consume locked funds when a game is settled (locked_balance -= totalBet, money is lost/spent).
+  // roomId makes the key deterministic so retries are safe.
   async consumeLockedFunds(userId: string, amount: number, client?: PoolClient, roomId?: string): Promise<void> {
     const c = client || await this.db.connect()
     const shouldRelease = !client
+    const ikey = roomId ? `consume:${roomId}:${userId}` : crypto.randomUUID()
     try {
       if (!client) await c.query('BEGIN')
+
+      // Idempotency check
+      const existing = await c.query('SELECT id FROM wallet_transactions WHERE idempotency_key = $1', [ikey])
+      if (existing.rows.length > 0) { if (!client) await c.query('COMMIT'); return }
 
       const walletRes = await c.query(
         'SELECT locked_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
         [userId]
       )
       if (!walletRes.rows.length) throw new Error('Wallet not found')
-      const wallet = walletRes.rows[0]
-      const locked = parseFloat(wallet.locked_balance)
+      const locked = parseFloat(walletRes.rows[0].locked_balance)
 
-      // Clamp to actual locked amount to handle edge-case discrepancies.
+      // Clamp — handles edge-case discrepancies without crashing settlement
       const toConsume = Math.min(locked, amount)
-      if (toConsume <= 0) return
+      if (toConsume <= 0) { if (!client) await c.query('COMMIT'); return }
 
       if (locked < amount) {
         console.warn(`[wallet] consumeLockedFunds: user=${userId} locked=${locked} < amount=${amount} — consuming ${toConsume} (clamped)`)
       }
-
-      const ikey = roomId ? `consume:${roomId}:${userId}` : crypto.randomUUID()
-
-      // Check idempotency to prevent double-debit on retry
-      const existing = await c.query('SELECT id FROM wallet_transactions WHERE idempotency_key = $1', [ikey])
-      if (existing.rows.length > 0) return
 
       await c.query(
         'UPDATE wallets SET locked_balance = locked_balance - $1, updated_at = NOW() WHERE user_id = $2',
@@ -234,9 +264,10 @@ export class WalletService {
       )
 
       await c.query(
-        `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, idempotency_key, status, description)
-         VALUES ($1, 'game_debit', 'real', $2, $3, $4, $5, 'completed', 'Locked funds consumed by gameplay')`,
-        [userId, toConsume, locked, locked - toConsume, ikey]
+        `INSERT INTO wallet_transactions
+           (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
+         VALUES ($1, 'game_debit', 'real', $2, $3, $4, $5, $6, 'completed', 'Locked funds consumed by gameplay')`,
+        [userId, toConsume, locked, locked - toConsume, roomId ?? null, ikey]
       )
 
       if (!client) await c.query('COMMIT')
@@ -250,7 +281,7 @@ export class WalletService {
 
   async getTransactions(userId: string, limit = 20, offset = 0) {
     const res = await this.db.query(
-      `SELECT id, type, wallet_type, amount, balance_after, reference_id, description, created_at
+      `SELECT id, type, wallet_type, amount, balance_before, balance_after, reference_id, description, status, created_at
        FROM wallet_transactions WHERE user_id = $1
        ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
       [userId, limit, offset]

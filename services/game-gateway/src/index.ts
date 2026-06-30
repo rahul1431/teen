@@ -326,7 +326,7 @@ async function start() {
           await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-            body: JSON.stringify({ user_id: conn.userId, amount: extraBet }),
+            body: JSON.stringify({ user_id: conn.userId, amount: extraBet, room_id }),
           }).catch(e => console.error('[gateway] unlock rollback failed', e))
         }
         const msg = await res.text()
@@ -366,7 +366,7 @@ async function start() {
         await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-          body: JSON.stringify({ user_id: conn.userId, amount: extraBet }),
+          body: JSON.stringify({ user_id: conn.userId, amount: extraBet, room_id }),
         }).catch(err => console.error('[gateway] unlock rollback failed on catch', err))
       }
       hub.sendToRoom(room_id, 'game:action_received', { user_id: conn.userId, action, amount, sequence_num })
@@ -515,6 +515,7 @@ async function start() {
             body: JSON.stringify({
               user_id: row.user_id,
               amount,
+              room_id: roomId,
             }),
           })
           console.log(`Refunded user=${row.user_id} amount=${amount} for terminated room=${roomId}`)

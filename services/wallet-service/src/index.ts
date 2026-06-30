@@ -164,10 +164,13 @@ async function start() {
   })
 
   // POST /wallet/deposit/manual (admin only — identified by internal key)
+  // request_id must be a stable ID from the admin panel (e.g. UUID generated on form submit)
+  // so that retrying the same approval doesn't double-credit.
   app.post('/wallet/deposit/manual', { onRequest: [authenticateInternal] }, async (req, reply) => {
     const body = z.object({
       user_id: z.string().uuid(),
       amount: z.number().min(1),
+      request_id: z.string().min(1),
       description: z.string().optional(),
     }).parse(req.body)
 
@@ -176,7 +179,7 @@ async function start() {
       amount: body.amount,
       type: 'manual_credit',
       walletType: 'real',
-      idempotencyKey: `manual_${body.user_id}_${Date.now()}`,
+      idempotencyKey: `manual_credit:${body.request_id}`,
       description: body.description || 'Manual credit by admin',
     })
     const balance = await walletSvc.getBalance(body.user_id)
@@ -251,31 +254,36 @@ async function start() {
   })
 
   // POST /wallet/debit/manual (admin only — identified by internal key)
+  // request_id must be a stable ID from the admin panel to prevent double-debit on retry.
   app.post('/wallet/debit/manual', { onRequest: [authenticateInternal] }, async (req, reply) => {
     const body = z.object({
       user_id: z.string().uuid(),
       amount: z.number().min(1),
+      request_id: z.string().min(1),
       description: z.string().optional(),
     }).parse(req.body)
 
-    const bal = await walletSvc.getBalance(body.user_id)
-    if (parseFloat(bal.real_balance) < body.amount) {
-      return reply.code(400).send({ error: 'Insufficient balance' })
+    try {
+      await walletSvc.debit({
+        userId: body.user_id,
+        amount: body.amount,
+        type: 'manual_debit',
+        walletType: 'real',
+        idempotencyKey: `manual_debit:${body.request_id}`,
+        description: body.description || 'Manual debit by admin',
+      })
+    } catch (err: any) {
+      if (err?.message === 'Insufficient balance') {
+        return reply.code(400).send({ error: 'Insufficient balance' })
+      }
+      throw err
     }
-
-    await walletSvc.debit({
-      userId: body.user_id,
-      amount: body.amount,
-      type: 'manual_debit',
-      walletType: 'real',
-      idempotencyKey: `manual_debit_${body.user_id}_${Date.now()}`,
-      description: body.description || 'Manual debit by admin',
-    })
     const balance = await walletSvc.getBalance(body.user_id)
     return reply.send({ success: true, balance })
   })
 
   // POST /wallet/withdraw/request
+  // Locks the withdrawal amount immediately so the user can't spend it while pending.
   app.post('/wallet/withdraw/request', { onRequest: [authenticate] }, async (req, reply) => {
     const user = req.user as any
     const body = z.object({
@@ -284,24 +292,56 @@ async function start() {
       upi_id: z.string().optional(),
     }).parse(req.body)
 
-    const balance = await walletSvc.getBalance(user.sub)
-    if (parseFloat(balance.real_balance) < body.amount) {
-      return reply.code(400).send({ error: 'Insufficient balance' })
-    }
-
-    // KYC check
-    const kycRes = await db.query("SELECT kyc_status FROM users WHERE id = $1", [user.sub])
+    // KYC check first
+    const kycRes = await db.query('SELECT kyc_status FROM users WHERE id = $1', [user.sub])
     if (kycRes.rows[0]?.kyc_status !== 'approved') {
       return reply.code(403).send({ error: 'KYC verification required before withdrawal' })
     }
 
-    await db.query(
-      `INSERT INTO payment_orders (user_id, gateway, amount, type, status, metadata)
-       VALUES ($1, 'manual', $2, 'withdrawal', 'created', $3)`,
-      [user.sub, body.amount, JSON.stringify({ bank_account: body.bank_account, upi_id: body.upi_id })]
-    )
+    // Lock the amount in a transaction so balance + order creation are atomic
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
 
-    return reply.send({ success: true, message: 'Withdrawal request submitted. Processed within 24 hours.' })
+      const walletRes = await client.query(
+        'SELECT real_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
+        [user.sub]
+      )
+      const realBalance = parseFloat(walletRes.rows[0]?.real_balance ?? '0')
+      if (realBalance < body.amount) {
+        await client.query('ROLLBACK')
+        return reply.code(400).send({ error: 'Insufficient balance' })
+      }
+
+      // Move amount to locked_balance so it can't be spent during review
+      await client.query(
+        'UPDATE wallets SET real_balance = real_balance - $1, locked_balance = locked_balance + $1 WHERE user_id = $2',
+        [body.amount, user.sub]
+      )
+
+      const orderRes = await client.query(
+        `INSERT INTO payment_orders (user_id, gateway, amount, type, status, metadata)
+         VALUES ($1, 'manual', $2, 'withdrawal', 'created', $3) RETURNING id`,
+        [user.sub, body.amount, JSON.stringify({ bank_account: body.bank_account, upi_id: body.upi_id })]
+      )
+
+      // Log the lock
+      await client.query(
+        `INSERT INTO wallet_transactions
+           (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
+         VALUES ($1, 'withdrawal', 'real', $2, $3, $4, $5, $6, 'pending', 'Withdrawal pending admin approval')`,
+        [user.sub, body.amount, realBalance, realBalance - body.amount,
+         orderRes.rows[0].id, `withdraw:${orderRes.rows[0].id}`]
+      )
+
+      await client.query('COMMIT')
+      return reply.send({ success: true, order_id: orderRes.rows[0].id, message: 'Withdrawal request submitted. Processed within 24 hours.' })
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
   })
 
   // Internal: POST /internal/wallet/lock (called by game-gateway)
@@ -313,12 +353,14 @@ async function start() {
 
   // Internal: POST /internal/wallet/unlock (called by game-gateway on termination/cancel)
   app.post('/internal/wallet/unlock', { onRequest: [authenticateInternal] }, async (req, reply) => {
-    const body = z.object({ user_id: z.string().uuid(), amount: z.number() }).parse(req.body)
-    await walletSvc.unlockFunds(body.user_id, body.amount)
+    const body = z.object({ user_id: z.string().uuid(), amount: z.number(), room_id: z.string() }).parse(req.body)
+    await walletSvc.unlockFunds(body.user_id, body.amount, body.room_id)
     return reply.send({ success: true })
   })
 
   // Internal: POST /internal/wallet/settle-game (called by game-gateway at game end)
+  // Each player's fund consumption is independent so one player's issue doesn't
+  // block the winner from being credited. The winner credit is the critical path.
   app.post('/internal/wallet/settle-game', { onRequest: [authenticateInternal] }, async (req, reply) => {
     const body = z.object({
       room_id: z.string(),
@@ -330,36 +372,34 @@ async function start() {
       }))
     }).parse(req.body)
 
-    const client = await db.connect()
-    try {
-      await client.query('BEGIN')
-      
-      // 1. Consume locked funds for all participants
-      for (const p of body.players) {
-        await walletSvc.consumeLockedFunds(p.user_id, p.entry_fee, client, body.room_id)
+    // Step 1: Consume each player's locked funds independently.
+    // If one player's consumption fails (edge case), log and continue — don't
+    // block the rest of settlement. consumeLockedFunds is idempotent so any
+    // failed ones can be retried later.
+    const consumeErrors: string[] = []
+    for (const p of body.players) {
+      try {
+        await walletSvc.consumeLockedFunds(p.user_id, p.entry_fee, undefined, body.room_id)
+      } catch (err: any) {
+        console.error(`[wallet] settle-game consume failed user=${p.user_id} room=${body.room_id}: ${err?.message}`)
+        consumeErrors.push(p.user_id)
       }
-
-      // 2. If there is a winner, credit the prize to their real wallet
-      if (body.winner_id && body.prize > 0) {
-        await walletSvc.credit({
-          userId: body.winner_id,
-          amount: body.prize,
-          type: 'game_credit',
-          walletType: 'real',
-          referenceId: body.room_id,
-          idempotencyKey: `win:${body.room_id}:${body.winner_id}`,
-          description: `Game win: room ${body.room_id}`,
-        }, client)
-      }
-
-      await client.query('COMMIT')
-      return reply.send({ success: true })
-    } catch (err) {
-      await client.query('ROLLBACK')
-      throw err
-    } finally {
-      client.release()
     }
+
+    // Step 2: Credit winner in its own transaction (most critical step).
+    if (body.winner_id && body.prize > 0) {
+      await walletSvc.credit({
+        userId: body.winner_id,
+        amount: body.prize,
+        type: 'game_credit',
+        walletType: 'real',
+        referenceId: body.room_id,
+        idempotencyKey: `win:${body.room_id}:${body.winner_id}`,
+        description: `Game win: room ${body.room_id}`,
+      })
+    }
+
+    return reply.send({ success: true, consume_errors: consumeErrors.length ? consumeErrors : undefined })
   })
 
   // Internal: POST /internal/wallet/credit (called by game-gateway after game result)
@@ -411,23 +451,6 @@ async function start() {
     }
   })
 
-  // Alias used by game-gateway: POST /internal/wallet/credit-game-win
-  app.post('/internal/wallet/credit-game-win', { onRequest: [authenticateInternal] }, async (req, reply) => {
-    const { user_id, amount, room_id } = req.body as any
-    if (!user_id || amount == null) return reply.code(400).send({ error: 'user_id and amount required' })
-    const numAmount = Number(amount)
-    if (isNaN(numAmount) || numAmount <= 0) return reply.code(400).send({ error: 'amount must be a positive number' })
-    await walletSvc.credit({
-      userId: user_id,
-      amount: numAmount,
-      type: 'game_credit',
-      walletType: 'real',
-      referenceId: room_id,
-      idempotencyKey: `win:${room_id}:${user_id}`,
-      description: `Teen Patti win: room ${room_id}`,
-    })
-    return reply.send({ success: true })
-  })
 
   app.get('/health', async () => ({ status: 'ok', service: 'wallet' }))
 
