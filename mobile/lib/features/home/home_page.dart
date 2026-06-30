@@ -7,6 +7,7 @@ import '../../core/constants/app_config.dart';
 import '../../core/storage/secure_storage.dart';
 import '../../shared/theme/app_theme.dart';
 import '../../shared/widgets/error_retry.dart';
+import '../../core/update/update_service.dart';
 
 // ── Fake live counters (replace with real WebSocket data later) ──────────────
 const _kLiveOnline = {'teen-patti': 15842, 'aviator': 9231, 'ludo': 10477, 'cricket': 6120};
@@ -76,6 +77,12 @@ class _HomePageState extends State<HomePage>
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _updateCountdown());
     _loadData();
     _loadBanners();
+    // Check for app update after a short delay so the home screen renders first.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) UpdateService.instance.checkAndPrompt(context);
+      });
+    });
   }
 
   @override

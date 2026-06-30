@@ -48,7 +48,7 @@ async function start() {
   await app.register(helmet, { crossOriginResourcePolicy: false })
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.ADMIN_JWT_SECRET! })
-  await app.register(multipart, { limits: { fileSize: 5 * 1024 * 1024 } }) // 5MB QR images
+  await app.register(multipart, { limits: { fileSize: 150 * 1024 * 1024 } }) // 150MB (APK uploads)
   if (redis.status === 'wait') await redis.connect()
   fs.mkdirSync(QR_UPLOAD_DIR, { recursive: true })
 
@@ -2225,6 +2225,57 @@ async function start() {
       [newStatus, userId]
     )
     return reply.send({ ok: true, status: newStatus })
+  })
+
+  // ── App Version / In-App Update ──────────────────────────────────────────
+  const APK_DIR = process.env.APK_DIR || '/opt/teen/downloads'
+  const APK_FILENAME = 'app-release.apk'
+  const APK_PUBLIC_URL = process.env.APK_PUBLIC_URL || 'https://game.myonlinejoker.com/downloads/app-release.apk'
+  fs.mkdirSync(APK_DIR, { recursive: true })
+
+  // Public: GET /api/app/version — no auth, called by the Flutter app on startup
+  app.get('/api/app/version', async (_req, reply) => {
+    const res = await db.query(
+      'SELECT version_name, version_code, download_url, release_notes, force_update FROM app_versions ORDER BY version_code DESC LIMIT 1'
+    )
+    if (!res.rows.length) return reply.send({ version_code: 0, version_name: '1.0.0', force_update: false, download_url: APK_PUBLIC_URL })
+    return reply.send(res.rows[0])
+  })
+
+  // Admin: POST /api/admin/app/upload — upload APK and set new version info
+  app.post('/api/admin/app/upload', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const parts = (req as any).parts()
+    let versionName = '', versionCode = 0, releaseNotes = '', forceUpdate = false, fileWritten = false
+
+    for await (const part of parts) {
+      if (part.type === 'file' && part.fieldname === 'apk') {
+        const dest = path.join(APK_DIR, APK_FILENAME)
+        await pipeline(part.file, fs.createWriteStream(dest))
+        fileWritten = true
+      } else if (part.type === 'field') {
+        if (part.fieldname === 'version_name') versionName = String(part.value)
+        if (part.fieldname === 'version_code') versionCode = parseInt(String(part.value)) || 0
+        if (part.fieldname === 'release_notes') releaseNotes = String(part.value)
+        if (part.fieldname === 'force_update') forceUpdate = String(part.value) === 'true'
+      }
+    }
+
+    if (!fileWritten) return reply.code(400).send({ error: 'No APK file provided' })
+    if (!versionName || versionCode < 1) return reply.code(400).send({ error: 'version_name and version_code are required' })
+
+    await db.query(
+      `INSERT INTO app_versions (version_name, version_code, download_url, release_notes, force_update)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (version_code) DO UPDATE SET version_name=$1, download_url=$3, release_notes=$4, force_update=$5, created_at=NOW()`,
+      [versionName, versionCode, APK_PUBLIC_URL, releaseNotes || null, forceUpdate]
+    )
+    return reply.send({ success: true, version_name: versionName, version_code: versionCode, download_url: APK_PUBLIC_URL })
+  })
+
+  // Admin: GET /api/admin/app/versions — list all uploaded versions
+  app.get('/api/admin/app/versions', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query('SELECT * FROM app_versions ORDER BY version_code DESC LIMIT 20')
+    return reply.send(res.rows)
   })
 
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))
