@@ -259,6 +259,54 @@ async function start() {
     return reply.send(res.rows)
   })
 
+  // POST /wallet/promo/validate — check if a promo code is valid for given amount
+  app.post('/wallet/promo/validate', { onRequest: [authenticate] }, async (req, reply) => {
+    const user = req.user as any
+    const body = z.object({
+      code: z.string().min(1),
+      amount: z.number().positive(),
+    }).parse(req.body)
+
+    const code = body.code.trim().toUpperCase()
+    const promo = await db.query(
+      `SELECT * FROM promo_codes WHERE code = $1 AND is_active = true
+         AND (expires_at IS NULL OR expires_at > NOW())
+         AND (usage_limit IS NULL OR used_count < usage_limit)`,
+      [code]
+    )
+    if (!promo.rows.length) return reply.code(404).send({ error: 'Invalid or expired promo code' })
+    const p = promo.rows[0]
+
+    if (body.amount < parseFloat(p.min_deposit)) {
+      return reply.code(400).send({ error: `Minimum deposit of ₹${p.min_deposit} required for this code` })
+    }
+
+    const usage = await db.query(
+      `SELECT COUNT(*) as cnt FROM promo_code_usages WHERE promo_id = $1 AND user_id = $2`,
+      [p.id, user.sub]
+    )
+    if (parseInt(usage.rows[0].cnt) >= p.per_user_limit) {
+      return reply.code(400).send({ error: 'You have already used this promo code' })
+    }
+
+    let discount = p.discount_type === 'percent'
+      ? (body.amount * parseFloat(p.discount_value)) / 100
+      : parseFloat(p.discount_value)
+    if (p.max_discount) discount = Math.min(discount, parseFloat(p.max_discount))
+    discount = Math.round(discount * 100) / 100
+
+    return reply.send({
+      valid: true,
+      promo_id: p.id,
+      code: p.code,
+      description: p.description,
+      discount_type: p.discount_type,
+      discount_value: parseFloat(p.discount_value),
+      discount_amount: discount,
+      bonus_amount: discount,
+    })
+  })
+
   // POST /wallet/deposit/submit — multipart: amount, payment_method_id, reference_number, screenshot
   // Creates a PENDING deposit order with proof. Admin approves it to credit the wallet.
   app.post('/wallet/deposit/submit', { onRequest: [authenticate] }, async (req, reply) => {
@@ -268,6 +316,7 @@ async function start() {
     let referenceNumber = ''
     let screenshotUrl: string | null = null
 
+    let promoCode: string | null = null
     const parts = (req as any).parts()
     for await (const part of parts) {
       if (part.type === 'file') {
@@ -282,6 +331,7 @@ async function start() {
         if (part.fieldname === 'amount') amount = parseFloat(part.value as string)
         if (part.fieldname === 'payment_method_id') methodId = part.value as string
         if (part.fieldname === 'reference_number') referenceNumber = (part.value as string).trim()
+        if (part.fieldname === 'promo_code') promoCode = (part.value as string)?.trim().toUpperCase() || null
       }
     }
 
@@ -298,19 +348,61 @@ async function start() {
       }
     }
 
+    // Validate promo code if provided
+    let promoRow: any = null
+    let promoBonus = 0
+    if (promoCode) {
+      const pr = await db.query(
+        `SELECT * FROM promo_codes WHERE code = $1 AND is_active = true
+           AND (expires_at IS NULL OR expires_at > NOW())
+           AND (usage_limit IS NULL OR used_count < usage_limit)`,
+        [promoCode]
+      )
+      if (pr.rows.length) {
+        promoRow = pr.rows[0]
+        if (amount >= parseFloat(promoRow.min_deposit)) {
+          const used = await db.query(
+            `SELECT COUNT(*) as cnt FROM promo_code_usages WHERE promo_id = $1 AND user_id = $2`,
+            [promoRow.id, user.sub]
+          )
+          if (parseInt(used.rows[0].cnt) < promoRow.per_user_limit) {
+            promoBonus = promoRow.discount_type === 'percent'
+              ? (amount * parseFloat(promoRow.discount_value)) / 100
+              : parseFloat(promoRow.discount_value)
+            if (promoRow.max_discount) promoBonus = Math.min(promoBonus, parseFloat(promoRow.max_discount))
+            promoBonus = Math.round(promoBonus * 100) / 100
+          }
+        }
+      }
+    }
+
     const ins = await db.query(
       `INSERT INTO payment_orders
          (user_id, gateway, amount, type, status, reference_number, screenshot_url, payment_method_id, metadata)
        VALUES ($1, 'manual', $2, 'deposit', 'created', $3, $4, $5, $6)
        RETURNING id`,
       [user.sub, amount, referenceNumber, screenshotUrl, methodId,
-       JSON.stringify({ submitted_at: new Date().toISOString() })]
+       JSON.stringify({ submitted_at: new Date().toISOString(), promo_code: promoCode, promo_bonus: promoBonus })]
     )
+
+    // Record promo usage (non-fatal)
+    if (promoRow && promoBonus > 0) {
+      try {
+        await db.query(
+          `INSERT INTO promo_code_usages (promo_id, user_id, deposit_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+          [promoRow.id, user.sub, ins.rows[0].id]
+        )
+        await db.query(`UPDATE promo_codes SET used_count = used_count + 1 WHERE id = $1`, [promoRow.id])
+      } catch (e) { /* non-fatal */ }
+    }
 
     return reply.send({
       success: true,
       order_id: ins.rows[0].id,
-      message: 'Deposit submitted for review. Your balance updates once an admin approves it.',
+      promo_bonus: promoBonus,
+      message: promoBonus > 0
+        ? `Deposit submitted! ₹${promoBonus} bonus will be added on approval.`
+        : 'Deposit submitted for review. Your balance updates once an admin approves it.',
     })
   })
 

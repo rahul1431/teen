@@ -199,7 +199,10 @@ class _DepositSheetState extends State<_DepositSheet> {
   bool _submitting = false;
   final _amountCtrl = TextEditingController(text: '100');
   final _refCtrl = TextEditingController();
+  final _promoCtrl = TextEditingController();
   XFile? _screenshot;
+  Map<String, dynamic>? _promoResult;
+  bool _validatingPromo = false;
 
   @override
   void initState() {
@@ -227,6 +230,26 @@ class _DepositSheetState extends State<_DepositSheet> {
 
   void _snack(String msg, Color c) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: c));
 
+  Future<void> _validatePromo() async {
+    final code = _promoCtrl.text.trim().toUpperCase();
+    if (code.isEmpty) return;
+    final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0;
+    if (amount < 1) { _snack('Enter amount first', AppColors.orange); return; }
+    setState(() => _validatingPromo = true);
+    try {
+      final res = await widget.api.dio.post('/api/wallet/promo/validate',
+        data: {'code': code, 'amount': amount});
+      setState(() => _promoResult = res.data as Map<String, dynamic>);
+      _snack('Promo applied! ₹${(_promoResult!['discount_amount'] as num).toStringAsFixed(2)} bonus', AppColors.green);
+    } catch (e) {
+      setState(() => _promoResult = null);
+      final msg = e is DioException ? (e.response?.data?['error']?.toString() ?? 'Invalid code') : 'Invalid code';
+      _snack(msg, AppColors.red);
+    } finally {
+      if (mounted) setState(() => _validatingPromo = false);
+    }
+  }
+
   Future<void> _submit() async {
     final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0;
     if (amount < 1) { _snack('Enter a valid amount', AppColors.red); return; }
@@ -240,9 +263,12 @@ class _DepositSheetState extends State<_DepositSheet> {
         if (_selected != null) 'payment_method_id': _selected!['id'],
         'reference_number': _refCtrl.text.trim(),
         'screenshot': await MultipartFile.fromFile(_screenshot!.path, filename: _screenshot!.name),
+        if (_promoCtrl.text.trim().isNotEmpty) 'promo_code': _promoCtrl.text.trim().toUpperCase(),
       });
-      await widget.api.dio.post('/api/wallet/deposit/submit', data: form);
+      final res = await widget.api.dio.post('/api/wallet/deposit/submit', data: form);
+      final msg = res.data?['message'] as String? ?? 'Deposit submitted!';
       if (mounted) Navigator.pop(context, true);
+      _snack(msg, AppColors.green);
     } catch (e) {
       final msg = e is DioException ? (e.response?.data?['error']?.toString() ?? 'Submit failed') : 'Submit failed';
       _snack(msg, AppColors.red);
@@ -358,6 +384,7 @@ class _DepositSheetState extends State<_DepositSheet> {
                       TextField(
                         controller: _amountCtrl,
                         keyboardType: TextInputType.number,
+                        onChanged: (_) { if (_promoResult != null) setState(() => _promoResult = null); },
                         decoration: const InputDecoration(labelText: 'Amount (₹)', prefixText: '₹ '),
                       ),
                       const SizedBox(height: 12),
@@ -365,6 +392,61 @@ class _DepositSheetState extends State<_DepositSheet> {
                         controller: _refCtrl,
                         decoration: const InputDecoration(labelText: 'UPI / UTR Reference Number', hintText: 'e.g. 4012XXXXXX'),
                       ),
+                      const SizedBox(height: 12),
+
+                      // Promo Code
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _promoCtrl,
+                              textCapitalization: TextCapitalization.characters,
+                              decoration: InputDecoration(
+                                labelText: 'Promo Code (Optional)',
+                                hintText: 'e.g. WELCOME50',
+                                prefixIcon: const Icon(Icons.local_offer_outlined, size: 18),
+                                suffixIcon: _promoResult != null
+                                  ? const Icon(Icons.check_circle, color: Color(0xFF00C853), size: 20)
+                                  : null,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          _validatingPromo
+                            ? const SizedBox(width: 44, height: 44, child: CircularProgressIndicator(strokeWidth: 2))
+                            : OutlinedButton(
+                                onPressed: _validatePromo,
+                                style: OutlinedButton.styleFrom(
+                                  minimumSize: const Size(64, 50),
+                                  side: const BorderSide(color: AppColors.gold),
+                                ),
+                                child: const Text('Apply', style: TextStyle(color: AppColors.gold, fontSize: 13)),
+                              ),
+                        ],
+                      ),
+                      if (_promoResult != null) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF00C853).withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFF00C853).withOpacity(0.3)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.celebration_outlined, color: Color(0xFF00C853), size: 16),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '${_promoResult!['code']} — ₹${(_promoResult!['discount_amount'] as num).toStringAsFixed(0)} bonus on approval!',
+                                  style: const TextStyle(color: Color(0xFF00C853), fontSize: 12, fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 12),
 
                       OutlinedButton.icon(

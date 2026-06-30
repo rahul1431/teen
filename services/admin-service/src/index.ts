@@ -2023,6 +2023,145 @@ async function start() {
     })
   })
 
+  // ── Home Banners ──────────────────────────────────────────────────────────────
+  const BANNER_UPLOAD_DIR = process.env.BANNER_UPLOAD_DIR || '/opt/teen/uploads/banners'
+  fs.mkdirSync(BANNER_UPLOAD_DIR, { recursive: true })
+
+  app.get('/api/admin/banners', { onRequest: [app.authenticate] }, async (_req, reply) => {
+    const res = await db.query(`SELECT * FROM home_banners ORDER BY sort_order ASC, created_at ASC`)
+    return reply.send(res.rows)
+  })
+
+  app.post('/api/admin/banners', {
+    onRequest: [app.authenticate, app.requireRole('superadmin')],
+  }, async (req, reply) => {
+    let imageUrl = ''
+    let title = '', subtitle = '', clickUrl = '', clickType = 'url'
+    let sortOrder = 0, isActive = true
+
+    const parts = (req as any).parts()
+    for await (const part of parts) {
+      if (part.type === 'file') {
+        const ext = path.extname(part.filename || '').toLowerCase().slice(0, 8) || '.jpg'
+        if (!['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
+          return reply.code(400).send({ error: 'Only jpg/png/webp allowed' })
+        }
+        const fname = `banner_${crypto.randomUUID()}${ext}`
+        await pipeline(part.file, fs.createWriteStream(path.join(BANNER_UPLOAD_DIR, fname)))
+        imageUrl = `/uploads/banners/${fname}`
+      } else {
+        const v = (part.value as string)?.trim() ?? ''
+        if (part.fieldname === 'title') title = v
+        if (part.fieldname === 'subtitle') subtitle = v
+        if (part.fieldname === 'click_url') clickUrl = v
+        if (part.fieldname === 'click_type') clickType = v
+        if (part.fieldname === 'sort_order') sortOrder = parseInt(v) || 0
+        if (part.fieldname === 'is_active') isActive = v !== 'false'
+        if (part.fieldname === 'image_url') imageUrl = imageUrl || v
+      }
+    }
+    if (!imageUrl) return reply.code(400).send({ error: 'Image required' })
+
+    const res = await db.query(
+      `INSERT INTO home_banners (title, subtitle, image_url, click_url, click_type, sort_order, is_active)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [title || null, subtitle || null, imageUrl, clickUrl || null, clickType, sortOrder, isActive]
+    )
+    return reply.send(res.rows[0])
+  })
+
+  app.put('/api/admin/banners/:id', {
+    onRequest: [app.authenticate, app.requireRole('superadmin')],
+  }, async (req, reply) => {
+    const { id } = req.params as any
+    const body = req.body as any
+    const res = await db.query(
+      `UPDATE home_banners SET
+         title = COALESCE($1, title), subtitle = COALESCE($2, subtitle),
+         click_url = $3, click_type = COALESCE($4, click_type),
+         sort_order = COALESCE($5, sort_order), is_active = COALESCE($6, is_active),
+         updated_at = NOW()
+       WHERE id = $7 RETURNING *`,
+      [body.title ?? null, body.subtitle ?? null, body.click_url ?? null,
+       body.click_type ?? null, body.sort_order ?? null, body.is_active ?? null, id]
+    )
+    if (!res.rows.length) return reply.code(404).send({ error: 'Not found' })
+    return reply.send(res.rows[0])
+  })
+
+  app.delete('/api/admin/banners/:id', {
+    onRequest: [app.authenticate, app.requireRole('superadmin')],
+  }, async (req, reply) => {
+    const { id } = req.params as any
+    await db.query(`DELETE FROM home_banners WHERE id = $1`, [id])
+    return reply.send({ ok: true })
+  })
+
+  // ── Promo Codes ───────────────────────────────────────────────────────────────
+  app.get('/api/admin/promo-codes', { onRequest: [app.authenticate] }, async (_req, reply) => {
+    const res = await db.query(`SELECT * FROM promo_codes ORDER BY created_at DESC`)
+    return reply.send(res.rows)
+  })
+
+  app.post('/api/admin/promo-codes', {
+    onRequest: [app.authenticate, app.requireRole('finance')],
+  }, async (req, reply) => {
+    const body = z.object({
+      code: z.string().min(3).max(50).toUpperCase(),
+      description: z.string().optional(),
+      discount_type: z.enum(['fixed', 'percent']),
+      discount_value: z.number().positive(),
+      min_deposit: z.number().min(0).default(0),
+      max_discount: z.number().optional(),
+      usage_limit: z.number().int().optional(),
+      per_user_limit: z.number().int().default(1),
+      is_active: z.boolean().default(true),
+      expires_at: z.string().optional(),
+    }).parse(req.body)
+
+    const res = await db.query(
+      `INSERT INTO promo_codes (code, description, discount_type, discount_value, min_deposit, max_discount,
+         usage_limit, per_user_limit, is_active, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [body.code, body.description || null, body.discount_type, body.discount_value,
+       body.min_deposit, body.max_discount || null, body.usage_limit || null,
+       body.per_user_limit, body.is_active, body.expires_at || null]
+    )
+    return reply.send(res.rows[0])
+  })
+
+  app.put('/api/admin/promo-codes/:id', {
+    onRequest: [app.authenticate, app.requireRole('finance')],
+  }, async (req, reply) => {
+    const { id } = req.params as any
+    const body = req.body as any
+    const res = await db.query(
+      `UPDATE promo_codes SET
+         code = COALESCE($1, code), description = $2,
+         discount_type = COALESCE($3, discount_type),
+         discount_value = COALESCE($4, discount_value),
+         min_deposit = COALESCE($5, min_deposit),
+         max_discount = $6, usage_limit = $7,
+         per_user_limit = COALESCE($8, per_user_limit),
+         is_active = COALESCE($9, is_active), expires_at = $10
+       WHERE id = $11 RETURNING *`,
+      [body.code?.toUpperCase() ?? null, body.description ?? null, body.discount_type ?? null,
+       body.discount_value ?? null, body.min_deposit ?? null, body.max_discount ?? null,
+       body.usage_limit ?? null, body.per_user_limit ?? null, body.is_active ?? null,
+       body.expires_at ?? null, id]
+    )
+    if (!res.rows.length) return reply.code(404).send({ error: 'Not found' })
+    return reply.send(res.rows[0])
+  })
+
+  app.delete('/api/admin/promo-codes/:id', {
+    onRequest: [app.authenticate, app.requireRole('finance')],
+  }, async (req, reply) => {
+    const { id } = req.params as any
+    await db.query(`DELETE FROM promo_codes WHERE id = $1`, [id])
+    return reply.send({ ok: true })
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))
 
   const port = parseInt(process.env.PORT || '3008')

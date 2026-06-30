@@ -25,6 +25,8 @@ import Changelog from './pages/Changelog'
 import { AIControlCenter } from './pages/AIControlCenter'
 import AppMonitor from './pages/AppMonitor'
 import DailyBonus from './pages/DailyBonus'
+import Banners from './pages/Banners'
+import PromoCodes from './pages/PromoCodes'
 import { useAuthStore } from './store/auth'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -60,6 +62,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="changelog" element={<Changelog />} />
           <Route path="app-monitor" element={<AppMonitor />} />
           <Route path="daily-bonus" element={<DailyBonus />} />
+          <Route path="banners" element={<Banners />} />
+          <Route path="promo-codes" element={<PromoCodes />} />
         </Route>
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>

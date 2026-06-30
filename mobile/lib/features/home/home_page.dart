@@ -3,12 +3,19 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../core/network/api_client.dart';
+import '../../core/constants/app_config.dart';
 import '../../core/storage/secure_storage.dart';
 import '../../shared/theme/app_theme.dart';
 import '../../shared/widgets/error_retry.dart';
 
 // ── Fake live counters (replace with real WebSocket data later) ──────────────
 const _kLiveOnline = {'teen-patti': 15842, 'aviator': 9231, 'ludo': 10477, 'cricket': 6120};
+
+String _resolveImageUrl(String? p) {
+  if (p == null || p.isEmpty) return '';
+  if (p.startsWith('http')) return p;
+  return '${AppConfig.apiBaseUrl}$p';
+}
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -27,6 +34,10 @@ class _HomePageState extends State<HomePage>
   double _bonusBalance = 0;
   bool _loadingData = true;
   bool _hasError = false;
+  List<dynamic> _banners = [];
+  int _bannerIndex = 0;
+  Timer? _bannerTimer;
+  final PageController _bannerCtrl = PageController();
 
   // Animations
   late final AnimationController _pulseCtrl;
@@ -64,6 +75,7 @@ class _HomePageState extends State<HomePage>
     _updateCountdown();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _updateCountdown());
     _loadData();
+    _loadBanners();
   }
 
   @override
@@ -72,7 +84,38 @@ class _HomePageState extends State<HomePage>
     _heroCtrl.dispose();
     _balanceCtrl.dispose();
     _ticker?.cancel();
+    _bannerTimer?.cancel();
+    _bannerCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadBanners() async {
+    try {
+      final res = await ApiClient().dio.get('/api/users/banners');
+      if (!mounted) return;
+      final list = res.data as List? ?? [];
+      if (list.isEmpty) return;
+      setState(() => _banners = list);
+      _bannerTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+        if (!mounted || _banners.isEmpty) return;
+        final next = (_bannerIndex + 1) % _banners.length;
+        _bannerCtrl.animateToPage(next,
+          duration: const Duration(milliseconds: 400), curve: Curves.easeInOut);
+        setState(() => _bannerIndex = next);
+      });
+    } catch (_) {}
+  }
+
+  void _onBannerTap(Map<String, dynamic> banner) {
+    final url = banner['click_url'] as String? ?? '';
+    final type = banner['click_type'] as String? ?? 'none';
+    if (url.isEmpty || type == 'none') return;
+    if (type == 'route') {
+      context.push(url);
+    } else {
+      // External URL — could open browser, for now navigate as route if starts with /
+      if (url.startsWith('/')) context.push(url);
+    }
   }
 
   void _updateCountdown() {
@@ -250,80 +293,162 @@ class _HomePageState extends State<HomePage>
 
   // ─── Hero Banner ─────────────────────────────────────────────────────────────
 
-  Widget _buildHeroBanner() => FadeTransition(
-    opacity: _heroFade,
-    child: SlideTransition(
-      position: _heroSlide,
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-        height: 140,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          gradient: const LinearGradient(
-            colors: [Color(0xFF1C1455), Color(0xFF0B1E52), Color(0xFF0D1117)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          border: Border.all(color: AppColors.gold.withOpacity(0.25), width: 1.5),
-          boxShadow: [
-            BoxShadow(color: AppColors.gold.withOpacity(0.12), blurRadius: 24, offset: const Offset(0, 8)),
-          ],
-        ),
-        child: Stack(
-          children: [
-            // Background decorative circles
-            Positioned(right: -20, top: -20, child: Container(
-              width: 120, height: 120,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppColors.gold.withOpacity(0.05),
+  Widget _buildHeroBanner() {
+    if (_banners.isNotEmpty) {
+      return FadeTransition(
+        opacity: _heroFade,
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+          height: 160,
+          child: Stack(
+            children: [
+              PageView.builder(
+                controller: _bannerCtrl,
+                onPageChanged: (i) => setState(() => _bannerIndex = i),
+                itemCount: _banners.length,
+                itemBuilder: (_, i) {
+                  final b = _banners[i] as Map<String, dynamic>;
+                  final imgUrl = _resolveImageUrl(b['image_url'] as String?);
+                  return GestureDetector(
+                    onTap: () => _onBannerTap(b),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 2),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: AppColors.gold.withOpacity(0.25), width: 1.5),
+                        boxShadow: [BoxShadow(color: AppColors.gold.withOpacity(0.12), blurRadius: 24, offset: const Offset(0, 8))],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(24),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            imgUrl.isNotEmpty
+                              ? Image.network(imgUrl, fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => _buildDefaultHeroContent())
+                              : _buildDefaultHeroContent(),
+                            if ((b['title'] as String? ?? '').isNotEmpty)
+                              Positioned(
+                                bottom: 0, left: 0, right: 0,
+                                child: Container(
+                                  padding: const EdgeInsets.fromLTRB(16, 24, 16, 14),
+                                  decoration: const BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.bottomCenter, end: Alignment.topCenter,
+                                      colors: [Color(0xCC000000), Colors.transparent],
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(b['title'] as String? ?? '',
+                                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900)),
+                                      if ((b['subtitle'] as String? ?? '').isNotEmpty)
+                                        Text(b['subtitle'] as String? ?? '',
+                                          style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 12)),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
-            )),
-            Positioned(right: 40, bottom: -30, child: Container(
-              width: 80, height: 80,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppColors.blue.withOpacity(0.08),
-              ),
-            )),
-            // Card suits decoration
-            Positioned(
-              right: 20, top: 16,
-              child: Text('♠ ♥ ♦ ♣',
-                style: TextStyle(color: AppColors.gold.withOpacity(0.15), fontSize: 28, letterSpacing: 4)),
-            ),
-            // Content
-            Padding(
-              padding: const EdgeInsets.all(22),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text('PLAY & WIN BIG! 🏆',
-                    style: TextStyle(
-                      color: AppColors.gold,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.5,
+              // Page indicator dots
+              if (_banners.length > 1)
+                Positioned(
+                  bottom: 8, left: 0, right: 0,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(_banners.length, (i) => AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      width: i == _bannerIndex ? 16 : 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: i == _bannerIndex ? AppColors.gold : Colors.white38,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
                     )),
-                  const SizedBox(height: 6),
-                  Text('Hey, ${_user?['username'] ?? 'Player'} — your table awaits!',
-                    style: const TextStyle(color: Colors.white70, fontSize: 13)),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      _heroBadge('🎯 Daily Bonus', AppColors.green),
-                      const SizedBox(width: 8),
-                      _heroBadge('🎰 Jackpot ₹10 CR', AppColors.orange),
-                    ],
                   ),
-                ],
-              ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+    return FadeTransition(
+      opacity: _heroFade,
+      child: SlideTransition(
+        position: _heroSlide,
+        child: _buildDefaultHeroBannerCard(),
+      ),
+    );
+  }
+
+  Widget _buildDefaultHeroBannerCard() => Container(
+    margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+    height: 140,
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(24),
+      gradient: const LinearGradient(
+        colors: [Color(0xFF1C1455), Color(0xFF0B1E52), Color(0xFF0D1117)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ),
+      border: Border.all(color: AppColors.gold.withOpacity(0.25), width: 1.5),
+      boxShadow: [BoxShadow(color: AppColors.gold.withOpacity(0.12), blurRadius: 24, offset: const Offset(0, 8))],
+    ),
+    child: _buildDefaultHeroContent(),
+  );
+
+  Widget _buildDefaultHeroContent() => Stack(
+    children: [
+      Positioned(right: -20, top: -20, child: Container(
+        width: 120, height: 120,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: AppColors.gold.withOpacity(0.05)),
+      )),
+      Positioned(right: 40, bottom: -30, child: Container(
+        width: 80, height: 80,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: AppColors.blue.withOpacity(0.08)),
+      )),
+      Positioned(
+        right: 20, top: 16,
+        child: Text('♠ ♥ ♦ ♣',
+          style: TextStyle(color: AppColors.gold.withOpacity(0.15), fontSize: 28, letterSpacing: 4)),
+      ),
+      Padding(
+        padding: const EdgeInsets.all(22),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('PLAY & WIN BIG! 🏆',
+              style: TextStyle(
+                color: AppColors.gold,
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.5,
+              )),
+            const SizedBox(height: 6),
+            Text('Hey, ${_user?['username'] ?? 'Player'} — your table awaits!',
+              style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                _heroBadge('🎯 Daily Bonus', AppColors.green),
+                const SizedBox(width: 8),
+                _heroBadge('🎰 Jackpot ₹10 CR', AppColors.orange),
+              ],
             ),
           ],
         ),
       ),
-    ),
+    ],
   );
 
   Widget _heroBadge(String text, Color color) => Container(

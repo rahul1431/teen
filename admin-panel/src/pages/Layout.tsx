@@ -4,6 +4,7 @@ import {
   BellOutlined, SettingOutlined, LogoutOutlined, TrophyOutlined, SafetyOutlined,
   TeamOutlined, ProfileOutlined, WarningOutlined, CustomerServiceOutlined,
   FundOutlined, RobotOutlined, HistoryOutlined, MonitorOutlined, GiftOutlined,
+  PictureOutlined, TagOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
@@ -28,6 +29,8 @@ const menuItems = [
     ]
   },
   { key: '/admin/daily-bonus', icon: <GiftOutlined />, label: 'Daily Bonus' },
+  { key: '/admin/banners', icon: <PictureOutlined />, label: 'Home Banners' },
+  { key: '/admin/promo-codes', icon: <TagOutlined />, label: 'Promo Codes' },
   { key: '/admin/finance', icon: <DollarOutlined />, label: 'Finance' },
   { key: '/admin/notifications', icon: <BellOutlined />, label: 'Notifications' },
   { key: '/admin/admin-users', icon: <TeamOutlined />, label: 'Admin Users' },

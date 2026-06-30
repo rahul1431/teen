@@ -279,6 +279,21 @@ async function start() {
     }
   })
 
+  // GET /users/banners — active home banners for the app
+  app.get('/users/banners', async (_req, reply) => {
+    const now = new Date().toISOString()
+    const res = await db.query(
+      `SELECT id, title, subtitle, image_url, click_url, click_type, sort_order
+       FROM home_banners
+       WHERE is_active = true
+         AND (starts_at IS NULL OR starts_at <= $1)
+         AND (ends_at IS NULL OR ends_at >= $1)
+       ORDER BY sort_order ASC, created_at ASC`,
+      [now]
+    )
+    return reply.send(res.rows)
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'user' }))
 
   const port = parseInt(process.env.PORT || '3002')

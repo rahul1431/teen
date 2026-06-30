@@ -75,7 +75,7 @@ class _DailyBonusPageState extends State<DailyBonusPage>
     if (_claiming) return;
     setState(() => _claiming = true);
     try {
-      final res = await ApiClient().dio.post('/api/users/daily-bonus/claim');
+      final res = await ApiClient().dio.post('/api/users/daily-bonus/claim', data: {});
       final result = res.data as Map<String, dynamic>;
       if (!mounted) return;
       await _celebCtrl.forward();
