@@ -476,7 +476,7 @@ class _HomePageState extends State<HomePage>
           onTap: () => _comingSoon('Spin & Win')),
         _promoCard('👥', 'Refer &\nEarn', 'Get ₹50 Per Ref',
           [const Color(0xFF4A1A00), const Color(0xFF2A0E00)], AppColors.orange,
-          onTap: () => _comingSoon('Refer & Earn')),
+          onTap: () => context.push('/referral')),
         _promoCard('🏆', 'Leaderboard\nReward', 'Top 3 Win Big',
           [const Color(0xFF4A3200), const Color(0xFF2A1D00)], AppColors.gold,
           onTap: () => context.push('/leaderboard')),

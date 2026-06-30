@@ -92,6 +92,43 @@ async function start() {
     return reply.send(res.rows)
   })
 
+  // GET /referrals/my-stats — full referral dashboard data for the authed user
+  app.get('/referrals/my-stats', { onRequest: [authenticate] }, async (req, reply) => {
+    const user = req.user as any
+
+    const [userRes, referralsRes] = await Promise.all([
+      db.query(`SELECT referral_code FROM users WHERE id = $1`, [user.sub]),
+      db.query(
+        `SELECT r.id, r.status, r.reward_amount, r.created_at, r.qualified_at, r.rewarded_at,
+                u.username, u.avatar_url
+         FROM referrals r
+         JOIN users u ON u.id = r.referee_id
+         WHERE r.referrer_id = $1
+         ORDER BY r.created_at DESC`,
+        [user.sub]
+      ),
+    ])
+
+    if (!userRes.rows.length) return reply.code(404).send({ error: 'User not found' })
+    const referralCode = userRes.rows[0].referral_code
+    const referralLink = `${process.env.APP_URL || 'https://game.myonlinejoker.com'}/join?ref=${referralCode}`
+
+    const referrals = referralsRes.rows
+    const totalEarned = referrals
+      .filter((r: any) => r.status === 'rewarded')
+      .reduce((sum: number, r: any) => sum + parseFloat(r.reward_amount), 0)
+
+    const stats = {
+      total_referred: referrals.length,
+      total_earned: totalEarned,
+      pending_count: referrals.filter((r: any) => r.status === 'pending').length,
+      qualified_count: referrals.filter((r: any) => r.status === 'qualified').length,
+      rewarded_count: referrals.filter((r: any) => r.status === 'rewarded').length,
+    }
+
+    return reply.send({ referral_code: referralCode, referral_link: referralLink, stats, referrals })
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'user' }))
 
   const port = parseInt(process.env.PORT || '3002')

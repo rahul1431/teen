@@ -16,6 +16,60 @@ import { WalletService } from './wallet.service'
 // Where uploaded deposit screenshots are stored (served by nginx at /uploads/).
 const UPLOAD_DIR = process.env.UPLOAD_DIR || '/opt/teen/uploads/deposits'
 
+// Credit the referrer when their referee makes their first deposit.
+// Idempotency key `referral_reward:<referral_id>` guarantees exactly-once credit.
+async function tryTriggerReferralReward(userId: string, db: Pool, walletSvc: any): Promise<void> {
+  try {
+    const ref = await db.query(
+      `SELECT * FROM referrals WHERE referee_id = $1 AND status = 'pending' LIMIT 1`,
+      [userId]
+    )
+    if (!ref.rows.length) return
+
+    const referral = ref.rows[0]
+    const ikey = `referral_reward:${referral.id}`
+
+    // Mark qualified + rewarded atomically in one transaction, then credit outside it
+    const client = await db.connect()
+    let shouldCredit = false
+    try {
+      await client.query('BEGIN')
+      const lock = await client.query(
+        `SELECT id FROM referrals WHERE id = $1 AND status = 'pending' FOR UPDATE`,
+        [referral.id]
+      )
+      if (!lock.rows.length) { await client.query('ROLLBACK'); return } // already processed
+
+      await client.query(
+        `UPDATE referrals SET status = 'rewarded', qualified_at = NOW(), rewarded_at = NOW() WHERE id = $1`,
+        [referral.id]
+      )
+      await client.query('COMMIT')
+      shouldCredit = true
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
+
+    if (shouldCredit) {
+      await walletSvc.credit({
+        userId: referral.referrer_id,
+        amount: parseFloat(referral.reward_amount),
+        type: 'referral',
+        walletType: 'real',
+        referenceId: referral.id,
+        idempotencyKey: ikey,
+        description: 'Referral bonus — friend made first deposit',
+      })
+    }
+  } catch (err) {
+    // Non-fatal: log and continue so the deposit itself doesn't fail
+    console.error('[referral-reward] failed:', err)
+  }
+}
+
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
 const walletSvc = new WalletService(db)
@@ -159,6 +213,9 @@ async function start() {
       client.release()
     }
 
+    // Trigger referral reward after successful deposit (outside the payment tx)
+    await tryTriggerReferralReward(user.sub, db, walletSvc)
+
     const balance = await walletSvc.getBalance(user.sub)
     return reply.send({ success: true, balance })
   })
@@ -182,6 +239,10 @@ async function start() {
       idempotencyKey: `manual_credit:${body.request_id}`,
       description: body.description || 'Manual credit by admin',
     })
+
+    // Trigger referral reward for the depositing user (idempotent — no-ops if already rewarded)
+    await tryTriggerReferralReward(body.user_id, db, walletSvc)
+
     const balance = await walletSvc.getBalance(body.user_id)
     return reply.send({ success: true, balance })
   })

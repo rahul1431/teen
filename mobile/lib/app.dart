@@ -24,6 +24,7 @@ import 'features/games/betting/cricket_page.dart';
 import 'features/leaderboard/leaderboard_page.dart';
 import 'features/profile/profile_page.dart';
 import 'features/notifications/notifications_page.dart';
+import 'features/referral/referral_page.dart';
 
 final GoRouter _router = GoRouter(
   initialLocation: '/splash',
@@ -78,6 +79,7 @@ final GoRouter _router = GoRouter(
     GoRoute(path: '/games/cricket', builder: (_, __) => const CricketPage()),
     GoRoute(path: '/leaderboard', builder: (_, __) => const LeaderboardPage()),
     GoRoute(path: '/profile', builder: (_, __) => const ProfilePage()),
+    GoRoute(path: '/referral', builder: (_, __) => const ReferralPage()),
   ],
 );
 
