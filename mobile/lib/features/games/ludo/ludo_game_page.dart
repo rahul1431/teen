@@ -47,6 +47,7 @@ class _LudoGamePageState extends State<LudoGamePage>
     super.initState();
     SoundService.instance.init();
     widget.offline ? _initOffline() : _initOnline();
+    SoundService.instance.loopAmbience('ludo_bgm.mp3', volume: 0.3);
   }
 
   @override
@@ -55,6 +56,7 @@ class _LudoGamePageState extends State<LudoGamePage>
     for (final s in _subs) {
       s.cancel();
     }
+    SoundService.instance.stopAmbience();
     super.dispose();
   }
 
@@ -254,33 +256,97 @@ class _LudoGamePageState extends State<LudoGamePage>
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.cardBg,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: Text(won ? '🏆 You Win!' : 'Game Over',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-                color: won ? AppColors.gold : Colors.white,
-                fontWeight: FontWeight.w900)),
-        content: Text(
-            won
-                ? 'You got all your tokens home first!'
-                : 'Better luck next time.',
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: AppColors.textSecondary)),
-        actions: [
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                if (mounted) context.pop();
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold),
-              child: const Text('Back to Lobby'),
+      barrierColor: Colors.black.withOpacity(0.85),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Container(
+          padding: const EdgeInsets.all(28),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: won
+                  ? [const Color(0xFF1A1200), const Color(0xFF2A1E00), const Color(0xFF0D0D0D)]
+                  : [const Color(0xFF0D0D16), const Color(0xFF161B2E), const Color(0xFF0D0D0D)],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
             ),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: won
+                  ? AppColors.gold.withOpacity(0.6)
+                  : Colors.white.withOpacity(0.1),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: won ? AppColors.gold.withOpacity(0.3) : Colors.blue.withOpacity(0.15),
+                blurRadius: 40,
+                spreadRadius: 5,
+              ),
+            ],
           ),
-        ],
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Trophy / Sad emoji
+              Text(
+                won ? '🏆' : '😔',
+                style: const TextStyle(fontSize: 64),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                won ? 'VICTORY!' : 'GAME OVER',
+                style: TextStyle(
+                  color: won ? AppColors.gold : Colors.white70,
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 3,
+                  shadows: won
+                      ? [const Shadow(color: AppColors.gold, blurRadius: 20)]
+                      : [],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                won
+                    ? 'All tokens home first!'
+                    : 'Better luck next time',
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 15,
+                ),
+              ),
+              const SizedBox(height: 28),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    if (mounted) context.pop();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: won ? AppColors.gold : const Color(0xFF1E2840),
+                    foregroundColor: won ? Colors.black : Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    side: won
+                        ? null
+                        : BorderSide(color: Colors.white.withOpacity(0.2)),
+                  ),
+                  child: Text(
+                    won ? 'Claim Victory' : 'Back to Lobby',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -382,81 +448,116 @@ class _LudoGamePageState extends State<LudoGamePage>
   }
 
   Widget _playersBar(LudoState s) {
+    final seatColors = [
+      AppColors.ludoRed,
+      AppColors.ludoGreen,
+      AppColors.ludoYellow,
+      AppColors.ludoBlue,
+    ];
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      height: 80,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: List.generate(s.players.length, (i) {
           final p = s.players[i];
           final active = i == s.currentTurn;
-          final color = [
-            AppColors.ludoRed,
-            AppColors.ludoGreen,
-            AppColors.ludoYellow,
-            AppColors.ludoBlue
-          ][(p.seat - 1) % 4];
-          
+          final color = seatColors[(p.seat - 1) % 4];
+          final initials = p.username.length > 1
+              ? p.username.substring(0, 2).toUpperCase()
+              : p.username.toUpperCase();
+
           return AnimatedContainer(
-            duration: const Duration(milliseconds: 250),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
-              color: active ? color.withOpacity(0.18) : const Color(0xFF161F38).withOpacity(0.6),
-              borderRadius: BorderRadius.circular(16),
+              color: active
+                  ? color.withOpacity(0.15)
+                  : Colors.white.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: active ? color : Colors.white.withOpacity(0.05), 
-                width: active ? 1.8 : 1.0,
+                color: active ? color.withOpacity(0.7) : Colors.transparent,
+                width: 1.5,
               ),
-              boxShadow: active ? [
-                BoxShadow(
-                  color: color.withOpacity(0.2),
-                  blurRadius: 8,
-                  spreadRadius: 1,
-                )
-              ] : [],
+              boxShadow: active
+                  ? [BoxShadow(color: color.withOpacity(0.3), blurRadius: 12, spreadRadius: 1)]
+                  : [],
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+                // Avatar
+                Stack(
+                  alignment: Alignment.center,
                   children: [
                     Container(
-                      width: 10,
-                      height: 10,
+                      width: 34,
+                      height: 34,
                       decoration: BoxDecoration(
-                        color: color, 
                         shape: BoxShape.circle,
+                        gradient: RadialGradient(
+                          colors: [color.withOpacity(0.9), color.withOpacity(0.5)],
+                        ),
+                        border: Border.all(
+                          color: active ? Colors.white : color.withOpacity(0.4),
+                          width: active ? 2.0 : 1.0,
+                        ),
                         boxShadow: [
-                          BoxShadow(color: color.withOpacity(0.6), blurRadius: 4, spreadRadius: 0.5)
+                          BoxShadow(color: color.withOpacity(0.5), blurRadius: 6),
                         ],
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      p.username,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: active ? FontWeight.w900 : FontWeight.bold,
-                        color: active ? Colors.white : AppColors.textSecondary,
+                      child: Center(
+                        child: Text(
+                          initials,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 11,
+                          ),
+                        ),
                       ),
                     ),
+                    if (active)
+                      Positioned(
+                        bottom: 0,
+                        right: 0,
+                        child: Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: Colors.greenAccent,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.black, width: 1.5),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.black26,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    'HOME ${p.finished}/4',
-                    style: TextStyle(
-                      fontSize: 9, 
-                      fontWeight: FontWeight.bold,
-                      color: active ? AppColors.gold : AppColors.textSecondary,
-                    ),
-                  ),
+                // Token dots (4 slots)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: List.generate(4, (ti) {
+                    final home = ti < p.finished;
+                    final onBoard = !home && p.tokens[ti] != -1;
+                    return Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 1),
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: home
+                            ? color
+                            : onBoard
+                                ? color.withOpacity(0.5)
+                                : Colors.white.withOpacity(0.15),
+                        boxShadow: home
+                            ? [BoxShadow(color: color.withOpacity(0.6), blurRadius: 3)]
+                            : [],
+                      ),
+                    );
+                  }),
                 ),
               ],
             ),

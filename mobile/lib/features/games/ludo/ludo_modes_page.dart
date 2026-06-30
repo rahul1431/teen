@@ -58,14 +58,81 @@ class _LudoModesPageState extends State<LudoModesPage> {
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
-          const Text('Choose a Mode',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
-          const SizedBox(height: 4),
-          const Text('Roll · Race · Capture · Reach home first',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-          const SizedBox(height: 20),
+          // Hero Banner
+          Container(
+            margin: const EdgeInsets.only(bottom: 20),
+            height: 130,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF6B1FE8), Color(0xFF2A1A8E), Color(0xFF0E1640)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                    color: const Color(0xFF6B1FE8).withOpacity(0.4),
+                    blurRadius: 20,
+                    offset: const Offset(0, 6))
+              ],
+            ),
+            child: Stack(
+              children: [
+                // Subtle pattern
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: CustomPaint(painter: _HeroDotsPainter()),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'LUDO',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 32,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 4,
+                                shadows: [Shadow(color: Colors.black38, blurRadius: 8)],
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Roll · Race · Capture · Win',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.8),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Dice emoji cluster
+                      Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: const [
+                          Text('🎲', style: TextStyle(fontSize: 42)),
+                          SizedBox(height: 4),
+                          Text('🏆', style: TextStyle(fontSize: 24)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
           GridView.count(
             crossAxisCount: 2,
             shrinkWrap: true,
@@ -285,6 +352,32 @@ class _LudoModesPageState extends State<LudoModesPage> {
           ),
         ),
       );
+}
+
+class _HeroDotsPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Paint()..color = Colors.white.withOpacity(0.05);
+    for (var x = 0.0; x < size.width; x += 20) {
+      for (var y = 0.0; y < size.height; y += 20) {
+        canvas.drawCircle(Offset(x, y), 1.5, p);
+      }
+    }
+    // Diagonal stripe overlay
+    final sp = Paint()
+      ..color = Colors.white.withOpacity(0.03)
+      ..strokeWidth = 8;
+    for (var i = -size.height.toInt(); i < size.width.toInt(); i += 30) {
+      canvas.drawLine(
+        Offset(i.toDouble(), 0),
+        Offset(i + size.height, size.height),
+        sp,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _Rule extends StatelessWidget {

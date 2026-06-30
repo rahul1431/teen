@@ -3,54 +3,50 @@ import 'package:flutter/material.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'ludo_engine.dart';
 
-/// Canonical 52-cell main track as (col,row) on a 15×15 grid. Index == the
-/// engine's absolute cell number, so `track[absoluteCell(seat, progress)]`
-/// gives a token's screen cell directly.
+// ── Coordinate tables ─────────────────────────────────────────────────────────
+
 const List<List<int>> _track = [
-  [6, 13], [6, 12], [6, 11], [6, 10], [6, 9],          // 0-4  bottom arm, left lane
-  [5, 8], [4, 8], [3, 8], [2, 8], [1, 8], [0, 8],       // 5-10 to left edge
-  [0, 7], [0, 6],                                        // 11-12 turn
-  [1, 6], [2, 6], [3, 6], [4, 6], [5, 6],               // 13-17 left arm top lane
-  [6, 5], [6, 4], [6, 3], [6, 2], [6, 1], [6, 0],       // 18-23 up top arm
-  [7, 0], [8, 0],                                        // 24-25 turn
-  [8, 1], [8, 2], [8, 3], [8, 4], [8, 5],               // 26-30 top arm right lane
-  [9, 6], [10, 6], [11, 6], [12, 6], [13, 6], [14, 6],  // 31-36 to right edge
-  [14, 7], [14, 8],                                      // 37-38 turn
-  [13, 8], [12, 8], [11, 8], [10, 8], [9, 8],           // 39-43 right arm bottom lane
-  [8, 9], [8, 10], [8, 11], [8, 12], [8, 13], [8, 14],  // 44-49 down bottom arm
-  [7, 14], [6, 14],                                      // 50-51 turn
+  [6, 13], [6, 12], [6, 11], [6, 10], [6, 9],
+  [5, 8], [4, 8], [3, 8], [2, 8], [1, 8], [0, 8],
+  [0, 7], [0, 6],
+  [1, 6], [2, 6], [3, 6], [4, 6], [5, 6],
+  [6, 5], [6, 4], [6, 3], [6, 2], [6, 1], [6, 0],
+  [7, 0], [8, 0],
+  [8, 1], [8, 2], [8, 3], [8, 4], [8, 5],
+  [9, 6], [10, 6], [11, 6], [12, 6], [13, 6], [14, 6],
+  [14, 7], [14, 8],
+  [13, 8], [12, 8], [11, 8], [10, 8], [9, 8],
+  [8, 9], [8, 10], [8, 11], [8, 12], [8, 13], [8, 14],
+  [7, 14], [6, 14],
 ];
 
-/// Home columns (6 cells each) leading to the centre, per seat index.
 const List<List<List<int>>> _homeLanes = [
-  [[7, 13], [7, 12], [7, 11], [7, 10], [7, 9], [7, 8]], // seat 0
-  [[1, 7], [2, 7], [3, 7], [4, 7], [5, 7], [6, 7]],     // seat 1
-  [[7, 1], [7, 2], [7, 3], [7, 4], [7, 5], [7, 6]],     // seat 2
-  [[13, 7], [12, 7], [11, 7], [10, 7], [9, 7], [8, 7]], // seat 3
+  [[7, 13], [7, 12], [7, 11], [7, 10], [7, 9], [7, 8]],
+  [[1, 7], [2, 7], [3, 7], [4, 7], [5, 7], [6, 7]],
+  [[7, 1], [7, 2], [7, 3], [7, 4], [7, 5], [7, 6]],
+  [[13, 7], [12, 7], [11, 7], [10, 7], [9, 7], [8, 7]],
 ];
 
-/// 2×2 base dot positions per seat (col,row), fractional grid coords.
 const List<List<List<double>>> _baseDots = [
-  [[1.5, 10.5], [3.5, 10.5], [1.5, 12.5], [3.5, 12.5]], // seat 0 bottom-left
-  [[1.5, 1.5], [3.5, 1.5], [1.5, 3.5], [3.5, 3.5]],     // seat 1 top-left
-  [[10.5, 1.5], [12.5, 1.5], [10.5, 3.5], [12.5, 3.5]], // seat 2 top-right
-  [[10.5, 10.5], [12.5, 10.5], [10.5, 12.5], [12.5, 12.5]], // seat 3 bottom-right
+  [[1.5, 10.5], [3.5, 10.5], [1.5, 12.5], [3.5, 12.5]],
+  [[1.5, 1.5],  [3.5, 1.5],  [1.5, 3.5],  [3.5, 3.5]],
+  [[10.5, 1.5], [12.5, 1.5], [10.5, 3.5], [12.5, 3.5]],
+  [[10.5, 10.5],[12.5, 10.5],[10.5, 12.5],[12.5, 12.5]],
 ];
 
+// Vivid seat colors: Red, Green, Yellow, Blue
 const List<Color> _seatColors = [
-  AppColors.ludoRed,
-  AppColors.ludoGreen,
-  AppColors.ludoYellow,
-  AppColors.ludoBlue,
+  Color(0xFFE53935), // red
+  Color(0xFF43A047), // green
+  Color(0xFFFDD835), // yellow
+  Color(0xFF1E88E5), // blue
 ];
 
-/// Centre of the grid cell (col,row) within a board of [size] px.
 Offset _cellCenter(num col, num row, double size) {
   final s = size / 15.0;
   return Offset((col + 0.5) * s, (row + 0.5) * s);
 }
 
-/// Screen position for a token given its seat + progress.
 Offset tokenPosition(int seatIndex, int tokenIndex, int progress, double size) {
   if (progress == -1) {
     final d = _baseDots[seatIndex % 4][tokenIndex % 4];
@@ -64,12 +60,14 @@ Offset tokenPosition(int seatIndex, int tokenIndex, int progress, double size) {
     final cell = _homeLanes[seatIndex % 4][progress - 51];
     return _cellCenter(cell[0], cell[1], size);
   }
-  return _cellCenter(7, 7, size); // home / centre
+  return _cellCenter(7, 7, size);
 }
+
+// ── Board widget ─────────────────────────────────────────────────────────────
 
 class LudoBoard extends StatefulWidget {
   final LudoState state;
-  final int? mySeatIndex; // highlight my movable tokens
+  final int? mySeatIndex;
   final void Function(int playerIdx, int tokenIndex)? onTokenTap;
 
   const LudoBoard({
@@ -83,10 +81,11 @@ class LudoBoard extends StatefulWidget {
   State<LudoBoard> createState() => _LudoBoardState();
 }
 
-class _LudoBoardState extends State<LudoBoard> with SingleTickerProviderStateMixin {
+class _LudoBoardState extends State<LudoBoard>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _breathingCtrl = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 1200),
+    duration: const Duration(milliseconds: 1400),
   )..repeat(reverse: true);
 
   @override
@@ -97,68 +96,92 @@ class _LudoBoardState extends State<LudoBoard> with SingleTickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final size = constraints.maxWidth;
-        // Restrict size slightly to account for the mahogany wood border padding
-        final borderSize = size - 16.0;
-        
-        return Container(
-          padding: const EdgeInsets.all(8),
+    return LayoutBuilder(builder: (context, constraints) {
+      final outer = constraints.maxWidth;
+      const framePad = 10.0;
+      final boardSize = outer - framePad * 2;
+
+      return Container(
+        width: outer,
+        height: outer,
+        decoration: BoxDecoration(
+          // Outermost dark shadow ring
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.75),
+                blurRadius: 24,
+                spreadRadius: 2,
+                offset: const Offset(0, 8)),
+            BoxShadow(
+                color: const Color(0xFFD4AF37).withOpacity(0.12),
+                blurRadius: 30,
+                spreadRadius: -4),
+          ],
+        ),
+        child: Container(
+          // Layer 1: Mahogany wood outer frame
           decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
             gradient: const LinearGradient(
-              colors: [Color(0xFF4E2C1B), Color(0xFF261005)],
+              colors: [Color(0xFF5C3317), Color(0xFF2E1A0A), Color(0xFF4A2812)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFF8C5D3A), width: 1.5),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.55),
-                blurRadius: 12,
-                offset: const Offset(0, 5),
-              ),
-            ],
           ),
-          child: SizedBox(
-            width: borderSize,
-            height: borderSize,
-            child: AnimatedBuilder(
-              animation: _breathingCtrl,
-              builder: (context, child) {
-                // Get active player seat (1-indexed: 1, 2, 3, 4) -> map to 0..3 index
-                final activeSeat = widget.state.players[widget.state.currentTurn].seat - 1;
-                return Stack(
-                  children: [
-                    // Static board.
-                    CustomPaint(
-                      size: Size(borderSize, borderSize), 
-                      painter: _BoardPainter(
-                        activeSeatIndex: activeSeat,
-                        breathing: _breathingCtrl.value,
+          child: Container(
+            margin: const EdgeInsets.all(3),
+            // Layer 2: Gold inlay line
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(17.5),
+              border: Border.all(color: const Color(0xFFD4AF37).withOpacity(0.6), width: 1.5),
+            ),
+            child: Container(
+              margin: const EdgeInsets.all(2),
+              padding: EdgeInsets.all(framePad - 6),
+              // Layer 3: Inner dark bezel
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(15),
+                color: const Color(0xFF0A0F1D),
+                border: Border.all(color: Colors.white.withOpacity(0.04), width: 1),
+              ),
+              child: SizedBox(
+                width: boardSize,
+                height: boardSize,
+                child: AnimatedBuilder(
+                  animation: _breathingCtrl,
+                  builder: (context, _) {
+                    final activeSeat =
+                        widget.state.players[widget.state.currentTurn].seat - 1;
+                    return Stack(children: [
+                      CustomPaint(
+                        size: Size(boardSize, boardSize),
+                        painter: _BoardPainter(
+                          activeSeatIndex: activeSeat,
+                          breathing: _breathingCtrl.value,
+                        ),
                       ),
-                    ),
-                    // Tokens.
-                    ...(_buildTokens(borderSize)),
-                  ],
-                );
-              },
+                      ..._buildTokens(boardSize),
+                    ]);
+                  },
+                ),
+              ),
             ),
           ),
-        );
-      },
-    );
+        ),
+      );
+    });
   }
 
   List<Widget> _buildTokens(double size) {
     final widgets = <Widget>[];
     final s = size / 15.0;
-    final tokenSize = s * 0.85;
+    final tokenSize = s * 0.82;
 
     for (var pi = 0; pi < widget.state.players.length; pi++) {
       final player = widget.state.players[pi];
-      final color = _seatColors[player.seat - 1 >= 0 ? (player.seat - 1) % 4 : pi % 4];
+      final seatIdx = (player.seat - 1).clamp(0, 3);
+      final color = _seatColors[seatIdx];
       final isMine = widget.mySeatIndex == pi;
       final canMoveNow = pi == widget.state.currentTurn &&
           widget.state.awaiting == 'move' &&
@@ -166,11 +189,11 @@ class _LudoBoardState extends State<LudoBoard> with SingleTickerProviderStateMix
 
       for (var ti = 0; ti < player.tokens.length; ti++) {
         final progress = player.tokens[ti];
-        final pos = tokenPosition(player.seat - 1, ti, progress, size);
+        final pos = tokenPosition(seatIdx, ti, progress, size);
         final movable = canMoveNow && widget.state.movableTokens.contains(ti);
 
         widgets.add(AnimatedPositioned(
-          duration: const Duration(milliseconds: 320),
+          duration: const Duration(milliseconds: 340),
           curve: Curves.easeOutBack,
           left: pos.dx - tokenSize / 2,
           top: pos.dy - tokenSize / 2,
@@ -178,7 +201,11 @@ class _LudoBoardState extends State<LudoBoard> with SingleTickerProviderStateMix
           height: tokenSize,
           child: GestureDetector(
             onTap: movable ? () => widget.onTokenTap?.call(pi, ti) : null,
-            child: _Token(color: color, highlighted: movable),
+            child: _Token(
+              color: color,
+              number: ti + 1,
+              highlighted: movable,
+            ),
           ),
         ));
       }
@@ -187,61 +214,80 @@ class _LudoBoardState extends State<LudoBoard> with SingleTickerProviderStateMix
   }
 }
 
+// ── Token widget ─────────────────────────────────────────────────────────────
+
 class _Token extends StatelessWidget {
   final Color color;
+  final int number;
   final bool highlighted;
-  const _Token({required this.color, required this.highlighted});
+  const _Token({required this.color, required this.number, required this.highlighted});
 
   @override
   Widget build(BuildContext context) {
-    Widget tokenBody = Container(
+    Widget body = Container(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: RadialGradient(
           colors: [
-            Colors.white.withOpacity(0.95), // Shiny reflections
+            Colors.white.withOpacity(0.98),
             color,
-            color.withOpacity(0.85),
-            Colors.black.withOpacity(0.45), // 3D spherical shade
+            color.withOpacity(0.8),
+            Colors.black.withOpacity(0.55),
           ],
-          stops: const [0.0, 0.25, 0.75, 1.0],
-          center: const Alignment(-0.35, -0.35),
-          radius: 0.9,
+          stops: const [0.0, 0.28, 0.72, 1.0],
+          center: const Alignment(-0.4, -0.4),
+          radius: 0.85,
         ),
         border: Border.all(
-          color: highlighted ? Colors.white : Colors.black.withOpacity(0.45),
-          width: highlighted ? 2.2 : 1.0,
+          color: highlighted
+              ? Colors.white
+              : color.withOpacity(0.7),
+          width: highlighted ? 2.5 : 1.5,
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.45),
-            blurRadius: 4,
-            offset: const Offset(1.5, 3),
-          ),
+              color: Colors.black.withOpacity(0.6),
+              blurRadius: 5,
+              offset: const Offset(1.5, 3.5)),
           if (highlighted)
             BoxShadow(
-              color: color.withOpacity(0.7),
-              blurRadius: 14,
-              spreadRadius: 2,
-            ),
+                color: color.withOpacity(0.8),
+                blurRadius: 16,
+                spreadRadius: 3),
         ],
       ),
       child: Center(
-        child: Container(
-          width: 5,
-          height: 5,
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.white70,
-          ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Specular highlight dot
+            Container(
+              width: 4,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 1),
+              decoration: const BoxDecoration(
+                  shape: BoxShape.circle, color: Colors.white),
+            ),
+            // Token number
+            Text(
+              '$number',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.9),
+                fontSize: 7,
+                fontWeight: FontWeight.w900,
+                shadows: [
+                  Shadow(
+                      color: Colors.black.withOpacity(0.7),
+                      blurRadius: 2)
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
 
-    if (highlighted) {
-      return _BouncingToken(child: tokenBody);
-    }
-    return tokenBody;
+    return highlighted ? _BouncingToken(child: body) : body;
   }
 }
 
@@ -256,7 +302,7 @@ class _BouncingTokenState extends State<_BouncingToken>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 600),
+    duration: const Duration(milliseconds: 550),
   )..repeat(reverse: true);
 
   @override
@@ -269,20 +315,17 @@ class _BouncingTokenState extends State<_BouncingToken>
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _ctrl,
-      builder: (_, child) {
-        final val = _ctrl.value;
-        return Transform.translate(
-          offset: Offset(0, -7 * val),
-          child: Transform.scale(
-            scale: 1.0 + 0.05 * val,
-            child: child,
-          ),
-        );
-      },
+      builder: (_, child) => Transform.translate(
+        offset: Offset(0, -7 * _ctrl.value),
+        child: Transform.scale(
+            scale: 1.0 + 0.06 * _ctrl.value, child: child),
+      ),
       child: widget.child,
     );
   }
 }
+
+// ── Board painter ─────────────────────────────────────────────────────────────
 
 class _BoardPainter extends CustomPainter {
   final int activeSeatIndex;
@@ -293,241 +336,447 @@ class _BoardPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final s = size.width / 15.0;
-    
-    // 1. Dark Board Background
-    final bg = Paint()..color = const Color(0xFF0F1422);
-    canvas.drawRect(Offset.zero & size, bg);
 
-    // 2. Base quadrants (6x6 base slots)
-    _drawBaseQuadrant(canvas, s, 0, 9, _seatColors[0], 0);  // bottom-left (seat 0)
-    _drawBaseQuadrant(canvas, s, 0, 0, _seatColors[1], 1);  // top-left (seat 1)
-    _drawBaseQuadrant(canvas, s, 9, 0, _seatColors[2], 2);  // top-right (seat 2)
-    _drawBaseQuadrant(canvas, s, 9, 9, _seatColors[3], 3);  // bottom-right (seat 3)
+    // ── 1. Board background ──────────────────────────────────────────────────
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xFF0A0F1D),
+    );
 
-    // 3. Track cells & safe cells
-    final stroke = Paint()
-      ..style = PaintingStyle.stroke
-      ..color = Colors.white.withOpacity(0.06)
-      ..strokeWidth = 0.8;
+    // Subtle dot texture
+    final dotP = Paint()..color = Colors.white.withOpacity(0.025);
+    for (double x = s * 0.5; x < size.width; x += s) {
+      for (double y = s * 0.5; y < size.height; y += s) {
+        canvas.drawCircle(Offset(x, y), 1.0, dotP);
+      }
+    }
 
+    // ── 2. Colored quadrants ─────────────────────────────────────────────────
+    _drawBaseQuadrant(canvas, s, 0, 9, _seatColors[0], 0);  // BL – Red
+    _drawBaseQuadrant(canvas, s, 0, 0, _seatColors[1], 1);  // TL – Green
+    _drawBaseQuadrant(canvas, s, 9, 0, _seatColors[2], 2);  // TR – Yellow
+    _drawBaseQuadrant(canvas, s, 9, 9, _seatColors[3], 3);  // BR – Blue
+
+    // ── 3. Track cells (cream/ivory) ─────────────────────────────────────────
     for (var i = 0; i < _track.length; i++) {
       final c = _track[i];
-      final rect = Rect.fromLTWH(c[0] * s, c[1] * s, s, s);
+      final rect = Rect.fromLTWH(c[0] * s + 0.8, c[1] * s + 0.8, s - 1.6, s - 1.6);
+      final rr = RRect.fromRectAndRadius(rect, Radius.circular(s * 0.18));
       final isSafe = kSafeCells.contains(i);
-      
-      final cellPaint = Paint()..style = PaintingStyle.fill;
+
+      // Cell fill
+      canvas.drawRRect(
+        rr,
+        Paint()
+          ..color = isSafe
+              ? const Color(0xFFF8F3E6)
+              : const Color(0xFFEEE9D8),
+      );
+
+      // Cell inner shadow (top-left lighter, bottom-right darker)
+      canvas.drawRRect(
+        rr,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2
+          ..color = const Color(0xFFD4C9B0),
+      );
+
       if (isSafe) {
-        cellPaint.shader = LinearGradient(
-          colors: [const Color(0xFF243049), const Color(0xFF161F33)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ).createShader(rect);
-      } else {
-        cellPaint.color = const Color(0xFF161B26);
-      }
-      
-      canvas.drawRect(rect, cellPaint);
-      canvas.drawRect(rect, stroke);
-      
-      if (isSafe) {
-        _drawSafeShield(canvas, rect.center, s * 0.35);
+        _drawStar(canvas, rect.center, s * 0.32, const Color(0xFFFFB300));
       }
     }
 
-    // 4. Colored home lanes & start cells
+    // ── 4. Colored home lanes ────────────────────────────────────────────────
     for (var seat = 0; seat < 4; seat++) {
       final color = _seatColors[seat];
-      for (final c in _homeLanes[seat]) {
-        final rect = Rect.fromLTWH(c[0] * s, c[1] * s, s, s);
-        final lanePaint = Paint()
-          ..shader = RadialGradient(
-            colors: [color.withOpacity(0.65), color.withOpacity(0.35)],
-          ).createShader(rect);
-        canvas.drawRect(rect, lanePaint);
-        canvas.drawRect(rect, stroke);
+      final lanes = _homeLanes[seat];
+      for (var j = 0; j < lanes.length; j++) {
+        final c = lanes[j];
+        final rect = Rect.fromLTWH(
+            c[0] * s + 0.8, c[1] * s + 0.8, s - 1.6, s - 1.6);
+        final rr = RRect.fromRectAndRadius(rect, Radius.circular(s * 0.18));
+
+        canvas.drawRRect(
+          rr,
+          Paint()
+            ..shader = LinearGradient(
+              colors: [color, color.withOpacity(0.7)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ).createShader(rect),
+        );
+        canvas.drawRRect(
+          rr,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..color = Colors.white.withOpacity(0.35)
+            ..strokeWidth = 1.0,
+        );
+
+        // Arrow on entry cell (j==0) and small triangle on last
+        if (j == 0) {
+          _drawArrow(canvas, rect.center, s * 0.22, seat);
+        }
       }
-      
-      // Start cell tint
-      final start = _track[kStartOffsets[seat]];
-      final sr = Rect.fromLTWH(start[0] * s, start[1] * s, s, s);
-      canvas.drawRect(
-        sr,
+
+      // Start cells (vivid color fill + star)
+      final startCoord = _track[kStartOffsets[seat]];
+      final sr = Rect.fromLTWH(
+          startCoord[0] * s + 0.8,
+          startCoord[1] * s + 0.8,
+          s - 1.6,
+          s - 1.6);
+      final srr = RRect.fromRectAndRadius(sr, Radius.circular(s * 0.18));
+      canvas.drawRRect(
+        srr,
         Paint()
           ..shader = LinearGradient(
-            colors: [color.withOpacity(0.7), color.withOpacity(0.4)],
+            colors: [color, color.withOpacity(0.8)],
           ).createShader(sr),
       );
-      canvas.drawRect(sr, stroke);
-      _drawSafeShield(canvas, sr.center, s * 0.28, color: color.withOpacity(0.6));
+      canvas.drawRRect(
+        srr,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..color = Colors.white.withOpacity(0.4)
+          ..strokeWidth = 1.0,
+      );
+      _drawStar(canvas, sr.center, s * 0.3, Colors.white.withOpacity(0.95));
     }
 
-    // 5. Central Home Triangle (3x3 center)
-    final cx = 6 * s, cy = 6 * s, cs = 3 * s;
-    canvas.drawRect(
-      Rect.fromLTWH(cx, cy, cs, cs),
-      Paint()..color = const Color(0xFF0F1524),
-    );
-    final center = Offset(7.5 * s, 7.5 * s);
-    final tri = [
-      [_seatColors[1], Offset(cx, cy), Offset(cx + cs, cy)],         // top → seat1
-      [_seatColors[2], Offset(cx + cs, cy), Offset(cx + cs, cy + cs)], // right → seat2
-      [_seatColors[3], Offset(cx + cs, cy + cs), Offset(cx, cy + cs)], // bottom → seat3
-      [_seatColors[0], Offset(cx, cy + cs), Offset(cx, cy)],         // left → seat0
-    ];
-    for (final t in tri) {
-      final p = Path()
-        ..moveTo((t[1] as Offset).dx, (t[1] as Offset).dy)
-        ..lineTo((t[2] as Offset).dx, (t[2] as Offset).dy)
-        ..lineTo(center.dx, center.dy)
-        ..close();
-      canvas.drawPath(
-        p,
-        Paint()
-          ..shader = RadialGradient(
-            center: Alignment.center,
-            radius: 1.0,
-            colors: [(t[0] as Color), (t[0] as Color).withOpacity(0.4)],
-          ).createShader(Rect.fromPoints(t[1] as Offset, center)),
-      );
-    }
-    
-    // Draw golden crown watermark in absolute center
-    final crownPaint = Paint()
-      ..color = const Color(0xFFFFD700).withOpacity(0.18)
-      ..style = PaintingStyle.fill;
-    final crown = Path()
-      ..moveTo(center.dx - 12, center.dy + 8)
-      ..lineTo(center.dx - 16, center.dy - 6)
-      ..lineTo(center.dx - 6, center.dy)
-      ..lineTo(center.dx, center.dy - 12) // center point of crown
-      ..lineTo(center.dx + 6, center.dy)
-      ..lineTo(center.dx + 16, center.dy - 6)
-      ..lineTo(center.dx + 12, center.dy + 8)
-      ..close();
-    canvas.drawPath(crown, crownPaint);
+    // ── 5. Center home area (3×3 at col 6, row 6) ───────────────────────────
+    _drawCenter(canvas, s, size);
   }
 
-  void _drawBaseQuadrant(Canvas canvas, double s, int col, int row, Color color, int seatIndex) {
+  // ── Quadrant base ──────────────────────────────────────────────────────────
+
+  void _drawBaseQuadrant(
+      Canvas canvas, double s, int col, int row, Color color, int seatIndex) {
     final outer = Rect.fromLTWH(col * s, row * s, 6 * s, 6 * s);
     final isActive = seatIndex == activeSeatIndex;
 
-    // Draw quadrant background gradient
-    final quadPaint = Paint()
-      ..shader = LinearGradient(
-        colors: [color.withOpacity(0.8), color.withOpacity(0.35)],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-      ).createShader(outer);
-    canvas.drawRect(outer, quadPaint);
-    
-    // Draw active turn breathing glow border
+    // Quadrant background — vivid gradient
+    canvas.drawRect(
+      outer,
+      Paint()
+        ..shader = LinearGradient(
+          colors: [
+            color,
+            color.withOpacity(0.75),
+            color.withOpacity(0.55),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ).createShader(outer),
+    );
+
+    // Active turn breathing glow
     if (isActive) {
       canvas.drawRect(
         outer,
         Paint()
           ..style = PaintingStyle.stroke
-          ..color = color.withOpacity(0.35 + 0.45 * breathing)
-          ..strokeWidth = 3.5 + 3.5 * breathing
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 3.5 + 3.5 * breathing),
+          ..color = Colors.white.withOpacity(0.15 + 0.35 * breathing)
+          ..strokeWidth = 4.0 + 3.0 * breathing
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 4.0 + 4.0 * breathing),
+      );
+      canvas.drawRect(
+        outer,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..color = color.withOpacity(0.4 + 0.5 * breathing)
+          ..strokeWidth = 2.5,
       );
     }
 
-    // Draw thin gold boundary
+    // Gold boundary
     canvas.drawRect(
       outer,
       Paint()
         ..style = PaintingStyle.stroke
-        ..color = const Color(0xFFFFD700).withOpacity(0.35)
-        ..strokeWidth = 1.0,
+        ..color = const Color(0xFFFFD700).withOpacity(0.45)
+        ..strokeWidth = 1.2,
     );
 
-    // Inner tray (glassmorphic token yard)
+    // Inner tray (dark recessed area)
     final inner = Rect.fromLTWH((col + 1) * s, (row + 1) * s, 4 * s, 4 * s);
+    final innerRR = RRect.fromRectAndRadius(inner, Radius.circular(s * 0.45));
     canvas.drawRRect(
-      RRect.fromRectAndRadius(inner, Radius.circular(s * 0.4)),
+      innerRR,
+      Paint()..color = Colors.black.withOpacity(0.45),
+    );
+    // Tray color tint
+    canvas.drawRRect(
+      innerRR,
       Paint()
-        ..color = const Color(0xFF0D121F).withOpacity(0.85)
+        ..color = color.withOpacity(0.12)
         ..style = PaintingStyle.fill,
     );
+    // Tray border
     canvas.drawRRect(
-      RRect.fromRectAndRadius(inner, Radius.circular(s * 0.4)),
+      innerRR,
       Paint()
         ..style = PaintingStyle.stroke
-        ..color = Colors.white.withOpacity(0.08)
+        ..color = Colors.white.withOpacity(0.12)
         ..strokeWidth = 1.0,
     );
 
-    // Draw 4 glossy pocket sockets for token positions
-    final dots = _baseDots[seatIndex];
-    for (final d in dots) {
+    // Token sockets
+    for (final d in _baseDots[seatIndex]) {
       final center = Offset(d[0] * s, d[1] * s);
-      final socketRadius = s * 0.65;
-      
-      // Outer shadow of socket
+      final r = s * 0.62;
+
+      // Deep shadow ring
+      canvas.drawCircle(center, r + 1.5,
+          Paint()..color = Colors.black.withOpacity(0.65));
+
+      // Socket base (recessed dark)
       canvas.drawCircle(
         center,
-        socketRadius,
-        Paint()
-          ..color = Colors.black.withOpacity(0.6)
-          ..style = PaintingStyle.fill,
-      );
-      
-      // Gold/metallic trim ring
-      canvas.drawCircle(
-        center,
-        socketRadius,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..color = const Color(0xFFFFD700).withOpacity(0.25)
-          ..strokeWidth = 1.2,
-      );
-      
-      // Inner deep shading
-      canvas.drawCircle(
-        center,
-        s * 0.45,
+        r,
         Paint()
           ..shader = RadialGradient(
-            colors: [Colors.black, color.withOpacity(0.12)],
-          ).createShader(Rect.fromCircle(center: center, radius: s * 0.45)),
+            colors: [
+              Colors.black.withOpacity(0.85),
+              color.withOpacity(0.15),
+            ],
+            center: const Alignment(0.3, 0.3),
+          ).createShader(Rect.fromCircle(center: center, radius: r)),
+      );
+
+      // Color ring around socket
+      canvas.drawCircle(
+        center,
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..color = color.withOpacity(0.5)
+          ..strokeWidth = 2.0,
+      );
+      // Gold accent ring
+      canvas.drawCircle(
+        center,
+        r - 2,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..color = const Color(0xFFFFD700).withOpacity(0.2)
+          ..strokeWidth = 1.0,
       );
     }
+
+    // Corner label (seat number / color initial)
+    final labels = ['R', 'G', 'Y', 'B'];
+    final tp = TextPainter(
+      text: TextSpan(
+        text: labels[seatIndex],
+        style: TextStyle(
+          color: Colors.white.withOpacity(0.25),
+          fontSize: s * 0.75,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(
+      canvas,
+      Offset(
+        outer.left + s * 0.15,
+        outer.top + s * 0.1,
+      ),
+    );
   }
 
-  void _drawSafeShield(Canvas canvas, Offset c, double r, {Color? color}) {
-    final activeColor = color ?? const Color(0xFFFFD700).withOpacity(0.85);
-    final paint = Paint()
-      ..color = activeColor
-      ..style = PaintingStyle.fill;
-      
-    // Draw shield shape path
-    final path = Path()
-      ..moveTo(c.dx, c.dy - r)
-      ..lineTo(c.dx + r * 0.8, c.dy - r * 0.4)
-      ..lineTo(c.dx + r * 0.7, c.dy + r * 0.3)
-      ..quadraticBezierTo(c.dx, c.dy + r, c.dx, c.dy + r)
-      ..quadraticBezierTo(c.dx - r * 0.7, c.dy + r * 0.3, c.dx - r * 0.7, c.dy + r * 0.3)
-      ..lineTo(c.dx - r * 0.8, c.dy - r * 0.4)
-      ..close();
-    canvas.drawPath(path, paint);
-    
-    // Inner star on shield
-    final starPaint = Paint()..color = const Color(0xFF0F1524);
-    final starPath = Path();
-    final starRadius = r * 0.45;
-    for (var i = 0; i < 5; i++) {
-      final a = -math.pi / 2 + i * 2 * math.pi / 5;
-      final p = Offset(c.dx + starRadius * math.cos(a), c.dy + starRadius * math.sin(a));
-      i == 0 ? starPath.moveTo(p.dx, p.dy) : starPath.lineTo(p.dx, p.dy);
-      final a2 = a + math.pi / 5;
-      final p2 = Offset(c.dx + starRadius * 0.4 * math.cos(a2), c.dy + starRadius * 0.4 * math.sin(a2));
-      starPath.lineTo(p2.dx, p2.dy);
+  // ── Center area ────────────────────────────────────────────────────────────
+
+  void _drawCenter(Canvas canvas, double s, Size size) {
+    final cx = 6 * s, cy = 6 * s, cs = 3 * s;
+    final centerRect = Rect.fromLTWH(cx, cy, cs, cs);
+    final centerPt = Offset(7.5 * s, 7.5 * s);
+
+    // Background
+    canvas.drawRect(centerRect, Paint()..color = const Color(0xFF0A0F1D));
+
+    // 4 colored triangles pointing to center
+    final triangles = [
+      // [color, corner1, corner2]
+      [_seatColors[1], Offset(cx, cy), Offset(cx + cs, cy)],       // top → green
+      [_seatColors[2], Offset(cx + cs, cy), Offset(cx + cs, cy + cs)], // right → yellow
+      [_seatColors[3], Offset(cx + cs, cy + cs), Offset(cx, cy + cs)], // bottom → blue
+      [_seatColors[0], Offset(cx, cy + cs), Offset(cx, cy)],       // left → red
+    ];
+
+    for (final t in triangles) {
+      final color = t[0] as Color;
+      final p1 = t[1] as Offset;
+      final p2 = t[2] as Offset;
+      final path = Path()
+        ..moveTo(p1.dx, p1.dy)
+        ..lineTo(p2.dx, p2.dy)
+        ..lineTo(centerPt.dx, centerPt.dy)
+        ..close();
+      canvas.drawPath(
+        path,
+        Paint()
+          ..shader = LinearGradient(
+            colors: [color.withOpacity(0.95), color.withOpacity(0.5)],
+            begin: Alignment.center,
+            end: Alignment.topCenter,
+          ).createShader(
+              Rect.fromPoints(p1, centerPt)),
+      );
+      // Edge highlight on each triangle
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..color = Colors.white.withOpacity(0.12)
+          ..strokeWidth = 0.8,
+      );
     }
-    starPath.close();
-    canvas.drawPath(starPath, starPaint);
+
+    // Center home circle
+    canvas.drawCircle(
+      centerPt,
+      s * 0.85,
+      Paint()..color = const Color(0xFF0A0F1D),
+    );
+    canvas.drawCircle(
+      centerPt,
+      s * 0.85,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..color = const Color(0xFFD4AF37).withOpacity(0.5)
+        ..strokeWidth = 1.5,
+    );
+
+    // Golden crown/home icon
+    _drawCrown(canvas, centerPt, s * 0.65);
+  }
+
+  // ── Star ──────────────────────────────────────────────────────────────────
+
+  void _drawStar(Canvas canvas, Offset c, double r, Color color) {
+    // Outer glow
+    canvas.drawCircle(
+      c,
+      r * 1.5,
+      Paint()
+        ..color = color.withOpacity(0.2)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
+    );
+
+    // 6-pointed star (two overlapping triangles)
+    final path1 = _starTriangle(c, r, 0);
+    final path2 = _starTriangle(c, r, math.pi);
+
+    canvas.drawPath(path1, Paint()..color = color);
+    canvas.drawPath(path2, Paint()..color = color);
+
+    // Center dot
+    canvas.drawCircle(c, r * 0.22, Paint()..color = Colors.white.withOpacity(0.9));
+  }
+
+  Path _starTriangle(Offset c, double r, double rotation) {
+    final path = Path();
+    for (var i = 0; i < 3; i++) {
+      final angle = rotation + i * 2 * math.pi / 3 - math.pi / 2;
+      final p = Offset(c.dx + r * math.cos(angle), c.dy + r * math.sin(angle));
+      i == 0 ? path.moveTo(p.dx, p.dy) : path.lineTo(p.dx, p.dy);
+    }
+    return path..close();
+  }
+
+  // ── Arrow (into home lane) ─────────────────────────────────────────────────
+
+  void _drawArrow(Canvas canvas, Offset c, double r, int seat) {
+    // seat 0 = up, seat 1 = right, seat 2 = down, seat 3 = left
+    final angles = [-math.pi / 2, 0, math.pi / 2, math.pi];
+    final angle = angles[seat];
+    final tip = Offset(c.dx + r * math.cos(angle), c.dy + r * math.sin(angle));
+    final base1 = Offset(
+        c.dx + r * 0.7 * math.cos(angle + math.pi * 0.6),
+        c.dy + r * 0.7 * math.sin(angle + math.pi * 0.6));
+    final base2 = Offset(
+        c.dx + r * 0.7 * math.cos(angle - math.pi * 0.6),
+        c.dy + r * 0.7 * math.sin(angle - math.pi * 0.6));
+    final path = Path()
+      ..moveTo(tip.dx, tip.dy)
+      ..lineTo(base1.dx, base1.dy)
+      ..lineTo(base2.dx, base2.dy)
+      ..close();
+    canvas.drawPath(path, Paint()..color = Colors.white.withOpacity(0.85));
+  }
+
+  // ── Crown watermark ────────────────────────────────────────────────────────
+
+  void _drawCrown(Canvas canvas, Offset c, double r) {
+    final goldPaint = Paint()
+      ..color = const Color(0xFFD4AF37).withOpacity(0.85)
+      ..style = PaintingStyle.fill;
+
+    // Crown base bar
+    final barH = r * 0.25;
+    final barW = r * 1.6;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(
+            center: Offset(c.dx, c.dy + r * 0.4),
+            width: barW,
+            height: barH),
+        Radius.circular(barH * 0.5),
+      ),
+      goldPaint,
+    );
+
+    // Crown peaks (5 points)
+    final path = Path();
+    final peakPositions = [-r * 0.7, -r * 0.35, 0.0, r * 0.35, r * 0.7];
+    final peakHeights = [r * 0.55, r * 0.75, r * 0.9, r * 0.75, r * 0.55];
+    final baseY = c.dy + r * 0.28;
+
+    path.moveTo(c.dx - r * 0.8, baseY);
+    for (var i = 0; i < peakPositions.length; i++) {
+      path.lineTo(c.dx + peakPositions[i], c.dy - peakHeights[i] + r * 0.25);
+    }
+    path.lineTo(c.dx + r * 0.8, baseY);
+    path.close();
+    canvas.drawPath(path, goldPaint);
+
+    // Crown jewel dots
+    final jewels = [
+      [c.dx - r * 0.35, c.dy - r * 0.08],
+      [c.dx, c.dy - r * 0.25],
+      [c.dx + r * 0.35, c.dy - r * 0.08],
+    ];
+    for (final j in jewels) {
+      canvas.drawCircle(
+        Offset(j[0], j[1]),
+        r * 0.1,
+        Paint()..color = Colors.white.withOpacity(0.9),
+      );
+    }
+
+    // "HOME" text below crown
+    final tp = TextPainter(
+      text: TextSpan(
+        text: 'HOME',
+        style: TextStyle(
+          color: const Color(0xFFD4AF37).withOpacity(0.7),
+          fontSize: r * 0.32,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 1.5,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(
+      canvas,
+      Offset(c.dx - tp.width / 2, c.dy + r * 0.5),
+    );
   }
 
   @override
-  bool shouldRepaint(covariant _BoardPainter oldDelegate) =>
-      oldDelegate.activeSeatIndex != activeSeatIndex || oldDelegate.breathing != breathing;
+  bool shouldRepaint(covariant _BoardPainter old) =>
+      old.activeSeatIndex != activeSeatIndex || old.breathing != breathing;
 }
