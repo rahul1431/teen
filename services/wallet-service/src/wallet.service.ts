@@ -165,7 +165,7 @@ export class WalletService {
     const shouldRelease = !client
     try {
       if (!client) await c.query('BEGIN')
-      
+
       const walletRes = await c.query(
         'SELECT locked_balance, real_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
         [userId]
@@ -184,9 +184,9 @@ export class WalletService {
       )
 
       await c.query(
-        `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, status, description)
-         VALUES ($1, 'game_credit', 'real', $2, $3, $4, 'completed', 'Locked funds unlocked/refunded')`,
-        [userId, amount, balanceBefore, balanceAfter]
+        `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, idempotency_key, status, description)
+         VALUES ($1, 'game_credit', 'real', $2, $3, $4, $5, 'completed', 'Locked funds unlocked/refunded')`,
+        [userId, amount, balanceBefore, balanceAfter, crypto.randomUUID()]
       )
 
       if (!client) await c.query('COMMIT')
@@ -198,8 +198,9 @@ export class WalletService {
     }
   }
 
-  // Consume locked funds when a game is successfully completed (debits from locked_balance)
-  async consumeLockedFunds(userId: string, amount: number, client?: PoolClient): Promise<void> {
+  // Consume locked funds when a game is successfully completed (debits from locked_balance).
+  // roomId is used as part of the idempotency key so retries don't double-debit.
+  async consumeLockedFunds(userId: string, amount: number, client?: PoolClient, roomId?: string): Promise<void> {
     const c = client || await this.db.connect()
     const shouldRelease = !client
     try {
@@ -213,8 +214,7 @@ export class WalletService {
       const wallet = walletRes.rows[0]
       const locked = parseFloat(wallet.locked_balance)
 
-      // Clamp to actual locked amount to handle edge-case discrepancies
-      // (e.g. network retry incremented entry_fee_deducted but lock failed).
+      // Clamp to actual locked amount to handle edge-case discrepancies.
       const toConsume = Math.min(locked, amount)
       if (toConsume <= 0) return
 
@@ -222,15 +222,21 @@ export class WalletService {
         console.warn(`[wallet] consumeLockedFunds: user=${userId} locked=${locked} < amount=${amount} — consuming ${toConsume} (clamped)`)
       }
 
+      const ikey = roomId ? `consume:${roomId}:${userId}` : crypto.randomUUID()
+
+      // Check idempotency to prevent double-debit on retry
+      const existing = await c.query('SELECT id FROM wallet_transactions WHERE idempotency_key = $1', [ikey])
+      if (existing.rows.length > 0) return
+
       await c.query(
         'UPDATE wallets SET locked_balance = locked_balance - $1, updated_at = NOW() WHERE user_id = $2',
         [toConsume, userId]
       )
 
       await c.query(
-        `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, status, description)
-         VALUES ($1, 'game_debit', 'real', $2, 0, 0, 'completed', 'Locked funds consumed by gameplay')`,
-        [userId, toConsume]
+        `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, idempotency_key, status, description)
+         VALUES ($1, 'game_debit', 'real', $2, $3, $4, $5, 'completed', 'Locked funds consumed by gameplay')`,
+        [userId, toConsume, locked, locked - toConsume, ikey]
       )
 
       if (!client) await c.query('COMMIT')

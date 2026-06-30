@@ -336,7 +336,7 @@ async function start() {
       
       // 1. Consume locked funds for all participants
       for (const p of body.players) {
-        await walletSvc.consumeLockedFunds(p.user_id, p.entry_fee, client)
+        await walletSvc.consumeLockedFunds(p.user_id, p.entry_fee, client, body.room_id)
       }
 
       // 2. If there is a winner, credit the prize to their real wallet
