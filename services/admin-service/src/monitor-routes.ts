@@ -96,4 +96,16 @@ export async function registerMonitorRoutes(
       }
     }
   )
+
+  // Server health: PM2 processes + system RAM + Docker containers
+  app.get('/api/admin/monitor/server-health', { onRequest: [authenticate] }, async (_req, reply) => {
+    try {
+      const res = await axios.get(`${MONITOR_URL}/api/monitor/server-health`)
+      return reply.send(res.data)
+    } catch (err: any) {
+      return reply.code(err.response?.status ?? 500).send(
+        err.response?.data ?? { success: false, error: 'App monitor service unavailable' }
+      )
+    }
+  })
 }

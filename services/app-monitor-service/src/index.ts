@@ -4,6 +4,8 @@ import Fastify from 'fastify'
 import { Pool } from 'pg'
 import Redis from 'ioredis'
 import pino from 'pino'
+import os from 'os'
+import { execSync } from 'child_process'
 import { MonitorIngestor } from './monitor-ingestor'
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' })
@@ -136,6 +138,69 @@ app.get<{ Querystring: { hours?: string } }>(
     }
   }
 )
+
+app.get('/api/monitor/server-health', async (_req, reply) => {
+  try {
+    // PM2 process list
+    let processes: object[] = []
+    try {
+      const raw = execSync('pm2 jlist 2>/dev/null', { timeout: 5000 }).toString()
+      const list: any[] = JSON.parse(raw)
+      processes = list.map(p => ({
+        name:        p.name,
+        status:      p.pm2_env?.status ?? 'unknown',
+        memory_mb:   Math.round((p.monit?.memory ?? 0) / 1024 / 1024),
+        cpu_pct:     p.monit?.cpu ?? 0,
+        restarts:    p.pm2_env?.restart_time ?? 0,
+        uptime_ms:   p.pm2_env?.pm_uptime ? (Date.now() - p.pm2_env.pm_uptime) : 0,
+        pid:         p.pid ?? null,
+      }))
+    } catch { /* PM2 not available in this env — skip */ }
+
+    // System memory via OS module
+    const totalMem  = Math.round(os.totalmem()  / 1024 / 1024)
+    const freeMem   = Math.round(os.freemem()   / 1024 / 1024)
+    const usedMem   = totalMem - freeMem
+    const loadAvg   = os.loadavg()
+
+    // Docker containers
+    let containers: object[] = []
+    try {
+      const raw = execSync(
+        'docker ps --format "{{.Names}}|{{.Status}}|{{.State}}" 2>/dev/null', { timeout: 5000 }
+      ).toString().trim()
+      if (raw) {
+        containers = raw.split('\n').map(line => {
+          const [name, status, state] = line.split('|')
+          const healthy = status?.includes('(healthy)') ? 'healthy'
+            : status?.includes('(unhealthy)') ? 'unhealthy'
+            : 'no-healthcheck'
+          return { name, state, health: healthy }
+        })
+      }
+    } catch { /* Docker not available */ }
+
+    return reply.send({
+      success: true,
+      data: {
+        processes,
+        system: {
+          total_ram_mb: totalMem,
+          used_ram_mb:  usedMem,
+          free_ram_mb:  freeMem,
+          load_avg_1m:  Math.round(loadAvg[0] * 100) / 100,
+          load_avg_5m:  Math.round(loadAvg[1] * 100) / 100,
+          cpu_count:    os.cpus().length,
+        },
+        docker: containers,
+        checked_at: new Date().toISOString(),
+      }
+    })
+  } catch (err: any) {
+    logger.error({ err }, 'server-health error')
+    return reply.code(500).send({ success: false, error: err.message })
+  }
+})
 
 async function start() {
   if (redis.status === 'wait') await redis.connect()

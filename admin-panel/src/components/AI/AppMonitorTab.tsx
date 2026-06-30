@@ -1,10 +1,10 @@
 // admin-panel/src/components/AI/AppMonitorTab.tsx
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Card, Row, Col, Statistic, Table, Tag, Select, Spin, Badge, Radio, Typography
+  Card, Row, Col, Statistic, Table, Tag, Select, Spin, Badge, Radio, Typography, Progress, Tooltip
 } from 'antd'
 import {
-  BugOutlined, ApiOutlined, MobileOutlined, WifiOutlined
+  BugOutlined, ApiOutlined, MobileOutlined, WifiOutlined, CloudServerOutlined, DatabaseOutlined
 } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
@@ -55,6 +55,35 @@ interface Session {
   last_seen_at: string
   event_count: number
   status: 'active' | 'ended'
+}
+
+interface Pm2Process {
+  name: string
+  status: string
+  memory_mb: number
+  cpu_pct: number
+  restarts: number
+  uptime_ms: number
+}
+
+interface DockerContainer {
+  name: string
+  state: string
+  health: string
+}
+
+interface ServerHealth {
+  processes: Pm2Process[]
+  system: {
+    total_ram_mb: number
+    used_ram_mb: number
+    free_ram_mb: number
+    load_avg_1m: number
+    load_avg_5m: number
+    cpu_count: number
+  }
+  docker: DockerContainer[]
+  checked_at: string
 }
 
 // SVG bar chart — follows Dashboard.tsx custom SVG pattern
@@ -108,24 +137,27 @@ export function AppMonitorTab() {
   const [apiHealth, setApiHealth] = useState<ApiEndpoint[]>([])
   const [funnel, setFunnel] = useState<ScreenFunnel[]>([])
   const [sessions, setSessions] = useState<Session[]>([])
+  const [serverHealth, setServerHealth] = useState<ServerHealth | null>(null)
   const [loading, setLoading] = useState(true)
   const [errorHours, setErrorHours] = useState(24)
   const [apiHours, setApiHours] = useState(1)
 
   const load = useCallback(async () => {
     try {
-      const [statsRes, errorsRes, apiRes, funnelRes, sessionsRes] = await Promise.allSettled([
+      const [statsRes, errorsRes, apiRes, funnelRes, sessionsRes, serverRes] = await Promise.allSettled([
         adminApi.get('/monitor/stats'),
         adminApi.get('/monitor/errors', { params: { hours: errorHours, limit: 50 } }),
         adminApi.get('/monitor/api-health', { params: { hours: apiHours } }),
         adminApi.get('/monitor/screen-funnel', { params: { hours: 24 } }),
         adminApi.get('/monitor/sessions', { params: { limit: 10, offset: 0 } }),
+        adminApi.get('/monitor/server-health'),
       ])
       if (statsRes.status === 'fulfilled') setStats(statsRes.value.data?.data ?? null)
       if (errorsRes.status === 'fulfilled') setErrors(errorsRes.value.data?.data ?? [])
       if (apiRes.status === 'fulfilled') setApiHealth(apiRes.value.data?.data ?? [])
       if (funnelRes.status === 'fulfilled') setFunnel(funnelRes.value.data?.data ?? [])
       if (sessionsRes.status === 'fulfilled') setSessions(sessionsRes.value.data?.data ?? [])
+      if (serverRes.status === 'fulfilled') setServerHealth(serverRes.value.data?.data ?? null)
     } finally {
       setLoading(false)
     }
@@ -276,7 +308,7 @@ export function AppMonitorTab() {
       </Card>
 
       {/* ── Section 4: Recent Sessions ── */}
-      <Card size="small" title={<span><MobileOutlined /> Recent Sessions</span>}>
+      <Card size="small" title={<span><MobileOutlined /> Recent Sessions</span>} style={{ marginBottom: 24 }}>
         <Table<Session>
           dataSource={sessions}
           rowKey="session_id"
@@ -314,6 +346,141 @@ export function AppMonitorTab() {
           ]}
         />
       </Card>
+
+      {/* ── Section 5: Server Health (PM2 + RAM + Docker) ── */}
+      {serverHealth && (
+        <>
+          {/* System RAM + Load */}
+          <Row gutter={16} style={{ marginBottom: 16 }}>
+            <Col span={16}>
+              <Card size="small" title={<span><CloudServerOutlined /> Server RAM</span>}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <div style={{ flex: 1 }}>
+                    <Progress
+                      percent={Math.round((serverHealth.system.used_ram_mb / serverHealth.system.total_ram_mb) * 100)}
+                      strokeColor={
+                        serverHealth.system.used_ram_mb / serverHealth.system.total_ram_mb > 0.85 ? '#ff4d4f'
+                        : serverHealth.system.used_ram_mb / serverHealth.system.total_ram_mb > 0.70 ? '#faad14'
+                        : '#52c41a'
+                      }
+                      format={() =>
+                        `${serverHealth.system.used_ram_mb}MB / ${serverHealth.system.total_ram_mb}MB`
+                      }
+                    />
+                  </div>
+                  <Statistic
+                    title="Load 1m"
+                    value={serverHealth.system.load_avg_1m}
+                    valueStyle={{ fontSize: 16, color: serverHealth.system.load_avg_1m > serverHealth.system.cpu_count ? '#ff4d4f' : '#52c41a' }}
+                  />
+                  <Statistic
+                    title="Load 5m"
+                    value={serverHealth.system.load_avg_5m}
+                    valueStyle={{ fontSize: 16 }}
+                  />
+                  <Statistic
+                    title="CPUs"
+                    value={serverHealth.system.cpu_count}
+                    valueStyle={{ fontSize: 16 }}
+                  />
+                </div>
+              </Card>
+            </Col>
+            <Col span={8}>
+              <Card size="small" title={<span><DatabaseOutlined /> Docker</span>}>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  {serverHealth.docker.length === 0 && <Text type="secondary">No containers</Text>}
+                  {serverHealth.docker.map(c => (
+                    <Tooltip key={c.name} title={`State: ${c.state} | Health: ${c.health}`}>
+                      <Tag color={c.state === 'running' && c.health !== 'unhealthy' ? 'green' : 'red'}>
+                        {c.name.replace('teen_', '')}
+                        {' '}
+                        <Badge
+                          status={c.state === 'running' ? (c.health === 'healthy' ? 'success' : 'warning') : 'error'}
+                        />
+                      </Tag>
+                    </Tooltip>
+                  ))}
+                </div>
+              </Card>
+            </Col>
+          </Row>
+
+          {/* PM2 Process Table */}
+          <Card
+            size="small"
+            title={<span><CloudServerOutlined /> PM2 Processes</span>}
+            extra={<Text type="secondary" style={{ fontSize: 11 }}>Updated {new Date(serverHealth.checked_at).toLocaleTimeString()}</Text>}
+          >
+            <Table<Pm2Process>
+              dataSource={serverHealth.processes}
+              rowKey="name"
+              size="small"
+              pagination={false}
+              rowClassName={r => r.status !== 'online' ? 'error-row' : ''}
+              onRow={r => ({ style: { background: r.status !== 'online' ? '#fff1f0' : undefined } })}
+              columns={[
+                {
+                  title: 'Service',
+                  dataIndex: 'name',
+                  render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text>,
+                },
+                {
+                  title: 'Status',
+                  dataIndex: 'status',
+                  width: 90,
+                  render: v => (
+                    <Badge
+                      status={v === 'online' ? 'success' : 'error'}
+                      text={<span style={{ fontSize: 11 }}>{v}</span>}
+                    />
+                  ),
+                },
+                {
+                  title: 'RAM',
+                  dataIndex: 'memory_mb',
+                  width: 80,
+                  sorter: (a, b) => a.memory_mb - b.memory_mb,
+                  render: v => (
+                    <Tag color={v > 300 ? 'red' : v > 150 ? 'orange' : 'default'} style={{ fontSize: 11 }}>
+                      {v}MB
+                    </Tag>
+                  ),
+                },
+                {
+                  title: 'CPU%',
+                  dataIndex: 'cpu_pct',
+                  width: 65,
+                  sorter: (a, b) => a.cpu_pct - b.cpu_pct,
+                  render: v => <Text style={{ fontSize: 11 }}>{v}%</Text>,
+                },
+                {
+                  title: 'Restarts',
+                  dataIndex: 'restarts',
+                  width: 75,
+                  sorter: (a, b) => a.restarts - b.restarts,
+                  render: v => (
+                    <Tag color={v > 20 ? 'red' : v > 5 ? 'orange' : 'default'} style={{ fontSize: 11 }}>
+                      {v}
+                    </Tag>
+                  ),
+                },
+                {
+                  title: 'Uptime',
+                  dataIndex: 'uptime_ms',
+                  width: 90,
+                  render: (v: number) => {
+                    if (!v) return '-'
+                    const h = Math.floor(v / 3_600_000)
+                    const m = Math.floor((v % 3_600_000) / 60_000)
+                    return h > 0 ? `${h}h ${m}m` : `${m}m`
+                  },
+                },
+              ]}
+            />
+          </Card>
+        </>
+      )}
     </Spin>
   )
 }
