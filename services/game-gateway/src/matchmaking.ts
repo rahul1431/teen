@@ -513,6 +513,7 @@ export class MatchmakingService {
           winner_id: effectiveWinnerId,
           prize: effectivePrize,
           players,
+          idempotency_key: `settle_${roomId}`,
         }),
       })
       if (!settleRes.ok) {
@@ -565,6 +566,7 @@ export class MatchmakingService {
           winner_id: effectiveWinnerId,
           prize: effectivePrize,
           players,
+          idempotency_key: `settle_${roomId}`,
         }),
       })
       if (!settleRes.ok) {

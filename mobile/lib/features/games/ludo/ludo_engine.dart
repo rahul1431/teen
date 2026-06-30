@@ -38,12 +38,12 @@ class LudoPlayer {
   factory LudoPlayer.fromJson(Map<String, dynamic> j) => LudoPlayer(
         userId: (j['user_id'] ?? j['userId'] ?? '').toString(),
         username: (j['username'] ?? 'Player').toString(),
-        seat: (j['seat'] ?? 1) as int,
+        seat: ((j['seat'] ?? 1) as num).toInt(),
         isBot: (j['is_bot'] ?? j['isBot'] ?? false) as bool,
         color: (j['color'] ?? 'red').toString(),
-        tokens: ((j['tokens'] as List?)?.map((e) => e as int).toList()) ??
+        tokens: ((j['tokens'] as List?)?.map((e) => (e as num).toInt()).toList()) ??
             [-1, -1, -1, -1],
-        finished: (j['finished'] ?? 0) as int,
+        finished: ((j['finished'] ?? 0) as num).toInt(),
         status: (j['status'] ?? 'active').toString(),
       );
 }
@@ -82,13 +82,13 @@ class LudoState {
             .map((e) => LudoPlayer.fromJson(e as Map<String, dynamic>))
             .toList(),
         status: (j['status'] ?? 'active').toString(),
-        currentTurn: (j['current_turn'] ?? j['currentTurn'] ?? 0) as int,
-        dice: j['dice'] as int?,
+        currentTurn: ((j['current_turn'] ?? j['currentTurn'] ?? 0) as num).toInt(),
+        dice: j['dice'] != null ? (j['dice'] as num).toInt() : null,
         movableTokens:
-            ((j['movable_tokens'] as List?)?.map((e) => e as int).toList()) ??
+            ((j['movable_tokens'] as List?)?.map((e) => (e as num).toInt()).toList()) ??
                 const [],
         awaiting: (j['awaiting'] ?? 'roll').toString(),
-        consecutiveSixes: (j['consecutive_sixes'] ?? 0) as int,
+        consecutiveSixes: ((j['consecutive_sixes'] ?? 0) as num).toInt(),
         winnerId: (j['winner_id'] ?? j['winnerId'])?.toString(),
         round: (j['round'] ?? 1) as int,
       );

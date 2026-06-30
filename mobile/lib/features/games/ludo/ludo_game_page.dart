@@ -198,7 +198,7 @@ class _LudoGamePageState extends State<LudoGamePage>
             ? (newState.currentTurn + (newState.awaiting == 'move' ? 0 : -1)) % newState.players.length
             : newState.currentTurn;
         final rollerName = newState.players[rollerIdx.clamp(0, newState.players.length - 1)].username;
-        _showRoll(rollerName, la['dice'] as int);
+        _showRoll(rollerName, (la['dice'] as num).toInt());
       }
       if (captured) SoundService.instance.play(Sfx.tokenCapture);
       else SoundService.instance.play(Sfx.tokenMove);
@@ -626,7 +626,8 @@ class _LudoGamePageState extends State<LudoGamePage>
   Widget _controlBar(LudoState s) {
     final canRoll = _isMyTurn && s.awaiting == 'roll' && !_rolling && !_botBusy;
     final myTurn = _isMyTurn;
-    final activePlayer = s.players[s.currentTurn];
+    final turnIdx = s.currentTurn.clamp(0, s.players.length - 1);
+    final activePlayer = s.players[turnIdx];
     final seatColors = [AppColors.ludoRed, AppColors.ludoGreen, AppColors.ludoYellow, AppColors.ludoBlue];
     final activeColor = seatColors[(activePlayer.seat - 1) % 4];
 
