@@ -43,12 +43,20 @@ mkdir -p /opt/teen/downloads
 echo "  Directories created."
 
 echo "==> Setting up Nginx..."
-mkdir -p /etc/nginx/snippets
-cp "$BASE/infra/nginx/proxy-headers.conf" /etc/nginx/snippets/
-cp "$BASE/infra/nginx/game.myonlinejoker.com.conf" /etc/nginx/sites-available/game.myonlinejoker.com
-ln -sf /etc/nginx/sites-available/game.myonlinejoker.com /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default
-nginx -t && systemctl reload nginx
+HESTIA_NGINX_DIR="/home/admin/conf/web/game.myonlinejoker.com"
+if [ -d "$HESTIA_NGINX_DIR" ]; then
+  # HestiaCP — append custom location blocks via the _api include file
+  cp "$BASE/infra/nginx/game.myonlinejoker.com.conf" "$HESTIA_NGINX_DIR/nginx.conf_api"
+  cp "$BASE/infra/nginx/game.myonlinejoker.com.conf" "$HESTIA_NGINX_DIR/nginx.ssl.conf_api"
+  nginx -t && systemctl reload nginx
+else
+  mkdir -p /etc/nginx/snippets
+  cp "$BASE/infra/nginx/proxy-headers.conf" /etc/nginx/snippets/
+  cp "$BASE/infra/nginx/game.myonlinejoker.com.conf" /etc/nginx/sites-available/game.myonlinejoker.com
+  ln -sf /etc/nginx/sites-available/game.myonlinejoker.com /etc/nginx/sites-enabled/
+  rm -f /etc/nginx/sites-enabled/default
+  nginx -t && systemctl reload nginx
+fi
 
 echo "==> Starting DB containers..."
 cd "$BASE"
