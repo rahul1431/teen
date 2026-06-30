@@ -29,6 +29,10 @@ class SocketService {
   Timer? _reconnectTimer;
   Timer? _pingTimer;
 
+  // When true, _freshToken() forces a refresh even if the token hasn't expired
+  // by clock. Set when the server closes with code 4001 (token rejected).
+  bool _forceRefresh = false;
+
   // Observable diagnostics — surfaced in the lobby debug panel.
   final ValueNotifier<String> status = ValueNotifier('idle');
   final ValueNotifier<String> lastError = ValueNotifier('');
@@ -38,6 +42,9 @@ class SocketService {
   // compiles fine but breaks host resolution.
   String get url => AppConfig.socketUrl.trim();
   bool get isConnected => _connected;
+
+  /// Called by AviatorSocketService when it receives close code 4001.
+  void markForceRefresh() => _forceRefresh = true;
 
   /// WebSocket endpoint: https://host -> wss://host/ws (and ws:// for http).
   Uri _wsUri(String token) {
@@ -55,17 +62,38 @@ class SocketService {
     if (_connected || _connecting) return;
     _connecting = true;
     _manuallyClosed = false;
+
+    // Reset the reconnect counter when connect() is called externally (e.g.,
+    // when a game lobby opens). Without this, hitting the 20-attempt cap once
+    // prevents further auto-retries even in a fresh navigation.
+    if (_reconnectAttempts >= 20) _reconnectAttempts = 0;
+
     status.value = 'reading-token';
 
-    // The access token expires in 15m. Unlike Dio, the socket does not
-    // auto-refresh, so read a fresh token (refreshing first if expired).
-    final token = await _freshToken();
+    String? token;
+    try {
+      token = await _freshToken();
+    } catch (_) {
+      token = null;
+    }
     tokenPresent = token != null && token.isNotEmpty;
+
     if (token == null || token.isEmpty) {
-      status.value = 'no-token';
-      lastError.value = 'No auth token — please log in again';
       _connecting = false;
-      print('[Socket] connect() skipped: no auth token');
+      print('[Socket] connect(): no token / refresh failed');
+      if (!_manuallyClosed && _reconnectAttempts < 4) {
+        // Refresh may have failed due to a transient network error — retry.
+        status.value = 'auth-retry';
+        lastError.value = 'Token refresh failed — retrying in 8s';
+        _reconnectAttempts++;
+        _reconnectTimer = Timer(const Duration(seconds: 8), () {
+          _channel = null;
+          connect();
+        });
+      } else {
+        status.value = 'no-token';
+        lastError.value = 'Session expired — please log in again';
+      }
       return;
     }
 
@@ -128,10 +156,19 @@ class SocketService {
   }
 
   void _onClosed() {
+    final code = _channel?.closeCode;
     _connected = false;
     _pingTimer?.cancel();
     _sub?.cancel();
     _sub = null;
+
+    // Server closes with 4001 when the token is invalid or expired.
+    // Force a fresh refresh on the next connect attempt.
+    if (code == 4001) {
+      _forceRefresh = true;
+      print('[Socket] close 4001 — will force token refresh before next connect');
+    }
+
     if (_manuallyClosed) {
       status.value = 'disconnected';
       return;
@@ -209,14 +246,22 @@ class SocketService {
     _reconnectHandler = null;
   }
 
-  // --- Token freshness (access token expires in 15m) ---
+  // --- Token freshness ---
 
   Future<String?> _freshToken() async {
     final token = await SecureStorage.getAccessToken();
     if (token == null || token.isEmpty) return null;
-    if (!_isExpired(token)) return token;
+
+    final needsRefresh = _forceRefresh || _isExpired(token);
+    if (!needsRefresh) return token;
+
+    _forceRefresh = false;
     final refreshed = await _refreshAccessToken();
-    return refreshed ? await SecureStorage.getAccessToken() : token;
+    // Do NOT fall back to the expired token on refresh failure — that causes
+    // an infinite 4001 rejection loop. Return null so connect() schedules a
+    // retry instead.
+    if (!refreshed) return null;
+    return await SecureStorage.getAccessToken();
   }
 
   bool _isExpired(String jwt) {
@@ -241,6 +286,10 @@ class SocketService {
       final res = await Dio().post(
         '${AppConfig.apiBaseUrl.trim()}/api/auth/refresh',
         data: {'refresh_token': refreshToken},
+        options: Options(
+          sendTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
+        ),
       );
       await SecureStorage.saveTokens(
         accessToken: res.data['access_token'],
@@ -313,10 +362,16 @@ class AviatorSocketService {
   }
 
   void _onClosed() {
+    final code = _channel?.closeCode;
     _sub?.cancel();
     _sub = null;
     _channel = null;
     _connecting = false;
+    // Tell the main service to force-refresh the token before next attempt.
+    if (code == 4001) {
+      SocketService().markForceRefresh();
+      print('[AviatorSocket] close 4001 — will force token refresh');
+    }
     if (!_manuallyClosed) _scheduleReconnect();
   }
 
