@@ -3,7 +3,7 @@
 set -e
 
 BASE=/opt/teen
-SERVICES=(auth-service user-service wallet-service game-gateway betting-service leaderboard-service notification-service admin-service monitoring-service risk-service churn-service bot-learning-service app-monitor-service)
+SERVICES=(core-api-service auth-service user-service wallet-service game-gateway betting-service leaderboard-service notification-service admin-service monitoring-service risk-service churn-service bot-learning-service app-monitor-service)
 
 echo "==> Installing dependencies and building Node.js services..."
 for svc in "${SERVICES[@]}"; do
@@ -45,9 +45,9 @@ echo "  Directories created."
 echo "==> Setting up Nginx..."
 HESTIA_NGINX_DIR="/home/admin/conf/web/game.myonlinejoker.com"
 if [ -d "$HESTIA_NGINX_DIR" ]; then
-  # HestiaCP — append custom location blocks via the _api include file
-  cp "$BASE/infra/nginx/game.myonlinejoker.com.conf" "$HESTIA_NGINX_DIR/nginx.conf_api"
-  cp "$BASE/infra/nginx/game.myonlinejoker.com.conf" "$HESTIA_NGINX_DIR/nginx.ssl.conf_api"
+  # HestiaCP — inject location blocks only (no server{} wrapper, no upstream blocks)
+  cp "$BASE/infra/nginx/hestia-proxy.conf" "$HESTIA_NGINX_DIR/nginx.conf_api"
+  cp "$BASE/infra/nginx/hestia-proxy.conf" "$HESTIA_NGINX_DIR/nginx.ssl.conf_api"
   nginx -t && systemctl reload nginx
 else
   mkdir -p /etc/nginx/snippets

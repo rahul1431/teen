@@ -1,20 +1,13 @@
 import { Pool } from 'pg'
-import { creditPrize } from './wallet'
+import { creditPrize } from './wallet-client'
 
 export const MATKA_MULTIPLIERS: Record<string, number> = {
-  single: 9.5,
-  jodi: 95,
-  single_panna: 142,
-  double_panna: 285,
-  triple_panna: 950,
+  single: 9.5, jodi: 95, single_panna: 142, double_panna: 285, triple_panna: 950,
 }
-
 export const MATKA_BET_TYPES = Object.keys(MATKA_MULTIPLIERS)
 
 export function pannaToDigit(panna: string): number {
-  return panna
-    .split('')
-    .reduce((s, c) => s + (parseInt(c, 10) || 0), 0) % 10
+  return panna.split('').reduce((s, c) => s + (parseInt(c, 10) || 0), 0) % 10
 }
 
 export function pannaKind(panna: string): 'single_panna' | 'double_panna' | 'triple_panna' {
@@ -38,10 +31,7 @@ export function validateMatkaBet(betType: string, number: string): string | null
 }
 
 export async function settleMatkaSession(
-  db: Pool,
-  drawId: string,
-  session: 'open' | 'close',
-  panna: string,
+  db: Pool, drawId: string, session: 'open' | 'close', panna: string,
 ): Promise<{ settled: number; winners: number }> {
   const digit = pannaToDigit(panna)
   const client = await db.connect()
@@ -61,61 +51,43 @@ export async function settleMatkaSession(
         `UPDATE matka_draws SET open_panna = $1, open_digit = $2, status = 'open_declared' WHERE id = $3`,
         [panna, digit, drawId],
       )
-
-      // Bulk update winners for the open session in one query
       const wonRes = await client.query(
         `UPDATE matka_bets SET status = 'won', payout = potential_payout
          WHERE draw_id = $1 AND status = 'pending' AND session = 'open'
-           AND (
-             (bet_type = 'single' AND number = $2)
-             OR (bet_type IN ('single_panna', 'double_panna', 'triple_panna') AND number = $3)
-           )
+           AND ((bet_type = 'single' AND number = $2) OR (bet_type IN ('single_panna','double_panna','triple_panna') AND number = $3))
          RETURNING id, user_id, payout`,
         [drawId, String(digit), panna],
       )
-
       for (const row of wonRes.rows) {
         winners++
         winnerPayouts.push({ userId: row.user_id, amount: Number(row.payout), betId: row.id })
       }
-
-      // Bulk mark remaining open-session bets as lost
       const lostRes = await client.query(
-        `UPDATE matka_bets SET status = 'lost'
-         WHERE draw_id = $1 AND status = 'pending' AND session = 'open'`,
+        `UPDATE matka_bets SET status = 'lost' WHERE draw_id = $1 AND status = 'pending' AND session = 'open'`,
         [drawId],
       )
       settled = wonRes.rowCount! + lostRes.rowCount!
     } else {
       const jodi = `${draw.open_digit ?? 0}${digit}`
-
       await client.query(
         `UPDATE matka_draws SET close_panna = $1, close_digit = $2, jodi = $3, status = 'settled' WHERE id = $4`,
         [panna, digit, jodi, drawId],
       )
-
-      // Bulk update all close-session + jodi winners in one query
       const wonRes = await client.query(
         `UPDATE matka_bets SET status = 'won', payout = potential_payout
          WHERE draw_id = $1 AND status = 'pending'
-           AND (
-             (bet_type = 'jodi' AND number = $2)
+           AND ((bet_type = 'jodi' AND number = $2)
              OR (session = 'close' AND bet_type = 'single' AND number = $3)
-             OR (session = 'close' AND bet_type IN ('single_panna', 'double_panna', 'triple_panna') AND number = $4)
-           )
+             OR (session = 'close' AND bet_type IN ('single_panna','double_panna','triple_panna') AND number = $4))
          RETURNING id, user_id, payout`,
         [drawId, jodi, String(digit), panna],
       )
-
       for (const row of wonRes.rows) {
         winners++
         winnerPayouts.push({ userId: row.user_id, amount: Number(row.payout), betId: row.id })
       }
-
-      // Bulk mark all remaining pending bets for this draw as lost
       const lostRes = await client.query(
-        `UPDATE matka_bets SET status = 'lost'
-         WHERE draw_id = $1 AND status = 'pending'`,
+        `UPDATE matka_bets SET status = 'lost' WHERE draw_id = $1 AND status = 'pending'`,
         [drawId],
       )
       settled = wonRes.rowCount! + lostRes.rowCount!
@@ -130,12 +102,7 @@ export async function settleMatkaSession(
   }
 
   await Promise.all(winnerPayouts.map(w =>
-    creditPrize({
-      userId: w.userId,
-      amount: w.amount,
-      referenceId: w.betId,
-      idempotencyKey: `matka_payout_${w.betId}`,
-    }),
+    creditPrize({ userId: w.userId, amount: w.amount, referenceId: w.betId, idempotencyKey: `matka_payout_${w.betId}` }),
   ))
 
   return { settled, winners }

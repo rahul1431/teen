@@ -14,12 +14,56 @@ export interface NormalizedEvent {
   raw_data?: any;
 }
 
+const BATCH_SIZE = 100
+const FLUSH_INTERVAL_MS = 1000
+
 export class EventProcessor {
+  private eventBuffer: NormalizedEvent[] = []
+  private flushTimer: ReturnType<typeof setInterval>
+
   constructor(
     private redis: Redis,
     private pool: Pool,
     private logger: Logger
-  ) {}
+  ) {
+    this.flushTimer = setInterval(() => {
+      this.flushEvents().catch(err => this.logger.error({ err }, 'Batch flush failed'))
+    }, FLUSH_INTERVAL_MS)
+  }
+
+  destroy() {
+    clearInterval(this.flushTimer)
+  }
+
+  private async flushEvents(): Promise<void> {
+    if (!this.eventBuffer.length) return
+    const batch = this.eventBuffer.splice(0, this.eventBuffer.length)
+    const cols = 9
+    const values = batch.map((_, i) => {
+      const base = i * cols
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9})`
+    }).join(', ')
+    const params = batch.flatMap(e => [
+      e.event_type,
+      e.game_type ?? null,
+      e.room_id ?? null,
+      e.user_id ?? null,
+      e.action ?? null,
+      e.amount ?? null,
+      e.player_count ?? null,
+      e.raw_data ? JSON.stringify(e.raw_data) : null,
+      e.timestamp,
+    ])
+    try {
+      await this.pool.query(
+        `INSERT INTO game_events (event_type, game_type, room_id, user_id, action, amount, player_count, raw_data, created_at)
+         VALUES ${values} ON CONFLICT DO NOTHING`,
+        params,
+      )
+    } catch (err) {
+      this.logger.error({ err, count: batch.length }, 'Batch insert failed')
+    }
+  }
 
   /**
    * Normalize event from WebSocket into standard format
@@ -102,34 +146,10 @@ export class EventProcessor {
     }
   }
 
-  /**
-   * Persist normalized event to PostgreSQL
-   */
   async persistEvent(event: NormalizedEvent): Promise<void> {
-    try {
-      const query = `
-        INSERT INTO game_events (
-          event_type, game_type, room_id, user_id, action,
-          amount, player_count, raw_data, created_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        ON CONFLICT DO NOTHING;
-      `;
-
-      await this.pool.query(query, [
-        event.event_type,
-        event.game_type || null,
-        event.room_id || null,
-        event.user_id || null,
-        event.action || null,
-        event.amount || null,
-        event.player_count || null,
-        event.raw_data ? JSON.stringify(event.raw_data) : null,
-        event.timestamp,
-      ]);
-    } catch (err) {
-      this.logger.error({ err, event }, 'Failed to persist event');
-      throw err;
+    this.eventBuffer.push(event)
+    if (this.eventBuffer.length >= BATCH_SIZE) {
+      await this.flushEvents()
     }
   }
 

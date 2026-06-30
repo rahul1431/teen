@@ -1,28 +1,23 @@
 const BASE = '/opt/teen/services'
 const ENV_FILE = (svc) => `${BASE}/${svc}/.env`
+const NODE_OPTS = { NODE_OPTIONS: '--max-old-space-size=120' }
 
 module.exports = {
   apps: [
+    // ── Core API: auth + users + leaderboard + notifications + betting (5 → 1) ──
     {
-      name: 'teen-auth',
-      cwd: `${BASE}/auth-service`,
+      name: 'teen-core-api',
+      cwd: `${BASE}/core-api-service`,
       script: 'dist/index.js',
-      env_file: ENV_FILE('auth-service'),
+      env_file: ENV_FILE('core-api-service'),
       instances: 1,
       exec_mode: 'fork',
       watch: false,
-      max_memory_restart: '300M',
+      max_memory_restart: '350M',
+      env: { ...NODE_OPTS, PORT: 3001 },
     },
-    {
-      name: 'teen-user',
-      cwd: `${BASE}/user-service`,
-      script: 'dist/index.js',
-      env_file: ENV_FILE('user-service'),
-      instances: 1,
-      exec_mode: 'fork',
-      watch: false,
-      max_memory_restart: '300M',
-    },
+
+    // ── Wallet: critical financial service, keep isolated ──
     {
       name: 'teen-wallet',
       cwd: `${BASE}/wallet-service`,
@@ -31,19 +26,24 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       watch: false,
-      max_memory_restart: '300M',
+      max_memory_restart: '200M',
+      env: NODE_OPTS,
     },
+
+    // ── Game Gateway: WebSocket hub — 1 instance (was cluster max=3) ──
     {
       name: 'teen-gateway',
       cwd: `${BASE}/game-gateway`,
       script: 'dist/index.js',
       env_file: ENV_FILE('game-gateway'),
-      // Cluster mode: enabled by adding Redis Pub/Sub cluster fan-out broker.
-      instances: 'max',
-      exec_mode: 'cluster',
+      instances: 1,
+      exec_mode: 'fork',
       watch: false,
-      max_memory_restart: '400M',
+      max_memory_restart: '300M',
+      env: NODE_OPTS,
     },
+
+    // ── Game Engines ──
     {
       name: 'teen-aviator',
       cwd: `${BASE}/game-engines/aviator`,
@@ -52,7 +52,8 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       watch: false,
-      max_memory_restart: '300M',
+      max_memory_restart: '200M',
+      env: NODE_OPTS,
     },
     {
       name: 'teen-ludo',
@@ -62,38 +63,11 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       watch: false,
-      max_memory_restart: '300M',
-    },
-    {
-      name: 'teen-betting',
-      cwd: `${BASE}/betting-service`,
-      script: 'dist/index.js',
-      env_file: ENV_FILE('betting-service'),
-      instances: 1,
-      exec_mode: 'fork',
-      watch: false,
-      max_memory_restart: '300M',
-    },
-    {
-      name: 'teen-leaderboard',
-      cwd: `${BASE}/leaderboard-service`,
-      script: 'dist/index.js',
-      env_file: ENV_FILE('leaderboard-service'),
-      instances: 1,
-      exec_mode: 'fork',
-      watch: false,
       max_memory_restart: '200M',
+      env: NODE_OPTS,
     },
-    {
-      name: 'teen-notify',
-      cwd: `${BASE}/notification-service`,
-      script: 'dist/index.js',
-      env_file: ENV_FILE('notification-service'),
-      instances: 1,
-      exec_mode: 'fork',
-      watch: false,
-      max_memory_restart: '200M',
-    },
+
+    // ── Admin: keep separate — 2300+ lines with multipart KYC upload ──
     {
       name: 'teen-admin-svc',
       cwd: `${BASE}/admin-service`,
@@ -102,8 +76,11 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       watch: false,
-      max_memory_restart: '200M',
+      max_memory_restart: '250M',
+      env: NODE_OPTS,
     },
+
+    // ── Monitoring: WebSocket receiver from game-gateway + metrics ──
     {
       name: 'teen-monitoring',
       cwd: `${BASE}/monitoring-service`,
@@ -112,8 +89,11 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       watch: false,
-      max_memory_restart: '200M',
+      max_memory_restart: '150M',
+      env: NODE_OPTS,
     },
+
+    // ── Risk: fraud detection API ──
     {
       name: 'teen-risk',
       cwd: `${BASE}/risk-service`,
@@ -122,8 +102,11 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       watch: false,
-      max_memory_restart: '200M',
+      max_memory_restart: '150M',
+      env: NODE_OPTS,
     },
+
+    // ── Churn: background cron + admin HTTP ──
     {
       name: 'teen-churn',
       cwd: `${BASE}/churn-service`,
@@ -132,18 +115,11 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       watch: false,
-      max_memory_restart: '200M',
+      max_memory_restart: '150M',
+      env: NODE_OPTS,
     },
-    {
-      name: 'teen-bot-learning',
-      cwd: `${BASE}/bot-learning-service`,
-      script: 'dist/index.js',
-      env_file: ENV_FILE('bot-learning-service'),
-      instances: 1,
-      exec_mode: 'fork',
-      watch: false,
-      max_memory_restart: '200M',
-    },
+
+    // ── App Monitor: Flutter SDK event ingest ──
     {
       name: 'teen-app-monitor',
       cwd: `${BASE}/app-monitor-service`,
@@ -152,11 +128,22 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       watch: false,
-      max_memory_restart: '200M',
-      env: {
-        NODE_ENV: 'production',
-        PORT: 3015,
-      },
+      max_memory_restart: '150M',
+      env: { ...NODE_OPTS, NODE_ENV: 'production', PORT: 3015 },
     },
+
+    // ── bot-learning: disabled (saves ~70MB) ──
+    // Remove from active services. To re-enable, uncomment below:
+    // {
+    //   name: 'teen-bot-learning',
+    //   cwd: `${BASE}/bot-learning-service`,
+    //   script: 'dist/index.js',
+    //   env_file: ENV_FILE('bot-learning-service'),
+    //   instances: 1,
+    //   exec_mode: 'fork',
+    //   watch: false,
+    //   max_memory_restart: '150M',
+    //   env: NODE_OPTS,
+    // },
   ],
 }

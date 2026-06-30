@@ -1,5 +1,5 @@
 import { Pool } from 'pg'
-import { creditPrize } from './wallet'
+import { creditPrize } from './wallet-client'
 
 export async function settleLottery(
   db: Pool,
@@ -24,17 +24,14 @@ export async function settleLottery(
       [winningNumber, drawId],
     )
 
-    // Count all tickets
     const countRes = await client.query(
       'SELECT COUNT(*) AS total FROM lottery_tickets WHERE draw_id = $1',
       [drawId],
     )
     tickets = parseInt(countRes.rows[0].total, 10)
 
-    // Bulk update winners and retrieve payout info in one query
     const winnerRes = await client.query(
-      `UPDATE lottery_tickets
-         SET is_winner = true, prize = amount * $1
+      `UPDATE lottery_tickets SET is_winner = true, prize = amount * $1
        WHERE draw_id = $2 AND ticket_number = $3
        RETURNING id, user_id, (amount * $1) AS prize`,
       [multiplier, drawId, winningNumber],
@@ -47,7 +44,6 @@ export async function settleLottery(
       winnerPayouts.push({ userId: row.user_id, prize, ticketId: row.id })
     }
 
-    // Bulk mark losers (single query, no row-by-row loop)
     await client.query(
       `UPDATE lottery_tickets SET is_winner = false
        WHERE draw_id = $1 AND ticket_number != $2 AND is_winner IS NULL`,
@@ -62,14 +58,8 @@ export async function settleLottery(
     client.release()
   }
 
-  // Credit winners outside the DB transaction — idempotency keys protect retries
   await Promise.all(winnerPayouts.map(w =>
-    creditPrize({
-      userId: w.userId,
-      amount: w.prize,
-      referenceId: w.ticketId,
-      idempotencyKey: `lottery_payout_${w.ticketId}`,
-    }),
+    creditPrize({ userId: w.userId, amount: w.prize, referenceId: w.ticketId, idempotencyKey: `lottery_payout_${w.ticketId}` }),
   ))
 
   return { tickets, winners, paid }

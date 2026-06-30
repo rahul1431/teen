@@ -34,10 +34,6 @@ export class WalletService {
     try {
       if (!client) await c.query('BEGIN')
 
-      // Idempotency: skip if already processed
-      const existing = await c.query('SELECT id FROM wallet_transactions WHERE idempotency_key = $1', [ikey])
-      if (existing.rows.length > 0) return
-
       const walletRes = await c.query(
         'SELECT real_balance, bonus_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
         [opts.userId]
@@ -48,6 +44,21 @@ export class WalletService {
       const col = opts.walletType === 'bonus' ? 'bonus_balance' : 'real_balance'
       const balanceBefore = parseFloat(wallet[col])
       const balanceAfter = balanceBefore + opts.amount
+
+      // Atomic idempotency: insert returns 0 rows if already processed
+      const txnRes = await c.query(
+        `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'completed', $9)
+         ON CONFLICT (idempotency_key) DO NOTHING
+         RETURNING id`,
+        [opts.userId, opts.type, opts.walletType || 'real', opts.amount, balanceBefore, balanceAfter, opts.referenceId, ikey, opts.description]
+      )
+
+      if (!txnRes.rows.length) {
+        // Already processed — release without touching wallet balance
+        if (!client) await c.query('ROLLBACK')
+        return
+      }
 
       await c.query(
         `UPDATE wallets SET ${col} = $1, updated_at = NOW() WHERE user_id = $2`,
@@ -67,12 +78,6 @@ export class WalletService {
         )
       }
 
-      await c.query(
-        `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'completed', $9)`,
-        [opts.userId, opts.type, opts.walletType || 'real', opts.amount, balanceBefore, balanceAfter, opts.referenceId, ikey, opts.description]
-      )
-
       if (!client) await c.query('COMMIT')
     } catch (err) {
       if (!client) await c.query('ROLLBACK')
@@ -90,9 +95,6 @@ export class WalletService {
     try {
       if (!client) await c.query('BEGIN')
 
-      const existing = await c.query('SELECT id FROM wallet_transactions WHERE idempotency_key = $1', [ikey])
-      if (existing.rows.length > 0) return
-
       const walletRes = await c.query(
         'SELECT real_balance, bonus_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
         [opts.userId]
@@ -105,6 +107,20 @@ export class WalletService {
       if (balanceBefore < opts.amount) throw new Error('Insufficient balance')
       const balanceAfter = balanceBefore - opts.amount
 
+      // Atomic idempotency: insert returns 0 rows if already processed
+      const txnRes = await c.query(
+        `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'completed', $9)
+         ON CONFLICT (idempotency_key) DO NOTHING
+         RETURNING id`,
+        [opts.userId, opts.type, opts.walletType || 'real', opts.amount, balanceBefore, balanceAfter, opts.referenceId, ikey, opts.description]
+      )
+
+      if (!txnRes.rows.length) {
+        if (!client) await c.query('ROLLBACK')
+        return
+      }
+
       await c.query(
         `UPDATE wallets SET ${col} = $1, updated_at = NOW() WHERE user_id = $2`,
         [balanceAfter, opts.userId]
@@ -116,12 +132,6 @@ export class WalletService {
           [opts.amount, opts.userId]
         )
       }
-
-      await c.query(
-        `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'completed', $9)`,
-        [opts.userId, opts.type, opts.walletType || 'real', opts.amount, balanceBefore, balanceAfter, opts.referenceId, ikey, opts.description]
-      )
 
       if (!client) await c.query('COMMIT')
     } catch (err) {
@@ -142,12 +152,6 @@ export class WalletService {
     try {
       await client.query('BEGIN')
 
-      // Idempotency: skip if this specific lock already ran (handles gateway retries)
-      const existing = await client.query(
-        'SELECT id FROM wallet_transactions WHERE idempotency_key = $1', [ikey]
-      )
-      if (existing.rows.length > 0) { await client.query('COMMIT'); return }
-
       const res = await client.query(
         'SELECT real_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
         [userId]
@@ -157,17 +161,20 @@ export class WalletService {
       if (balanceBefore < amount) throw new Error('Insufficient balance')
       const balanceAfter = balanceBefore - amount
 
+      const lockTxn = await client.query(
+        `INSERT INTO wallet_transactions
+           (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
+         VALUES ($1, 'game_debit', 'real', $2, $3, $4, $5, $6, 'pending', 'Funds locked for game')
+         ON CONFLICT (idempotency_key) DO NOTHING
+         RETURNING id`,
+        [userId, amount, balanceBefore, balanceAfter, roomId, ikey]
+      )
+
+      if (!lockTxn.rows.length) { await client.query('ROLLBACK'); return }
+
       await client.query(
         'UPDATE wallets SET real_balance = real_balance - $1, locked_balance = locked_balance + $1 WHERE user_id = $2',
         [amount, userId]
-      )
-
-      // Log every lock in wallet_transactions for full audit trail
-      await client.query(
-        `INSERT INTO wallet_transactions
-           (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
-         VALUES ($1, 'game_debit', 'real', $2, $3, $4, $5, $6, 'pending', 'Funds locked for game')`,
-        [userId, amount, balanceBefore, balanceAfter, roomId, ikey]
       )
 
       await client.query('COMMIT')
@@ -187,10 +194,6 @@ export class WalletService {
     const ikey = `unlock:${roomId}:${userId}`
     try {
       if (!client) await c.query('BEGIN')
-
-      // Idempotency check
-      const existing = await c.query('SELECT id FROM wallet_transactions WHERE idempotency_key = $1', [ikey])
-      if (existing.rows.length > 0) { if (!client) await c.query('COMMIT'); return }
 
       const walletRes = await c.query(
         'SELECT locked_balance, real_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
@@ -216,12 +219,16 @@ export class WalletService {
         [toUnlock, toUnlock, userId]
       )
 
-      await c.query(
+      const unlockTxn = await c.query(
         `INSERT INTO wallet_transactions
            (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
-         VALUES ($1, 'game_credit', 'real', $2, $3, $4, $5, $6, 'completed', 'Locked funds unlocked/refunded')`,
+         VALUES ($1, 'game_credit', 'real', $2, $3, $4, $5, $6, 'completed', 'Locked funds unlocked/refunded')
+         ON CONFLICT (idempotency_key) DO NOTHING
+         RETURNING id`,
         [userId, toUnlock, balanceBefore, balanceAfter, roomId, ikey]
       )
+
+      if (!unlockTxn.rows.length) { if (!client) await c.query('ROLLBACK'); return }
 
       if (!client) await c.query('COMMIT')
     } catch (err) {
@@ -240,10 +247,6 @@ export class WalletService {
     const ikey = roomId ? `consume:${roomId}:${userId}` : crypto.randomUUID()
     try {
       if (!client) await c.query('BEGIN')
-
-      // Idempotency check
-      const existing = await c.query('SELECT id FROM wallet_transactions WHERE idempotency_key = $1', [ikey])
-      if (existing.rows.length > 0) { if (!client) await c.query('COMMIT'); return }
 
       const walletRes = await c.query(
         'SELECT locked_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
@@ -265,12 +268,16 @@ export class WalletService {
         [toConsume, userId]
       )
 
-      await c.query(
+      const consumeTxn = await c.query(
         `INSERT INTO wallet_transactions
            (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
-         VALUES ($1, 'game_debit', 'real', $2, $3, $4, $5, $6, 'completed', 'Locked funds consumed by gameplay')`,
+         VALUES ($1, 'game_debit', 'real', $2, $3, $4, $5, $6, 'completed', 'Locked funds consumed by gameplay')
+         ON CONFLICT (idempotency_key) DO NOTHING
+         RETURNING id`,
         [userId, toConsume, locked, locked - toConsume, roomId ?? null, ikey]
       )
+
+      if (!consumeTxn.rows.length) { if (!client) await c.query('ROLLBACK'); return }
 
       if (!client) await c.query('COMMIT')
     } catch (err) {

@@ -9,6 +9,18 @@ services:
       POSTGRES_USER: teen
       POSTGRES_PASSWORD: teen_secret_2024
       POSTGRES_DB: teen_db
+    command: >
+      postgres
+      -c max_connections=150
+      -c shared_buffers=512MB
+      -c effective_cache_size=1536MB
+      -c work_mem=8MB
+      -c maintenance_work_mem=128MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
     ports:
       - "5432:5432"
     volumes:
@@ -24,7 +36,15 @@ services:
     image: redis:7-alpine
     container_name: teen_redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass teen_redis_2024
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass teen_redis_2024
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --tcp-backlog 511
+      --hz 20
     ports:
       - "6379:6379"
     volumes:
