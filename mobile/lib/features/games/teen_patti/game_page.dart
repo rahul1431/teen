@@ -48,16 +48,32 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   final _api = ApiClient();
   PracticeEngine? _practice;
 
-  // Seat positions: (fractionX, fractionY) relative to TABLE rect — landscape oval.
-  // (0,0)=table top-left, (1,1)=table bottom-right.
-  // cx = tableLeft + tableW * fx,  cy = tableTop + tableH * fy
+  // ── Responsive layout ────────────────────────────────────────────────────
+  // All visual dimensions derive from _ls (layout scale), computed each build
+  // from the landscape screen height so the game looks good on every device.
+  // Reference height = 400 logical px (typical mid-range phone landscape).
+  double _ls = 1.0; // set at top of LayoutBuilder, read by all helpers
+
+  static const _rightPanelW = 64.0;
+
+  // Seat positions: (fractionX, fractionY) relative to TABLE oval.
+  // Side seats kept at fx≥0.16 / fx≤0.84 so they stay clear of oval corners
+  // at all screen sizes.
   static const _tableSeats = {
-    1: [(0.50, 0.12)],
-    2: [(0.22, 0.09), (0.78, 0.09)],
-    3: [(0.07, 0.50), (0.50, 0.08), (0.93, 0.50)],
-    4: [(0.07, 0.46), (0.30, 0.08), (0.70, 0.08), (0.93, 0.46)],
-    5: [(0.07, 0.46), (0.24, 0.08), (0.50, 0.06), (0.76, 0.08), (0.93, 0.46)],
+    1: [(0.50, 0.18)],
+    2: [(0.24, 0.12), (0.76, 0.12)],
+    3: [(0.18, 0.46), (0.50, 0.11), (0.82, 0.46)],
+    4: [(0.18, 0.44), (0.36, 0.11), (0.64, 0.11), (0.82, 0.44)],
+    5: [(0.18, 0.44), (0.30, 0.11), (0.50, 0.09), (0.70, 0.11), (0.82, 0.44)],
   };
+
+  // Derived seat dimensions (updated via _ls in build)
+  double get _seatW   => (100 * _ls).clamp(68, 118);
+  double get _seatCH  => (118 * _ls).clamp(82, 138); // container height
+  double get _cardBH  => (32  * _ls).clamp(24, 40);  // card-backs row height
+  double get _totalSH => _cardBH + 4 + _seatCH;      // total seat widget height
+  double get _cardW   => (58  * _ls).clamp(40, 76);  // player card width
+  double get _cardHt  => (84  * _ls).clamp(58, 110); // player card height
 
   // ── ValueNotifiers ────────────────────────────────────────────────────────
   final _gsNotifier        = ValueNotifier<Map<String, dynamic>?>(null);
@@ -72,6 +88,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   bool    _isSeen      = false;
   int     _turnSeq     = 0;
   double  _betAmount   = 0;
+  double  _myBalance   = 0;   // fetched from wallet API and kept live
   Timer?  _turnTimer;
   StreamSubscription? _reconnectSub;
   StreamSubscription? _roomJoinedSub;
@@ -219,9 +236,21 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     } catch (_) { /* keep defaults on error */ }
   }
 
+  Future<void> _fetchBalance() async {
+    try {
+      final res = await _api.dio.get('/api/wallet/balance');
+      if (!mounted) return;
+      final val = double.tryParse(
+              res.data['real_balance']?.toString() ?? '0') ??
+          0;
+      setState(() => _myBalance = val);
+    } catch (_) { /* leave at 0 if wallet unreachable */ }
+  }
+
   Future<void> _init() async {
     _myUserId = await SecureStorage.getUserId();
-    _loadConfig(); // fire-and-forget, updates emojis/gifts when available
+    _loadConfig();      // fire-and-forget
+    _fetchBalance();    // load wallet balance for the action bar display
     MonitorService.instance.game('tp_join_room', properties: {'room_id': widget.roomId});
     _socket.emit(SocketEvents.joinRoom, {'room_id': widget.roomId});
     _reconnectSub = _socket.on('reconnect').listen((_) =>
@@ -273,6 +302,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         HapticFeedback.mediumImpact();
         SoundService.instance.play(Sfx.lose);
       }
+      // Refresh wallet balance after settlement completes on the server.
+      Timer(const Duration(milliseconds: 1200), _fetchBalance);
     });
 
     _roomChatSub = _socket.on(SocketEvents.roomChatMsg).listen((data) {
@@ -317,6 +348,17 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       _practice?.playerAction(action, amount);
       return;
     }
+
+    // Optimistically deduct bet from displayed balance so it updates immediately.
+    // 'see' (look at cards) has no wallet cost — only call/raise/show deduct.
+    // Server confirms via wallet lock; we re-fetch on game:result for the final value.
+    if (action == 'call' || action == 'raise' || action == 'show') {
+      final gs    = _gsNotifier.value;
+      final stake = (gs?['min_bet'] as num?)?.toDouble() ?? 0;
+      final bet   = amount ?? (_isSeen ? stake * 2 : stake);
+      if (bet > 0) setState(() => _myBalance = (_myBalance - bet).clamp(0, double.infinity));
+    }
+
     MonitorService.instance.wsMessage('send', SocketEvents.gameAction);
     _socket.emit(SocketEvents.gameAction, {
       'room_id': widget.roomId,
@@ -406,20 +448,21 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       child: Scaffold(
         backgroundColor: const Color(0xFF060A1A),
         body: SafeArea(
-          top: false,
+          top: true,
           bottom: true,
           child: !_ready
               ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
               : LayoutBuilder(builder: (context, box) {
                   final w = box.maxWidth;
                   final h = box.maxHeight;
-                  // Landscape layout: top bar 40px, right action panel 172px
-                  const topBarH = 40.0;
-                  const rightPanelW = 172.0;
+                  // Landscape layout — all dims scale from landscape height.
+                  _ls = (h / 400.0).clamp(0.72, 1.5);
+                  final topBarH = (40 * _ls).clamp(36.0, 52.0);
+                  const rightPanelW = _rightPanelW;
                   final tw = w - rightPanelW - 2;   // table fills left area
                   final th = h - topBarH - 2;        // fills full height below top bar
                   const tl = 0.0;
-                  const tt = topBarH;
+                  final tt = topBarH;
 
                   return Stack(children: [
                     // ① Ambient background
@@ -428,13 +471,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     // ② Poker table oval — explicit coords, no helpers needed
                     _buildTableOval(tl, tt, tw, th),
 
-                    // ③ Dealer hostess — top-centre of the table oval
-                    Positioned(
-                      left: tw / 2 - 40, top: tt + 6,
-                      child: const _HostessWidget(),
-                    ),
-
-                    // ④ Opponent seats
+                    // ③ Opponent seats
                     ValueListenableBuilder<Map<String, dynamic>?>(
                       valueListenable: _gsNotifier,
                       builder: (_, gs, __) =>
@@ -452,16 +489,17 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                           ),
                     ),
 
-                    // ⑥ Pot chip — below user cards, inside table
+                    // ⑥ Pot chip — upper-centre of table
                     ValueListenableBuilder<Map<String, dynamic>?>(
                       valueListenable: _gsNotifier,
                       builder: (_, gs, __) => _buildPotChip(gs, w, tt, tw, th),
                     ),
-
-                    // ⑦ My chips strip — just below the table
-                    ValueListenableBuilder<Map<String, dynamic>?>(
-                      valueListenable: _gsNotifier,
-                      builder: (_, gs, __) => _buildMyChips(gs),
+                    // ⑦ Wallet balance + Blind/Seen pills — above action bar
+                    ValueListenableBuilder<bool>(
+                      valueListenable: _myTurnNotifier,
+                      builder: (_, isMyTurn, __) => isMyTurn
+                          ? _buildPlayerStatus(w, h)
+                          : const SizedBox.shrink(),
                     ),
 
                     // ⑧ Top bar
@@ -549,9 +587,12 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         ),
       );
 
-  // ② Oval poker table — tl/tt/tw/th passed in from LayoutBuilder
+  // ② Oval poker table — uses th*0.44 radius so side-seat area stays wide
   Widget _buildTableOval(double tl, double tt, double tw, double th) {
-    final radius = BorderRadius.circular(math.min(tw, th) / 2);
+    // Clamp radius to look like a real poker table on all screen sizes.
+    // th*0.44 ≈ fully-rounded short ends, th*0.2 ≈ mild rounding on tall table.
+    final r = math.min(th * 0.44, tw * 0.22);
+    final radius = BorderRadius.circular(r);
     return Positioned(
       left: tl, top: tt, width: tw, height: th,
       child: RepaintBoundary(
@@ -628,24 +669,25 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     double w, double h,
     double tl, double tt, double tw, double th,
   ) {
-    const seatW = 106.0;
-    const seatH = 148.0;
-    // Centre of seat in screen pixels, table-relative
+    final sw = _seatW;
+    final sh = _totalSH; // total height: card-backs + gap + container
+    // Centre of seat widget in screen pixels, table-relative
     final cx = tl + tw * frac.$1;
     final cy = tt + th * frac.$2;
-    // Clamp so seat box stays within screen bounds (4dp margin each side)
-    final sl = (cx - seatW / 2).clamp(4.0, w - seatW - 4.0);
-    // Clamp top: must be below status-bar area (tt - seatH/2 minimum = tt - 74)
-    final st = (cy - seatH / 2).clamp(tt - 10.0, h - seatH - 4.0);
+    // Keep seats well inside the oval — use 8% of table width as minimum inner gap
+    // so seats clear the curved corners at all aspect ratios.
+    final innerMarginH = math.max(12.0, tw * 0.08);
+    final sl = (cx - sw / 2).clamp(tl + innerMarginH, tl + tw - sw - innerMarginH);
+    final st = (cy - sh / 2).clamp(tt - 8.0, h - sh - 4.0);
 
     return Positioned(
       key: ValueKey('seat_${p['user_id'] ?? p['userId']}'),
-      left: sl, top: st, width: seatW,
-      child: RepaintBoundary(child: _buildSeatWidget(p, gs)),
+      left: sl, top: st, width: sw,
+      child: RepaintBoundary(child: _buildSeatWidget(p, gs, sw)),
     );
   }
 
-  Widget _buildSeatWidget(Map<String, dynamic> p, Map<String, dynamic>? gs) {
+  Widget _buildSeatWidget(Map<String, dynamic> p, Map<String, dynamic>? gs, double sw) {
     final uid      = (p['user_id'] ?? p['userId'])?.toString() ?? '';
     final isFolded = p['status'] == 'folded';
     final isBot    = p['is_bot'] == true;
@@ -660,21 +702,32 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final (statusLabel, statusColor) = _statusOf(p);
     final chips    = _chipsOf(p);
 
+    // Scale-aware dimensions
+    final avatarD  = (44 * _ls).clamp(32.0, 54.0);
+    final avatarR  = avatarD * 0.5;
+    final badgeD   = (16 * _ls).clamp(12.0, 20.0);
+    final fUsername = (9.5 * _ls).clamp(7.5, 12.0);
+    final fChips    = (7.5 * _ls).clamp(6.0, 10.0);
+    final padH     = (7 * _ls).clamp(5.0, 10.0);
+    final padV     = (5 * _ls).clamp(4.0, 8.0);
+    final brCorner = (12 * _ls).clamp(8.0, 16.0);
+
     return Opacity(
       opacity: isFolded ? 0.45 : 1.0,
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Card backs on top
+          // Mini card-backs fan above seat container
           if (!isFolded) _opponentCardBacks(),
-          const SizedBox(height: 4),
-          // Dark container: avatar + name + status
+          SizedBox(height: (4 * _ls).clamp(2, 6)),
+          // Dark seat container
           Container(
-            width: 110,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            width: sw,
+            padding: EdgeInsets.symmetric(horizontal: padH, vertical: padV),
             decoration: BoxDecoration(
               color: const Color(0xFF0D2E18).withOpacity(0.88),
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(brCorner),
               border: Border.all(
                   color: isTurn ? const Color(0xFF2ECC71) : Colors.white12,
                   width: isTurn ? 2.0 : 1.0),
@@ -689,17 +742,16 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
               children: [
                 // Avatar with timer ring
                 SizedBox(
-                  width: 48, height: 48,
+                  width: avatarD, height: avatarD,
                   child: Stack(alignment: Alignment.center, children: [
-                    // Timer ring
                     if (isTurn)
                       ValueListenableBuilder<int>(
                         valueListenable: _timerNotifier,
                         builder: (_, secs, __) => SizedBox(
-                          width: 46, height: 46,
+                          width: avatarD - 2, height: avatarD - 2,
                           child: CircularProgressIndicator(
                             value: (secs / 30).clamp(0.0, 1.0),
-                            strokeWidth: 2.5,
+                            strokeWidth: 2.0,
                             backgroundColor: Colors.black26,
                             valueColor: AlwaysStoppedAnimation(
                                 secs <= 5 ? Colors.red : const Color(0xFF2ECC71)),
@@ -708,63 +760,43 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                       )
                     else
                       SizedBox(
-                        width: 46, height: 46,
+                        width: avatarD - 2, height: avatarD - 2,
                         child: CircularProgressIndicator(
                           value: 1.0,
-                          strokeWidth: 2.5,
+                          strokeWidth: 2.0,
                           backgroundColor: Colors.black26,
                           valueColor: AlwaysStoppedAnimation(
                               const Color(0xFFD4AF37).withOpacity(0.4)),
                         ),
                       ),
-                    // Avatar circle
                     CircleAvatar(
-                      radius: 16,
+                      radius: avatarR * 0.72,
                       backgroundColor: isFolded ? Colors.grey.shade800 : Colors.white24,
                       child: Text(
                         (p['username']?.toString() ?? '?')[0].toUpperCase(),
-                        style: const TextStyle(
-                            color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                        style: TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.bold,
+                            fontSize: (13 * _ls).clamp(9, 17)),
                       ),
                     ),
-                    // Gift button
-                    Positioned(
-                      left: 0, top: 0,
-                      child: GestureDetector(
-                        onTap: () => setState(() { _showGiftTray = true; }),
-                        child: Container(
-                          width: 18, height: 18, alignment: Alignment.center,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: LinearGradient(
-                              colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                            ),
-                          ),
-                          child: const Text('🎁', style: TextStyle(fontSize: 9)),
-                        ),
-                      ),
-                    ),
-                    // Dealer badge
+                    // Dealer chip — small "D" at bottom-right of avatar, not overlapping
                     if (isDealer)
                       Positioned(
-                        right: 0, top: 0,
+                        right: 0, bottom: 0,
                         child: Container(
-                          width: 17, height: 17, alignment: Alignment.center,
+                          width: badgeD, height: badgeD, alignment: Alignment.center,
                           decoration: BoxDecoration(
-                              color: AppColors.red,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 1.5)),
-                          child: const Text('D',
-                              style: TextStyle(
-                                  color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                              color: AppColors.gold, shape: BoxShape.circle,
+                              border: Border.all(color: Colors.black45, width: 1.0)),
+                          child: Text('D',
+                              style: TextStyle(color: Colors.black,
+                                  fontSize: (8 * _ls).clamp(6, 11),
+                                  fontWeight: FontWeight.bold)),
                         ),
                       ),
-                    // Thinking dots for bots
                     if (isBot && isTurn)
                       Positioned(
-                        top: -36,
+                        top: -32,
                         child: Container(
                           key: ValueKey('thinking_$uid'),
                           padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
@@ -779,36 +811,39 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                       ),
                   ]),
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: (3 * _ls).clamp(2, 5)),
                 Text(
                   p['username']?.toString() ?? 'Bot',
-                  style: const TextStyle(
-                      color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+                  style: TextStyle(color: Colors.white, fontSize: fUsername,
+                      fontWeight: FontWeight.w600),
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
                 ),
-                const SizedBox(height: 3),
-                _statusPill(statusLabel, statusColor),
+                SizedBox(height: (2 * _ls).clamp(1, 4)),
+                _statusPill(statusLabel, statusColor, scale: _ls),
                 if (chips != null) ...[
-                  const SizedBox(height: 3),
+                  SizedBox(height: (2 * _ls).clamp(1, 4)),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    padding: EdgeInsets.symmetric(
+                        horizontal: (5 * _ls).clamp(3, 8),
+                        vertical: (1 * _ls).clamp(1, 2)),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
                           colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
                           begin: Alignment.topCenter, end: Alignment.bottomCenter),
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius: BorderRadius.circular(5),
                     ),
                     child: Text('💰 $chips',
-                        style: const TextStyle(
-                            color: Colors.black, fontSize: 8, fontWeight: FontWeight.bold)),
+                        style: TextStyle(color: Colors.black, fontSize: fChips,
+                            fontWeight: FontWeight.bold)),
                   ),
                 ],
                 if (isBot) ...[
-                  const SizedBox(height: 2),
-                  const Text('BOT',
-                      style: TextStyle(
-                          color: Colors.orange, fontSize: 7, fontWeight: FontWeight.bold)),
+                  SizedBox(height: (2 * _ls).clamp(1, 4)),
+                  Text('BOT',
+                      style: TextStyle(color: Colors.orange,
+                          fontSize: (7 * _ls).clamp(5.5, 9),
+                          fontWeight: FontWeight.bold)),
                 ],
               ],
             ),
@@ -818,47 +853,70 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑤ User's own cards — centred on the table
+  // ⑤ User's cards — anchored above action bar; "See Cards" overlays the backs
   Widget _buildUserCards(
       List<Map<String, dynamic>> cards, bool isMyTurn,
       double w, double tl, double tt, double tw, double th) {
     if (cards.isEmpty) return const SizedBox.shrink();
 
-    // Cards sit at 60% down the table; "See Cards" btn at 46%
-    final cardsTop = tt + th * 0.60;
-    final btnTop   = tt + th * 0.46;
+    // Action bar height estimate (scales with _ls, consistent with _buildActionBar)
+    final actionBarH = (60 * _ls).clamp(50.0, 80.0);
+    // 12dp breathing room above the action bar
+    final cardsBottom = tt + th - actionBarH - 12;
+    final cardsTop    = cardsBottom - _cardHt;
+
+    // Row of 3 cards — slight fan overlap
+    final cardStep = _cardW * 0.88;
+    final rowWidth = cards.length * cardStep + (_cardW * 0.12);
+    final rowLeft  = (w - _rightPanelW) / 2 - rowWidth / 2;
 
     return Stack(children: [
-      // "See Cards" button (only when blind and cards exist)
-      if (!_isSeen)
-        Positioned(
-          top: btnTop,
-          left: w / 2 - 70,
-          child: SizedBox(
-            width: 140, height: 38,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.gold,
-                foregroundColor: Colors.black,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20)),
-                elevation: 4,
-              ),
-              onPressed: () { _sendAction('see'); setState(() => _isSeen = true); },
-              child: const Text('See Cards',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-            ),
-          ),
-        ),
-      // The 3 cards
       Positioned(
-        top: cardsTop,
-        left: w / 2 - (cards.length * 46.0) / 2,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+        top: cardsTop, left: rowLeft,
+        child: Stack(
+          clipBehavior: Clip.none,
           children: [
-            for (var i = 0; i < cards.length; i++)
-              _buildAnimatedCard(cards[i], i, cards.length),
+            // Card row
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < cards.length; i++)
+                  _buildAnimatedCard(cards[i], i, cards.length),
+              ],
+            ),
+            // "See Cards" overlay — sits ON TOP of the card backs when blind
+            if (!_isSeen)
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () {
+                    _sendAction('see');
+                    setState(() => _isSeen = true);
+                    _fetchBalance(); // deduct entry fee reflected after seeing
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.55),
+                      borderRadius: BorderRadius.circular((8 * _ls).clamp(6, 12)),
+                    ),
+                    alignment: Alignment.center,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.visibility_rounded,
+                            color: AppColors.gold,
+                            size: (18 * _ls).clamp(14, 24)),
+                        SizedBox(height: (2 * _ls).clamp(1, 4)),
+                        Text('See Cards',
+                            style: TextStyle(
+                                color: AppColors.gold,
+                                fontWeight: FontWeight.bold,
+                                fontSize: (10 * _ls).clamp(8, 14),
+                                shadows: const [Shadow(color: Colors.black54, blurRadius: 4)])),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -866,17 +924,19 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   }
 
   Widget _buildAnimatedCard(Map<String, dynamic> card, int index, int total) {
+    final dropDist = (_cardHt * 0.7).clamp(30.0, 60.0);
+    final fanAngle = (index - (total - 1) / 2) * 0.10;
     return TweenAnimationBuilder<double>(
       key: ValueKey('${card['value']}_${card['suit']}_$index'),
       tween: Tween(begin: 0.0, end: 1.0),
-      duration: Duration(milliseconds: 360 + index * 80),
+      duration: Duration(milliseconds: 340 + index * 70),
       curve: Curves.easeOutBack,
       builder: (_, t, __) => Transform.translate(
-        offset: Offset(0, -60 * (1 - t)),
+        offset: Offset(0, -dropDist * (1 - t)),
         child: Opacity(
           opacity: t.clamp(0.0, 1.0),
           child: Transform.rotate(
-            angle: (index - (total - 1) / 2) * 0.12,
+            angle: fanAngle,
             child: _isSeen
                 ? _buildCard(card['value'].toString(), card['suit'].toString())
                 : _buildCardBack(),
@@ -886,13 +946,22 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑥ Pot chip — below the user cards, inside table
+  // ⑥ Pot chip — upper centre, guaranteed above the player cards zone
   Widget _buildPotChip(Map<String, dynamic>? gs, double w, double tt, double tw, double th) {
+    final chipW  = (100 * _ls).clamp(68.0, 120.0);
+    final chipH  = (30  * _ls).clamp(24.0, 40.0);
+    final actionBarH = (60 * _ls).clamp(50.0, 80.0);
+    // Player cards zone top = th - actionBarH - 12 - _cardHt (from tt)
+    final cardsZoneTop = th - actionBarH - 12 - _cardHt;
+    // Pot chip sits at 36% of table height, but never within 20dp of cards
+    final potY = math.min(th * 0.36, cardsZoneTop - chipH - 20);
     return Positioned(
-      left: w / 2 - 52, top: tt + th * 0.80,
+      left: w / 2 - chipW / 2, top: tt + potY,
       child: Container(
-        width: 104,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        width: chipW,
+        padding: EdgeInsets.symmetric(
+            horizontal: (10 * _ls).clamp(7, 14),
+            vertical: (5 * _ls).clamp(3, 8)),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
               colors: [Color(0xFFFFE082), Color(0xFFD4AF37), Color(0xFF8A6D1E)],
@@ -906,10 +975,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           ],
         ),
         child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          const Text('🪙 ', style: TextStyle(fontSize: 14)),
+          Text('🪙 ', style: TextStyle(fontSize: (13 * _ls).clamp(10, 18))),
           Text('₹${gs?['pot'] ?? 0}',
-              style: const TextStyle(
-                  color: Colors.black, fontWeight: FontWeight.bold, fontSize: 15)),
+              style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold,
+                  fontSize: (14 * _ls).clamp(11, 18))),
         ]),
       ),
     );
@@ -923,9 +992,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     if (me == null) return const SizedBox.shrink();
     final chips  = me['chips'] ?? me['balance'] ?? 0;
     final isSeen = me['is_seen'] ?? me['isSeen'] ?? _isSeen;
-    // In landscape, table fills most of the screen, so show chips at bottom inside table
     return Positioned(
-      left: 0, right: 174, bottom: 12,
+      left: 0, right: _rightPanelW, bottom: 12,
       child: Center(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -959,98 +1027,151 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑧ Top bar (landscape: compact 40px, stops before right panel)
+  // ⑧ Top bar — back · table name · turn timer · sound toggle
   Widget _buildTopBar(double w) {
     return Positioned(
-      top: 0, left: 0, right: 172, height: 40,
+      top: 0, left: 0, right: _rightPanelW,
+      height: (40 * _ls).clamp(36.0, 52.0),
       child: RepaintBoundary(
-        child: Row(children: [
-          // Back button
+        child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+          // Back
           _iconBtn(Icons.arrow_back_ios_new_rounded, _confirmExit, size: 38),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           // Table label
-          Flexible(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                  color: Colors.black54, borderRadius: BorderRadius.circular(20)),
-              child: Text(
-                'Teen Patti • Table ${widget.roomId.substring(0, math.min(4, widget.roomId.length))}',
-                style: const TextStyle(color: Colors.white70, fontSize: 12),
-                overflow: TextOverflow.ellipsis,
-              ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+                color: Colors.black54, borderRadius: BorderRadius.circular(20)),
+            child: Text(
+              'Table ${widget.roomId.substring(0, math.min(4, widget.roomId.length))}',
+              style: TextStyle(color: Colors.white70,
+                  fontSize: (11 * _ls).clamp(9.0, 14.0)),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
           const SizedBox(width: 8),
-          // Turn timer
+          // Turn timer pill
           ValueListenableBuilder<bool>(
             valueListenable: _myTurnNotifier,
             builder: (_, isMyTurn, __) => isMyTurn
                 ? ValueListenableBuilder<int>(
                     valueListenable: _timerNotifier,
                     builder: (_, secs, __) => Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                       decoration: BoxDecoration(
                         color: secs <= 5 ? AppColors.red : const Color(0xFF8B0F1E),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text('Your turn • ${secs}s',
-                          style: const TextStyle(
-                              color: Colors.white,
+                          style: TextStyle(color: Colors.white,
                               fontWeight: FontWeight.bold,
-                              fontSize: 12)),
+                              fontSize: (11 * _ls).clamp(9.0, 14.0))),
                     ))
                 : const SizedBox.shrink(),
           ),
           const Spacer(),
-          // Icon actions
-          _iconBtn(Icons.info_outline, () {}),
-          const SizedBox(width: 5),
-          _iconBtn(Icons.person_add_alt_1, () {}),
-          const SizedBox(width: 5),
+          // Sound toggle (functional)
           _iconBtn(
-            SoundService.instance.muted ? Icons.volume_off : Icons.volume_up,
+            SoundService.instance.muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
             () => setState(() => SoundService.instance.toggleMute()),
           ),
-          const SizedBox(width: 5),
-          _iconBtn(Icons.settings, () {}),
+          const SizedBox(width: 4),
+          // Info — shows table details
+          _iconBtn(Icons.info_outline_rounded, _showTableInfo),
         ]),
       ),
     );
   }
 
-  // ⑨ Right panel — emojis + gift, anchored to right edge for landscape
+  void _showTableInfo() {
+    final gs = _gsNotifier.value;
+    final pot   = gs?['pot'] ?? 0;
+    final stake = gs?['min_bet'] ?? 0;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0D2E18),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Table Info',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _infoLine('Table ID', widget.roomId),
+            _infoLine('Stake', '₹$stake'),
+            _infoLine('Pot', '₹$pot'),
+            _infoLine('Players', '${(gs?['players'] as List?)?.length ?? 0}'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close', style: TextStyle(color: AppColors.gold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoLine(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Row(children: [
+      Text('$label: ', style: const TextStyle(color: Colors.white54, fontSize: 13)),
+      Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+    ]),
+  );
+
+  // ⑨ Right panel — gift button + scrollable emoji list
   Widget _buildRightPanel(double w, double h, double tt) {
     return Positioned(
-      right: 0, top: 0, bottom: 0, width: 172,
+      right: 0, top: 0, bottom: 0, width: _rightPanelW,
       child: RepaintBoundary(
         child: Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFF050C1A),
-            border: Border(left: BorderSide(color: Colors.white12)),
+          decoration: const BoxDecoration(
+            color: Color(0xFF050C1A),
+            border: Border(left: BorderSide(color: Colors.white10)),
           ),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              // Gift button — fixed at top
               const SizedBox(height: 8),
-              // Gift button at top of right panel
-              _iconBtn(Icons.card_giftcard,
-                  () => setState(() { _showGiftTray = !_showGiftTray; }),
-                  size: 36),
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
-                decoration: BoxDecoration(
-                    color: Colors.black38, borderRadius: BorderRadius.circular(22)),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: _quickEmojis.take(6).map((e) => GestureDetector(
-                    onTap: () => _sendEmoji(e),
-                    child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Text(e, style: const TextStyle(fontSize: 24))),
-                  )).toList(),
+              GestureDetector(
+                onTap: () => setState(() { _showGiftTray = !_showGiftTray; }),
+                child: Container(
+                  width: 38, height: 38,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
+                      begin: Alignment.topLeft, end: Alignment.bottomRight,
+                    ),
+                    boxShadow: [BoxShadow(color: AppColors.gold.withOpacity(0.4),
+                        blurRadius: 8, spreadRadius: 1)],
+                  ),
+                  child: const Icon(Icons.card_giftcard, color: Colors.black, size: 20),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Container(height: 1, color: Colors.white10,
+                  margin: const EdgeInsets.symmetric(horizontal: 8)),
+              const SizedBox(height: 4),
+              // Scrollable emoji list — shows all emojis, user can scroll
+              Expanded(
+                child: ScrollConfiguration(
+                  behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: Column(
+                      children: _quickEmojis.map((e) => GestureDetector(
+                        onTap: () => _sendEmoji(e),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 5),
+                          child: Text(e, style: const TextStyle(fontSize: 24)),
+                        ),
+                      )).toList(),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 8),
@@ -1064,7 +1185,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   // ⑩ Floating reactions (centered in table area, not right panel)
   Widget _buildReactions(List<_Reaction> reactions, double w, double h) {
     if (reactions.isEmpty) return const SizedBox.shrink();
-    final tableW = w - 174.0;
+    final tableW = w - _rightPanelW;
     return Stack(children: reactions.map((r) {
       return Positioned(
         key: ValueKey('rx_${r.id}'),
@@ -1079,7 +1200,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   Widget _buildReconnectBanner(String sv) {
     final failed = sv == 'reconnect-failed';
     return Positioned(
-      top: 44, left: 8, right: 180,
+      top: 44, left: 8, right: _rightPanelW,
       child: Center(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1136,7 +1257,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final activeCount = players.where((p) => (p as Map)['status'] == 'active').length;
 
     return Positioned(
-      left: 0, right: 174, bottom: 0,
+      left: 0, right: _rightPanelW, bottom: 0,
       child: SafeArea(
         top: false,
         child: Container(
@@ -1150,38 +1271,39 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           child: ValueListenableBuilder<double>(
             valueListenable: _betNotifier,
             builder: (_, rawBet, __) {
-              // Clamp inline — never write to _betNotifier inside a builder
-              // to avoid triggering a rebuild loop.
               final bet = rawBet.clamp(minBet, maxBet);
               _betAmount = bet;
               final label = bet > minBet
                   ? 'Raise ₹${bet.toInt()}'
                   : 'Chaal ₹${bet.toInt()}';
+              final btnPack    = (86  * _ls).clamp(62.0,  110.0);
+              final btnMain    = (114 * _ls).clamp(88.0,  140.0);
+              final btnSecond  = (72  * _ls).clamp(54.0,  90.0);
+              final gap        = (8   * _ls).clamp(5.0,   12.0);
               return Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Pack
-                  _actionBtn('Pack', AppColors.red, () => _sendAction('fold'),
-                      width: 90),
-                  const SizedBox(width: 8),
-                  // Show (only 2 active players)
-                  if (activeCount == 2) ...[
-                    _actionBtn('Show', Colors.deepPurple,
-                        () => _sendAction('show'), width: 72),
-                    const SizedBox(width: 8),
+                  _actionBtn('Pack', AppColors.red, () => _sendAction('fold'), width: btnPack),
+                  SizedBox(width: gap),
+                  // Sideshow — seen player can challenge the previous seen player
+                  if (_isSeen && activeCount > 2) ...[
+                    _actionBtn('Sideshow', Colors.indigo, () => _sendAction('sideshow'), width: btnSecond),
+                    SizedBox(width: gap),
                   ],
-                  // − stepper
+                  // Show — final showdown when only 2 players remain
+                  if (activeCount == 2) ...[
+                    _actionBtn('Show', Colors.deepPurple, () => _sendAction('show'), width: btnSecond),
+                    SizedBox(width: gap),
+                  ],
                   _stepperBtn('−', () {
                     _betNotifier.value = (bet - stake).clamp(minBet, maxBet);
                     HapticFeedback.selectionClick();
                   }),
-                  const SizedBox(width: 8),
-                  // Chaal / Raise
+                  SizedBox(width: gap),
                   _actionBtn(label, AppColors.green,
                       () => _sendAction(bet > minBet ? 'raise' : 'call', amount: bet),
-                      width: 120),
-                  const SizedBox(width: 8),
-                  // + stepper
+                      width: btnMain),
+                  SizedBox(width: gap),
                   _stepperBtn('+', () {
                     _betNotifier.value = (bet + stake).clamp(minBet, maxBet);
                     HapticFeedback.selectionClick();
@@ -1195,48 +1317,129 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑬ Gift tray (positioned inside table area in landscape)
-  Widget _buildGiftTray(double w, double h) => Positioned(
-        right: 180, top: h * 0.22,
+  // Balance + Blind/Seen pills — pinned just above the action bar, inside table
+  Widget _buildPlayerStatus(double w, double h) {
+    final actionBarH = (60 * _ls).clamp(50.0, 80.0);
+    final bottomY    = h - actionBarH - 6;
+    return Positioned(
+      left: 10, right: _rightPanelW + 10, bottom: h - bottomY,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Wallet balance — loaded from API
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.72),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.gold.withOpacity(0.6)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Text('💰', style: TextStyle(fontSize: 13)),
+              const SizedBox(width: 5),
+              Text('₹${_myBalance.toInt()}',
+                  style: TextStyle(
+                      color: AppColors.gold,
+                      fontWeight: FontWeight.bold,
+                      fontSize: (12 * _ls).clamp(10.0, 15.0))),
+            ]),
+          ),
+          // Blind / Seen badge
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(
+              color: _isSeen
+                  ? Colors.deepPurple.withOpacity(0.85)
+                  : Colors.orange.withOpacity(0.85),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                  color: _isSeen ? Colors.purple.shade200 : Colors.orange.shade200,
+                  width: 1.0),
+            ),
+            child: Text(
+              _isSeen ? 'SEEN' : 'BLIND',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: (11 * _ls).clamp(9.0, 14.0)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ⑬ Gift tray — scrollable so all gifts are reachable on any screen size
+  Widget _buildGiftTray(double w, double h) {
+    final maxH = (h * 0.70).clamp(180.0, 420.0);
+    return Positioned(
+      right: _rightPanelW + 8,
+      top: h * 0.14,
+      child: GestureDetector(
+        onTap: () {}, // absorb taps so table doesn't close tray
         child: Container(
-          width: 190,
+          width: 200,
+          constraints: BoxConstraints(maxHeight: maxH),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-              color: Colors.black87,
+              color: Colors.black.withOpacity(0.92),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: AppColors.gold.withOpacity(0.5))),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Send a gift',
-                style: TextStyle(
-                    color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8, runSpacing: 8,
-              children: _gifts.map((g) {
-                final price = double.tryParse(g['price']?.toString() ?? '0') ?? 0;
-                return GestureDetector(
-                  onTap: () => _sendGift(g['icon']?.toString() ?? ''),
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                        color: Colors.white10,
-                        borderRadius: BorderRadius.circular(10)),
-                    child: Column(children: [
-                      Text(g['icon']?.toString() ?? '', style: const TextStyle(fontSize: 22)),
-                      Text(g['name']?.toString() ?? '',
-                          style: const TextStyle(color: Colors.white70, fontSize: 9)),
-                      if (price > 0)
-                        Text('₹${price.toInt()}',
-                            style: const TextStyle(color: AppColors.gold, fontSize: 9,
-                                fontWeight: FontWeight.bold)),
-                    ]),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                const Text('Send a Gift',
+                    style: TextStyle(
+                        color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () => setState(() => _showGiftTray = false),
+                  child: const Icon(Icons.close, color: Colors.white54, size: 18),
+                ),
+              ]),
+              const SizedBox(height: 8),
+              Flexible(
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: _gifts.map((g) {
+                      final price = double.tryParse(g['price']?.toString() ?? '0') ?? 0;
+                      return GestureDetector(
+                        onTap: () {
+                          _sendGift(g['icon']?.toString() ?? '');
+                          setState(() => _showGiftTray = false);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                              color: Colors.white10,
+                              borderRadius: BorderRadius.circular(10)),
+                          child: Column(children: [
+                            Text(g['icon']?.toString() ?? '',
+                                style: const TextStyle(fontSize: 22)),
+                            Text(g['name']?.toString() ?? '',
+                                style: const TextStyle(color: Colors.white70, fontSize: 9)),
+                            if (price > 0)
+                              Text('₹${price.toInt()}',
+                                  style: const TextStyle(
+                                      color: AppColors.gold, fontSize: 9,
+                                      fontWeight: FontWeight.bold)),
+                          ]),
+                        ),
+                      );
+                    }).toList(),
                   ),
-                );
-              }).toList(),
-            ),
-          ]),
+                ),
+              ),
+            ],
+          ),
         ),
-      );
+      ),
+    );
+  }
 
   // ⑮ Result overlay (returned as plain Container — AnimatedSwitcher wraps
   //    it inside Positioned.fill, so ScaleTransition can't break StackParentData)
@@ -1334,82 +1537,76 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   // ═══════════════════════════════════════════════════════════════════════════
 
   Widget _buildCard(String value, String suit) {
-    final isRed   = suit == 'H' || suit == 'D';
-    final color   = isRed ? AppColors.red : const Color(0xFF1A1A2A);
-    final symbol  = {'S': '♠', 'H': '♥', 'D': '♦', 'C': '♣'}[suit] ?? suit;
+    final isRed  = suit == 'H' || suit == 'D';
+    final color  = isRed ? AppColors.red : const Color(0xFF1A1A2A);
+    final symbol = {'S': '♠', 'H': '♥', 'D': '♦', 'C': '♣'}[suit] ?? suit;
+    final cw = _cardW; final ch = _cardHt;
+    final fs1 = (13 * _ls).clamp(9.0, 16.0);
+    final fs2 = (11 * _ls).clamp(8.0, 14.0);
+    final fsC = (24 * _ls).clamp(16.0, 32.0);
     return Container(
-      width: 60, height: 86,
-      margin: const EdgeInsets.symmetric(horizontal: 3),
+      width: cw, height: ch,
+      margin: EdgeInsets.symmetric(horizontal: (3 * _ls).clamp(2, 5)),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(9),
-        boxShadow: const [
-          BoxShadow(color: Colors.black54, blurRadius: 8, offset: Offset(2, 4))
-        ],
+        borderRadius: BorderRadius.circular((8 * _ls).clamp(6, 11)),
+        boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 8, offset: Offset(2, 4))],
       ),
       child: Stack(children: [
-        Positioned(top: 4, left: 5,
+        Positioned(top: 3, left: 4,
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(value,
-                style: TextStyle(
-                    fontSize: 14, fontWeight: FontWeight.bold, color: color)),
-            Text(symbol, style: TextStyle(fontSize: 12, color: color)),
+            Text(value, style: TextStyle(fontSize: fs1, fontWeight: FontWeight.bold, color: color)),
+            Text(symbol, style: TextStyle(fontSize: fs2, color: color)),
           ])),
         Center(child: Text(symbol,
-            style: TextStyle(fontSize: 26, color: color.withOpacity(0.12)))),
-        Positioned(bottom: 4, right: 5,
-          child: Transform.rotate(
-            angle: math.pi,
+            style: TextStyle(fontSize: fsC, color: color.withOpacity(0.12)))),
+        Positioned(bottom: 3, right: 4,
+          child: Transform.rotate(angle: math.pi,
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(value,
-                  style: TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.bold, color: color)),
-              Text(symbol, style: TextStyle(fontSize: 12, color: color)),
-            ]),
-          )),
+              Text(value, style: TextStyle(fontSize: fs1, fontWeight: FontWeight.bold, color: color)),
+              Text(symbol, style: TextStyle(fontSize: fs2, color: color)),
+            ]))),
       ]),
     );
   }
 
   Widget _buildCardBack() => Container(
-        width: 60, height: 86,
-        margin: const EdgeInsets.symmetric(horizontal: 3),
+        width: _cardW, height: _cardHt,
+        margin: EdgeInsets.symmetric(horizontal: (3 * _ls).clamp(2, 5)),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(9),
+          borderRadius: BorderRadius.circular((8 * _ls).clamp(6, 11)),
           image: const DecorationImage(
-              image: AssetImage('assets/images/card_back.png'),
-              fit: BoxFit.cover),
-          boxShadow: const [
-            BoxShadow(color: Colors.black54, blurRadius: 8, offset: Offset(2, 4))
-          ],
+              image: AssetImage('assets/images/card_back.png'), fit: BoxFit.cover),
+          boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 8, offset: Offset(2, 4))],
         ),
       );
 
-  Widget _opponentCardBacks() => SizedBox(
-        width: 52, height: 30,
-        child: Stack(
-          alignment: Alignment.center,
-          children: List.generate(3, (i) => Transform.translate(
-            offset: Offset((i - 1) * 7.0, 0),
-            child: Transform.rotate(
-              angle: (i - 1) * 0.22,
-              child: Container(
-                width: 18, height: 25,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(3),
-                  image: const DecorationImage(
-                      image: AssetImage('assets/images/card_back.png'),
-                      fit: BoxFit.cover),
-                  boxShadow: const [
-                    BoxShadow(color: Colors.black54, blurRadius: 2,
-                        offset: Offset(0, 1))
-                  ],
-                ),
+  // Mini fan of 3 card backs shown above opponent seat containers
+  Widget _opponentCardBacks() {
+    final cw = (17 * _ls).clamp(13.0, 22.0);
+    final ch = (24 * _ls).clamp(18.0, 32.0);
+    final fanW = (48 * _ls).clamp(36.0, 60.0);
+    return SizedBox(
+      width: fanW, height: ch + 4,
+      child: Stack(alignment: Alignment.center,
+        children: List.generate(3, (i) => Transform.translate(
+          offset: Offset((i - 1) * (fanW / 7), 0),
+          child: Transform.rotate(
+            angle: (i - 1) * 0.20,
+            child: Container(
+              width: cw, height: ch,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular((3 * _ls).clamp(2, 5)),
+                image: const DecorationImage(
+                    image: AssetImage('assets/images/card_back.png'), fit: BoxFit.cover),
+                boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 2, offset: Offset(0, 1))],
               ),
             ),
-          )),
-        ),
-      );
+          ),
+        )),
+      ),
+    );
+  }
 
   (String, Color) _statusOf(Map<String, dynamic> p) {
     if (p['status'] == 'folded') return ('Pack', AppColors.red);
@@ -1417,18 +1614,19 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     return ('Chaal', AppColors.green);
   }
 
-  Widget _statusPill(String label, Color color) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.white24),
-        ),
-        child: Text(label,
-            style: const TextStyle(
-                color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold,
-                letterSpacing: 0.5)),
-      );
+  Widget _statusPill(String label, Color color, {double scale = 1.0}) {
+    final s = scale;
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: (7 * s).clamp(5, 10), vertical: (2 * s).clamp(1, 3)),
+      decoration: BoxDecoration(
+        color: color, borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Text(label,
+          style: TextStyle(color: Colors.white, fontSize: (8.5 * s).clamp(7, 11),
+              fontWeight: FontWeight.bold, letterSpacing: 0.4)),
+    );
+  }
 
   Widget _iconBtn(IconData icon, VoidCallback onTap, {double size = 36}) =>
       GestureDetector(
@@ -1459,7 +1657,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       GestureDetector(
         onTap: onTap,
         child: Container(
-          width: width, height: 46,
+          width: width, height: (44 * _ls).clamp(36.0, 54.0),
           alignment: Alignment.center,
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -1470,43 +1668,42 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                 Color.lerp(color, Colors.black, 0.22)!,
               ],
             ),
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular((13 * _ls).clamp(10, 18)),
             border: Border.all(color: Colors.white24),
             boxShadow: [
               BoxShadow(color: color.withOpacity(0.5), blurRadius: 12, spreadRadius: 1),
-              const BoxShadow(color: Colors.black38, blurRadius: 4,
-                  offset: Offset(0, 2)),
+              const BoxShadow(color: Colors.black38, blurRadius: 4, offset: Offset(0, 2)),
             ],
           ),
           child: Text(label,
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13,
-                  shadows: [Shadow(color: Colors.black38, blurRadius: 2)])),
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold,
+                  fontSize: (12.5 * _ls).clamp(10.0, 16.0),
+                  shadows: const [Shadow(color: Colors.black38, blurRadius: 2)])),
         ),
       );
 
-  Widget _stepperBtn(String label, VoidCallback onTap) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 40, height: 40, alignment: Alignment.center,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topCenter, end: Alignment.bottomCenter,
-              colors: [Color(0xFF5B6470), Color(0xFF323844)],
-            ),
-            border: Border.all(
-                color: AppColors.gold.withOpacity(0.6), width: 1.5),
-            shape: BoxShape.circle,
-            boxShadow: const [
-              BoxShadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 2))
-            ],
+  Widget _stepperBtn(String label, VoidCallback onTap) {
+    final d = (40 * _ls).clamp(32.0, 50.0);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: d, height: d, alignment: Alignment.center,
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topCenter, end: Alignment.bottomCenter,
+            colors: [Color(0xFF5B6470), Color(0xFF323844)],
           ),
-          child: Text(label,
-              style: const TextStyle(
-                  color: Colors.white, fontSize: 22,
-                  fontWeight: FontWeight.bold, height: 1.1)),
+          border: Border.all(color: AppColors.gold.withOpacity(0.6), width: 1.5),
+          shape: BoxShape.circle,
+          boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 2))],
         ),
-      );
+        child: Text(label,
+            style: TextStyle(color: Colors.white,
+                fontSize: (21 * _ls).clamp(16.0, 26.0),
+                fontWeight: FontWeight.bold, height: 1.1)),
+      ),
+    );
+  }
 }
 
 // ── Data ──────────────────────────────────────────────────────────────────────

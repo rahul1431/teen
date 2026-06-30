@@ -37,15 +37,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
     super.initState();
     _socket.connect();
     _loadBalance();
-    _roomJoinedSub = _socket.on(SocketEvents.roomJoined).listen((data) {
-      if (!mounted) return;
-      // Cancel before navigating — push() keeps lobby alive in the stack, so
-      // without this the listener fires again when the game page re-emits joinRoom.
-      _roomJoinedSub?.cancel();
-      _roomJoinedSub = null;
-      setState(() => _searching = false);
-      context.push('/games/teen-patti/play/${data['room_id']}', extra: data);
-    });
+    _attachRoomJoinedListener();
     _errorSub = _socket.on(SocketEvents.errorEvent).listen((data) {
       if (!mounted) return;
       setState(() => _searching = false);
@@ -59,6 +51,21 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
         'stake': _selectedStake,
         'variation': widget.variation,
       });
+    });
+  }
+
+  // Re-subscribes to roomJoined each time we need it. The listener is cancelled
+  // after navigation to prevent the lobby (still alive in the stack) from double-
+  // firing when the game page emits its own joinRoom. We re-attach here on every
+  // new search so the 2nd, 3rd... game can still receive the event.
+  void _attachRoomJoinedListener() {
+    _roomJoinedSub?.cancel();
+    _roomJoinedSub = _socket.on(SocketEvents.roomJoined).listen((data) {
+      if (!mounted || !_searching) return;
+      _roomJoinedSub?.cancel();
+      _roomJoinedSub = null;
+      setState(() => _searching = false);
+      context.push('/games/teen-patti/play/${data['room_id']}', extra: data);
     });
   }
 
@@ -87,6 +94,9 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       _showLowBalanceDialog();
       return;
     }
+    // Reattach listener every time — it was cancelled after game 1 to prevent
+    // the lobby (alive in stack) from firing again on the game page's joinRoom.
+    _attachRoomJoinedListener();
     setState(() => _searching = true);
     _socket.emit(SocketEvents.joinMatchmaking, {
       'game_type': 'teen_patti',
@@ -134,6 +144,8 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
 
   void _cancelSearch() {
     _socket.emit(SocketEvents.leaveMatchmaking, {'game_type': 'teen_patti', 'stake': _selectedStake});
+    _roomJoinedSub?.cancel();
+    _roomJoinedSub = null;
     setState(() => _searching = false);
   }
 

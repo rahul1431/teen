@@ -527,10 +527,21 @@ export class MatchmakingService {
         'SELECT user_id, entry_fee_deducted, is_bot FROM game_participants WHERE room_id = $1',
         [roomId]
       )
-      const players = parts.rows.filter(r => !r.is_bot).map(r => ({
+
+      const realParticipants = parts.rows.filter(r => !r.is_bot)
+      const players = realParticipants.map(r => ({
         user_id: r.user_id,
-        entry_fee: parseFloat(r.entry_fee_deducted) || 0  // NULL → 0
+        entry_fee: parseFloat(r.entry_fee_deducted) || 0,
       }))
+
+      // Only credit if the winner is a real (non-bot) player.
+      // If a bot wins (all real players folded), locked funds are consumed
+      // but no prize is credited — it stays as rake/house income.
+      const winnerIsReal = realParticipants.some(r => r.user_id === result.winner_id)
+      const effectiveWinnerId = winnerIsReal ? (result.winner_id || null) : null
+      const effectivePrize    = (winnerIsReal && effectiveWinnerId) ? Number(result.prize) : 0
+
+      console.log(`[gateway] handleGameEnd room=${roomId} winner=${result.winner_id} isReal=${winnerIsReal} prize=${effectivePrize}`)
 
       const walletUrl = process.env.WALLET_SERVICE_URL || 'http://localhost:3003'
       const settleRes = await fetch(`${walletUrl}/internal/wallet/settle-game`, {
@@ -538,17 +549,19 @@ export class MatchmakingService {
         headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
         body: JSON.stringify({
           room_id: roomId,
-          winner_id: result.winner_id || null,
-          prize: result.winner_id ? Number(result.prize) : 0,
+          winner_id: effectiveWinnerId,
+          prize: effectivePrize,
           players,
         }),
       })
       if (!settleRes.ok) {
         const errBody = await settleRes.text().catch(() => '(unreadable)')
         console.error(`[gateway] settle-game failed ${settleRes.status} for room ${roomId}:`, errBody)
+      } else {
+        console.log(`[gateway] settle-game succeeded for room=${roomId} winner=${effectiveWinnerId} prize=${effectivePrize}`)
       }
     } catch (e) {
-      console.error('Failed to settle Teen Patti game', e)
+      console.error('[gateway] Failed to settle Teen Patti game', e)
     }
 
     const winner = state.players?.find((p: any) => (p.userId ?? p.user_id ?? p.id) === result.winner_id)

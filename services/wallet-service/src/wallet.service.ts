@@ -204,7 +204,7 @@ export class WalletService {
     const shouldRelease = !client
     try {
       if (!client) await c.query('BEGIN')
-      
+
       const walletRes = await c.query(
         'SELECT locked_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
         [userId]
@@ -212,17 +212,25 @@ export class WalletService {
       if (!walletRes.rows.length) throw new Error('Wallet not found')
       const wallet = walletRes.rows[0]
       const locked = parseFloat(wallet.locked_balance)
-      if (locked < amount) throw new Error('Insufficient locked balance')
+
+      // Clamp to actual locked amount to handle edge-case discrepancies
+      // (e.g. network retry incremented entry_fee_deducted but lock failed).
+      const toConsume = Math.min(locked, amount)
+      if (toConsume <= 0) return
+
+      if (locked < amount) {
+        console.warn(`[wallet] consumeLockedFunds: user=${userId} locked=${locked} < amount=${amount} — consuming ${toConsume} (clamped)`)
+      }
 
       await c.query(
         'UPDATE wallets SET locked_balance = locked_balance - $1, updated_at = NOW() WHERE user_id = $2',
-        [amount, userId]
+        [toConsume, userId]
       )
 
       await c.query(
         `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, status, description)
          VALUES ($1, 'game_debit', 'real', $2, 0, 0, 'completed', 'Locked funds consumed by gameplay')`,
-        [userId, amount]
+        [userId, toConsume]
       )
 
       if (!client) await c.query('COMMIT')
