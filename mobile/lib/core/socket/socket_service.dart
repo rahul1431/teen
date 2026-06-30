@@ -264,6 +264,9 @@ class AviatorSocketService {
   WebSocketChannel? _channel;
   StreamSubscription? _sub;
   final _controllers = <String, StreamController<dynamic>>{};
+  bool _manuallyClosed = false;
+  bool _connecting = false;
+  Timer? _reconnectTimer;
 
   String get _base {
     var b = AppConfig.socketUrl.trim();
@@ -273,24 +276,53 @@ class AviatorSocketService {
   }
 
   Future<void> connect() async {
-    if (_channel != null) return;
-    final token = await SecureStorage.getAccessToken();
-    final uri = Uri.parse('$_base/ws/aviator?token=${Uri.encodeComponent(token ?? '')}');
+    _manuallyClosed = false; // reset so re-navigation to the page reconnects
+    if (_channel != null || _connecting) return;
+    _connecting = true;
+    // Use the main SocketService's token refresh so Aviator always has a fresh token.
+    final token = await SocketService()._freshToken();
+    if (token == null || token.isEmpty) {
+      _connecting = false;
+      _scheduleReconnect();
+      return;
+    }
+    final uri = Uri.parse('$_base/ws/aviator?token=${Uri.encodeComponent(token)}');
     try {
       _channel = WebSocketChannel.connect(uri);
       await _channel!.ready;
-      _sub = _channel!.stream.listen((raw) {
-        if (raw is! String) return;
-        try {
-          final msg = json.decode(raw) as Map<String, dynamic>;
-          final event = msg['event'] as String?;
-          if (event != null) _controllers[event]?.add(msg['data']);
-        } catch (_) {}
-      });
+      _sub = _channel!.stream.listen(
+        (raw) {
+          if (raw is! String) return;
+          try {
+            final msg = json.decode(raw) as Map<String, dynamic>;
+            final event = msg['event'] as String?;
+            if (event != null) _controllers[event]?.add(msg['data']);
+          } catch (_) {}
+        },
+        onError: (_) => _onClosed(),
+        onDone:  () => _onClosed(),
+        cancelOnError: true,
+      );
+      _connecting = false;
     } catch (e) {
       print('[AviatorSocket] connect error: $e');
       _channel = null;
+      _connecting = false;
+      _scheduleReconnect();
     }
+  }
+
+  void _onClosed() {
+    _sub?.cancel();
+    _sub = null;
+    _channel = null;
+    _connecting = false;
+    if (!_manuallyClosed) _scheduleReconnect();
+  }
+
+  void _scheduleReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(const Duration(seconds: 4), connect);
   }
 
   Stream<dynamic> on(String event) {
@@ -303,9 +335,13 @@ class AviatorSocketService {
   }
 
   void disconnect() {
+    _manuallyClosed = true;
+    _reconnectTimer?.cancel();
     _sub?.cancel();
+    _sub = null;
     _channel?.sink.close(ws_status.normalClosure);
     _channel = null;
+    _connecting = false;
     for (final c in _controllers.values) {
       c.close();
     }

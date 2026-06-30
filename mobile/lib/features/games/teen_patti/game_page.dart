@@ -215,7 +215,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _gsNotifier.value  = gs;
     _betAmount         = (data['min_bet'] as num?)?.toDouble() ?? 0;
     _betNotifier.value = _betAmount;
-    final idx  = (gs['current_turn'] ?? 0) as int;
+    final idx  = ((gs['current_turn'] ?? 0) as num).toInt();
     final cur  = idx < players.length ? players[idx] : null;
     final isMe = (cur?['userId'] ?? cur?['user_id']) == _myUserId;
     _myTurnNotifier.value = isMe;
@@ -269,7 +269,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       final inner   = data['state'] as Map<String, dynamic>? ?? data;
       final players = _mapPlayers(inner['players'] as List? ?? []);
       _gsNotifier.value = {...inner, 'players': players};
-      final idx      = (inner['current_turn'] ?? inner['CurrentTurn'] ?? 0) as int;
+      final idx      = ((inner['current_turn'] ?? inner['CurrentTurn'] ?? 0) as num).toInt();
       final cur      = idx < players.length ? players[idx] : null;
       final isMe     = (cur?['userId'] ?? cur?['user_id']) == _myUserId;
       final wasMyTurn = _myTurnNotifier.value;
@@ -692,7 +692,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final isFolded = p['status'] == 'folded';
     final isBot    = p['is_bot'] == true;
     final players  = (gs?['players'] as List?) ?? [];
-    final turnIdx  = (gs?['current_turn'] ?? gs?['CurrentTurn'] ?? -1) as int;
+    final turnIdx  = ((gs?['current_turn'] ?? gs?['CurrentTurn'] ?? -1) as num).toInt();
     final turnUid  = gs?['current_turn_user_id'] ??
         (turnIdx >= 0 && turnIdx < players.length
             ? (players[turnIdx] as Map)['user_id'] ?? (players[turnIdx] as Map)['userId']
