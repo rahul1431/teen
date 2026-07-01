@@ -25,6 +25,8 @@ class SocketService {
   bool _connecting = false;
   bool _connected = false;
   bool _manuallyClosed = false;
+  bool _closedHandled = false; // prevents double _onClosed() when both onError+onDone fire
+  bool _autoReconnecting = false; // true only when _scheduleReconnect timer fires connect()
   int _reconnectAttempts = 0;
   Timer? _reconnectTimer;
   Timer? _pingTimer;
@@ -62,11 +64,11 @@ class SocketService {
     if (_connected || _connecting) return;
     _connecting = true;
     _manuallyClosed = false;
+    _closedHandled = false; // arm the guard for this new connection lifecycle
 
-    // Reset the reconnect counter when connect() is called externally (e.g.,
-    // when a game lobby opens). Without this, hitting the 20-attempt cap once
-    // prevents further auto-retries even in a fresh navigation.
-    if (_reconnectAttempts >= 20) _reconnectAttempts = 0;
+    // External calls (from lobbies) always reset the counter so the user gets
+    // a fresh 20-attempt window. Internal timer-driven reconnects do NOT reset.
+    if (!_autoReconnecting) _reconnectAttempts = 0;
 
     status.value = 'reading-token';
 
@@ -156,6 +158,12 @@ class SocketService {
   }
 
   void _onClosed() {
+    // web_socket_channel can fire both onError (cancelOnError:true) AND onDone
+    // for the same close event, doubling _reconnectAttempts and exhausting the
+    // 20-attempt cap after only 10 real disconnects. Guard against this.
+    if (_closedHandled) return;
+    _closedHandled = true;
+
     final code = _channel?.closeCode;
     _connected = false;
     _pingTimer?.cancel();
@@ -189,7 +197,8 @@ class SocketService {
     _reconnectAttempts++;
     _reconnectTimer = Timer(Duration(seconds: delaySec), () {
       _channel = null;
-      connect();
+      _autoReconnecting = true;
+      connect().whenComplete(() => _autoReconnecting = false);
     });
   }
 

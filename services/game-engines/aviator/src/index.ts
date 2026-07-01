@@ -10,7 +10,11 @@ import { v4 as uuid } from 'uuid'
 
 const app = Fastify({ logger: false })
 const db = new Pool({ connectionString: process.env.DATABASE_URL!, max: 10 })
-const pubClient = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
+const pubClient = new Redis(process.env.REDIS_URL!, {
+  maxRetriesPerRequest: null,
+  retryStrategy: (times) => Math.min(times * 200, 3000),
+  lazyConnect: false,
+})
 
 // ── Raw WebSocket transport (replaced socket.io) ──────────────────────────
 interface AvConn { ws: WebSocket; userId: string; username: string }
@@ -100,30 +104,46 @@ function generateCrashPoint(serverSeed: string, roundId: string): number {
 }
 
 async function startBettingPhase() {
-  await loadConfig() // pick up live admin changes each round
-  const roundId = uuid()
-  const serverSeed = crypto.randomBytes(32).toString('hex')
-  const crashAt = generateCrashPoint(serverSeed, roundId)
+  try {
+    await loadConfig() // pick up live admin changes each round
+    const roundId = uuid()
+    const serverSeed = crypto.randomBytes(32).toString('hex')
+    const crashAt = generateCrashPoint(serverSeed, roundId)
 
-  currentRound = {
-    roundId,
-    serverSeed,
-    status: 'betting',
-    crashAt,
-    currentMultiplier: 1.00,
-    bets: {},
-    history: await getHistory(),
+    currentRound = {
+      roundId,
+      serverSeed,
+      status: 'betting',
+      crashAt,
+      currentMultiplier: 1.00,
+      bets: {},
+      history: await getHistory(),
+    }
+
+    await pubClient.setex(`aviator:round:${roundId}`, 600, JSON.stringify(currentRound))
+
+    broadcast('aviator:round_start', {
+      round_id: roundId,
+      betting_time_ms: aviatorConfig.bettingTimeMs,
+      history: currentRound.history,
+    })
+
+    setTimeout(() => startBettingPhaseNext(), aviatorConfig.bettingTimeMs)
+  } catch (err) {
+    console.error('[aviator] startBettingPhase failed, retrying in 5s:', err)
+    currentRound = null
+    setTimeout(() => startBettingPhase(), 5000)
   }
+}
 
-  await pubClient.setex(`aviator:round:${roundId}`, 600, JSON.stringify(currentRound))
-
-  broadcast('aviator:round_start', {
-    round_id: roundId,
-    betting_time_ms: aviatorConfig.bettingTimeMs,
-    history: currentRound.history,
+// Wrapper to ensure startFlyingPhase errors don't propagate unhandled
+function startBettingPhaseNext() {
+  startFlyingPhase().catch((err) => {
+    console.error('[aviator] startFlyingPhase failed, restarting in 5s:', err)
+    if (flyingInterval) { clearInterval(flyingInterval); flyingInterval = null }
+    currentRound = null
+    setTimeout(() => startBettingPhase(), 5000)
   })
-
-  setTimeout(() => startFlyingPhase(), aviatorConfig.bettingTimeMs)
 }
 
 async function startFlyingPhase() {
@@ -148,7 +168,12 @@ async function startFlyingPhase() {
 
     if (multiplier >= crashAt) {
       clearInterval(flyingInterval!)
-      await crashRound(crashAt)
+      flyingInterval = null
+      crashRound(crashAt).catch((err) => {
+        console.error('[aviator] crashRound failed, restarting in 5s:', err)
+        currentRound = null
+        setTimeout(() => startBettingPhase(), 5000)
+      })
     }
   }, 100)
 }
@@ -182,7 +207,9 @@ async function crashRound(crashAt: number) {
   currentRound = null
 
   // Start next round after 3 seconds
-  setTimeout(() => startBettingPhase(), 3000)
+  setTimeout(() => {
+    startBettingPhase().catch((err) => console.error('[aviator] round restart failed:', err))
+  }, 3000)
 }
 
 async function creditWallet(userId: string, amount: number, referenceId: string, betIndex: number) {
@@ -213,7 +240,12 @@ async function start() {
   await app.register(require('@fastify/cors'), { origin: true })
 
   const httpServer = createServer(app.server)
-  if (pubClient.status === 'wait') await pubClient.connect()
+  // pubClient connects automatically (lazyConnect:false); wait for it to be ready
+  await new Promise<void>((resolve) => {
+    if (pubClient.status === 'ready') { resolve(); return }
+    pubClient.once('ready', resolve)
+    pubClient.once('error', () => resolve()) // proceed even if Redis is temporarily down
+  })
 
   const wss = new WebSocketServer({ server: httpServer, path: '/ws/aviator' })
 
@@ -329,7 +361,9 @@ async function start() {
   httpServer.listen(port, '0.0.0.0', () => {
     console.log(`Aviator engine running on port ${port} (raw WebSocket /ws/aviator)`)
     // Start first round
-    setTimeout(() => startBettingPhase(), 2000)
+    setTimeout(() => {
+      startBettingPhase().catch((err) => console.error('[aviator] initial round start failed:', err))
+    }, 2000)
   })
 }
 

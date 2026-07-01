@@ -41,7 +41,8 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
     _errorSub = _socket.on(SocketEvents.errorEvent).listen((data) {
       if (!mounted) return;
       setState(() => _searching = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(data['message'] ?? 'Error'), backgroundColor: AppColors.red));
+      final msg = (data is Map ? data['message'] as String? : null) ?? 'Connection error. Please retry.';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: AppColors.red));
     });
     // Re-join matchmaking queue after socket reconnects (preserves searching state)
     _socket.onReconnect(() {
@@ -89,6 +90,14 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   }
 
   void _joinMatchmaking() {
+    if (!_socket.isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Not connected to server. Attempting to reconnect…'),
+        backgroundColor: AppColors.orange,
+      ));
+      _socket.reconnectNow();
+      return;
+    }
     // Gate: block join when balance is unknown or below the selected stake.
     if (_balanceValue == null || _balanceValue! < _selectedStake) {
       _showLowBalanceDialog();
