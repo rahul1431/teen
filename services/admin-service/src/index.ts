@@ -1496,6 +1496,92 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // --- Lottery Draw Edit ---
+  app.patch('/api/admin/betting/lottery/draws/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const body = z.object({
+      name: z.string().optional(),
+      ticket_price: z.number().positive().optional(),
+      draw_time: z.string().optional(),
+      prize_multiplier: z.number().positive().optional(),
+    }).parse(req.body)
+    const existing = await db.query(`SELECT status FROM lottery_draws WHERE id = $1`, [id])
+    if (!existing.rows.length) return reply.code(404).send({ error: 'Draw not found' })
+    if (existing.rows[0].status !== 'open') return reply.code(409).send({ error: 'Can only edit open draws' })
+    const fields: string[] = [], params: any[] = [id]
+    let i = 2
+    if (body.name) { fields.push(`name = $${i++}`); params.push(body.name) }
+    if (body.ticket_price) { fields.push(`ticket_price = $${i++}`); params.push(body.ticket_price) }
+    if (body.draw_time) { fields.push(`draw_time = $${i++}`); params.push(body.draw_time) }
+    if (body.prize_multiplier) { fields.push(`prize_multiplier = $${i++}`); params.push(body.prize_multiplier) }
+    if (!fields.length) return reply.code(400).send({ error: 'No fields to update' })
+    const r = await db.query(`UPDATE lottery_draws SET ${fields.join(', ')} WHERE id = $1 RETURNING *`, params)
+    return reply.send({ success: true, draw: r.rows[0] })
+  })
+
+  // --- Lottery Draw Tickets View ---
+  app.get('/api/admin/betting/lottery/draws/:id/tickets', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const { page = '1', limit = '50' } = req.query as any
+    const offset = (parseInt(page) - 1) * parseInt(limit)
+    const [draw, tickets, total] = await Promise.all([
+      db.query(`SELECT * FROM lottery_draws WHERE id = $1`, [id]),
+      db.query(`
+        SELECT t.*, u.username, u.phone
+        FROM lottery_tickets t
+        JOIN users u ON u.id = t.user_id
+        WHERE t.draw_id = $1
+        ORDER BY t.created_at DESC
+        LIMIT $2 OFFSET $3
+      `, [id, parseInt(limit), offset]),
+      db.query(`SELECT COUNT(*) FROM lottery_tickets WHERE draw_id = $1`, [id]),
+    ])
+    if (!draw.rows.length) return reply.code(404).send({ error: 'Draw not found' })
+    return reply.send({
+      draw: draw.rows[0],
+      tickets: tickets.rows,
+      total: parseInt(total.rows[0].count),
+      page: parseInt(page),
+      limit: parseInt(limit),
+    })
+  })
+
+  // --- Lottery Stats ---
+  app.get('/api/admin/betting/lottery/stats', { onRequest: [authenticate] }, async (_req, reply) => {
+    const [overview, topDraws] = await Promise.all([
+      db.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'open') AS open_draws,
+          COUNT(*) FILTER (WHERE status = 'settled') AS settled_draws,
+          COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled_draws,
+          (SELECT COUNT(*) FROM lottery_tickets) AS total_tickets,
+          (SELECT COALESCE(SUM(amount), 0) FROM lottery_tickets) AS total_revenue,
+          (SELECT COALESCE(SUM(prize), 0) FROM lottery_tickets WHERE is_winner = true) AS total_paid_out
+        FROM lottery_draws
+      `),
+      db.query(`
+        SELECT d.id, d.name, d.status, d.draw_time,
+          COUNT(t.id)::int AS ticket_count,
+          COALESCE(SUM(t.amount), 0) AS revenue,
+          COALESCE(SUM(t.prize) FILTER (WHERE t.is_winner = true), 0) AS paid_out
+        FROM lottery_draws d
+        LEFT JOIN lottery_tickets t ON t.draw_id = d.id
+        GROUP BY d.id
+        ORDER BY d.draw_time DESC
+        LIMIT 10
+      `),
+    ])
+    return reply.send({ overview: overview.rows[0], recent_draws: topDraws.rows })
+  })
+
+  // --- Lottery Cancel + Refund ---
+  app.post('/api/admin/betting/lottery/cancel/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const r = await callBetting('/internal/lottery/cancel', { draw_id: id })
+    if (!r.ok) return reply.code(r.status).send(r.data)
+    return reply.send(r.data)
+  })
+
   // --- Bot Management ---
   app.post('/api/admin/bots', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const body = z.object({

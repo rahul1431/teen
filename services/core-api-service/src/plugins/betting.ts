@@ -59,7 +59,14 @@ export function bettingPlugin(db: Pool) {
 
     // ══ LOTTERY ══
     app.get('/lottery/draws', { onRequest: [auth] }, async () => {
-      const rows = await db.query(`SELECT * FROM lottery_draws WHERE status = 'open' AND draw_time > NOW() ORDER BY draw_time ASC`)
+      const rows = await db.query(`
+        SELECT d.*, COUNT(t.id)::int AS ticket_count
+        FROM lottery_draws d
+        LEFT JOIN lottery_tickets t ON t.draw_id = d.id
+        WHERE d.status = 'open' AND d.draw_time > NOW()
+        GROUP BY d.id
+        ORDER BY d.draw_time ASC
+      `)
       return { draws: rows.rows }
     })
 
@@ -79,6 +86,22 @@ export function bettingPlugin(db: Pool) {
     app.get('/lottery/my-tickets', { onRequest: [auth] }, async (req) => {
       const rows = await db.query(`SELECT t.*, d.name AS draw_name, d.winning_number, d.draw_time, d.status AS draw_status FROM lottery_tickets t JOIN lottery_draws d ON d.id = t.draw_id WHERE t.user_id = $1 ORDER BY t.created_at DESC LIMIT 100`, [uid(req)])
       return { tickets: rows.rows }
+    })
+
+    app.get('/lottery/results', { onRequest: [auth] }, async () => {
+      const rows = await db.query(`
+        SELECT d.*,
+          COUNT(t.id)::int AS total_tickets,
+          COUNT(t.id) FILTER (WHERE t.is_winner = true)::int AS winner_count,
+          COALESCE(SUM(t.prize) FILTER (WHERE t.is_winner = true), 0) AS total_paid
+        FROM lottery_draws d
+        LEFT JOIN lottery_tickets t ON t.draw_id = d.id
+        WHERE d.status = 'settled'
+        GROUP BY d.id
+        ORDER BY d.draw_time DESC
+        LIMIT 20
+      `)
+      return { draws: rows.rows }
     })
 
     // ══ CRICKET ══
@@ -249,6 +272,18 @@ export function bettingPlugin(db: Pool) {
       const body = z.object({ draw_id: z.string().uuid(), winning_number: z.string() }).parse(req.body)
       const res = await settleLottery(db, body.draw_id, body.winning_number)
       return { success: true, ...res }
+    })
+
+    app.post('/internal/lottery/cancel', { onRequest: [internal] }, async (req, reply) => {
+      const body = z.object({ draw_id: z.string().uuid() }).parse(req.body)
+      const drawRes = await db.query(`SELECT * FROM lottery_draws WHERE id = $1 AND status = 'open'`, [body.draw_id])
+      if (!drawRes.rows.length) return reply.code(409).send({ error: 'Draw not open or already settled' })
+      const tickets = await db.query(`SELECT * FROM lottery_tickets WHERE draw_id = $1`, [body.draw_id])
+      await db.query(`UPDATE lottery_draws SET status = 'cancelled' WHERE id = $1`, [body.draw_id])
+      await Promise.all(tickets.rows.map((t: any) =>
+        creditPrize({ userId: t.user_id, amount: Number(t.amount), referenceId: t.id, idempotencyKey: `lottery_refund_${t.id}` })
+      ))
+      return { success: true, refunded: tickets.rows.length }
     })
 
     app.post('/internal/cricket/match', { onRequest: [internal] }, async (req) => {
