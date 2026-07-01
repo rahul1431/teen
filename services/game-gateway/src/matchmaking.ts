@@ -534,6 +534,9 @@ export class MatchmakingService {
 
   async handleGameEnd(roomId: string, result: any, realPlayers: MatchmakingEntry[], state: any): Promise<void> {
     if (!result) return
+    // Cancel any pending bot action timer for this room
+    const bt = this.botTimers.get(roomId)
+    if (bt) { clearTimeout(bt.timer); this.botTimers.delete(roomId) }
 
     // Settle game via wallet service (consumes locked balance for all players, pays winner)
     try {

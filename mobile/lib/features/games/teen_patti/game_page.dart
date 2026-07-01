@@ -290,7 +290,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         'room_id': widget.roomId,
       });
       _resultNotifier.value = won
-          ? '🎉 You Won ₹${double.parse(data['prize'].toString()).toStringAsFixed(2)}!'
+          ? '🎉 You Won ₹${(double.tryParse(data['prize']?.toString() ?? '0') ?? 0.0).toStringAsFixed(2)}!'
           : '😔 You Lost. Winner: ${data['winner_username'] ?? 'Unknown'}';
       _myTurnNotifier.value = false;
       if (won) {

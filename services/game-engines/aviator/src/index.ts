@@ -268,7 +268,7 @@ async function start() {
           const res = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-            body: JSON.stringify({ user_id: userId, amount, room_id: `${currentRound.roundId}_${betIndex}` }),
+            body: JSON.stringify({ user_id: userId, amount, room_id: `${currentRound.roundId}_${betIndex}`, lock_id: `aviator_${currentRound.roundId}_${betIndex}_${userId}` }),
           })
           if (!res.ok) {
             const err = await res.json() as any

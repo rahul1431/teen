@@ -316,6 +316,7 @@ class AviatorSocketService {
   bool _manuallyClosed = false;
   bool _connecting = false;
   Timer? _reconnectTimer;
+  int _reconnectAttempts = 0;
 
   String get _base {
     var b = AppConfig.socketUrl.trim();
@@ -328,6 +329,7 @@ class AviatorSocketService {
     _manuallyClosed = false; // reset so re-navigation to the page reconnects
     if (_channel != null || _connecting) return;
     _connecting = true;
+    if (_reconnectAttempts >= 20) _reconnectAttempts = 0;
     // Use the main SocketService's token refresh so Aviator always has a fresh token.
     final token = await SocketService()._freshToken();
     if (token == null || token.isEmpty) {
@@ -353,6 +355,7 @@ class AviatorSocketService {
         cancelOnError: true,
       );
       _connecting = false;
+      _reconnectAttempts = 0;
     } catch (e) {
       print('[AviatorSocket] connect error: $e');
       _channel = null;
@@ -377,7 +380,13 @@ class AviatorSocketService {
 
   void _scheduleReconnect() {
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 4), connect);
+    if (_reconnectAttempts >= 20) {
+      print('[AviatorSocket] max reconnect attempts reached — giving up');
+      return;
+    }
+    final delaySec = [2, 2, 4, 4, 8, 8, 16][_reconnectAttempts.clamp(0, 6)];
+    _reconnectAttempts++;
+    _reconnectTimer = Timer(Duration(seconds: delaySec), connect);
   }
 
   Stream<dynamic> on(String event) {

@@ -12,19 +12,23 @@ import { RealtimeHub, Conn } from './realtime'
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
-const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
+const redisOpts = {
+  retryStrategy: (times: number) => Math.min(times * 500, 5000),
+  maxRetriesPerRequest: null,
+}
+const redis = new Redis(process.env.REDIS_URL!, redisOpts)
+redis.on('error', (err) => console.error('[redis] pub error', err.message))
 
 async function start() {
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.JWT_SECRET! })
-  if (redis.status === 'wait') await redis.connect()
 
   const httpServer = createServer(app.server)
   const hub = new RealtimeHub()
   hub.setRedisPub(redis)
 
-  const redisSub = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
-  if (redisSub.status === 'wait') await redisSub.connect()
+  const redisSub = new Redis(process.env.REDIS_URL!, redisOpts)
+  redisSub.on('error', (err) => console.error('[redis] sub error', err.message))
   await redisSub.subscribe('gateway:broadcast')
   redisSub.on('message', (channel, message) => {
     if (channel !== 'gateway:broadcast') return

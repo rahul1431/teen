@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/network/api_client.dart';
@@ -22,19 +23,21 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
   String? _balance;
   double? _balanceValue;
   final _stakes = [10.0, 50.0, 100.0, 500.0];
+  StreamSubscription? _roomJoinedSub;
+  StreamSubscription? _errorSub;
 
   @override
   void initState() {
     super.initState();
     _socket.connect();
     _loadBalance();
-    _socket.on(SocketEvents.roomJoined).listen((data) {
+    _roomJoinedSub = _socket.on(SocketEvents.roomJoined).listen((data) {
       if (!mounted) return;
       if (data['game_type'] != null && data['game_type'] != 'ludo') return;
       setState(() => _searching = false);
       context.push('/games/ludo/play/${data['room_id']}', extra: data);
     });
-    _socket.on(SocketEvents.errorEvent).listen((data) {
+    _errorSub = _socket.on(SocketEvents.errorEvent).listen((data) {
       if (!mounted) return;
       setState(() => _searching = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -46,6 +49,13 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
       _socket.emit(SocketEvents.joinMatchmaking,
           {'game_type': 'ludo', 'stake': _selectedStake});
     });
+  }
+
+  @override
+  void dispose() {
+    _roomJoinedSub?.cancel();
+    _errorSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadBalance() async {

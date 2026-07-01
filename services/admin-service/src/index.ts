@@ -329,7 +329,7 @@ async function start() {
     const res = await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/deposit/manual`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-      body: JSON.stringify({ user_id: id, amount, description: description || 'Manual credit by admin' }),
+      body: JSON.stringify({ user_id: id, amount, request_id: crypto.randomUUID(), description: description || 'Manual credit by admin' }),
     })
     if (!res.ok) return reply.code(res.status).send(await res.json().catch(() => ({ error: 'Wallet service error' })))
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'credit_wallet', 'user', $2, $3)`,
@@ -612,13 +612,15 @@ async function start() {
 
     // Refund the held amount back to the user's wallet on reject
     if (status === 'refunded') {
-      await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/deposit/manual`, {
+      // Restore funds via unlock (real_balance += amount, locked_balance -= amount)
+      // deposit/manual would credit real_balance without clearing locked_balance
+      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
         body: JSON.stringify({
           user_id: row.rows[0].user_id,
           amount: parseFloat(row.rows[0].amount),
-          description: `Withdrawal rejected: ${reason || 'no reason given'}`,
+          room_id: `withdrawal:${id}`,
         }),
       }).catch(() => null)
     }
@@ -693,6 +695,7 @@ async function start() {
         body: JSON.stringify({
           user_id: row.rows[0].user_id,
           amount: parseFloat(row.rows[0].amount),
+          request_id: crypto.randomUUID(),
           description: `Manual deposit reconciliation${reference ? ` (ref: ${reference})` : ''}`,
         }),
       })
