@@ -915,9 +915,9 @@ async function start() {
     const currentRules = existing.rows[0]?.special_rules || {}
     const specialRules = body.special_rules ? { ...currentRules, ...body.special_rules } : currentRules
     await db.query(
-      `UPDATE game_configs SET is_active=$1, rake_percent=$2, bot_fill_enabled=$3, bot_fill_delay_seconds=$4, max_bot_ratio=$5, bot_difficulty=$6, special_rules=$7, updated_by=$8, updated_at=NOW()
-       WHERE game_type=$9`,
-      [body.is_active, body.rake_percent, body.bot_fill_enabled, body.bot_fill_delay_seconds, body.max_bot_ratio, body.bot_difficulty, JSON.stringify(specialRules), admin.sub, gameType]
+      `UPDATE game_configs SET is_active=$1, rake_percent=$2, bot_fill_enabled=$3, bot_fill_delay_seconds=$4, max_bot_ratio=$5, bot_difficulty=$6, special_rules=$7, bot_fill_table_size=$8, updated_by=$9, updated_at=NOW()
+       WHERE game_type=$10`,
+      [body.is_active, body.rake_percent, body.bot_fill_enabled, body.bot_fill_delay_seconds, body.max_bot_ratio, body.bot_difficulty, JSON.stringify(specialRules), body.bot_fill_table_size ?? null, admin.sub, gameType]
     )
     return reply.send({ success: true })
   })

@@ -86,6 +86,10 @@ export default function GameConfig() {
               <Form.Item name="max_bot_ratio" label="Max Bot Ratio (0-1)">
                 <InputNumber min={0} max={1} step={0.1} style={{ width: '100%' }} />
               </Form.Item>
+              <Form.Item name="bot_fill_table_size" label="Fixed Bot-Fill Table Size (blank = use ratio above)"
+                tooltip="When set, short-handed tables are always topped up to exactly this many seats with bots (e.g. 4 for Teen Patti: 1+3, 2+2, 3+1). Tables that already have this many real players skip bots entirely.">
+                <InputNumber min={2} max={cfg.max_players} placeholder="Ratio-based" style={{ width: '100%' }} />
+              </Form.Item>
               <Form.Item name="bot_difficulty" label="Bot Difficulty">
                 <Select>
                   <Select.Option value="easy">Easy</Select.Option>

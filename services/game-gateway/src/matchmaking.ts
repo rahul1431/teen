@@ -68,15 +68,24 @@ export class MatchmakingService {
 
   private async tryCreateRoom(gameType: string, stake: number, config: any): Promise<void> {
     const key = `matchmaking:${gameType}:${stake}`
-    
+
+    // Games with a fixed bot-fill table size (e.g. Teen Patti's 4) shouldn't
+    // instant-start on the bare min_players threshold — that's how you end up
+    // with e.g. two real players locked into a 2-real/0-bot table the moment
+    // they both happen to be queued, instead of waiting to see if enough real
+    // players show up to skip bots entirely. Only start immediately once
+    // there are enough real players that no bots are needed at all; anything
+    // short of that waits for the bot-fill timer in joinQueue.
+    const noBotThreshold = config.bot_fill_table_size || config.min_players
+
     // Atomically check if enough players are ready, and if so pop them
     const members = await this.redis.eval(
       `
       local key = KEYS[1]
-      local min_players = tonumber(ARGV[1])
+      local no_bot_threshold = tonumber(ARGV[1])
       local max_players = tonumber(ARGV[2])
       local members = redis.call('zrange', key, 0, max_players - 1)
-      if #members < min_players then
+      if #members < no_bot_threshold then
         return {}
       end
       for _, m in ipairs(members) do
@@ -86,11 +95,11 @@ export class MatchmakingService {
       `,
       1,
       key,
-      config.min_players,
+      noBotThreshold,
       config.max_players
     ) as string[]
 
-    if (!members || members.length < config.min_players) return
+    if (!members || members.length < noBotThreshold) return
 
     console.log(`[matchmaking] tryCreateRoom: ${members.length} players ready for ${gameType}:${stake} — starting game`)
     const players: MatchmakingEntry[] = members.map(m => JSON.parse(m))
@@ -121,10 +130,19 @@ export class MatchmakingService {
     const realPlayers: MatchmakingEntry[] = members.map(m => JSON.parse(m))
     console.log(`[matchmaking] botFillRoom: ${realPlayers.length} real players for ${gameType}:${stake} — filling with bots`)
 
-    const maxBots = Math.floor(config.max_players * config.max_bot_ratio)
-    // Ensure at least min_players total (fill gap with bots)
-    const minBotsNeeded = Math.max(0, (config.min_players || 2) - realPlayers.length)
-    const botsNeeded = Math.min(config.max_players - realPlayers.length, Math.max(maxBots, minBotsNeeded))
+    let botsNeeded: number
+    if (config.bot_fill_table_size) {
+      // Fixed target size (e.g. Teen Patti's 4): top up to exactly that many
+      // seats with bots. If enough real players already showed up to hit or
+      // exceed the target (a race with tryCreateRoom), no bots are needed —
+      // just seat the real players, capped at max_players.
+      botsNeeded = Math.max(0, Math.min(config.max_players, config.bot_fill_table_size) - realPlayers.length)
+    } else {
+      const maxBots = Math.floor(config.max_players * config.max_bot_ratio)
+      // Ensure at least min_players total (fill gap with bots)
+      const minBotsNeeded = Math.max(0, (config.min_players || 2) - realPlayers.length)
+      botsNeeded = Math.min(config.max_players - realPlayers.length, Math.max(maxBots, minBotsNeeded))
+    }
     const bots = await this.getBots(gameType, botsNeeded)
 
     // If no bots in DB and real players alone don't meet min_players, re-queue them
