@@ -129,7 +129,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '150M',
-      env: { ...NODE_OPTS, NODE_ENV: 'production', PORT: 3015 },
+      env: { ...NODE_OPTS, NODE_ENV: 'production', PORT: 3015, GEOLITE2_CITY_PATH: '/opt/teen/geoip/GeoLite2-City.mmdb' },
     },
 
     // ── Bot Learning: nightly bot-profile rebuild from real player data ──
