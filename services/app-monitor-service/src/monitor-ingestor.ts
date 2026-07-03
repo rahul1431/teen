@@ -101,6 +101,10 @@ export function deriveLastScreenGame(events: AppEvent[]): { last_screen: string 
   return { last_screen, last_game }
 }
 
+export function isValidLocationEvent(e: AppEvent): boolean {
+  return e.event_type === 'location' && typeof (e as any).lat === 'number' && typeof (e as any).lon === 'number'
+}
+
 export class MonitorIngestor {
   constructor(
     private pool: Pool,
@@ -160,7 +164,7 @@ export class MonitorIngestor {
     }
 
     // GPS pings → dedicated table
-    const locEvents = events.filter(e => e.event_type === 'location' && typeof (e as any).lat === 'number')
+    const locEvents = events.filter(isValidLocationEvent)
     if (locEvents.length > 0) {
       await this._bulkInsertLocations(session_id, user_id ?? null, locEvents)
     }

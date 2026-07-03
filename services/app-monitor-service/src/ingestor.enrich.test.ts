@@ -1,6 +1,6 @@
 // services/app-monitor-service/src/ingestor.enrich.test.ts
 import { describe, it, expect } from 'vitest'
-import { deriveLastScreenGame } from './monitor-ingestor'
+import { deriveLastScreenGame, isValidLocationEvent } from './monitor-ingestor'
 
 describe('deriveLastScreenGame', () => {
   it('takes the most recent screen_view screen and game_event action', () => {
@@ -14,5 +14,36 @@ describe('deriveLastScreenGame', () => {
   it('returns nulls when absent', () => {
     expect(deriveLastScreenGame([{ event_type: 'error' } as any]))
       .toEqual({ last_screen: null, last_game: null })
+  })
+})
+
+describe('isValidLocationEvent', () => {
+  it('accepts a location event with both lat and lon as numbers', () => {
+    const e = { event_type: 'location', lat: 40.7128, lon: -74.0060 } as any
+    expect(isValidLocationEvent(e)).toBe(true)
+  })
+  it('rejects a location event with lat but missing lon', () => {
+    const e = { event_type: 'location', lat: 40.7128 } as any
+    expect(isValidLocationEvent(e)).toBe(false)
+  })
+  it('rejects a location event with lon but missing lat', () => {
+    const e = { event_type: 'location', lon: -74.0060 } as any
+    expect(isValidLocationEvent(e)).toBe(false)
+  })
+  it('rejects a location event with neither lat nor lon', () => {
+    const e = { event_type: 'location' } as any
+    expect(isValidLocationEvent(e)).toBe(false)
+  })
+  it('rejects a location event with non-numeric lat', () => {
+    const e = { event_type: 'location', lat: '40.7128', lon: -74.0060 } as any
+    expect(isValidLocationEvent(e)).toBe(false)
+  })
+  it('rejects a location event with non-numeric lon', () => {
+    const e = { event_type: 'location', lat: 40.7128, lon: '-74.0060' } as any
+    expect(isValidLocationEvent(e)).toBe(false)
+  })
+  it('rejects a non-location event even with lat and lon', () => {
+    const e = { event_type: 'screen_view', lat: 40.7128, lon: -74.0060 } as any
+    expect(isValidLocationEvent(e)).toBe(false)
   })
 })
