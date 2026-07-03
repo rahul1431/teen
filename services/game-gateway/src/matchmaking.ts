@@ -165,6 +165,11 @@ export class MatchmakingService {
     await this.startGame(gameType, stake, realPlayers, bots)
   }
 
+  // Friends tables: start a game for an explicit player list, never bots.
+  async startPrivateGame(gameType: string, stake: number, players: MatchmakingEntry[]): Promise<void> {
+    await this.startGame(gameType, stake, players, [])
+  }
+
   private async getBots(gameType: string, count: number): Promise<MatchmakingEntry[]> {
     const botRes = await this.db.query(
       `SELECT id, username FROM users WHERE is_bot = true AND status = 'active' ORDER BY RANDOM() LIMIT $1`,

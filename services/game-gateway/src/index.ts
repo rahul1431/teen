@@ -234,8 +234,119 @@ async function start() {
         return
       }
 
+      // ── Friends / private tables ──
+      case 'private:create': {
+        const gameType = data.game_type || 'teen_patti'
+        const stake = Number(data.stake)
+        if (!stake || stake <= 0) return hub.send(conn, 'error', { message: 'stake required' })
+        const cfg = await db.query('SELECT is_active, max_players FROM game_configs WHERE game_type = $1', [gameType])
+        if (!cfg.rows.length || !cfg.rows[0].is_active) {
+          return hub.send(conn, 'error', { message: 'Game not available' })
+        }
+        const code = await generatePrivateCode()
+        const table = {
+          code,
+          gameType,
+          stake,
+          maxPlayers: cfg.rows[0].max_players || 6,
+          hostId: conn.userId,
+          players: [{ userId: conn.userId, username: conn.username }],
+          createdAt: Date.now(),
+        }
+        await redis.setex(`private:table:${code}`, PRIVATE_TABLE_TTL, JSON.stringify(table))
+        console.log(`[private] table created code=${code} host=${conn.userId} ${gameType}:${stake}`)
+        broadcastPrivateLobby(table)
+        return
+      }
+
+      case 'private:join': {
+        const code = String(data.code || '').toUpperCase().trim()
+        if (!code) return hub.send(conn, 'error', { message: 'code required' })
+        const raw = await redis.get(`private:table:${code}`)
+        if (!raw) return hub.send(conn, 'error', { message: 'Table not found — check the code or ask your friend for a new one' })
+        const table = JSON.parse(raw)
+        if (table.players.some((p: any) => p.userId === conn.userId)) {
+          broadcastPrivateLobby(table) // re-send lobby (rejoin after app restart)
+          return
+        }
+        if (table.players.length >= table.maxPlayers) {
+          return hub.send(conn, 'error', { message: 'Table is full' })
+        }
+        table.players.push({ userId: conn.userId, username: conn.username })
+        await redis.setex(`private:table:${code}`, PRIVATE_TABLE_TTL, JSON.stringify(table))
+        console.log(`[private] ${conn.userId} joined code=${code} (${table.players.length}/${table.maxPlayers})`)
+        broadcastPrivateLobby(table)
+        return
+      }
+
+      case 'private:leave': {
+        const code = String(data.code || '').toUpperCase().trim()
+        const raw = await redis.get(`private:table:${code}`)
+        if (!raw) return
+        const table = JSON.parse(raw)
+        if (conn.userId === table.hostId) {
+          // Host leaving closes the table for everyone
+          await redis.del(`private:table:${code}`)
+          for (const p of table.players) {
+            hub.sendToUser(p.userId, 'private:closed', { code, reason: 'Host left the table' })
+          }
+          return
+        }
+        table.players = table.players.filter((p: any) => p.userId !== conn.userId)
+        await redis.setex(`private:table:${code}`, PRIVATE_TABLE_TTL, JSON.stringify(table))
+        broadcastPrivateLobby(table)
+        return
+      }
+
+      case 'private:start': {
+        const code = String(data.code || '').toUpperCase().trim()
+        const raw = await redis.get(`private:table:${code}`)
+        if (!raw) return hub.send(conn, 'error', { message: 'Table not found or expired' })
+        const table = JSON.parse(raw)
+        if (conn.userId !== table.hostId) {
+          return hub.send(conn, 'error', { message: 'Only the host can start the game' })
+        }
+        if (table.players.length < 2) {
+          return hub.send(conn, 'error', { message: 'Need at least 2 players to start' })
+        }
+        // Delete first so a double-tap can't start the game twice
+        await redis.del(`private:table:${code}`)
+        console.log(`[private] starting code=${code} ${table.gameType}:${table.stake} players=${table.players.length}`)
+        monitorEmitter.emit('join_matchmaking', { game_type: table.gameType, user_id: conn.userId, stake: table.stake })
+        await matchmaking.startPrivateGame(table.gameType, table.stake, table.players)
+        return
+      }
+
       default:
         console.warn(`[ws] unknown event: ${event}`)
+    }
+  }
+
+  // ── Private-table helpers ──
+  const PRIVATE_TABLE_TTL = 15 * 60 // seconds; lobby dies if unused for 15 min
+
+  // 6 chars from an unambiguous alphabet (no 0/O or 1/I lookalikes)
+  async function generatePrivateCode(): Promise<string> {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    for (let attempt = 0; attempt < 8; attempt++) {
+      let code = ''
+      for (let i = 0; i < 6; i++) code += alphabet[crypto.randomInt(alphabet.length)]
+      if (!(await redis.exists(`private:table:${code}`))) return code
+    }
+    throw new Error('could not allocate private table code')
+  }
+
+  function broadcastPrivateLobby(table: any): void {
+    const lobby = {
+      code: table.code,
+      game_type: table.gameType,
+      stake: table.stake,
+      max_players: table.maxPlayers,
+      host_id: table.hostId,
+      players: table.players.map((p: any) => ({ user_id: p.userId, username: p.username })),
+    }
+    for (const p of table.players) {
+      hub.sendToUser(p.userId, 'private:lobby', lobby)
     }
   }
 
