@@ -22,6 +22,17 @@ export async function registerMonitorRoutes(
     }
   })
 
+  app.get('/api/admin/monitor/uptime', { onRequest: [authenticate] }, async (_req, reply) => {
+    try {
+      const res = await axios.get(`${MONITOR_URL}/api/monitor/uptime`)
+      return reply.send(res.data)
+    } catch (err: any) {
+      return reply.code(err.response?.status ?? 500).send(
+        err.response?.data ?? { success: false, error: 'App monitor service unavailable' }
+      )
+    }
+  })
+
   app.get<{ Querystring: { hours?: string; limit?: string } }>(
     '/api/admin/monitor/errors',
     { onRequest: [authenticate] },
