@@ -167,7 +167,17 @@ async function start() {
   // Manually flag a user (requires admin)
   app.post<{ Params: { userId: string }; Body: { isFlagged: boolean; reason: string } }>(
     '/api/risk/user/:userId/flag',
-    { onRequest: [async (req, reply) => {}] }, // Add auth middleware later
+    {
+      onRequest: [
+        async (req, reply) => {
+          const key = req.headers['x-internal-key']
+          const expected = process.env.INTERNAL_SERVICE_KEY
+          if (!expected || key !== expected) {
+            return reply.code(403).send({ error: 'Forbidden' })
+          }
+        }
+      ]
+    },
     async (request, reply) => {
       try {
         const { isFlagged, reason } = request.body
@@ -199,13 +209,13 @@ async function start() {
     try {
       while (true) {
         const events = await redis.xread(
-          'STREAMS',
-          'events:all',
-          lastId,
           'COUNT',
           '10',
           'BLOCK',
-          '1000' // 1 second timeout
+          '1000', // 1 second timeout
+          'STREAMS',
+          'events:all',
+          lastId
         )
 
         if (!events || events.length === 0) continue
