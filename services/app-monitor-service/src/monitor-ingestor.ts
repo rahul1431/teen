@@ -415,4 +415,99 @@ export class MonitorIngestor {
     )
     return res.rows
   }
+
+  async getLivePlayers() {
+    const res = await this.pool.query(`
+      SELECT s.id AS session_id, s.user_id, u.username, u.phone,
+             s.device_model, s.manufacturer, s.platform, s.ip_address,
+             s.geo_city, s.geo_region,
+             COALESCE(loc.lat, s.geo_lat) AS geo_lat,
+             COALESCE(loc.lon, s.geo_lon) AS geo_lon,
+             s.last_screen, s.last_game, s.started_at, s.last_seen_at
+      FROM app_sessions s
+      LEFT JOIN users u ON u.id = s.user_id
+      LEFT JOIN LATERAL (
+        SELECT lat, lon FROM app_device_locations d
+        WHERE d.session_id = s.id ORDER BY d.created_at DESC LIMIT 1
+      ) loc ON true
+      WHERE s.last_seen_at > NOW() - INTERVAL '35 seconds'
+        AND (u.is_bot IS NULL OR u.is_bot = false)
+      ORDER BY s.last_seen_at DESC
+      LIMIT 500`)
+    return res.rows
+  }
+
+  async getPlayerDetail(userId: string) {
+    const [sessions, screens, games, devices, locations] = await Promise.all([
+      this.pool.query(
+        `SELECT id AS session_id, platform, app_version, device_model, ip_address,
+                geo_city, started_at, ended_at, last_seen_at
+         FROM app_sessions WHERE user_id = $1 ORDER BY last_seen_at DESC LIMIT 20`, [userId]),
+      this.pool.query(
+        `SELECT screen, created_at FROM app_events
+         WHERE user_id = $1 AND event_type = 'screen_view'
+         ORDER BY created_at DESC LIMIT 50`, [userId]),
+      this.pool.query(
+        `SELECT properties->>'action' AS action, screen, created_at FROM app_events
+         WHERE user_id = $1 AND event_type = 'game_event'
+         ORDER BY created_at DESC LIMIT 50`, [userId]),
+      this.pool.query(
+        `SELECT DISTINCT device_model, manufacturer, platform FROM app_sessions
+         WHERE user_id = $1 AND device_model IS NOT NULL LIMIT 20`, [userId]),
+      this.pool.query(
+        `SELECT lat, lon, accuracy_m, created_at FROM app_device_locations
+         WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`, [userId]),
+    ])
+    return { sessions: sessions.rows, screens: screens.rows, games: games.rows,
+             devices: devices.rows, locations: locations.rows }
+  }
+
+  async getGeoDistribution() {
+    const res = await this.pool.query(`
+      SELECT ROUND(COALESCE(loc.lat, s.geo_lat)::numeric, 2) AS lat,
+             ROUND(COALESCE(loc.lon, s.geo_lon)::numeric, 2) AS lon,
+             MAX(s.geo_city) AS city, COUNT(*)::int AS players
+      FROM app_sessions s
+      LEFT JOIN users u ON u.id = s.user_id
+      LEFT JOIN LATERAL (
+        SELECT lat, lon FROM app_device_locations d
+        WHERE d.session_id = s.id ORDER BY d.created_at DESC LIMIT 1
+      ) loc ON true
+      WHERE s.last_seen_at > NOW() - INTERVAL '35 seconds'
+        AND (u.is_bot IS NULL OR u.is_bot = false)
+        AND COALESCE(loc.lat, s.geo_lat) IS NOT NULL
+      GROUP BY 1, 2 ORDER BY players DESC LIMIT 500`)
+    return res.rows
+  }
+
+  async getEngagement(hours: number) {
+    const safeHours = parseInt(String(hours), 10) || 24
+    const [versions, durations, spp, timeInGame] = await Promise.all([
+      this.pool.query(
+        `SELECT app_version, COUNT(*)::int AS sessions FROM app_sessions
+         WHERE started_at > NOW() - INTERVAL '${safeHours} hours'
+         GROUP BY app_version ORDER BY sessions DESC LIMIT 20`),
+      this.pool.query(
+        `SELECT width_bucket(EXTRACT(EPOCH FROM (COALESCE(ended_at, last_seen_at) - started_at))/60,
+                0, 60, 6) AS bucket, COUNT(*)::int AS sessions
+         FROM app_sessions WHERE started_at > NOW() - INTERVAL '${safeHours} hours'
+         GROUP BY bucket ORDER BY bucket`),
+      this.pool.query(
+        `SELECT ROUND(AVG(c)::numeric, 1) AS avg_screens FROM (
+           SELECT session_id, COUNT(*) AS c FROM app_events
+           WHERE event_type = 'screen_view' AND created_at > NOW() - INTERVAL '${safeHours} hours'
+           GROUP BY session_id) t`),
+      this.pool.query(
+        `SELECT COALESCE(last_game, 'none') AS game, COUNT(DISTINCT user_id)::int AS players
+         FROM app_sessions WHERE last_game IS NOT NULL
+           AND last_seen_at > NOW() - INTERVAL '${safeHours} hours'
+         GROUP BY last_game ORDER BY players DESC LIMIT 15`),
+    ])
+    return {
+      versions: versions.rows,
+      durations: durations.rows,
+      screens_per_session: parseFloat(spp.rows[0]?.avg_screens) || 0,
+      time_in_game: timeInGame.rows,
+    }
+  }
 }

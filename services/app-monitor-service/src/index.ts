@@ -220,6 +220,23 @@ app.get('/api/monitor/server-health', async (_req, reply) => {
   }
 })
 
+app.get('/api/monitor/live-players', async (_req, reply) => {
+  try { return reply.send({ success: true, data: await ingestor.getLivePlayers() }) }
+  catch (err: any) { logger.error({ err }, 'live-players'); return reply.code(500).send({ success: false, error: 'Failed' }) }
+})
+app.get<{ Params: { userId: string } }>('/api/monitor/player/:userId', async (req, reply) => {
+  try { return reply.send({ success: true, data: await ingestor.getPlayerDetail(req.params.userId) }) }
+  catch (err: any) { logger.error({ err }, 'player detail'); return reply.code(500).send({ success: false, error: 'Failed' }) }
+})
+app.get('/api/monitor/geo-distribution', async (_req, reply) => {
+  try { return reply.send({ success: true, data: await ingestor.getGeoDistribution() }) }
+  catch (err: any) { logger.error({ err }, 'geo-distribution'); return reply.code(500).send({ success: false, error: 'Failed' }) }
+})
+app.get<{ Querystring: { hours?: string } }>('/api/monitor/engagement', async (req, reply) => {
+  try { return reply.send({ success: true, data: await ingestor.getEngagement(parseInt(req.query.hours ?? '24', 10)) }) }
+  catch (err: any) { logger.error({ err }, 'engagement'); return reply.code(500).send({ success: false, error: 'Failed' }) }
+})
+
 async function start() {
   if (redis.status === 'wait') await redis.connect()
 
