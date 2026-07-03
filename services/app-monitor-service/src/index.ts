@@ -7,6 +7,7 @@ import pino from 'pino'
 import os from 'os'
 import { execSync } from 'child_process'
 import { MonitorIngestor } from './monitor-ingestor'
+import { parseClientIp, GeoLookup } from './geo'
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' })
 
@@ -17,6 +18,7 @@ const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
 const app = Fastify({ logger: false })
 
 const ingestor = new MonitorIngestor(pool, redis, logger)
+const geoLookup = new GeoLookup(process.env.GEOLITE2_CITY_PATH)
 
 app.get('/health', async (_req, reply) => {
   try {
@@ -45,7 +47,9 @@ app.post<{ Body: Record<string, unknown> }>('/api/monitor/events', async (req, r
         return reply.code(401).send({ success: false, error: 'Unauthorized' })
       }
     }
-    await ingestor.ingestBatch(payload)
+    const ip = parseClientIp(req.headers as any, req.socket?.remoteAddress)
+    const geo = geoLookup.lookup(ip)
+    await ingestor.ingestBatch(payload, geo, ip)
     return reply.send({ success: true })
   } catch (err: any) {
     if (err.statusCode === 429) {
@@ -63,6 +67,20 @@ app.get('/api/monitor/stats', async (_req, reply) => {
   } catch (err: any) {
     logger.error({ err }, 'getStats error')
     return reply.code(500).send({ success: false, error: 'Failed to fetch stats' })
+  }
+})
+
+app.get('/api/monitor/uptime', async (_req, reply) => {
+  try {
+    const filePath = '/opt/teen/uptime-status.json'
+    if (!require('fs').existsSync(filePath)) {
+      return reply.send({ success: true, data: null })
+    }
+    const raw = require('fs').readFileSync(filePath, 'utf-8')
+    return reply.send({ success: true, data: JSON.parse(raw) })
+  } catch (err: any) {
+    logger.error({ err }, 'uptime error')
+    return reply.code(500).send({ success: false, error: 'Failed to fetch uptime status' })
   }
 })
 

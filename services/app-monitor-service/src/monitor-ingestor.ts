@@ -2,9 +2,10 @@
 import { Pool } from 'pg'
 import Redis from 'ioredis'
 import { Logger } from 'pino'
+import { GeoResult } from './geo'
 
 export interface AppEvent {
-  event_type: 'screen_view' | 'api_call' | 'ws_event' | 'error' | 'lifecycle'
+  event_type: 'screen_view' | 'api_call' | 'ws_event' | 'error' | 'lifecycle' | 'game_event' | 'location'
   screen?: string
   endpoint?: string
   method?: string
@@ -12,6 +13,10 @@ export interface AppEvent {
   duration_ms?: number
   error_message?: string
   ws_status?: string
+  action?: string
+  lat?: number
+  lon?: number
+  accuracy_m?: number
   properties?: Record<string, unknown>
   ts?: string
 }
@@ -23,6 +28,8 @@ export interface IngestPayload {
   app_version: string
   platform: 'android' | 'ios'
   os_version: string
+  device_model?: string
+  manufacturer?: string
   events: AppEvent[]
 }
 
@@ -80,7 +87,19 @@ export interface ScreenFunnelRow {
   unique_users: number
 }
 
-const ALLOWED_EVENT_TYPES = new Set(['screen_view', 'api_call', 'ws_event', 'error', 'lifecycle'])
+const ALLOWED_EVENT_TYPES = new Set([
+  'screen_view', 'api_call', 'ws_event', 'error', 'lifecycle', 'game_event', 'location'
+])
+
+export function deriveLastScreenGame(events: AppEvent[]): { last_screen: string | null; last_game: string | null } {
+  let last_screen: string | null = null
+  let last_game: string | null = null
+  for (const e of events) {
+    if (e.event_type === 'screen_view' && e.screen) last_screen = e.screen
+    if (e.event_type === 'game_event' && (e as any).action) last_game = (e as any).action
+  }
+  return { last_screen, last_game }
+}
 
 export class MonitorIngestor {
   constructor(
@@ -89,8 +108,9 @@ export class MonitorIngestor {
     private logger: Logger
   ) {}
 
-  async ingestBatch(payload: IngestPayload): Promise<void> {
-    const { session_id, user_id, device_id, app_version, platform, os_version, events } = payload
+  async ingestBatch(payload: IngestPayload, geo: GeoResult, ip: string | null): Promise<void> {
+    const { session_id, user_id, device_id, app_version, platform, os_version,
+            device_model, manufacturer, events } = payload
 
     // Rate limit: 1 batch per 8s per device
     const rateLimitKey = `monitor:ratelimit:${device_id}`
@@ -99,15 +119,32 @@ export class MonitorIngestor {
       throw Object.assign(new Error('Rate limit exceeded'), { statusCode: 429 })
     }
 
+    const { last_screen, last_game } = deriveLastScreenGame(events)
+
     // Upsert session
     await this.pool.query(
-      `INSERT INTO app_sessions (id, user_id, device_id, app_version, platform, os_version, started_at, last_seen_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+      `INSERT INTO app_sessions
+         (id, user_id, device_id, app_version, platform, os_version,
+          device_model, manufacturer, ip_address, geo_city, geo_region, geo_country,
+          geo_lat, geo_lon, last_screen, last_game, started_at, last_seen_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW(),NOW())
        ON CONFLICT (id) DO UPDATE SET
-         last_seen_at = NOW(),
-         ended_at = NULL,
-         user_id = COALESCE(EXCLUDED.user_id, app_sessions.user_id)`,
-      [session_id, user_id ?? null, device_id, app_version, platform, os_version]
+         last_seen_at = NOW(), ended_at = NULL,
+         user_id      = COALESCE(EXCLUDED.user_id, app_sessions.user_id),
+         device_model = COALESCE(EXCLUDED.device_model, app_sessions.device_model),
+         manufacturer = COALESCE(EXCLUDED.manufacturer, app_sessions.manufacturer),
+         ip_address   = COALESCE(EXCLUDED.ip_address, app_sessions.ip_address),
+         geo_city     = COALESCE(EXCLUDED.geo_city, app_sessions.geo_city),
+         geo_region   = COALESCE(EXCLUDED.geo_region, app_sessions.geo_region),
+         geo_country  = COALESCE(EXCLUDED.geo_country, app_sessions.geo_country),
+         geo_lat      = COALESCE(EXCLUDED.geo_lat, app_sessions.geo_lat),
+         geo_lon      = COALESCE(EXCLUDED.geo_lon, app_sessions.geo_lon),
+         last_screen  = COALESCE(EXCLUDED.last_screen, app_sessions.last_screen),
+         last_game    = COALESCE(EXCLUDED.last_game, app_sessions.last_game)`,
+      [session_id, user_id ?? null, device_id, app_version, platform, os_version,
+       device_model ?? null, manufacturer ?? null, ip ?? null,
+       geo.city, geo.region, geo.country, geo.lat, geo.lon,
+       last_screen, last_game]
     )
 
     // Mark session ended if lifecycle event indicates it
@@ -122,8 +159,16 @@ export class MonitorIngestor {
       )
     }
 
-    // Filter to valid event types only
-    const validEvents = events.filter(e => ALLOWED_EVENT_TYPES.has(e.event_type))
+    // GPS pings → dedicated table
+    const locEvents = events.filter(e => e.event_type === 'location' && typeof (e as any).lat === 'number')
+    if (locEvents.length > 0) {
+      await this._bulkInsertLocations(session_id, user_id ?? null, locEvents)
+    }
+
+    // Everything else (except location) → app_events, filtered to valid event types
+    const validEvents = events.filter(
+      e => e.event_type !== 'location' && ALLOWED_EVENT_TYPES.has(e.event_type)
+    )
     if (validEvents.length > 0) {
       await this._bulkInsertEvents(session_id, user_id ?? null, validEvents)
     }
@@ -131,6 +176,22 @@ export class MonitorIngestor {
     // Update Redis counters (fire-and-forget)
     this._updateRedisCounters(device_id, validEvents).catch(err =>
       this.logger.warn({ err }, 'Redis counter update failed')
+    )
+  }
+
+  private async _bulkInsertLocations(
+    sessionId: string, userId: string | null, events: AppEvent[]
+  ): Promise<void> {
+    const cols = ['session_id', 'user_id', 'lat', 'lon', 'accuracy_m', 'created_at']
+    const params: unknown[] = []
+    const rows = events.map((e, i) => {
+      const base = i * cols.length
+      params.push(sessionId, userId, (e as any).lat, (e as any).lon,
+                  (e as any).accuracy_m ?? null, e.ts ?? new Date().toISOString())
+      return `(${cols.map((_, j) => `$${base + j + 1}`).join(', ')})`
+    })
+    await this.pool.query(
+      `INSERT INTO app_device_locations (${cols.join(', ')}) VALUES ${rows.join(', ')}`, params
     )
   }
 
