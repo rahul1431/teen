@@ -119,4 +119,29 @@ export async function registerMonitorRoutes(
       )
     }
   })
+
+  // Player tracking routes (superadmin only - PII + location data)
+  app.get('/api/admin/monitor/live-players',
+    { onRequest: [authenticate, requireRole('superadmin')] }, async (_req, reply) => {
+      try { const res = await axios.get(`${MONITOR_URL}/api/monitor/live-players`); return reply.send(res.data) }
+      catch (err: any) { return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'App monitor service unavailable' }) }
+    })
+
+  app.get<{ Params: { userId: string } }>('/api/admin/monitor/player/:userId',
+    { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+      try { const res = await axios.get(`${MONITOR_URL}/api/monitor/player/${encodeURIComponent(req.params.userId)}`); return reply.send(res.data) }
+      catch (err: any) { return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'App monitor service unavailable' }) }
+    })
+
+  app.get('/api/admin/monitor/geo-distribution',
+    { onRequest: [authenticate, requireRole('superadmin')] }, async (_req, reply) => {
+      try { const res = await axios.get(`${MONITOR_URL}/api/monitor/geo-distribution`); return reply.send(res.data) }
+      catch (err: any) { return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'App monitor service unavailable' }) }
+    })
+
+  app.get<{ Querystring: { hours?: string } }>('/api/admin/monitor/engagement',
+    { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+      try { const res = await axios.get(`${MONITOR_URL}/api/monitor/engagement`, { params: req.query }); return reply.send(res.data) }
+      catch (err: any) { return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'App monitor service unavailable' }) }
+    })
 }
