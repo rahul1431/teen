@@ -132,6 +132,16 @@ class MonitorService {
     });
   }
 
+  /// Enqueue a GPS ping (only called by LocationConsentService when consent granted).
+  void location(double lat, double lon, {int? accuracyM}) {
+    enqueue({
+      'event_type': 'location',
+      'lat': lat,
+      'lon': lon,
+      if (accuracyM != null) 'accuracy_m': accuracyM,
+    });
+  }
+
   /// Add an event to the queue. Silently drops if not initialized or queue is full.
   void enqueue(Map<String, dynamic> event) {
     if (!_initialized) return;

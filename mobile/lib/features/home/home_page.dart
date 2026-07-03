@@ -8,6 +8,9 @@ import '../../core/services/balance_service.dart';
 import '../../shared/theme/app_theme.dart';
 import '../../shared/widgets/error_retry.dart';
 import '../../core/update/update_service.dart';
+import '../../core/storage/secure_storage.dart';
+import '../../core/monitor/monitor_service.dart';
+import '../../core/monitor/location_consent_service.dart';
 
 // ── Fake live counters (replace with real WebSocket data later) ──────────────
 const _kLiveOnline = {'teen-patti': 15842, 'aviator': 9231, 'ludo': 10477, 'cricket': 6120};
@@ -79,6 +82,15 @@ class _HomePageState extends State<HomePage>
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted) UpdateService.instance.checkAndPrompt(context);
       });
+    });
+    // Tag telemetry with the logged-in user and (if not yet decided) prompt
+    // for opt-in coarse location sharing.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        final uid = await SecureStorage.getUserId();
+        MonitorService.instance.setUserId(uid);
+        if (mounted) LocationConsentService.instance.maybeStart(context);
+      } catch (_) {}
     });
   }
 
