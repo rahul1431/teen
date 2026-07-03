@@ -9,6 +9,7 @@ import Redis from 'ioredis'
 import crypto from 'crypto'
 import { MatchmakingService } from './matchmaking'
 import { RealtimeHub, Conn } from './realtime'
+import { monitorEmitter } from './monitor-emitter'
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
@@ -23,7 +24,7 @@ async function start() {
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.JWT_SECRET! })
 
-  const httpServer = createServer(app.server)
+  const httpServer = app.server
   const hub = new RealtimeHub()
   hub.setRedisPub(redis)
 
@@ -47,6 +48,7 @@ async function start() {
   })
 
   const matchmaking = new MatchmakingService(redis, db, hub)
+  monitorEmitter.start()
 
   // Raw WebSocket transport (replaces socket.io). Path /ws; token via the
   // ?token= query param or the Authorization header.
@@ -125,6 +127,7 @@ async function start() {
         try {
           await matchmaking.joinQueue(game_type, stake, { userId: conn.userId, username: conn.username })
           hub.send(conn, 'matchmaking:joined', { game_type, stake })
+          monitorEmitter.emit('join_matchmaking', { game_type, user_id: conn.userId, stake })
           console.log(`[matchmaking] ${conn.userId} queued for ${game_type}:${stake}`)
         } catch (err) {
           console.error(`[matchmaking] joinQueue failed for ${conn.userId}:`, err)
@@ -137,6 +140,7 @@ async function start() {
         const { game_type, stake } = data
         await matchmaking.leaveQueue(game_type, stake, conn.userId)
         hub.send(conn, 'matchmaking:left', {})
+        monitorEmitter.emit('leave_matchmaking', { game_type, user_id: conn.userId })
         return
       }
 
@@ -221,6 +225,7 @@ async function start() {
           type: msgType,
           timestamp: Date.now(),
         })
+        monitorEmitter.emit('room_chat', { room_id, user_id: conn.userId })
         return
       }
 
@@ -255,6 +260,13 @@ async function start() {
       }
       const out = await res.json() as any
       const newState = out.state
+      monitorEmitter.emit('game_action', {
+        game_type: 'ludo',
+        room_id,
+        user_id: conn.userId,
+        action: data.action,
+        amount: 0,
+      })
       await matchmaking.setRoomState(room_id, { ...newState, gameType: 'ludo' })
       hub.sendToRoom(room_id, 'game:state_update', {
         room_id,
@@ -342,6 +354,14 @@ async function start() {
       const data = await res.json() as any
       const newState = data.state ?? data
 
+      monitorEmitter.emit('game_action', {
+        game_type: state.gameType ?? state.game_type ?? 'teen_patti',
+        room_id,
+        user_id: conn.userId,
+        action,
+        amount: extraBet > 0 ? extraBet : (amount ?? 0),
+      })
+
       if (locked) {
         await db.query(
           'UPDATE game_participants SET entry_fee_deducted = entry_fee_deducted + $1 WHERE room_id = $2 AND user_id = $3',
@@ -382,7 +402,8 @@ async function start() {
   // --- Internal Admin API Endpoints ---
 
   app.post('/internal/game-rooms/:roomId/force-action', async (req, reply) => {
-    if (req.headers['x-internal-key'] !== process.env.INTERNAL_SERVICE_KEY) {
+    const key = process.env.INTERNAL_SERVICE_KEY
+    if (!key || req.headers['x-internal-key'] !== key) {
       return reply.code(401).send({ error: 'Unauthorized' })
     }
     const { roomId } = req.params as any
@@ -408,7 +429,8 @@ async function start() {
   })
 
   app.post('/internal/game-rooms/:roomId/kick', async (req, reply) => {
-    if (req.headers['x-internal-key'] !== process.env.INTERNAL_SERVICE_KEY) {
+    const key = process.env.INTERNAL_SERVICE_KEY
+    if (!key || req.headers['x-internal-key'] !== key) {
       return reply.code(401).send({ error: 'Unauthorized' })
     }
     const { roomId } = req.params as any
@@ -500,7 +522,8 @@ async function start() {
   })
 
   app.post('/internal/game-rooms/:roomId/terminate', async (req, reply) => {
-    if (req.headers['x-internal-key'] !== process.env.INTERNAL_SERVICE_KEY) {
+    const key = process.env.INTERNAL_SERVICE_KEY
+    if (!key || req.headers['x-internal-key'] !== key) {
       return reply.code(401).send({ error: 'Unauthorized' })
     }
     const { roomId } = req.params as any
@@ -550,6 +573,7 @@ async function start() {
   app.get('/health', async () => ({ status: 'ok', service: 'game-gateway' }))
 
   const port = parseInt(process.env.PORT || '3004')
+  await app.ready()
   httpServer.listen(port, '0.0.0.0', () => {
     console.log(`Game gateway running on port ${port} (raw WebSocket /ws)`)
   })

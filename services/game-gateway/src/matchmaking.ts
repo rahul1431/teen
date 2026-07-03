@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid'
 import crypto from 'crypto'
 import { RealtimeHub } from './realtime'
 import { getBotProfile, pickBotAction, pickBotDelay } from './bot-profile'
+import { monitorEmitter } from './monitor-emitter'
 
 export interface MatchmakingEntry {
   userId: string
@@ -239,6 +240,19 @@ export class MatchmakingService {
       return
     } finally {
       client.release()
+    }
+
+    // Feed the fraud/analytics pipeline — one room_joined per real player so
+    // per-user rules (co-location, velocity) see each participant.
+    const monitorPlayerIds = allPlayers.map(p => p.userId)
+    for (const p of realPlayers) {
+      monitorEmitter.emit('room_joined', {
+        game_type: gameType,
+        room_id: roomId,
+        user_id: p.userId,
+        players: monitorPlayerIds,
+        stake,
+      })
     }
 
     // Build initial state for gateway Redis (engine keeps its own state)
@@ -542,6 +556,13 @@ export class MatchmakingService {
       console.error('Failed to settle Ludo game', e)
     }
 
+    monitorEmitter.emit('game_result', {
+      game_type: 'ludo',
+      room_id: roomId,
+      winner_id: result?.winner_id,
+      prize_amount: Number(result?.prize) || 0,
+    })
+
     this.hub.sendToRoom(roomId, 'game:result', {
       room_id: roomId,
       winner_id: result.winner_id,
@@ -599,6 +620,13 @@ export class MatchmakingService {
     } catch (e) {
       console.error('[gateway] Failed to settle Teen Patti game', e)
     }
+
+    monitorEmitter.emit('game_result', {
+      game_type: state?.gameType ?? state?.game_type ?? 'teen_patti',
+      room_id: roomId,
+      winner_id: result.winner_id,
+      prize_amount: Number(result.prize) || 0,
+    })
 
     const winner = state.players?.find((p: any) => (p.userId ?? p.user_id ?? p.id) === result.winner_id)
     const winnerUsername = winner ? (winner.username ?? 'Player') : 'Unknown'
