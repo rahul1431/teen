@@ -62,6 +62,12 @@ dependencies:
   uuid: ^4.4.2
   crypto: ^3.0.3
 
+  # Language + preferences
+  shared_preferences: ^2.3.2
+
+  # Biometric authentication
+  local_auth: ^2.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
