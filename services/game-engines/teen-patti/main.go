@@ -2,10 +2,11 @@ package main
 
 import (
 	"context"
+	cryptoRand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"os"
 	"sort"
@@ -55,6 +56,15 @@ type GameState struct {
 	MinBet      float64  `json:"min_bet"`
 	DealerID    string   `json:"dealer_id"`
 	CreatedAt   int64    `json:"created_at"`
+	// Set while a sideshow request awaits the target's accept/reject. The
+	// requester's turn is frozen until it resolves (or the requester folds).
+	PendingSideshow *SideshowState `json:"pending_sideshow,omitempty"`
+}
+
+type SideshowState struct {
+	RequesterID string `json:"requester_id"`
+	TargetID    string `json:"target_id"`
+	RequestedAt int64  `json:"requested_at"`
 }
 
 // Hand ranks (higher = better)
@@ -88,9 +98,15 @@ func newDeck() []Card {
 			deck = append(deck, Card{Value: val, Suit: suit, Rank: rankCard(val)})
 		}
 	}
-	// Fisher-Yates shuffle using crypto-quality source
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	r.Shuffle(len(deck), func(i, j int) { deck[i], deck[j] = deck[j], deck[i] })
+	// Fisher-Yates shuffle using cryptographically secure source
+	for i := len(deck) - 1; i > 0; i-- {
+		nBig, err := cryptoRand.Int(cryptoRand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			panic(err)
+		}
+		j := nBig.Int64()
+		deck[i], deck[j] = deck[j], deck[i]
+	}
 	return deck
 }
 
@@ -223,7 +239,7 @@ func (s *Server) startGame(w http.ResponseWriter, r *http.Request) {
 		Players:     players,
 		Status:      "betting",
 		CurrentTurn: 0,
-		Pot:         req.Stake * float64(realPlayerCount),
+		Pot:         req.Stake * float64(len(players)),
 		Round:       1,
 		MinBet:      req.Stake,
 		DealerID:    players[0].UserID,
@@ -269,9 +285,27 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]interface{}{"status": "ok", "action": req.Action}
 
+	// While a sideshow awaits a response, the game is frozen: only the target
+	// may accept/reject, and only the requester may fold (e.g. turn-timer
+	// auto-fold). Everything else must wait for resolution.
+	if state.PendingSideshow != nil {
+		ps := state.PendingSideshow
+		isTargetResponse := (req.Action == "sideshow_accept" || req.Action == "sideshow_reject") && req.UserID == ps.TargetID
+		isRequesterFold := req.Action == "fold" && req.UserID == ps.RequesterID
+		if !isTargetResponse && !isRequesterFold {
+			http.Error(w, "waiting for sideshow response", 400)
+			return
+		}
+	}
+
 	switch req.Action {
 	case "fold":
 		state.Players[playerIdx].Status = "folded"
+		// A fold by either party of a pending sideshow cancels it.
+		if state.PendingSideshow != nil &&
+			(req.UserID == state.PendingSideshow.RequesterID || req.UserID == state.PendingSideshow.TargetID) {
+			state.PendingSideshow = nil
+		}
 	case "call":
 		callAmount := state.MinBet
 		if state.Players[playerIdx].IsSeen {
@@ -319,6 +353,99 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 		state.Players[playerIdx].IsSeen = true
 	case "see":
 		state.Players[playerIdx].IsSeen = true
+	case "sideshow":
+		// A seen player, on their turn, asks the previous active player to
+		// privately compare cards. Costs a seen chaal (2x current stake).
+		// Only meaningful with 3+ active players — with 2 you use "show".
+		if state.CurrentTurn != playerIdx {
+			http.Error(w, "not your turn", 400)
+			return
+		}
+		if !state.Players[playerIdx].IsSeen {
+			http.Error(w, "you must see your cards before asking for a sideshow", 400)
+			return
+		}
+		if state.Players[playerIdx].Status != "active" {
+			http.Error(w, "player not active", 400)
+			return
+		}
+		activeCount := 0
+		for _, p := range state.Players {
+			if p.Status == "active" {
+				activeCount++
+			}
+		}
+		if activeCount < 3 {
+			http.Error(w, "sideshow needs at least 3 active players", 400)
+			return
+		}
+		// Previous active player is the target
+		prev := (playerIdx - 1 + len(state.Players)) % len(state.Players)
+		for state.Players[prev].Status != "active" {
+			prev = (prev - 1 + len(state.Players)) % len(state.Players)
+		}
+		cost := state.MinBet * 2
+		state.Players[playerIdx].Bet += cost
+		state.Pot += cost
+		state.PendingSideshow = &SideshowState{
+			RequesterID: req.UserID,
+			TargetID:    state.Players[prev].UserID,
+			RequestedAt: time.Now().Unix(),
+		}
+		response["sideshow_request"] = map[string]interface{}{
+			"requester_id":       req.UserID,
+			"requester_username": state.Players[playerIdx].Username,
+			"target_id":          state.Players[prev].UserID,
+			"target_username":    state.Players[prev].Username,
+		}
+	case "sideshow_accept":
+		ps := state.PendingSideshow
+		if ps == nil || req.UserID != ps.TargetID {
+			http.Error(w, "no sideshow to accept", 400)
+			return
+		}
+		reqIdx, tgtIdx := -1, -1
+		for i, p := range state.Players {
+			if p.UserID == ps.RequesterID {
+				reqIdx = i
+			}
+			if p.UserID == ps.TargetID {
+				tgtIdx = i
+			}
+		}
+		if reqIdx == -1 || tgtIdx == -1 {
+			state.PendingSideshow = nil
+			http.Error(w, "sideshow players missing", 400)
+			return
+		}
+		// Both players now see each other's cards privately; the requester's
+		// turn resumes and they decide chaal or pack with that knowledge.
+		state.Players[reqIdx].IsSeen = true
+		state.Players[tgtIdx].IsSeen = true
+		state.PendingSideshow = nil
+		response["sideshow_reveal"] = map[string]interface{}{
+			"requester_id":       ps.RequesterID,
+			"requester_username": state.Players[reqIdx].Username,
+			"target_id":          ps.TargetID,
+			"target_username":    state.Players[tgtIdx].Username,
+			"requester_cards":    state.Players[reqIdx].Cards,
+			"target_cards":       state.Players[tgtIdx].Cards,
+		}
+	case "sideshow_reject":
+		ps := state.PendingSideshow
+		if ps == nil || req.UserID != ps.TargetID {
+			http.Error(w, "no sideshow to reject", 400)
+			return
+		}
+		state.PendingSideshow = nil
+		response["sideshow_rejected"] = map[string]interface{}{
+			"requester_id": ps.RequesterID,
+			"target_id":    ps.TargetID,
+		}
+	default:
+		// Unknown actions used to fall through and silently burn the turn.
+		http.Error(w, "unknown action: "+req.Action, 400)
+		return
 	}
 
 	// Advance turn
@@ -331,6 +458,13 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 
 	var gameResult *GameResult
 
+	// Actions that leave the turn where it is: seeing your own cards, and the
+	// whole sideshow exchange (the requester's turn is frozen during it and
+	// resumes with chaal/pack after accept/reject).
+	holdsTurn := map[string]bool{
+		"see": true, "sideshow": true, "sideshow_accept": true, "sideshow_reject": true,
+	}
+
 	if activePlayers <= 1 || req.Action == "show" {
 		// Determine winner
 		gameResult = s.determineWinner(&state)
@@ -338,7 +472,7 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 
 		// Save completed game to DB
 		go s.saveCompletedGame(req.RoomID, gameResult)
-	} else if req.Action != "see" {
+	} else if !holdsTurn[req.Action] {
 		// Next active player
 		next := (state.CurrentTurn + 1) % len(state.Players)
 		for state.Players[next].Status != "active" {

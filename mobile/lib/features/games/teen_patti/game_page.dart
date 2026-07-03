@@ -95,6 +95,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   StreamSubscription? _gameStateSub;
   StreamSubscription? _gameResultSub;
   StreamSubscription? _roomChatSub;
+  StreamSubscription? _sideshowPromptSub;
+  StreamSubscription? _sideshowRevealSub;
+  StreamSubscription? _sideshowResultSub;
+  Timer? _sideshowPromptTimer;
   bool _ready        = false;
   bool _showGiftTray = false;
   int  _reactionId   = 0;
@@ -137,6 +141,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _gameStateSub?.cancel();
     _gameResultSub?.cancel();
     _roomChatSub?.cancel();
+    _sideshowPromptSub?.cancel();
+    _sideshowRevealSub?.cancel();
+    _sideshowResultSub?.cancel();
+    _sideshowPromptTimer?.cancel();
     _turnTimer?.cancel();
     _practice?.dispose();
     for (final n in [
@@ -318,6 +326,152 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         _spawnReaction(msg.userId, msg.text, isGift: type == 'gift');
       }
     });
+
+    // ── Sideshow ──
+    // Prompt lands only on the target's socket; accept/reject within 10s.
+    _sideshowPromptSub = _socket.on('game:sideshow_prompt').listen((data) {
+      if (!mounted || data is! Map) return;
+      if (data['target_id']?.toString() != _myUserId) return;
+      _showSideshowPromptDialog(
+          data['requester_username']?.toString() ?? 'Player');
+    });
+
+    // Reveal is private to the two involved players.
+    _sideshowRevealSub = _socket.on('game:sideshow_reveal').listen((data) {
+      if (!mounted || data is! Map) return;
+      _showSideshowRevealDialog(Map<String, dynamic>.from(data));
+    });
+
+    // Room-wide outcome (no cards) — tell the requester if they were refused.
+    _sideshowResultSub = _socket.on('game:sideshow_result').listen((data) {
+      if (!mounted || data is! Map) return;
+      final accepted = data['accepted'] == true;
+      if (!accepted && data['requester_id']?.toString() == _myUserId) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Sideshow rejected — your turn continues'),
+          duration: Duration(seconds: 2),
+        ));
+      }
+    });
+  }
+
+  // ── Sideshow dialogs ───────────────────────────────────────────────────────
+  void _showSideshowPromptDialog(String requesterName) {
+    _sideshowPromptTimer?.cancel();
+    var secondsLeft = 10;
+    bool answered = false;
+    HapticFeedback.mediumImpact();
+
+    void answer(BuildContext dialogCtx, bool accept) {
+      if (answered) return;
+      answered = true;
+      _sideshowPromptTimer?.cancel();
+      Navigator.of(dialogCtx, rootNavigator: true).pop();
+      _sendAction(accept ? 'sideshow_accept' : 'sideshow_reject');
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(builder: (ctx, setDlg) {
+        _sideshowPromptTimer ??= Timer.periodic(const Duration(seconds: 1), (t) {
+          secondsLeft--;
+          if (secondsLeft <= 0) {
+            t.cancel();
+            if (ctx.mounted) answer(dialogCtx, false); // timeout = reject
+          } else if (ctx.mounted) {
+            setDlg(() {});
+          }
+        });
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1B2E),
+          title: const Text('Sideshow Request 👀',
+              style: TextStyle(color: Colors.white)),
+          content: Text(
+            '$requesterName wants to compare cards with you.\n'
+            'Accept and you both privately see each other\'s cards.\n\n'
+            'Auto-reject in $secondsLeft s',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => answer(dialogCtx, false),
+              child: const Text('Reject', style: TextStyle(color: Colors.redAccent)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo),
+              onPressed: () => answer(dialogCtx, true),
+              child: const Text('Accept'),
+            ),
+          ],
+        );
+      }),
+    ).then((_) {
+      _sideshowPromptTimer?.cancel();
+      _sideshowPromptTimer = null;
+    });
+  }
+
+  void _showSideshowRevealDialog(Map<String, dynamic> data) {
+    final iAmRequester = data['requester_id']?.toString() == _myUserId;
+    final theirName = iAmRequester
+        ? (data['target_username']?.toString() ?? 'Opponent')
+        : (data['requester_username']?.toString() ?? 'Opponent');
+    final myCards = ((iAmRequester ? data['requester_cards'] : data['target_cards']) as List? ?? [])
+        .cast<Map<String, dynamic>>();
+    final theirCards = ((iAmRequester ? data['target_cards'] : data['requester_cards']) as List? ?? [])
+        .cast<Map<String, dynamic>>();
+
+    Widget hand(String label, List<Map<String, dynamic>> cards) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final c in cards)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: SizedBox(
+                      width: 44, height: 62,
+                      child: _buildCard(c['value'].toString(), c['suit'].toString()),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        );
+
+    HapticFeedback.heavyImpact();
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1B2E),
+        title: const Text('Sideshow 🔍', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            hand('$theirName\'s cards', theirCards),
+            const SizedBox(height: 16),
+            hand('Your cards', myCards),
+            const SizedBox(height: 12),
+            Text(
+              iAmRequester
+                  ? 'Your turn — decide Chaal or Pack.'
+                  : 'Their turn continues.',
+              style: const TextStyle(color: Colors.amber, fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -350,12 +504,18 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     }
 
     // Optimistically deduct bet from displayed balance so it updates immediately.
-    // 'see' (look at cards) has no wallet cost — only call/raise/show deduct.
+    // 'see' (look at cards) and sideshow accept/reject have no wallet cost —
+    // call/raise/show deduct, and a sideshow request costs a seen chaal (2x).
     // Server confirms via wallet lock; we re-fetch on game:result for the final value.
     if (action == 'call' || action == 'raise' || action == 'show') {
       final gs    = _gsNotifier.value;
       final stake = (gs?['min_bet'] as num?)?.toDouble() ?? 0;
       final bet   = amount ?? (_isSeen ? stake * 2 : stake);
+      if (bet > 0) setState(() => _myBalance = (_myBalance - bet).clamp(0, double.infinity));
+    } else if (action == 'sideshow') {
+      final gs    = _gsNotifier.value;
+      final stake = (gs?['min_bet'] as num?)?.toDouble() ?? 0;
+      final bet   = stake * 2;
       if (bet > 0) setState(() => _myBalance = (_myBalance - bet).clamp(0, double.infinity));
     }
 

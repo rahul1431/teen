@@ -292,7 +292,11 @@ async function start() {
     const state = rawState
     const playerIdx = state.players.findIndex((p: any) => (p.userId ?? p.user_id) === conn.userId)
     if (playerIdx === -1) return hub.send(conn, 'error', { message: 'Not in this room' })
-    if (action !== 'see' && (state.currentTurn ?? state.current_turn) !== playerIdx) {
+    // 'see' is always out-of-turn; sideshow accept/reject is answered by the
+    // target player, whose turn it is not — the engine validates they're the
+    // actual target of the pending request.
+    const outOfTurnOk = action === 'see' || action === 'sideshow_accept' || action === 'sideshow_reject'
+    if (!outOfTurnOk && (state.currentTurn ?? state.current_turn) !== playerIdx) {
       return hub.send(conn, 'error', { message: 'Not your turn' })
     }
 
@@ -309,6 +313,9 @@ async function start() {
         extraBet = amount
       } else if (action === 'show') {
         extraBet = isSeen ? minBet * 2 : minBet
+      } else if (action === 'sideshow') {
+        // Engine charges a seen chaal for the request (requester must be seen)
+        extraBet = minBet * 2
       }
     }
 
@@ -378,6 +385,8 @@ async function start() {
         result: data.result ?? null,
       })
 
+      dispatchSideshowEvents(room_id, data, newState)
+
       const realPlayers = (newState.players ?? []).filter((p: any) => !(p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
 
       if (newState.status === 'completed' && data.result) {
@@ -397,6 +406,78 @@ async function start() {
       }
       hub.sendToRoom(room_id, 'game:action_received', { user_id: conn.userId, action, amount, sequence_num })
     }
+  }
+
+  // Route the engine's sideshow payloads to the right sockets: the target
+  // gets a private accept/reject prompt, the reveal (with cards) goes only to
+  // the two players involved, and the room sees card-free outcome events.
+  // When the target is a bot, answer for it after a human-feeling delay.
+  function dispatchSideshowEvents(room_id: string, data: any, newState: any): void {
+    if (data.sideshow_request) {
+      const sr = data.sideshow_request
+      hub.sendToRoom(room_id, 'game:sideshow_requested', { room_id, ...sr })
+      hub.sendToUser(sr.target_id, 'game:sideshow_prompt', { room_id, ...sr })
+
+      const target = (newState.players ?? []).find((p: any) => (p.userId ?? p.user_id) === sr.target_id)
+      if (target && (target.isBot || target.is_bot)) {
+        const accept = Math.random() < 0.6
+        const delayMs = 1500 + Math.floor(Math.random() * 2000)
+        setTimeout(() => {
+          botAnswerSideshow(room_id, sr.target_id, accept).catch(e =>
+            console.error('[gateway] bot sideshow answer failed', e))
+        }, delayMs)
+      }
+    }
+
+    if (data.sideshow_reveal) {
+      const rv = data.sideshow_reveal
+      const privatePayload = { room_id, ...rv }
+      hub.sendToUser(rv.requester_id, 'game:sideshow_reveal', privatePayload)
+      hub.sendToUser(rv.target_id, 'game:sideshow_reveal', privatePayload)
+      hub.sendToRoom(room_id, 'game:sideshow_result', {
+        room_id,
+        accepted: true,
+        requester_id: rv.requester_id,
+        target_id: rv.target_id,
+      })
+    }
+
+    if (data.sideshow_rejected) {
+      hub.sendToRoom(room_id, 'game:sideshow_result', {
+        room_id,
+        accepted: false,
+        ...data.sideshow_rejected,
+      })
+    }
+  }
+
+  async function botAnswerSideshow(room_id: string, botUserId: string, accept: boolean): Promise<void> {
+    const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
+    const res = await fetch(`${engineUrl}/action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        room_id,
+        user_id: botUserId,
+        action: accept ? 'sideshow_accept' : 'sideshow_reject',
+        amount: 0,
+        sequence_num: 0,
+      }),
+    })
+    if (!res.ok) {
+      console.error(`[gateway] bot sideshow ${accept ? 'accept' : 'reject'} rejected by engine:`, await res.text())
+      return
+    }
+    const data = await res.json() as any
+    const newState = data.state ?? data
+    await matchmaking.setRoomState(room_id, { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) })
+    hub.sendToRoom(room_id, 'game:state_update', {
+      room_id,
+      state: { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) },
+      last_action: { user_id: botUserId, action: accept ? 'sideshow_accept' : 'sideshow_reject', amount: 0 },
+      result: data.result ?? null,
+    })
+    dispatchSideshowEvents(room_id, data, newState)
   }
 
   // --- Internal Admin API Endpoints ---
