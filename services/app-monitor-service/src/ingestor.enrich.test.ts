@@ -1,6 +1,6 @@
 // services/app-monitor-service/src/ingestor.enrich.test.ts
 import { describe, it, expect } from 'vitest'
-import { deriveLastScreenGame, isValidLocationEvent } from './monitor-ingestor'
+import { deriveLastScreenGame, isValidLocationEvent, eventPropertiesJson } from './monitor-ingestor'
 
 describe('deriveLastScreenGame', () => {
   it('takes the most recent screen_view screen and game_event action', () => {
@@ -45,5 +45,29 @@ describe('isValidLocationEvent', () => {
   it('rejects a non-location event even with lat and lon', () => {
     const e = { event_type: 'screen_view', lat: 40.7128, lon: -74.0060 } as any
     expect(isValidLocationEvent(e)).toBe(false)
+  })
+})
+
+describe('eventPropertiesJson', () => {
+  it('stores a game_event action with no properties as {"action": ...}', () => {
+    const e = { event_type: 'game_event', action: 'tp_join_room' } as any
+    expect(eventPropertiesJson(e)).toBe(JSON.stringify({ action: 'tp_join_room' }))
+  })
+  it('merges action into existing properties', () => {
+    const e = {
+      event_type: 'game_event', action: 'tp_join_room',
+      properties: { room_id: 'r1', stake: 100 },
+    } as any
+    expect(eventPropertiesJson(e)).toBe(
+      JSON.stringify({ room_id: 'r1', stake: 100, action: 'tp_join_room' })
+    )
+  })
+  it('leaves properties unchanged when there is no action', () => {
+    const e = { event_type: 'screen_view', properties: { screen: 'home' } } as any
+    expect(eventPropertiesJson(e)).toBe(JSON.stringify({ screen: 'home' }))
+  })
+  it('returns null when there is neither action nor properties', () => {
+    const e = { event_type: 'lifecycle' } as any
+    expect(eventPropertiesJson(e)).toBeNull()
   })
 })

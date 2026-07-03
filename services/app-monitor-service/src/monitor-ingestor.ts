@@ -101,6 +101,13 @@ export function deriveLastScreenGame(events: AppEvent[]): { last_screen: string 
   return { last_screen, last_game }
 }
 
+export function eventPropertiesJson(e: AppEvent): string | null {
+  if (e.action) {
+    return JSON.stringify({ ...(e.properties ?? {}), action: e.action })
+  }
+  return e.properties ? JSON.stringify(e.properties) : null
+}
+
 export function isValidLocationEvent(e: AppEvent): boolean {
   return e.event_type === 'location' && typeof (e as any).lat === 'number' && typeof (e as any).lon === 'number'
 }
@@ -222,7 +229,7 @@ export class MonitorIngestor {
         e.duration_ms ?? null,
         e.error_message ?? null,
         e.ws_status ?? null,
-        e.properties ? JSON.stringify(e.properties) : null,
+        eventPropertiesJson(e),
         e.ts ?? new Date().toISOString()
       )
       return `(${cols.map((_, j) => `$${base + j + 1}`).join(', ')})`

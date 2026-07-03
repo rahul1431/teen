@@ -14,8 +14,24 @@ export function parseClientIp(
   const xff = headers['x-forwarded-for']
   const raw = Array.isArray(xff) ? xff[0] : (typeof xff === 'string' ? xff : '')
   const first = raw.split(',')[0]?.trim()
-  const pick = first || socketRemote || ''
-  const cleaned = pick.replace(/^::ffff:/, '').replace(/:\d+$/, '').trim()
+  const pick = (first || socketRemote || '').trim()
+  if (!pick.length) return null
+
+  const unmapped = pick.replace(/^::ffff:/, '')
+
+  if (unmapped.startsWith('[')) {
+    const m = unmapped.match(/^\[([^\]]+)\](?::\d+)?$/)
+    const inner = (m ? m[1] : unmapped.slice(1).replace(/\]$/, '')).trim()
+    return inner.length ? inner : null
+  }
+
+  const colonCount = (unmapped.match(/:/g) || []).length
+  if (colonCount === 1) {
+    const cleaned = unmapped.replace(/:\d+$/, '').trim()
+    return cleaned.length ? cleaned : null
+  }
+
+  const cleaned = unmapped.trim()
   return cleaned.length ? cleaned : null
 }
 
