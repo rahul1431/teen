@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../core/network/api_client.dart';
 import '../../core/constants/app_config.dart';
-import '../../core/storage/secure_storage.dart';
+import '../../core/services/balance_service.dart';
 import '../../shared/theme/app_theme.dart';
 import '../../shared/widgets/error_retry.dart';
 import '../../core/update/update_service.dart';
@@ -26,9 +26,6 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage>
     with TickerProviderStateMixin {
-  final _scaffoldKey = GlobalKey<ScaffoldState>();
-  int _selectedIndex = 0;
-
   // Data
   Map<String, dynamic>? _user;
   double _realBalance = 0;
@@ -154,6 +151,7 @@ class _HomePageState extends State<HomePage>
         _bonusBalance = double.tryParse(walletRes.data['bonus_balance'].toString()) ?? 0;
         _loadingData = false;
       });
+      BalanceService.instance.set(realBalance: _realBalance, bonusBalance: _bonusBalance);
       _heroCtrl.forward();
       _balanceCtrl.forward();
     } catch (_) {
@@ -161,142 +159,30 @@ class _HomePageState extends State<HomePage>
     }
   }
 
-  String get _initials {
-    final name = _user?['username'] as String? ?? '';
-    if (name.isEmpty) return 'P';
-    final parts = name.trim().split(' ');
-    if (parts.length >= 2) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    return name[0].toUpperCase();
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      key: _scaffoldKey,
       backgroundColor: AppColors.background,
-      drawer: _buildDrawer(),
-      body: SafeArea(
-        child: Stack(
-          children: [
-            RefreshIndicator(
-              onRefresh: _loadData,
-              color: AppColors.gold,
-              backgroundColor: AppColors.surface,
-              child: CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
-                  SliverToBoxAdapter(child: _buildHeader()),
-                  SliverToBoxAdapter(child: _buildHeroBanner()),
-                  SliverToBoxAdapter(child: _buildBalanceSection()),
-                  SliverToBoxAdapter(child: _buildPromoStrip()),
-                  SliverToBoxAdapter(child: _buildSectionLabel('🎮  Popular Games', trailing: 'See All')),
-                  SliverToBoxAdapter(child: _buildMainGamesGrid()),
-                  SliverToBoxAdapter(child: _buildSectionLabel('🎲  Luck Games')),
-                  SliverToBoxAdapter(child: _buildLuckGamesRow()),
-                  const SliverToBoxAdapter(child: SizedBox(height: 120)),
-                ],
-              ),
-            ),
+      body: RefreshIndicator(
+        onRefresh: _loadData,
+        color: AppColors.gold,
+        backgroundColor: AppColors.surface,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(child: _buildHeroBanner()),
+            SliverToBoxAdapter(child: _buildBalanceSection()),
+            SliverToBoxAdapter(child: _buildPromoStrip()),
+            SliverToBoxAdapter(child: _buildSectionLabel('🎮  Popular Games', trailing: 'See All')),
+            SliverToBoxAdapter(child: _buildMainGamesGrid()),
+            SliverToBoxAdapter(child: _buildSectionLabel('🎲  Luck Games')),
+            SliverToBoxAdapter(child: _buildLuckGamesRow()),
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
           ],
         ),
       ),
-      bottomNavigationBar: _buildBottomNav(),
     );
   }
-
-  // ─── Header ─────────────────────────────────────────────────────────────────
-
-  Widget _buildHeader() => Container(
-    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-    child: Row(
-      children: [
-        GestureDetector(
-          onTap: () => _scaffoldKey.currentState?.openDrawer(),
-          child: Row(
-            children: [
-              Container(
-                width: 36, height: 36,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: const SweepGradient(colors: [
-                    AppColors.feltRed, AppColors.gold, Color(0xFF0E5C2F),
-                    Color(0xFF1E3A8A), AppColors.gold, AppColors.feltRed,
-                  ]),
-                  border: Border.all(color: AppColors.gold, width: 1.5),
-                ),
-                child: const Icon(Icons.adjust_rounded, color: Colors.white, size: 18),
-              ),
-              const SizedBox(width: 8),
-              RichText(
-                text: const TextSpan(
-                  children: [
-                    TextSpan(text: 'TEEN ', style: TextStyle(
-                      color: AppColors.gold, fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 1)),
-                    TextSpan(text: 'PATTI', style: TextStyle(
-                      color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 1)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const Spacer(),
-        // Live players badge
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: AppColors.green.withOpacity(0.12),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AppColors.green.withOpacity(0.4)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              FadeTransition(
-                opacity: _pulseCtrl,
-                child: Container(width: 6, height: 6,
-                    decoration: const BoxDecoration(color: AppColors.green, shape: BoxShape.circle)),
-              ),
-              const SizedBox(width: 5),
-              const Text('41K Online', style: TextStyle(color: AppColors.green, fontSize: 11, fontWeight: FontWeight.bold)),
-            ],
-          ),
-        ),
-        const SizedBox(width: 8),
-        IconButton(
-          icon: Stack(
-            children: [
-              const Icon(Icons.notifications_outlined, color: AppColors.gold, size: 24),
-              Positioned(top: 0, right: 0, child: Container(
-                width: 8, height: 8,
-                decoration: const BoxDecoration(color: AppColors.red, shape: BoxShape.circle),
-              )),
-            ],
-          ),
-          onPressed: () => context.push('/notifications'),
-          constraints: const BoxConstraints(),
-          padding: const EdgeInsets.all(6),
-        ),
-        const SizedBox(width: 4),
-        GestureDetector(
-          onTap: () => context.push('/profile'),
-          child: Container(
-            padding: const EdgeInsets.all(2),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const LinearGradient(colors: [AppColors.gold, Color(0xFFB8870B)]),
-            ),
-            child: CircleAvatar(
-              radius: 18,
-              backgroundColor: AppColors.cardBg,
-              child: Text(_initials,
-                  style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 14)),
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
 
   // ─── Hero Banner ─────────────────────────────────────────────────────────────
 
@@ -983,170 +869,6 @@ class _HomePageState extends State<HomePage>
         ],
       ),
     ),
-  );
-
-  // ─── Bottom Nav ───────────────────────────────────────────────────────────────
-
-  BottomNavigationBar _buildBottomNav() => BottomNavigationBar(
-    currentIndex: _selectedIndex,
-    type: BottomNavigationBarType.fixed,
-    showUnselectedLabels: true,
-    selectedItemColor: AppColors.gold,
-    unselectedItemColor: AppColors.textSecondary,
-    backgroundColor: AppColors.surface,
-    selectedFontSize: 11,
-    unselectedFontSize: 10,
-    elevation: 8,
-    onTap: (i) {
-      if (i == _selectedIndex) return;
-      setState(() => _selectedIndex = i);
-      const paths = ['/home', '/wallet', '/leaderboard', '/profile'];
-      if (i == 0) return;
-      context.push(paths[i]).then((_) {
-        if (mounted) setState(() => _selectedIndex = 0);
-      });
-    },
-    items: const [
-      BottomNavigationBarItem(icon: Icon(Icons.home_rounded), label: 'Home'),
-      BottomNavigationBarItem(icon: Icon(Icons.account_balance_wallet_rounded), label: 'Wallet'),
-      BottomNavigationBarItem(icon: Icon(Icons.leaderboard_rounded), label: 'Leaders'),
-      BottomNavigationBarItem(icon: Icon(Icons.person_rounded), label: 'Profile'),
-    ],
-  );
-
-  // ─── Drawer ───────────────────────────────────────────────────────────────────
-
-  Widget _buildDrawer() => Drawer(
-    backgroundColor: AppColors.background,
-    child: SafeArea(
-      child: Column(
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF1E2533), Color(0xFF141922)],
-                begin: Alignment.topLeft, end: Alignment.bottomRight,
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(colors: [AppColors.gold, Color(0xFFB8870B)]),
-                      ),
-                      child: CircleAvatar(
-                        radius: 24,
-                        backgroundColor: AppColors.cardBg,
-                        child: Text(_initials,
-                          style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 18)),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(_user?['username'] ?? 'Player',
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-                          Text(_user?['email'] ?? '',
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: AppColors.gold.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.gold.withOpacity(0.3)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.account_balance_wallet_rounded, color: AppColors.gold, size: 16),
-                      const SizedBox(width: 8),
-                      Text(formatCurrency(_realBalance),
-                        style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: [
-                _drawerItem(Icons.home_rounded, 'Home', '/home'),
-                _drawerItem(Icons.account_balance_wallet_rounded, 'Wallet', '/wallet'),
-                _drawerItem(Icons.leaderboard_rounded, 'Leaderboard', '/leaderboard'),
-                _drawerItem(Icons.notifications_rounded, 'Notifications', '/notifications'),
-                _drawerItem(Icons.person_rounded, 'Profile', '/profile'),
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 16, 20, 6),
-                  child: Text('GAMES',
-                    style: TextStyle(color: AppColors.textSecondary, fontSize: 11,
-                        letterSpacing: 1.5, fontWeight: FontWeight.bold)),
-                ),
-                _drawerItem(Icons.style_rounded, 'Teen Patti', '/games/teen-patti', color: AppColors.feltRed),
-                _drawerItem(Icons.flight_rounded, 'Aviator', '/games/aviator', color: AppColors.blue),
-                _drawerItem(Icons.casino_rounded, 'Ludo', '/games/ludo', color: AppColors.purple),
-                _drawerItem(Icons.sports_cricket_rounded, 'Cricket Betting', '/games/cricket', color: AppColors.green),
-                _drawerItem(Icons.confirmation_number_rounded, 'Matka', '/games/matka', color: AppColors.orange),
-                _drawerItem(Icons.local_activity_rounded, 'Lottery', '/games/lottery', color: const Color(0xFF0D9488)),
-                const Divider(color: AppColors.border, height: 24, indent: 20, endIndent: 20),
-                ListTile(
-                  leading: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: AppColors.red.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(Icons.logout_rounded, color: AppColors.red, size: 18),
-                  ),
-                  title: const Text('Logout', style: TextStyle(color: AppColors.red, fontWeight: FontWeight.w600)),
-                  onTap: () async {
-                    await SecureStorage.clearAll();
-                    if (mounted) context.go('/auth/login');
-                  },
-                ),
-                const SizedBox(height: 12),
-              ],
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-
-  Widget _drawerItem(IconData icon, String label, String route, {Color? color}) => ListTile(
-    leading: Container(
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: (color ?? AppColors.gold).withOpacity(0.12),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Icon(icon, color: color ?? AppColors.gold, size: 18),
-    ),
-    title: Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-    dense: true,
-    onTap: () {
-      Navigator.pop(context);
-      if (route == '/home') return;
-      context.push(route);
-    },
   );
 
   void _comingSoon(String feature) =>
