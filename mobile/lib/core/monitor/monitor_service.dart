@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:uuid/uuid.dart';
 import '../constants/app_config.dart';
@@ -22,6 +23,8 @@ class MonitorService {
   String? _appVersion;
   String? _platform;
   String? _osVersion;
+  String? _deviceModel;
+  String? _manufacturer;
   String? _userId;
 
   /// Set by MonitorNavigatorObserver — read by MonitorInterceptor to tag API calls with screen.
@@ -49,6 +52,19 @@ class MonitorService {
       // e.g. "Android 14" or "iOS 17.0"
       final rawOs = Platform.operatingSystemVersion;
       _osVersion = rawOs.length > 80 ? rawOs.substring(0, 80) : rawOs;
+
+      try {
+        final deviceInfo = DeviceInfoPlugin();
+        if (Platform.isAndroid) {
+          final a = await deviceInfo.androidInfo;
+          _deviceModel = a.model;            // e.g. "SM-G991B"
+          _manufacturer = a.manufacturer;    // e.g. "samsung"
+        } else if (Platform.isIOS) {
+          final i = await deviceInfo.iosInfo;
+          _deviceModel = i.utsname.machine;  // e.g. "iPhone14,2"
+          _manufacturer = 'Apple';
+        }
+      } catch (_) { /* never crash the app */ }
 
       // Separate Dio instance — no auth interceptors, no monitor interceptor (avoids loops)
       _monitorDio = Dio(BaseOptions(
@@ -142,6 +158,8 @@ class MonitorService {
         'app_version': _appVersion ?? 'unknown',
         'platform': _platform ?? 'android',
         'os_version': _osVersion ?? 'unknown',
+        'device_model': _deviceModel,
+        'manufacturer': _manufacturer,
         'events': batch,
       });
     } catch (_) {

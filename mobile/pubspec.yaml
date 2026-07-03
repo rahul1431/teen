@@ -61,6 +61,7 @@ dependencies:
   package_info_plus: ^8.0.2
   uuid: ^4.4.2
   crypto: ^3.0.3
+  device_info_plus: ^10.1.2
 
   # Language + preferences
   shared_preferences: ^2.3.2
