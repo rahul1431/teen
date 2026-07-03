@@ -24,6 +24,7 @@ import Security from './pages/Security'
 import Changelog from './pages/Changelog'
 import { AIControlCenter } from './pages/AIControlCenter'
 import AppMonitor from './pages/AppMonitor'
+import PlayerTracking from './pages/PlayerTracking'
 import DailyBonus from './pages/DailyBonus'
 import Banners from './pages/Banners'
 import PromoCodes from './pages/PromoCodes'
@@ -63,6 +64,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="security" element={<Security />} />
           <Route path="changelog" element={<Changelog />} />
           <Route path="app-monitor" element={<AppMonitor />} />
+          <Route path="player-tracking" element={<PlayerTracking />} />
           <Route path="daily-bonus" element={<DailyBonus />} />
           <Route path="banners" element={<Banners />} />
           <Route path="promo-codes" element={<PromoCodes />} />
