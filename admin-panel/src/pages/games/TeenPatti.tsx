@@ -2,12 +2,44 @@ import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag, Badge,
   Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col,
-  Input, Popconfirm, Modal, Typography
+  Input, Popconfirm, Modal, Typography, Spin
 } from 'antd'
 import { ReloadOutlined, EyeOutlined, PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
 const { Text } = Typography
+
+// Teen Patti cards from the engine are { value: "A", suit: "S"|"H"|"D"|"C", rank }.
+const SUIT: Record<string, { sym: string; color: string }> = {
+  S: { sym: '♠', color: '#000' },
+  H: { sym: '♥', color: '#d4380d' },
+  D: { sym: '♦', color: '#d4380d' },
+  C: { sym: '♣', color: '#000' },
+}
+
+function PlayingCards({ cards }: { cards: any[] }) {
+  if (!cards || cards.length === 0) return <Text type="secondary">—</Text>
+  return (
+    <Space size={4}>
+      {cards.map((c, i) => {
+        const s = SUIT[c.suit] ?? { sym: c.suit, color: '#000' }
+        return (
+          <span
+            key={i}
+            style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              minWidth: 34, height: 44, padding: '0 4px', border: '1px solid #d9d9d9',
+              borderRadius: 5, background: '#fff', color: s.color, fontWeight: 700,
+              fontSize: 15, boxShadow: '0 1px 2px rgba(0,0,0,0.12)',
+            }}
+          >
+            {c.value}{s.sym}
+          </span>
+        )
+      })}
+    </Space>
+  )
+}
 
 export default function TeenPatti() {
   const [config, setConfig] = useState<any>(null)
@@ -18,6 +50,8 @@ export default function TeenPatti() {
   const [loadingRooms, setLoadingRooms] = useState(false)
   const [statusFilter, setStatusFilter] = useState('active')
   const [selectedRoom, setSelectedRoom] = useState<any>(null)
+  const [liveState, setLiveState] = useState<any>(null)
+  const [loadingLive, setLoadingLive] = useState(false)
 
   // Emojis state
   const [emojis, setEmojis] = useState<any[]>([])
@@ -65,6 +99,21 @@ export default function TeenPatti() {
       setRooms(res.data.filter((r: any) => r.game_type === 'teen_patti'))
     } finally {
       setLoadingRooms(false)
+    }
+  }
+
+  // Live hole-cards for a room, read from the gateway's tp:game:{id} state
+  // (present only while a hand is in progress). Admin-only "god view".
+  const fetchLiveCards = async (roomId: string) => {
+    setLoadingLive(true)
+    setLiveState(null)
+    try {
+      const res = await adminApi.get(`/game-rooms/${roomId}/live-state`)
+      setLiveState(res.data)
+    } catch {
+      setLiveState(null)
+    } finally {
+      setLoadingLive(false)
     }
   }
 
@@ -164,6 +213,15 @@ export default function TeenPatti() {
 
   useEffect(() => { loadConfig(); fetchEmojis(); fetchGifts() }, [])
   useEffect(() => { fetchRooms() }, [statusFilter])
+
+  // When a room drawer opens, pull the live hand's cards (only meaningful while active).
+  useEffect(() => {
+    if (selectedRoom?.id && selectedRoom.status === 'active') {
+      fetchLiveCards(selectedRoom.id)
+    } else {
+      setLiveState(null)
+    }
+  }, [selectedRoom])
 
   const emojiColumns = [
     { title: 'Emoji', dataIndex: 'emoji', render: (e: string) => <span style={{ fontSize: 24 }}>{e}</span> },
@@ -431,6 +489,49 @@ export default function TeenPatti() {
               <Descriptions.Item label="Rake">{selectedRoom.platform_fee_pct}%</Descriptions.Item>
               <Descriptions.Item label="Rake Collected">₹{parseFloat(selectedRoom.platform_fee_collected || 0).toFixed(2)}</Descriptions.Item>
             </Descriptions>
+            <Card
+              title="🃏 Live Cards (current hand)"
+              size="small"
+              style={{ marginTop: 16 }}
+              extra={
+                <Button
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  loading={loadingLive}
+                  onClick={() => selectedRoom?.id && fetchLiveCards(selectedRoom.id)}
+                >
+                  Refresh
+                </Button>
+              }
+            >
+              {loadingLive ? (
+                <div style={{ textAlign: 'center', padding: 16 }}><Spin /></div>
+              ) : liveState?.players?.some((p: any) => p.cards?.length) ? (
+                <List
+                  dataSource={liveState.players}
+                  renderItem={(p: any) => (
+                    <List.Item>
+                      <List.Item.Meta
+                        avatar={<Avatar>{p.username?.[0]?.toUpperCase()}</Avatar>}
+                        title={
+                          <span>
+                            {p.username || 'Player'}{' '}
+                            {p.is_bot && <Tag color="orange">BOT</Tag>}
+                            {p.status === 'folded' && <Tag>folded</Tag>}
+                          </span>
+                        }
+                        description={<PlayingCards cards={p.cards} />}
+                      />
+                    </List.Item>
+                  )}
+                />
+              ) : (
+                <Text type="secondary">
+                  Cards are visible only during an active hand (they clear when the round ends).
+                </Text>
+              )}
+            </Card>
+
             <Card title="Players" size="small" style={{ marginTop: 16 }}>
               <List
                 dataSource={selectedRoom.participants || []}
