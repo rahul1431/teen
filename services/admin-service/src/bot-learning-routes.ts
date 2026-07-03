@@ -31,7 +31,9 @@ export async function registerBotLearningRoutes(app: FastifyInstance, authentica
 
   app.post('/api/admin/bots/rebuild', { onRequest: [authenticate, requireRole('superadmin')] }, async (_req, reply) => {
     try {
-      const res = await axios.post(`${BOT_URL}/api/bots/rebuild`)
+      // Bodyless axios.post sends x-www-form-urlencoded, which Fastify rejects
+      // with 415 — send an explicit empty JSON body instead.
+      const res = await axios.post(`${BOT_URL}/api/bots/rebuild`, {})
       return reply.send(res.data)
     } catch (err: any) {
       return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'Bot learning service unavailable' })
