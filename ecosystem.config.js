@@ -132,18 +132,17 @@ module.exports = {
       env: { ...NODE_OPTS, NODE_ENV: 'production', PORT: 3015 },
     },
 
-    // ── bot-learning: disabled (saves ~70MB) ──
-    // Remove from active services. To re-enable, uncomment below:
-    // {
-    //   name: 'teen-bot-learning',
-    //   cwd: `${BASE}/bot-learning-service`,
-    //   script: 'dist/index.js',
-    //   env_file: ENV_FILE('bot-learning-service'),
-    //   instances: 1,
-    //   exec_mode: 'fork',
-    //   watch: false,
-    //   max_memory_restart: '150M',
-    //   env: NODE_OPTS,
-    // },
+    // ── Bot Learning: nightly bot-profile rebuild from real player data ──
+    {
+      name: 'teen-bot-learning',
+      cwd: `${BASE}/bot-learning-service`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('bot-learning-service'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '150M',
+      env: NODE_OPTS,
+    },
   ],
 }
