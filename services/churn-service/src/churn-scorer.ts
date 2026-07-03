@@ -87,7 +87,7 @@ export class ChurnScorer {
          COUNT(CASE WHEN wt.created_at > NOW() - INTERVAL '28 days'
                      AND wt.created_at <= NOW() - INTERVAL '14 days' THEN 1 END)::int AS deposits_prior_14
        FROM users u
-       JOIN wallet_transactions wt ON wt.user_id = u.id AND wt.txn_type = 'deposit'
+       JOIN wallet_transactions wt ON wt.user_id = u.id AND wt.type = 'deposit'
        WHERE u.status = 'active'
          AND u.is_bot = false
          AND u.created_at < NOW() - INTERVAL '${graceDays} days'
