@@ -20,6 +20,9 @@ done
 echo "==> Setting up Python virtual environment and dependencies for Churn ML..."
 if [ -d "$BASE/services/churn-ml-service" ]; then
   cd "$BASE/services/churn-ml-service"
+  echo "Ensuring python3-venv is installed..."
+  apt-get update && apt-get install -y python3-venv || true
+  rm -rf venv
   python3 -m venv venv
   source venv/bin/activate
   pip install --upgrade pip
