@@ -7,10 +7,14 @@ SERVICES=(core-api-service auth-service user-service wallet-service game-gateway
 
 echo "==> Installing dependencies and building Node.js services..."
 for svc in "${SERVICES[@]}"; do
-  echo "  -> Building $svc..."
-  cd "$BASE/services/$svc"
-  npm install --production=false
-  npm run build
+  if [ -d "$BASE/services/$svc" ]; then
+    echo "  -> Building $svc..."
+    cd "$BASE/services/$svc"
+    npm install --production=false
+    npm run build
+  else
+    echo "  -> Skipping $svc (directory does not exist)"
+  fi
 done
 
 echo "==> Installing Aviator engine dependencies..."

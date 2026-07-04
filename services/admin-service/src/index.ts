@@ -1,4 +1,4 @@
-﻿import 'dotenv/config'
+import 'dotenv/config'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
@@ -45,6 +45,9 @@ const db = new Pool({ connectionString: process.env.DATABASE_URL!, max: 20 })
 const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
 
 async function start() {
+  const NOTIFICATION_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:3001'
+  const LEADERBOARD_URL = process.env.LEADERBOARD_SERVICE_URL || 'http://127.0.0.1:3001'
+
   await app.register(helmet, { crossOriginResourcePolicy: false })
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.ADMIN_JWT_SECRET! })
@@ -356,6 +359,21 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // POST /api/admin/users/:id/reset-password â€” support sets a new password for a player
+  // (account-recovery requests via support, not a self-service OTP flow like the app's).
+  app.post('/api/admin/users/:id/reset-password', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as any
+    const { password } = z.object({ password: z.string().min(6) }).parse(req.body)
+    const hash = await bcrypt.hash(password, 12)
+    const res = await db.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2 RETURNING username', [hash, id])
+    if (!res.rows.length) return reply.code(404).send({ error: 'User not found' })
+    await redis.del(`session:${id}`)
+    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'user_password_reset', 'user', $2)`,
+      [admin.sub, id])
+    return reply.send({ success: true })
+  })
+
   // GET /api/admin/users/:id/transactions â€” ledger entries
   app.get('/api/admin/users/:id/transactions', { onRequest: [authenticate] }, async (req, reply) => {
     const { id } = req.params as any
@@ -413,7 +431,7 @@ async function start() {
       const kycNotif = status === 'approved'
         ? { title: 'KYC Approved âœ…', body: 'Your KYC verification has been approved. You can now make withdrawals.', type: 'kyc_approved' }
         : { title: 'KYC Rejected âŒ', body: `Your KYC was rejected.${reason ? ` Reason: ${reason}` : ''} Please re-submit your documents.`, type: 'kyc_rejected' }
-      fetch(`${process.env.NOTIFICATION_SERVICE_URL}/internal/notifications/send`, {
+      fetch(`${NOTIFICATION_URL}/internal/notifications/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
         body: JSON.stringify({ user_id: id, ...kycNotif }),
@@ -633,7 +651,7 @@ async function start() {
     const notifPayload = status === 'paid'
       ? { title: 'Withdrawal Processed âœ…', body: `Your withdrawal of â‚¹${amt.toFixed(2)} has been paid.${reference ? ` UTR: ${reference}` : ''}`, type: 'withdrawal_paid' }
       : { title: 'Withdrawal Rejected âŒ', body: `Your withdrawal of â‚¹${amt.toFixed(2)} was rejected.${reason ? ` Reason: ${reason}` : ''} Amount refunded to wallet.`, type: 'withdrawal_rejected' }
-    fetch(`${process.env.NOTIFICATION_SERVICE_URL}/internal/notifications/send`, {
+    fetch(`${NOTIFICATION_URL}/internal/notifications/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
       body: JSON.stringify({ user_id: row.rows[0].user_id, ...notifPayload }),
@@ -712,7 +730,7 @@ async function start() {
     const dNotif = action === 'mark_paid_and_credit'
       ? { title: 'Deposit Approved âœ…', body: `Your deposit of â‚¹${dAmt.toFixed(2)} has been credited to your wallet.`, type: 'deposit_approved' }
       : { title: 'Deposit Failed âŒ', body: `Your deposit of â‚¹${dAmt.toFixed(2)} could not be processed.${reason ? ` Reason: ${reason}` : ''}`, type: 'deposit_failed' }
-    fetch(`${process.env.NOTIFICATION_SERVICE_URL}/internal/notifications/send`, {
+    fetch(`${NOTIFICATION_URL}/internal/notifications/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
       body: JSON.stringify({ user_id: row.rows[0].user_id, ...dNotif }),
@@ -900,9 +918,9 @@ async function start() {
     const currentRules = existing.rows[0]?.special_rules || {}
     const specialRules = body.special_rules ? { ...currentRules, ...body.special_rules } : currentRules
     await db.query(
-      `UPDATE game_configs SET is_active=$1, rake_percent=$2, bot_fill_enabled=$3, bot_fill_delay_seconds=$4, max_bot_ratio=$5, bot_difficulty=$6, special_rules=$7, updated_by=$8, updated_at=NOW()
-       WHERE game_type=$9`,
-      [body.is_active, body.rake_percent, body.bot_fill_enabled, body.bot_fill_delay_seconds, body.max_bot_ratio, body.bot_difficulty, JSON.stringify(specialRules), admin.sub, gameType]
+      `UPDATE game_configs SET is_active=$1, rake_percent=$2, bot_fill_enabled=$3, bot_fill_delay_seconds=$4, max_bot_ratio=$5, bot_difficulty=$6, special_rules=$7, bot_fill_table_size=$8, updated_by=$9, updated_at=NOW()
+       WHERE game_type=$10`,
+      [body.is_active, body.rake_percent, body.bot_fill_enabled, body.bot_fill_delay_seconds, body.max_bot_ratio, body.bot_difficulty, JSON.stringify(specialRules), body.bot_fill_table_size ?? null, admin.sub, gameType]
     )
     return reply.send({ success: true })
   })
@@ -910,7 +928,7 @@ async function start() {
   // POST /api/admin/notifications/broadcast
   app.post('/api/admin/notifications/broadcast', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const body = req.body as any
-    const res = await fetch(`${process.env.NOTIFICATION_SERVICE_URL}/internal/notifications/broadcast`, {
+    const res = await fetch(`${NOTIFICATION_URL}/internal/notifications/broadcast`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
       body: JSON.stringify(body),
@@ -922,7 +940,7 @@ async function start() {
   // POST /api/admin/notifications/send
   app.post('/api/admin/notifications/send', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const body = req.body as any
-    const res = await fetch(`${process.env.NOTIFICATION_SERVICE_URL}/internal/notifications/send`, {
+    const res = await fetch(`${NOTIFICATION_URL}/internal/notifications/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
       body: JSON.stringify(body),
@@ -1644,7 +1662,7 @@ async function start() {
   app.get('/api/admin/leaderboard/:gameType', { onRequest: [authenticate] }, async (req, reply) => {
     const { gameType } = req.params as { gameType: string }
     const { period } = req.query as { period?: string }
-    const url = `${process.env.LEADERBOARD_SERVICE_URL || 'http://127.0.0.1:3006'}/leaderboard/${gameType}?period=${period || 'daily'}`
+    const url = `${LEADERBOARD_URL}/leaderboard/${gameType}?period=${period || 'daily'}`
     
     try {
       const res = await fetch(url, {

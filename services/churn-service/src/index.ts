@@ -16,7 +16,7 @@ async function start() {
   if (redis.status === 'wait') await redis.connect()
 
   const scorer = new ChurnScorer(pool, redis, logger, {
-    notificationServiceUrl: process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:3007',
+    notificationServiceUrl: process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:3001',
     walletServiceUrl: process.env.WALLET_SERVICE_URL || 'http://localhost:3002',
   })
 

@@ -84,7 +84,7 @@ PORT=3013
 NODE_ENV=production
 DATABASE_URL={db_url_val}
 REDIS_URL={redis_url_val}
-NOTIFICATION_SERVICE_URL=http://127.0.0.1:3007
+NOTIFICATION_SERVICE_URL=http://127.0.0.1:3001
 WALLET_SERVICE_URL=http://127.0.0.1:3003
 """
         print("Writing churn-service .env...")
