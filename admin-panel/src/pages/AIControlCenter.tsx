@@ -125,27 +125,27 @@ export function AIControlCenter() {
               <br />
               ✅ Monitoring Service
               <br />
-              ⏳ Fraud Detection
+              ✅ Fraud Detection
               <br />
-              ⏳ Bot Logging
+              ✅ Bot Logging
             </div>
             <div>
               <strong>Phase 2 (Weeks 4-6)</strong>
               <br />
-              ⏳ Analytics Pipeline
+              ✅ Analytics Pipeline
               <br />
-              ⏳ Churn Prediction
+              ✅ Churn Prediction
               <br />
-              ⏳ Dashboards
+              ✅ Dashboards
             </div>
             <div>
               <strong>Phase 3+ (Weeks 7-12)</strong>
               <br />
-              ⏳ Bot Learning
+              ✅ Bot Learning
               <br />
-              ⏳ Smart Matching
+              ✅ Smart Matching
               <br />
-              ⏳ RTP Optimization
+              ✅ RTP Optimization
             </div>
           </div>
         </Card>
