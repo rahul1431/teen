@@ -1601,6 +1601,19 @@ async function start() {
   })
 
   // --- Bot Management ---
+  app.get('/api/admin/bots/stats', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query(`
+      SELECT 
+        COUNT(*)::int AS total_bots,
+        COUNT(*) FILTER (WHERE status = 'active')::int AS active_bots,
+        COALESCE(SUM(w.real_balance), 0)::float AS total_balance
+      FROM users u
+      LEFT JOIN wallets w ON w.user_id = u.id
+      WHERE u.is_bot = true
+    `)
+    return reply.send(res.rows[0])
+  })
+
   app.post('/api/admin/bots', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const body = z.object({
       username: z.string(),

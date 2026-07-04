@@ -144,7 +144,7 @@ export class MatchmakingService {
       const minBotsNeeded = Math.max(0, (config.min_players || 2) - realPlayers.length)
       botsNeeded = Math.min(config.max_players - realPlayers.length, Math.max(maxBots, minBotsNeeded))
     }
-    const bots = await this.getBots(gameType, botsNeeded)
+    const bots = await this.getBots(gameType, botsNeeded, stake)
 
     // If no bots in DB and real players alone don't meet min_players, re-queue them
     if (realPlayers.length + bots.length < (config.min_players || 2)) {
@@ -170,10 +170,14 @@ export class MatchmakingService {
     await this.startGame(gameType, stake, players, [])
   }
 
-  private async getBots(gameType: string, count: number): Promise<MatchmakingEntry[]> {
+  private async getBots(gameType: string, count: number, stake: number): Promise<MatchmakingEntry[]> {
     const botRes = await this.db.query(
-      `SELECT id, username FROM users WHERE is_bot = true AND status = 'active' ORDER BY RANDOM() LIMIT $1`,
-      [count]
+      `SELECT u.id, u.username
+       FROM users u
+       JOIN wallets w ON w.user_id = u.id
+       WHERE u.is_bot = true AND u.status = 'active' AND w.real_balance >= $1
+       ORDER BY RANDOM() LIMIT $2`,
+      [stake, count]
     )
     return botRes.rows.map(b => ({ userId: b.id, username: b.username }))
   }
@@ -198,7 +202,7 @@ export class MatchmakingService {
         const p = allPlayers[i]
         const isBot = bots.some(b => b.userId === p.userId)
 
-        if (!isBot && stake > 0) {
+        if (stake > 0) {
           const lockRes = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
@@ -214,7 +218,7 @@ export class MatchmakingService {
         await client.query(
           `INSERT INTO game_participants (room_id, user_id, seat_number, entry_fee_deducted, is_bot)
            VALUES ($1, $2, $3, $4, $5)`,
-          [roomId, p.userId, i + 1, isBot ? 0 : stake, isBot]
+          [roomId, p.userId, i + 1, stake, isBot]
         )
       }
 
@@ -427,25 +431,86 @@ export class MatchmakingService {
       const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
 
       // Hoist action/amount so the catch block can use them in the retry (I5)
-      const action = botAction
+      let action = botAction
       const minBet = state.min_bet ?? state.MinBet ?? state.stake
-      const amount = action === 'raise' ? minBet * 2 : minBet
+      let amount = action === 'raise' ? minBet * 2 : minBet
 
       // I5: Extract the engine call + state-broadcast into a reusable closure so we can retry once
       const doAction = async () => {
+        const isSeen = currentPlayer.isSeen || currentPlayer.is_seen || false
+        let extraBet = 0
+        if (action === 'call') {
+          extraBet = isSeen ? minBet * 2 : minBet
+        } else if (action === 'raise') {
+          extraBet = amount
+        } else if (action === 'show') {
+          extraBet = isSeen ? minBet * 2 : minBet
+        } else if (action === 'sideshow') {
+          extraBet = minBet * 2
+        }
+
+        let locked = false
+        const lockId = crypto.randomUUID()
+        const userId = currentPlayer.user_id ?? currentPlayer.userId
+
+        if (extraBet > 0) {
+          try {
+            const lockRes = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+              body: JSON.stringify({ user_id: userId, amount: extraBet, room_id: roomId, lock_id: lockId }),
+            })
+            if (!lockRes.ok) {
+              const msg = await lockRes.text()
+              console.warn(`[gateway] Bot wallet lock failed: ${msg}. Forcing bot to fold.`)
+              action = 'fold'
+              amount = 0
+              extraBet = 0
+            } else {
+              locked = true
+            }
+          } catch (err) {
+            console.error('[gateway] Bot wallet lock failed with exception. Forcing bot to fold.', err)
+            action = 'fold'
+            amount = 0
+            extraBet = 0
+          }
+        }
+
+        if (locked) {
+          await this.db.query(
+            'UPDATE game_participants SET entry_fee_deducted = entry_fee_deducted + $1 WHERE room_id = $2 AND user_id = $3',
+            [extraBet, roomId, userId]
+          ).catch(e => console.error('[gateway] Failed to update bot entry_fee_deducted in DB', e))
+        }
+
         const res = await fetch(`${engineUrl}/action`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             room_id: roomId,
-            user_id: currentPlayer.user_id ?? currentPlayer.userId,
+            user_id: userId,
             action,
             amount,
             sequence_num: 0,
           }),
           signal: AbortSignal.timeout(5000),
         })
-        if (!res.ok) throw new Error(`Bot engine returned ${res.status}`)
+        if (!res.ok) {
+          if (locked) {
+            await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+              body: JSON.stringify({ user_id: userId, amount: extraBet, room_id: roomId }),
+            }).catch(e => console.error('[gateway] Bot unlock rollback failed', e))
+
+            await this.db.query(
+              'UPDATE game_participants SET entry_fee_deducted = entry_fee_deducted - $1 WHERE room_id = $2 AND user_id = $3',
+              [extraBet, roomId, userId]
+            ).catch(e => console.error('[gateway] Failed to rollback bot entry_fee_deducted in DB', e))
+          }
+          throw new Error(`Bot engine returned ${res.status}`)
+        }
         const data = await res.json()
         const newState = data.state ?? data
 
@@ -454,7 +519,7 @@ export class MatchmakingService {
           this.hub.sendToUser(p.userId, 'game:state_update', {
             room_id: roomId,
             state: { ...newState, players: newState.players?.map((ep: any) => ({ ...ep, cards: undefined })) },
-            last_action: { user_id: currentPlayer.user_id ?? currentPlayer.userId, action },
+            last_action: { user_id: userId, action },
             result: data.result ?? null,
           })
         }
@@ -529,18 +594,15 @@ export class MatchmakingService {
         'SELECT user_id, entry_fee_deducted, is_bot FROM game_participants WHERE room_id = $1',
         [roomId]
       )
-      const realParticipants = parts.rows.filter(r => !r.is_bot)
-      const players = realParticipants.map(r => ({
+      const players = parts.rows.map(r => ({
         user_id: r.user_id,
-        entry_fee: parseFloat(r.entry_fee_deducted)
+        entry_fee: parseFloat(r.entry_fee_deducted) || 0
       }))
 
-      // Only credit if the winner is a real player — bots can't receive wallet payments
-      const winnerIsReal = realParticipants.some(r => r.user_id === result?.winner_id)
-      const effectiveWinnerId = winnerIsReal ? result.winner_id : null
-      const effectivePrize    = winnerIsReal ? Number(result.prize) : 0
+      const effectiveWinnerId = result?.winner_id || null
+      const effectivePrize    = effectiveWinnerId ? Number(result.prize) : 0
 
-      console.log(`[gateway] handleLudoEnd room=${roomId} winner=${result?.winner_id} isReal=${winnerIsReal} prize=${effectivePrize}`)
+      console.log(`[gateway] handleLudoEnd room=${roomId} winner=${result?.winner_id} prize=${effectivePrize}`)
 
       const settleRes = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/settle-game`, {
         method: 'POST',
@@ -589,20 +651,15 @@ export class MatchmakingService {
         [roomId]
       )
 
-      const realParticipants = parts.rows.filter(r => !r.is_bot)
-      const players = realParticipants.map(r => ({
+      const players = parts.rows.map(r => ({
         user_id: r.user_id,
         entry_fee: parseFloat(r.entry_fee_deducted) || 0,
       }))
 
-      // Only credit if the winner is a real (non-bot) player.
-      // If a bot wins (all real players folded), locked funds are consumed
-      // but no prize is credited — it stays as rake/house income.
-      const winnerIsReal = realParticipants.some(r => r.user_id === result.winner_id)
-      const effectiveWinnerId = winnerIsReal ? (result.winner_id || null) : null
-      const effectivePrize    = (winnerIsReal && effectiveWinnerId) ? Number(result.prize) : 0
+      const effectiveWinnerId = result.winner_id || null
+      const effectivePrize    = effectiveWinnerId ? Number(result.prize) : 0
 
-      console.log(`[gateway] handleGameEnd room=${roomId} winner=${result.winner_id} isReal=${winnerIsReal} prize=${effectivePrize}`)
+      console.log(`[gateway] handleGameEnd room=${roomId} winner=${result.winner_id} prize=${effectivePrize}`)
 
       const walletUrl = process.env.WALLET_SERVICE_URL || 'http://localhost:3003'
       const settleRes = await fetch(`${walletUrl}/internal/wallet/settle-game`, {

@@ -5,7 +5,7 @@ import {
 } from 'antd'
 import {
   ReloadOutlined, UserAddOutlined, DeleteOutlined, RobotOutlined,
-  UnlockOutlined, LockOutlined, InfoCircleOutlined
+  UnlockOutlined, LockOutlined, InfoCircleOutlined, WalletOutlined
 } from '@ant-design/icons'
 import { adminApi } from '../api/client'
 
@@ -19,6 +19,10 @@ export default function Bots() {
   const [pageSize] = useState(10)
   const [search, setSearch] = useState('')
   
+  // Bot stats
+  const [stats, setStats] = useState<any>({ total_bots: 0, active_bots: 0, total_balance: 0 })
+  const [loadingStats, setLoadingStats] = useState(false)
+
   // Game configs (for bot settings)
   const [configs, setConfigs] = useState<any[]>([])
   const [loadingConfigs, setLoadingConfigs] = useState(false)
@@ -27,6 +31,19 @@ export default function Bots() {
   // Modals
   const [createOpen, setCreateOpen] = useState(false)
   const [form] = Form.useForm()
+
+  // Credit Bot modal
+  const [creditOpen, setCreditOpen] = useState(false)
+  const [selectedBot, setSelectedBot] = useState<any>(null)
+  const [creditForm] = Form.useForm()
+
+  const loadStats = () => {
+    setLoadingStats(true)
+    adminApi.get('/bots/stats')
+      .then(r => setStats(r.data))
+      .catch(() => message.error('Failed to load bot stats'))
+      .finally(() => setLoadingStats(false))
+  }
 
   const loadBots = () => {
     setLoading(true)
@@ -56,6 +73,22 @@ export default function Bots() {
       .finally(() => setLoadingConfigs(false))
   }
 
+  const creditBot = async (values: any) => {
+    try {
+      await adminApi.post(`/users/${selectedBot.id}/credit`, {
+        amount: values.amount,
+        description: values.description || 'Bot allotment by admin'
+      })
+      message.success(`Allotted ₹${values.amount} to ${selectedBot.username}`)
+      setCreditOpen(false)
+      creditForm.resetFields()
+      loadBots()
+      loadStats()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to allot money')
+    }
+  }
+
   const createBot = async (values: any) => {
     try {
       await adminApi.post('/bots', values)
@@ -63,6 +96,7 @@ export default function Bots() {
       setCreateOpen(false)
       form.resetFields()
       loadBots()
+      loadStats()
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'Failed to create bot')
     }
@@ -73,6 +107,7 @@ export default function Bots() {
       await adminApi.delete(`/bots/${id}`)
       message.success('Bot deleted successfully!')
       loadBots()
+      loadStats()
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'Failed to delete bot')
     }
@@ -84,6 +119,7 @@ export default function Bots() {
       await adminApi.patch(`/users/${id}/status`, { status: nextStatus })
       message.success(`Bot status updated to ${nextStatus}`)
       loadBots()
+      loadStats()
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'Failed to update status')
     }
@@ -95,6 +131,7 @@ export default function Bots() {
       await adminApi.patch(`/game-configs/${gameType}`, values)
       message.success(`${gameType.toUpperCase()} bot configuration updated!`)
       loadConfigs()
+      loadStats()
     } catch {
       message.error('Failed to save game configuration')
     } finally {
@@ -104,10 +141,12 @@ export default function Bots() {
 
   useEffect(() => {
     loadBots()
+    loadStats()
   }, [page, search])
 
   useEffect(() => {
     loadConfigs()
+    loadStats()
   }, [])
 
   return (
@@ -128,10 +167,36 @@ export default function Bots() {
             >
               Add New Bot
             </Button>
-            <Button icon={<ReloadOutlined />} onClick={() => { loadBots(); loadConfigs() }}>
+            <Button icon={<ReloadOutlined />} onClick={() => { loadBots(); loadConfigs(); loadStats() }}>
               Refresh All
             </Button>
           </Space>
+        </Col>
+      </Row>
+
+      {/* Bot Wallet Statistics Row */}
+      <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
+        <Col xs={24} sm={12} md={8}>
+          <Card loading={loadingStats} style={{ borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+            <Badge.Ribbon text="Combined" color="gold">
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: 13, color: '#888' }}>Total Bot Pool Balance</span>
+                <span style={{ fontSize: 24, fontWeight: 'bold', color: '#52c41a', marginTop: 8 }}>
+                  ₹{Number(stats.total_balance || 0).toLocaleString()}
+                </span>
+              </div>
+            </Badge.Ribbon>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={8}>
+          <Card loading={loadingStats} style={{ borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: 13, color: '#888' }}>Active Simulated Bots</span>
+              <span style={{ fontSize: 24, fontWeight: 'bold', color: '#1890ff', marginTop: 8 }}>
+                {stats.active_bots} <span style={{ fontSize: 14, fontWeight: 'normal', color: '#888' }}>/ {stats.total_bots} total</span>
+              </span>
+            </div>
+          </Card>
         </Col>
       </Row>
 
@@ -289,6 +354,18 @@ export default function Bots() {
                   key: 'actions',
                   render: (_, r) => (
                     <Space size="middle">
+                      <Tooltip title="Credit Wallet / Allot Money">
+                        <Button
+                          icon={<WalletOutlined />}
+                          onClick={() => {
+                            setSelectedBot(r)
+                            setCreditOpen(true)
+                          }}
+                          shape="circle"
+                          size="small"
+                          style={{ color: '#52c41a', borderColor: '#52c41a' }}
+                        />
+                      </Tooltip>
                       <Tooltip title={r.status === 'active' ? 'Suspend Bot' : 'Activate Bot'}>
                         <Button
                           icon={r.status === 'active' ? <LockOutlined /> : <UnlockOutlined />}
@@ -355,6 +432,36 @@ export default function Bots() {
             rules={[{ required: true, message: 'Please enter initial balance' }]}
           >
             <InputNumber min={0} style={{ width: '100%' }} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Credit Bot Wallet Modal */}
+      <Modal
+        open={creditOpen}
+        title={selectedBot ? `💸 Allot Balance to Bot: ${selectedBot.username}` : '💸 Allot Balance to Bot'}
+        onCancel={() => {
+          setCreditOpen(false)
+          creditForm.resetFields()
+        }}
+        onOk={() => creditForm.submit()}
+        okText="Allot Balance"
+        okButtonProps={{ style: { background: '#52c41a', borderColor: '#52c41a' } }}
+      >
+        <Form form={creditForm} layout="vertical" onFinish={creditBot}>
+          <Form.Item
+            name="amount"
+            label="Amount (₹)"
+            rules={[{ required: true, message: 'Please enter amount to allot' }]}
+          >
+            <InputNumber min={1} style={{ width: '100%' }} placeholder="e.g. 500" />
+          </Form.Item>
+          <Form.Item
+            name="description"
+            label="Description / Reason"
+            initialValue="Manual bot balance top-up"
+          >
+            <Input placeholder="e.g. Budget replenishment" />
           </Form.Item>
         </Form>
       </Modal>
