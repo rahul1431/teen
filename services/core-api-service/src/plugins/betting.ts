@@ -11,7 +11,8 @@ export function bettingPlugin(db: Pool) {
   return async function (app: FastifyInstance) {
     const auth = app.authenticate
     const internal = async (req: any, reply: any) => {
-      if (req.headers['x-internal-key'] !== process.env.INTERNAL_SERVICE_KEY) return reply.code(403).send({ error: 'Forbidden' })
+      const key = process.env.INTERNAL_SERVICE_KEY
+      if (!key || req.headers['x-internal-key'] !== key) return reply.code(403).send({ error: 'Forbidden' })
     }
 
     function uid(req: any): string { return (req.user as any)?.sub }
@@ -43,6 +44,18 @@ export function bettingPlugin(db: Pool) {
       if (draw.status === 'settled') return reply.code(409).send({ error: 'Market closed for today' })
       if (body.session === 'open' && draw.open_panna) return reply.code(409).send({ error: 'Open session already declared' })
       if (body.session === 'close' && draw.close_panna) return reply.code(409).send({ error: 'Close session already declared' })
+      // Enforce the market's posted betting windows (times are IST). Open bets
+      // are accepted until the open cutoff, close bets until the close cutoff.
+      const mkt = await db.query(
+        `SELECT open_time, close_time, (NOW() AT TIME ZONE 'Asia/Kolkata')::time AS now_ist
+         FROM matka_markets WHERE id = $1`,
+        [body.market_id],
+      )
+      if (mkt.rows.length) {
+        const { open_time, close_time, now_ist } = mkt.rows[0]
+        if (body.session === 'open' && now_ist > open_time) return reply.code(409).send({ error: 'Open betting has closed for today' })
+        if (body.session === 'close' && now_ist > close_time) return reply.code(409).send({ error: 'Close betting has closed for today' })
+      }
       const multiplier = MATKA_MULTIPLIERS[body.bet_type]
       const potential = Math.round(body.amount * multiplier * 100) / 100
       const betId = crypto.randomUUID()
@@ -60,7 +73,9 @@ export function bettingPlugin(db: Pool) {
     // ══ LOTTERY ══
     app.get('/lottery/draws', { onRequest: [auth] }, async () => {
       const rows = await db.query(`
-        SELECT d.*, COUNT(t.id)::int AS ticket_count
+        SELECT d.*, 
+               COALESCE((SELECT json_agg(t.ticket_number) FROM lottery_tickets t WHERE t.draw_id = d.id), '[]'::json) AS reserved_tickets,
+               COUNT(t.id)::int AS ticket_count
         FROM lottery_draws d
         LEFT JOIN lottery_tickets t ON t.draw_id = d.id
         WHERE d.status = 'open' AND d.draw_time > NOW()
@@ -72,15 +87,29 @@ export function bettingPlugin(db: Pool) {
 
     app.post('/lottery/buy', { onRequest: [auth] }, async (req, reply) => {
       const body = z.object({ draw_id: z.string().uuid(), ticket_number: z.string() }).parse(req.body)
+      const ticketNumClean = body.ticket_number.trim()
       const drawRes = await db.query(`SELECT * FROM lottery_draws WHERE id = $1 AND status = 'open'`, [body.draw_id])
       if (!drawRes.rows.length) return reply.code(409).send({ error: 'Draw not open' })
       const draw = drawRes.rows[0]
-      if (!new RegExp(`^[0-9]{${draw.digits}}$`).test(body.ticket_number)) return reply.code(400).send({ error: `Ticket must be ${draw.digits} digits` })
+      if (!/^[a-zA-Z0-9]{1,8}$/.test(ticketNumClean)) return reply.code(400).send({ error: 'Ticket must be alphanumeric and up to 8 characters.' })
+      
+      const checkRes = await db.query(`SELECT 1 FROM lottery_tickets WHERE draw_id = $1 AND ticket_number = $2`, [body.draw_id, ticketNumClean])
+      if (checkRes.rows.length > 0) return reply.code(409).send({ error: 'Ticket number is already reserved by another player' })
+      
       const ticketId = crypto.randomUUID()
       const debit = await debitStake({ userId: uid(req), amount: Number(draw.ticket_price), referenceId: ticketId, idempotencyKey: `lottery_buy_${ticketId}`, description: `Lottery: ${draw.name}` })
       if (!debit.ok) return reply.code(400).send({ error: debit.error })
-      await db.query(`INSERT INTO lottery_tickets (id, draw_id, user_id, ticket_number, amount) VALUES ($1,$2,$3,$4,$5)`, [ticketId, body.draw_id, uid(req), body.ticket_number, draw.ticket_price])
-      return { success: true, ticket_id: ticketId }
+      
+      try {
+        await db.query(`INSERT INTO lottery_tickets (id, draw_id, user_id, ticket_number, amount) VALUES ($1,$2,$3,$4,$5)`, [ticketId, body.draw_id, uid(req), ticketNumClean, draw.ticket_price])
+        return { success: true, ticket_id: ticketId }
+      } catch (err: any) {
+        await creditPrize({ userId: uid(req), amount: Number(draw.ticket_price), referenceId: ticketId, idempotencyKey: `lottery_buy_refund_${ticketId}` })
+        if (err.code === '23505') {
+          return reply.code(409).send({ error: 'Ticket number is already reserved' })
+        }
+        throw err
+      }
     })
 
     app.get('/lottery/my-tickets', { onRequest: [auth] }, async (req) => {
@@ -91,6 +120,8 @@ export function bettingPlugin(db: Pool) {
     app.get('/lottery/results', { onRequest: [auth] }, async () => {
       const rows = await db.query(`
         SELECT d.*,
+          (SELECT json_agg(json_build_object('ticket_number', t.ticket_number, 'prize', t.prize)) 
+           FROM lottery_tickets t WHERE t.draw_id = d.id AND t.is_winner = true) AS winners,
           COUNT(t.id)::int AS total_tickets,
           COUNT(t.id) FILTER (WHERE t.is_winner = true)::int AS winner_count,
           COALESCE(SUM(t.prize) FILTER (WHERE t.is_winner = true), 0) AS total_paid
@@ -269,8 +300,15 @@ export function bettingPlugin(db: Pool) {
     })
 
     app.post('/internal/lottery/draw', { onRequest: [internal] }, async (req) => {
-      const body = z.object({ draw_id: z.string().uuid(), winning_number: z.string() }).parse(req.body)
-      const res = await settleLottery(db, body.draw_id, body.winning_number)
+      const body = z.object({
+        draw_id: z.string().uuid(),
+        winners: z.array(z.object({
+          ticket_number: z.string(),
+          prize: z.number().positive(),
+          rank: z.number().optional()
+        }))
+      }).parse(req.body)
+      const res = await settleLottery(db, body.draw_id, body.winners as any)
       return { success: true, ...res }
     })
 

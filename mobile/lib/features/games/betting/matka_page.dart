@@ -360,11 +360,27 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
   ];
 
   int get _maxLen => _betType == 'single' ? 1 : _betType == 'jodi' ? 2 : 3;
+  bool get _isPanna => _betType.endsWith('_panna');
+
+  // Classify a 3-digit panna the same way the server does, so we can guide the
+  // player before they submit instead of letting the bet bounce back.
+  String _pannaKind(String p) {
+    if (p.length != 3) return '';
+    final a = p[0], b = p[1], c = p[2];
+    if (a == b && b == c) return 'triple_panna';
+    if (a == b || b == c || a == c) return 'double_panna';
+    return 'single_panna';
+  }
 
   Future<void> _submit() async {
     final number = _numberCtrl.text.trim();
     if (number.length != _maxLen) {
       setState(() => _error = 'Enter a $_maxLen-digit number');
+      return;
+    }
+    if (_isPanna && _pannaKind(number) != _betType) {
+      setState(() => _error =
+          '$number is a ${_pannaKind(number).replaceAll('_', ' ')}, not a ${_betType.replaceAll('_', ' ')}');
       return;
     }
     setState(() {
@@ -424,17 +440,22 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
           const SizedBox(height: 8),
           _buildBetTypeTabs(),
           const SizedBox(height: 14),
-          Row(
-            children: [
-              const Text('Session:  ', style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
-              _buildSessionChips(),
-            ],
-          ),
-          const SizedBox(height: 14),
+          // Jodi always settles on the close result, so it has no open/close
+          // session choice — only show the session selector for the others.
+          if (_betType != 'jodi') ...[
+            Row(
+              children: [
+                const Text('Session:  ', style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
+                _buildSessionChips(),
+              ],
+            ),
+            const SizedBox(height: 14),
+          ],
           TextField(
             controller: _numberCtrl,
             keyboardType: TextInputType.number,
             maxLength: _maxLen,
+            onChanged: (_) => setState(() => _error = null),
             style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
             decoration: InputDecoration(
               labelText: 'Enter number ($_maxLen digit${_maxLen > 1 ? 's' : ''})',
@@ -443,7 +464,9 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
               fillColor: Colors.white.withOpacity(0.03),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
+          _buildNumberHint(),
+          const SizedBox(height: 12),
           const Text('Bet Amount (Casino Chips)', style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
           Row(
@@ -598,6 +621,51 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
     );
   }
 
+  // Live guidance under the number field so players know exactly what a valid
+  // entry looks like for the selected bet type (and whether their input is ok).
+  Widget _buildNumberHint() {
+    final txt = _numberCtrl.text.trim();
+    String hint;
+    Color color = AppColors.textSecondary;
+    IconData icon = Icons.info_outline_rounded;
+
+    if (_betType == 'single') {
+      hint = 'Any single digit 0–9 (the "ank").';
+    } else if (_betType == 'jodi') {
+      hint = 'Any pair 00–99. Settles on the close result.';
+    } else {
+      const examples = {
+        'single_panna': 'all three digits different — e.g. 123',
+        'double_panna': 'exactly two digits the same — e.g. 112',
+        'triple_panna': 'all three digits the same — e.g. 555',
+      };
+      hint = 'Needs ${examples[_betType]}.';
+      if (txt.length == 3) {
+        final kind = _pannaKind(txt);
+        if (kind == _betType) {
+          hint = '$txt is a valid ${_betType.replaceAll('_', ' ')}';
+          color = AppColors.green;
+          icon = Icons.check_circle_outline_rounded;
+        } else {
+          hint = '$txt is a ${kind.replaceAll('_', ' ')}, not a ${_betType.replaceAll('_', ' ')}';
+          color = AppColors.red;
+          icon = Icons.error_outline_rounded;
+        }
+      }
+    }
+
+    return Row(
+      children: [
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(hint,
+              style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
+        ),
+      ],
+    );
+  }
+
   Widget _buildBetTypeTabs() {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -608,6 +676,9 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
             onTap: () => setState(() {
               _betType = t[0];
               _numberCtrl.clear();
+              _error = null;
+              // Jodi is decided by the close result, so lock its session to close.
+              if (t[0] == 'jodi') _session = 'close';
             }),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
