@@ -383,12 +383,12 @@ class _LudoGamePageState extends State<LudoGamePage>
           : Container(
               decoration: const BoxDecoration(
                 gradient: RadialGradient(
-                  center: Alignment(0, -0.2),
-                  radius: 1.3,
+                  center: Alignment(0, -0.15),
+                  radius: 1.35,
                   colors: [
-                    Color(0xFF1E2D5A), // Bright spotlight center
-                    Color(0xFF0F1736), // Deep navy
-                    Color(0xFF060A1A), // Dark shadow corners
+                    Color(0xFF7A2CC4), // Bright purple spotlight
+                    Color(0xFF4A1B87), // Deep violet
+                    Color(0xFF23103E), // Dark purple corners
                   ],
                   stops: [0.0, 0.6, 1.0],
                 ),
@@ -504,11 +504,12 @@ class _LudoGamePageState extends State<LudoGamePage>
   }
 
   Widget _playersBar(LudoState s) {
+    // Order matches the reskinned board: seat0 red, seat1 blue, seat2 yellow, seat3 green.
     final seatColors = [
       AppColors.ludoRed,
-      AppColors.ludoGreen,
-      AppColors.ludoYellow,
       AppColors.ludoBlue,
+      AppColors.ludoYellow,
+      AppColors.ludoGreen,
     ];
     return Container(
       height: 80,
