@@ -431,7 +431,7 @@ export class MatchmakingService {
       const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
 
       // Hoist action/amount so the catch block can use them in the retry (I5)
-      let action = botAction
+      let action: any = botAction
       const minBet = state.min_bet ?? state.MinBet ?? state.stake
       let amount = action === 'raise' ? minBet * 2 : minBet
 
