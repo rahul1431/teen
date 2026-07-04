@@ -5,7 +5,7 @@ import {
 } from 'antd'
 import {
   SearchOutlined, StopOutlined, CheckCircleOutlined, DollarOutlined,
-  MinusCircleOutlined, FlagOutlined,
+  MinusCircleOutlined, FlagOutlined, KeyOutlined, CopyOutlined,
 } from '@ant-design/icons'
 import { adminApi } from '../api/client'
 
@@ -26,6 +26,8 @@ export default function Users() {
   const [walletModal, setWalletModal] = useState<'credit' | 'debit' | null>(null)
   const [walletAmount, setWalletAmount] = useState<number>(0)
   const [walletNote, setWalletNote] = useState('')
+  const [resetPwOpen, setResetPwOpen] = useState(false)
+  const [resetPwValue, setResetPwValue] = useState('')
 
   const fetchUsers = async (p = page) => {
     setLoading(true)
@@ -63,6 +65,31 @@ export default function Users() {
     }
   }
 
+  const generateTempPassword = () => {
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
+    let pw = ''
+    for (let i = 0; i < 10; i++) pw += chars[Math.floor(Math.random() * chars.length)]
+    setResetPwValue(pw)
+  }
+
+  const openResetPassword = () => {
+    generateTempPassword()
+    setResetPwOpen(true)
+  }
+
+  const doResetPassword = async () => {
+    if (!selectedUser || resetPwValue.length < 6) {
+      message.warning('Password must be at least 6 characters'); return
+    }
+    try {
+      await adminApi.post(`/users/${selectedUser.id}/reset-password`, { password: resetPwValue })
+      message.success(`Password reset for ${selectedUser.username} — share it with them securely`)
+      setResetPwOpen(false)
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Failed to reset password')
+    }
+  }
+
   const columns = [
     { title: 'Username', dataIndex: 'username' },
     { title: 'Phone', dataIndex: 'phone' },
@@ -79,6 +106,17 @@ export default function Users() {
       render: (r: User) => (
         <Space>
           <Button size="small" onClick={() => setSelectedUser(r)}>View</Button>
+          <Tooltip title="Reset Password">
+            <Button
+              size="small"
+              icon={<KeyOutlined />}
+              onClick={() => {
+                setSelectedUser(r)
+                generateTempPassword()
+                setResetPwOpen(true)
+              }}
+            />
+          </Tooltip>
           {r.status === 'active' ? (
             <Popconfirm title="Suspend this user?" onConfirm={() => updateStatus(r.id, 'suspended')}>
               <Button size="small" danger icon={<StopOutlined />}>Suspend</Button>
@@ -115,6 +153,7 @@ export default function Users() {
             user={selectedUser}
             onCredit={() => { setWalletModal('credit'); setWalletAmount(0); setWalletNote('') }}
             onDebit={() => { setWalletModal('debit'); setWalletAmount(0); setWalletNote('') }}
+            onResetPassword={openResetPassword}
             onChanged={fetchUsers}
           />
         )}
@@ -130,19 +169,41 @@ export default function Users() {
         <Input.TextArea rows={2} value={walletNote} onChange={(e) => setWalletNote(e.target.value)}
           placeholder={walletModal === 'credit' ? 'e.g. compensation for failed deposit' : 'e.g. reversed fraudulent win'} />
       </Modal>
+
+      <Modal
+        title={`Reset Password — ${selectedUser?.username}`}
+        open={resetPwOpen}
+        onCancel={() => setResetPwOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setResetPwOpen(false)}>Close</Button>,
+          <Button key="reset" type="primary" danger disabled={resetPwValue.length < 6} onClick={doResetPassword}>
+            Reset Password
+          </Button>,
+        ]}
+      >
+        <p style={{ marginBottom: 8, color: '#666' }}>
+          A temporary password is generated below. Share it with the user through a secure
+          channel — they should change it after logging in.
+        </p>
+        <Space.Compact style={{ width: '100%' }}>
+          <Input value={resetPwValue} onChange={(e) => setResetPwValue(e.target.value)} />
+          <Button icon={<KeyOutlined />} onClick={generateTempPassword}>Generate</Button>
+          <Button icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(resetPwValue); message.success('Copied') }} />
+        </Space.Compact>
+      </Modal>
     </div>
   )
 }
 
 // ---- Tabbed user detail ----
-function UserDetail({ user, onCredit, onDebit, onChanged }: {
-  user: User; onCredit: () => void; onDebit: () => void; onChanged: () => void;
+function UserDetail({ user, onCredit, onDebit, onResetPassword, onChanged }: {
+  user: User; onCredit: () => void; onDebit: () => void; onResetPassword: () => void; onChanged: () => void;
 }) {
   return (
     <Tabs
       defaultActiveKey="profile"
       items={[
-        { key: 'profile', label: 'Profile', children: <ProfileTab user={user} onCredit={onCredit} onDebit={onDebit} /> },
+        { key: 'profile', label: 'Profile', children: <ProfileTab user={user} onCredit={onCredit} onDebit={onDebit} onResetPassword={onResetPassword} /> },
         { key: 'transactions', label: 'Transactions', children: <TransactionsTab userId={user.id} /> },
         { key: 'kyc', label: 'KYC', children: <KycTab user={user} onChanged={onChanged} /> },
         { key: 'games', label: 'Game History', children: <GamesTab userId={user.id} /> },
@@ -153,7 +214,9 @@ function UserDetail({ user, onCredit, onDebit, onChanged }: {
   )
 }
 
-function ProfileTab({ user, onCredit, onDebit }: { user: User; onCredit: () => void; onDebit: () => void }) {
+function ProfileTab({ user, onCredit, onDebit, onResetPassword }: {
+  user: User; onCredit: () => void; onDebit: () => void; onResetPassword: () => void;
+}) {
   return (
     <>
       <Descriptions bordered column={2} size="small">
@@ -171,6 +234,7 @@ function ProfileTab({ user, onCredit, onDebit }: { user: User; onCredit: () => v
       <Space style={{ marginTop: 16 }}>
         <Button icon={<DollarOutlined />} onClick={onCredit}>Credit Wallet</Button>
         <Button danger icon={<MinusCircleOutlined />} onClick={onDebit}>Debit Wallet</Button>
+        <Button icon={<KeyOutlined />} onClick={onResetPassword}>Reset Password</Button>
       </Space>
     </>
   )
