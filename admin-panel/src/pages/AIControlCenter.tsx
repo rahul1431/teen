@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Tabs, Card, Alert, Button, Space, Tag, Divider } from 'antd'
-import { RobotOutlined, SettingOutlined, DashboardOutlined, SyncOutlined, AlertOutlined } from '@ant-design/icons'
+import { RobotOutlined, SettingOutlined, DashboardOutlined, SyncOutlined, AlertOutlined, AimOutlined } from '@ant-design/icons'
 import { AIPromptConsole } from '../components/AI/AIPromptConsole'
 import { MLConfigPanel } from '../components/AI/MLConfigPanel'
 import { WorkflowDashboard } from '../components/AI/WorkflowDashboard'
 import { ChurnTab } from '../components/AI/ChurnTab'
+import PlayerTracking from './PlayerTracking'
 
 export function AIControlCenter() {
   const [activeTab, setActiveTab] = useState('1')
@@ -61,6 +62,17 @@ export function AIControlCenter() {
       ),
       children: <ChurnTab />,
       extra: <Tag color="red">Re-Engagement</Tag>,
+    },
+    {
+      key: '5',
+      label: (
+        <span>
+          <AimOutlined />
+          Player Tracking
+        </span>
+      ),
+      children: <PlayerTracking />,
+      extra: <Tag color="gold">Live Players</Tag>,
     },
   ]
 
