@@ -77,7 +77,12 @@ export class MatchmakingService {
     // players show up to skip bots entirely. Only start immediately once
     // there are enough real players that no bots are needed at all; anything
     // short of that waits for the bot-fill timer in joinQueue.
-    const noBotThreshold = config.bot_fill_table_size || config.min_players
+    // With bot-fill disabled there is no timer to top the table up, so waiting
+    // for bot_fill_table_size would strand 2-3 real players in the queue —
+    // fall back to min_players and start as soon as enough real players exist.
+    const noBotThreshold = config.bot_fill_enabled
+      ? (config.bot_fill_table_size || config.min_players)
+      : (config.min_players || 2)
 
     // Atomically check if enough players are ready, and if so pop them
     const members = await this.redis.eval(
