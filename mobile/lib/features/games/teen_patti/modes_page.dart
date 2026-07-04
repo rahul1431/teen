@@ -89,13 +89,6 @@ class _TeenPattiModesPageState extends State<TeenPattiModesPage> {
                 gradient: AppColors.variationsGrad,
                 onTap: () => context.push('/games/teen-patti/demo'),
               ),
-              _modeCard(
-                title: 'Friends',
-                subtitle: 'Private table',
-                icon: Icons.group_rounded,
-                gradient: AppColors.aviatorGrad,
-                onTap: () => AppSnackBar.show(context, 'Private tables — coming soon!'),
-              ),
             ],
           ),
         ],

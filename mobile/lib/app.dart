@@ -8,6 +8,8 @@ import 'features/auth/pages/splash_page.dart';
 import 'features/auth/pages/login_page.dart';
 import 'features/auth/pages/register_page.dart';
 import 'features/auth/pages/otp_page.dart';
+import 'features/auth/pages/forgot_password_page.dart';
+import 'features/auth/pages/reset_password_page.dart';
 import 'features/auth/pages/offline_demo_page.dart';
 import 'features/home/home_page.dart';
 import 'features/wallet/wallet_page.dart';
@@ -26,15 +28,26 @@ import 'features/profile/profile_page.dart';
 import 'features/notifications/notifications_page.dart';
 import 'features/referral/referral_page.dart';
 import 'features/daily_bonus/daily_bonus_page.dart';
+import 'features/onboarding/language_selection_page.dart';
+import 'features/games/games_page.dart';
+import 'shared/widgets/app_shell.dart';
+import 'core/services/locale_service.dart';
+
 
 final GoRouter _router = GoRouter(
   initialLocation: '/splash',
   observers: [MonitorNavigatorObserver()],
   redirect: (context, state) async {
+    // First-launch: show language selection before anything else
+    if (state.matchedLocation != '/onboarding/language') {
+      final isFirst = await LocaleService.isFirstLaunch();
+      if (isFirst) return '/onboarding/language';
+    }
     final token = await SecureStorage.getAccessToken();
     final isAuth = token != null;
     final isPublic = state.matchedLocation.startsWith('/auth') ||
         state.matchedLocation == '/splash' ||
+        state.matchedLocation.startsWith('/onboarding') ||
         state.matchedLocation.endsWith('/demo') ||
         state.matchedLocation.endsWith('/practice');
     if (!isAuth && !isPublic) return '/auth/login';
@@ -50,10 +63,44 @@ final GoRouter _router = GoRouter(
     GoRoute(path: '/auth/offline-demo', builder: (_, __) => const OfflineDemoPage()),
     GoRoute(path: '/auth/register', builder: (_, state) => RegisterPage(phone: state.uri.queryParameters['phone'] ?? '', otp: state.uri.queryParameters['otp'] ?? '')),
     GoRoute(path: '/auth/otp', builder: (_, state) => OtpPage(phone: state.uri.queryParameters['phone'] ?? '')),
-    GoRoute(path: '/home', builder: (_, __) => const HomePage()),
-    GoRoute(path: '/wallet', builder: (_, __) => const WalletPage()),
+    GoRoute(path: '/auth/forgot-password', builder: (_, __) => const ForgotPasswordPage()),
+    GoRoute(path: '/auth/reset-password', builder: (_, state) => ResetPasswordPage(
+      phone: state.uri.queryParameters['phone'] ?? '',
+      otp: state.uri.queryParameters['otp'] ?? '',
+    )),
+    // Main app shell — fixed top bar (wallet) + fixed bottom nav on every tab.
+    StatefulShellRoute.indexedStack(
+      builder: (_, __, navigationShell) => AppShell(navigationShell: navigationShell),
+      branches: [
+        StatefulShellBranch(routes: [
+          GoRoute(path: '/home', builder: (_, __) => const HomePage()),
+        ]),
+        StatefulShellBranch(routes: [
+          GoRoute(
+            path: '/games',
+            builder: (_, __) => const GamesPage(),
+            routes: [
+              GoRoute(path: 'teen-patti', builder: (_, __) => const TeenPattiModesPage()),
+              GoRoute(path: 'ludo', builder: (_, __) => const LudoModesPage()),
+              GoRoute(path: 'matka', builder: (_, __) => const MatkaPage()),
+              GoRoute(path: 'lottery', builder: (_, __) => const LotteryPage()),
+              GoRoute(path: 'cricket', builder: (_, __) => const CricketPage()),
+            ],
+          ),
+        ]),
+        StatefulShellBranch(routes: [
+          GoRoute(path: '/wallet', builder: (_, __) => const WalletPage()),
+        ]),
+        StatefulShellBranch(routes: [
+          GoRoute(path: '/leaderboard', builder: (_, __) => const LeaderboardPage()),
+        ]),
+        StatefulShellBranch(routes: [
+          GoRoute(path: '/profile', builder: (_, __) => const ProfilePage()),
+        ]),
+      ],
+    ),
+    // Fullscreen routes (gameplay & detail pages) — no shell chrome.
     GoRoute(path: '/notifications', builder: (_, __) => const NotificationsPage()),
-    GoRoute(path: '/games/teen-patti', builder: (_, __) => const TeenPattiModesPage()),
     GoRoute(path: '/games/teen-patti/lobby', builder: (_, s) => TeenPattiLobbyPage(variation: s.uri.queryParameters['variation'] ?? 'classic')),
     GoRoute(
       path: '/games/teen-patti/play/:roomId',
@@ -71,17 +118,13 @@ final GoRouter _router = GoRouter(
       ),
     ),
     GoRoute(path: '/games/aviator', builder: (_, __) => const AviatorPage()),
-    GoRoute(path: '/games/ludo', builder: (_, __) => const LudoModesPage()),
     GoRoute(path: '/games/ludo/lobby', builder: (_, s) => LudoLobbyPage(privateMode: s.uri.queryParameters['private'], privateCode: s.uri.queryParameters['code'])),
     GoRoute(path: '/games/ludo/practice', builder: (_, __) => const LudoGamePage(offline: true)),
     GoRoute(path: '/games/ludo/play/:roomId', builder: (_, s) => LudoGamePage(roomId: s.pathParameters['roomId']!, initialData: s.extra as Map<String, dynamic>?)),
-    GoRoute(path: '/games/matka', builder: (_, __) => const MatkaPage()),
-    GoRoute(path: '/games/lottery', builder: (_, __) => const LotteryPage()),
-    GoRoute(path: '/games/cricket', builder: (_, __) => const CricketPage()),
-    GoRoute(path: '/leaderboard', builder: (_, __) => const LeaderboardPage()),
-    GoRoute(path: '/profile', builder: (_, __) => const ProfilePage()),
     GoRoute(path: '/referral', builder: (_, __) => const ReferralPage()),
     GoRoute(path: '/daily-bonus', builder: (_, __) => const DailyBonusPage()),
+    GoRoute(path: '/onboarding/language',
+        builder: (_, __) => const LanguageSelectionPage(isOnboarding: true)),
   ],
 );
 

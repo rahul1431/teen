@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:math';
 import 'dart:async';
-import '../../../core/audio/sound_service.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
@@ -68,7 +67,6 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   @override
   void initState() {
     super.initState();
-    SoundService.instance.init();
     _ticker = AnimationController(vsync: this, duration: const Duration(seconds: 1))
       ..addListener(_onFrame)
       ..repeat();
@@ -123,7 +121,6 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       _showWinBurst = false;
       _lastWinPrize = 0.0;
     });
-    SoundService.instance.play(Sfx.countdown);
     _startBettingCountdown(ms);
     // Auto-bet: re-stake the same amount for the new round hands-free.
     if (_autoBet1 && (_balance == null || _balance! >= _betAmount1)) {
@@ -148,7 +145,6 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   void _onFlyingStart(dynamic _) {
     if (!mounted) return;
     _bettingTimer?.cancel();
-    SoundService.instance.play(Sfx.takeoff);
     setState(() {
       _phase = 'flying';
       _multiplier = 1.00;
@@ -174,7 +170,6 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     if (!mounted) return;
     final crash = (data?['crash_at'] as num?)?.toDouble() ?? _serverMultiplier;
     HapticFeedback.heavyImpact();
-    SoundService.instance.play(Sfx.crash);
     setState(() {
       _phase = 'crashed';
       _crashAt = crash;
@@ -228,8 +223,6 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       _lastWinPrize = prize;
     });
     HapticFeedback.heavyImpact();
-    SoundService.instance.play(Sfx.cashout);
-    SoundService.instance.play(Sfx.win);
     Future.delayed(const Duration(milliseconds: 1600), () {
       if (mounted) setState(() => _showWinBurst = false);
     });
@@ -243,13 +236,14 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   }
 
   // 60fps render loop: ease the displayed multiplier toward the server value
-  // so the plane glides smoothly between 100ms server ticks.
+  // so the plane glides smoothly between 100ms server ticks. This must NOT call
+  // setState — that would rebuild the whole page (history list, bet panels,
+  // flutter_animate effects) 60x/sec and cause the stutter. Instead only the
+  // sky subtree is wrapped in an AnimatedBuilder driven by _ticker, so a frame
+  // repaints just the plane + climbing multiplier.
   void _onFrame() {
     if (_phase == 'flying') {
-      final next = _multiplier + (_serverMultiplier - _multiplier) * 0.25;
-      setState(() => _multiplier = next);
-    } else {
-      setState(() {}); // keep painting glow / crash frame
+      _multiplier = _multiplier + (_serverMultiplier - _multiplier) * 0.25;
     }
   }
 
@@ -363,16 +357,30 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   Widget _buildSky(bool flying, bool crashed) => ClipRect(
     child: Stack(
       children: [
+        // Only this subtree repaints per frame (driven by the ticker), keeping
+        // the plane + climbing multiplier smooth without rebuilding the page.
         Positioned.fill(
-          child: CustomPaint(
-            painter: _AviatorPainter(
-              progress: _progress,
-              phase: _phase,
-              spin: _pulse.value,
+          child: RepaintBoundary(
+            child: AnimatedBuilder(
+              animation: Listenable.merge([_ticker, _pulse]),
+              builder: (_, __) => CustomPaint(
+                painter: _AviatorPainter(
+                  progress: _progress,
+                  phase: _phase,
+                  spin: _pulse.value,
+                ),
+              ),
             ),
           ),
         ),
-        Center(child: _buildCenterReadout(crashed)),
+        Center(
+          child: flying
+              ? AnimatedBuilder(
+                  animation: Listenable.merge([_ticker, _pulse]),
+                  builder: (_, __) => _buildCenterReadout(false),
+                )
+              : _buildCenterReadout(crashed),
+        ),
         if (_showWinBurst && _lastWinPrize > 0)
           Center(
             child: Container(
