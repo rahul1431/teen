@@ -9,6 +9,7 @@ import Redis from 'ioredis'
 import crypto from 'crypto'
 import { MatchmakingService } from './matchmaking'
 import { RealtimeHub, Conn } from './realtime'
+import { monitorEmitter } from './monitor-emitter'
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
@@ -23,7 +24,7 @@ async function start() {
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.JWT_SECRET! })
 
-  const httpServer = createServer(app.server)
+  const httpServer = app.server
   const hub = new RealtimeHub()
   hub.setRedisPub(redis)
 
@@ -47,6 +48,7 @@ async function start() {
   })
 
   const matchmaking = new MatchmakingService(redis, db, hub)
+  monitorEmitter.start()
 
   // Raw WebSocket transport (replaces socket.io). Path /ws; token via the
   // ?token= query param or the Authorization header.
@@ -125,6 +127,7 @@ async function start() {
         try {
           await matchmaking.joinQueue(game_type, stake, { userId: conn.userId, username: conn.username })
           hub.send(conn, 'matchmaking:joined', { game_type, stake })
+          monitorEmitter.emit('join_matchmaking', { game_type, user_id: conn.userId, stake })
           console.log(`[matchmaking] ${conn.userId} queued for ${game_type}:${stake}`)
         } catch (err) {
           console.error(`[matchmaking] joinQueue failed for ${conn.userId}:`, err)
@@ -137,6 +140,7 @@ async function start() {
         const { game_type, stake } = data
         await matchmaking.leaveQueue(game_type, stake, conn.userId)
         hub.send(conn, 'matchmaking:left', {})
+        monitorEmitter.emit('leave_matchmaking', { game_type, user_id: conn.userId })
         return
       }
 
@@ -221,6 +225,7 @@ async function start() {
           type: msgType,
           timestamp: Date.now(),
         })
+        monitorEmitter.emit('room_chat', { room_id, user_id: conn.userId })
         return
       }
 
@@ -229,8 +234,119 @@ async function start() {
         return
       }
 
+      // ── Friends / private tables ──
+      case 'private:create': {
+        const gameType = data.game_type || 'teen_patti'
+        const stake = Number(data.stake)
+        if (!stake || stake <= 0) return hub.send(conn, 'error', { message: 'stake required' })
+        const cfg = await db.query('SELECT is_active, max_players FROM game_configs WHERE game_type = $1', [gameType])
+        if (!cfg.rows.length || !cfg.rows[0].is_active) {
+          return hub.send(conn, 'error', { message: 'Game not available' })
+        }
+        const code = await generatePrivateCode()
+        const table = {
+          code,
+          gameType,
+          stake,
+          maxPlayers: cfg.rows[0].max_players || 6,
+          hostId: conn.userId,
+          players: [{ userId: conn.userId, username: conn.username }],
+          createdAt: Date.now(),
+        }
+        await redis.setex(`private:table:${code}`, PRIVATE_TABLE_TTL, JSON.stringify(table))
+        console.log(`[private] table created code=${code} host=${conn.userId} ${gameType}:${stake}`)
+        broadcastPrivateLobby(table)
+        return
+      }
+
+      case 'private:join': {
+        const code = String(data.code || '').toUpperCase().trim()
+        if (!code) return hub.send(conn, 'error', { message: 'code required' })
+        const raw = await redis.get(`private:table:${code}`)
+        if (!raw) return hub.send(conn, 'error', { message: 'Table not found — check the code or ask your friend for a new one' })
+        const table = JSON.parse(raw)
+        if (table.players.some((p: any) => p.userId === conn.userId)) {
+          broadcastPrivateLobby(table) // re-send lobby (rejoin after app restart)
+          return
+        }
+        if (table.players.length >= table.maxPlayers) {
+          return hub.send(conn, 'error', { message: 'Table is full' })
+        }
+        table.players.push({ userId: conn.userId, username: conn.username })
+        await redis.setex(`private:table:${code}`, PRIVATE_TABLE_TTL, JSON.stringify(table))
+        console.log(`[private] ${conn.userId} joined code=${code} (${table.players.length}/${table.maxPlayers})`)
+        broadcastPrivateLobby(table)
+        return
+      }
+
+      case 'private:leave': {
+        const code = String(data.code || '').toUpperCase().trim()
+        const raw = await redis.get(`private:table:${code}`)
+        if (!raw) return
+        const table = JSON.parse(raw)
+        if (conn.userId === table.hostId) {
+          // Host leaving closes the table for everyone
+          await redis.del(`private:table:${code}`)
+          for (const p of table.players) {
+            hub.sendToUser(p.userId, 'private:closed', { code, reason: 'Host left the table' })
+          }
+          return
+        }
+        table.players = table.players.filter((p: any) => p.userId !== conn.userId)
+        await redis.setex(`private:table:${code}`, PRIVATE_TABLE_TTL, JSON.stringify(table))
+        broadcastPrivateLobby(table)
+        return
+      }
+
+      case 'private:start': {
+        const code = String(data.code || '').toUpperCase().trim()
+        const raw = await redis.get(`private:table:${code}`)
+        if (!raw) return hub.send(conn, 'error', { message: 'Table not found or expired' })
+        const table = JSON.parse(raw)
+        if (conn.userId !== table.hostId) {
+          return hub.send(conn, 'error', { message: 'Only the host can start the game' })
+        }
+        if (table.players.length < 2) {
+          return hub.send(conn, 'error', { message: 'Need at least 2 players to start' })
+        }
+        // Delete first so a double-tap can't start the game twice
+        await redis.del(`private:table:${code}`)
+        console.log(`[private] starting code=${code} ${table.gameType}:${table.stake} players=${table.players.length}`)
+        monitorEmitter.emit('join_matchmaking', { game_type: table.gameType, user_id: conn.userId, stake: table.stake })
+        await matchmaking.startPrivateGame(table.gameType, table.stake, table.players)
+        return
+      }
+
       default:
         console.warn(`[ws] unknown event: ${event}`)
+    }
+  }
+
+  // ── Private-table helpers ──
+  const PRIVATE_TABLE_TTL = 15 * 60 // seconds; lobby dies if unused for 15 min
+
+  // 6 chars from an unambiguous alphabet (no 0/O or 1/I lookalikes)
+  async function generatePrivateCode(): Promise<string> {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    for (let attempt = 0; attempt < 8; attempt++) {
+      let code = ''
+      for (let i = 0; i < 6; i++) code += alphabet[crypto.randomInt(alphabet.length)]
+      if (!(await redis.exists(`private:table:${code}`))) return code
+    }
+    throw new Error('could not allocate private table code')
+  }
+
+  function broadcastPrivateLobby(table: any): void {
+    const lobby = {
+      code: table.code,
+      game_type: table.gameType,
+      stake: table.stake,
+      max_players: table.maxPlayers,
+      host_id: table.hostId,
+      players: table.players.map((p: any) => ({ user_id: p.userId, username: p.username })),
+    }
+    for (const p of table.players) {
+      hub.sendToUser(p.userId, 'private:lobby', lobby)
     }
   }
 
@@ -255,6 +371,13 @@ async function start() {
       }
       const out = await res.json() as any
       const newState = out.state
+      monitorEmitter.emit('game_action', {
+        game_type: 'ludo',
+        room_id,
+        user_id: conn.userId,
+        action: data.action,
+        amount: 0,
+      })
       await matchmaking.setRoomState(room_id, { ...newState, gameType: 'ludo' })
       hub.sendToRoom(room_id, 'game:state_update', {
         room_id,
@@ -280,7 +403,11 @@ async function start() {
     const state = rawState
     const playerIdx = state.players.findIndex((p: any) => (p.userId ?? p.user_id) === conn.userId)
     if (playerIdx === -1) return hub.send(conn, 'error', { message: 'Not in this room' })
-    if (action !== 'see' && (state.currentTurn ?? state.current_turn) !== playerIdx) {
+    // 'see' is always out-of-turn; sideshow accept/reject is answered by the
+    // target player, whose turn it is not — the engine validates they're the
+    // actual target of the pending request.
+    const outOfTurnOk = action === 'see' || action === 'sideshow_accept' || action === 'sideshow_reject'
+    if (!outOfTurnOk && (state.currentTurn ?? state.current_turn) !== playerIdx) {
       return hub.send(conn, 'error', { message: 'Not your turn' })
     }
 
@@ -297,6 +424,9 @@ async function start() {
         extraBet = amount
       } else if (action === 'show') {
         extraBet = isSeen ? minBet * 2 : minBet
+      } else if (action === 'sideshow') {
+        // Engine charges a seen chaal for the request (requester must be seen)
+        extraBet = minBet * 2
       }
     }
 
@@ -342,6 +472,14 @@ async function start() {
       const data = await res.json() as any
       const newState = data.state ?? data
 
+      monitorEmitter.emit('game_action', {
+        game_type: state.gameType ?? state.game_type ?? 'teen_patti',
+        room_id,
+        user_id: conn.userId,
+        action,
+        amount: extraBet > 0 ? extraBet : (amount ?? 0),
+      })
+
       if (locked) {
         await db.query(
           'UPDATE game_participants SET entry_fee_deducted = entry_fee_deducted + $1 WHERE room_id = $2 AND user_id = $3',
@@ -357,6 +495,8 @@ async function start() {
         last_action: { user_id: conn.userId, action, amount },
         result: data.result ?? null,
       })
+
+      dispatchSideshowEvents(room_id, data, newState)
 
       const realPlayers = (newState.players ?? []).filter((p: any) => !(p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
 
@@ -379,10 +519,83 @@ async function start() {
     }
   }
 
+  // Route the engine's sideshow payloads to the right sockets: the target
+  // gets a private accept/reject prompt, the reveal (with cards) goes only to
+  // the two players involved, and the room sees card-free outcome events.
+  // When the target is a bot, answer for it after a human-feeling delay.
+  function dispatchSideshowEvents(room_id: string, data: any, newState: any): void {
+    if (data.sideshow_request) {
+      const sr = data.sideshow_request
+      hub.sendToRoom(room_id, 'game:sideshow_requested', { room_id, ...sr })
+      hub.sendToUser(sr.target_id, 'game:sideshow_prompt', { room_id, ...sr })
+
+      const target = (newState.players ?? []).find((p: any) => (p.userId ?? p.user_id) === sr.target_id)
+      if (target && (target.isBot || target.is_bot)) {
+        const accept = Math.random() < 0.6
+        const delayMs = 1500 + Math.floor(Math.random() * 2000)
+        setTimeout(() => {
+          botAnswerSideshow(room_id, sr.target_id, accept).catch(e =>
+            console.error('[gateway] bot sideshow answer failed', e))
+        }, delayMs)
+      }
+    }
+
+    if (data.sideshow_reveal) {
+      const rv = data.sideshow_reveal
+      const privatePayload = { room_id, ...rv }
+      hub.sendToUser(rv.requester_id, 'game:sideshow_reveal', privatePayload)
+      hub.sendToUser(rv.target_id, 'game:sideshow_reveal', privatePayload)
+      hub.sendToRoom(room_id, 'game:sideshow_result', {
+        room_id,
+        accepted: true,
+        requester_id: rv.requester_id,
+        target_id: rv.target_id,
+      })
+    }
+
+    if (data.sideshow_rejected) {
+      hub.sendToRoom(room_id, 'game:sideshow_result', {
+        room_id,
+        accepted: false,
+        ...data.sideshow_rejected,
+      })
+    }
+  }
+
+  async function botAnswerSideshow(room_id: string, botUserId: string, accept: boolean): Promise<void> {
+    const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
+    const res = await fetch(`${engineUrl}/action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        room_id,
+        user_id: botUserId,
+        action: accept ? 'sideshow_accept' : 'sideshow_reject',
+        amount: 0,
+        sequence_num: 0,
+      }),
+    })
+    if (!res.ok) {
+      console.error(`[gateway] bot sideshow ${accept ? 'accept' : 'reject'} rejected by engine:`, await res.text())
+      return
+    }
+    const data = await res.json() as any
+    const newState = data.state ?? data
+    await matchmaking.setRoomState(room_id, { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) })
+    hub.sendToRoom(room_id, 'game:state_update', {
+      room_id,
+      state: { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) },
+      last_action: { user_id: botUserId, action: accept ? 'sideshow_accept' : 'sideshow_reject', amount: 0 },
+      result: data.result ?? null,
+    })
+    dispatchSideshowEvents(room_id, data, newState)
+  }
+
   // --- Internal Admin API Endpoints ---
 
   app.post('/internal/game-rooms/:roomId/force-action', async (req, reply) => {
-    if (req.headers['x-internal-key'] !== process.env.INTERNAL_SERVICE_KEY) {
+    const key = process.env.INTERNAL_SERVICE_KEY
+    if (!key || req.headers['x-internal-key'] !== key) {
       return reply.code(401).send({ error: 'Unauthorized' })
     }
     const { roomId } = req.params as any
@@ -408,7 +621,8 @@ async function start() {
   })
 
   app.post('/internal/game-rooms/:roomId/kick', async (req, reply) => {
-    if (req.headers['x-internal-key'] !== process.env.INTERNAL_SERVICE_KEY) {
+    const key = process.env.INTERNAL_SERVICE_KEY
+    if (!key || req.headers['x-internal-key'] !== key) {
       return reply.code(401).send({ error: 'Unauthorized' })
     }
     const { roomId } = req.params as any
@@ -500,7 +714,8 @@ async function start() {
   })
 
   app.post('/internal/game-rooms/:roomId/terminate', async (req, reply) => {
-    if (req.headers['x-internal-key'] !== process.env.INTERNAL_SERVICE_KEY) {
+    const key = process.env.INTERNAL_SERVICE_KEY
+    if (!key || req.headers['x-internal-key'] !== key) {
       return reply.code(401).send({ error: 'Unauthorized' })
     }
     const { roomId } = req.params as any
@@ -550,6 +765,7 @@ async function start() {
   app.get('/health', async () => ({ status: 'ok', service: 'game-gateway' }))
 
   const port = parseInt(process.env.PORT || '3004')
+  await app.ready()
   httpServer.listen(port, '0.0.0.0', () => {
     console.log(`Game gateway running on port ${port} (raw WebSocket /ws)`)
   })

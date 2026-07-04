@@ -157,14 +157,18 @@ export class FraudDetector {
    */
   private async checkWinRateAnomaly(user_id: string, event: any): Promise<number> {
     try {
+      // Win = took out more than they put in for that room (prize > entry fees).
+      // game_rooms.game_type is an enum, so compare as text to tolerate any
+      // game_type string arriving on the event without a cast error.
       const result = await this.pool.query(
         `SELECT
            COUNT(*) as total_games,
-           COUNT(CASE WHEN winner_id = $1 THEN 1 END) as wins
-         FROM game_results
-         WHERE (winner_id = $1 OR loser_id = $1)
-           AND created_at > NOW() - INTERVAL '7 days'
-           AND game_type = $2`,
+           COUNT(CASE WHEN gp.prize_won > gp.entry_fee_deducted THEN 1 END) as wins
+         FROM game_participants gp
+         JOIN game_rooms gr ON gr.id = gp.room_id
+         WHERE gp.user_id = $1
+           AND gp.joined_at > NOW() - INTERVAL '7 days'
+           AND gr.game_type::text = $2`,
         [user_id, event.game_type || 'teen_patti']
       )
 
@@ -197,7 +201,7 @@ export class FraudDetector {
         `SELECT SUM(CAST(amount AS DECIMAL)) as total_amount
          FROM wallet_transactions
          WHERE user_id = $1
-           AND txn_type IN ('credit', 'debit')
+           AND type IN ('deposit', 'withdrawal')
            AND created_at > NOW() - INTERVAL '${this.config.velocityLimitHours} hours'`,
         [user_id]
       )
@@ -359,15 +363,17 @@ export class FraudDetector {
         await this.redis.del(`fraud:flagged:${user_id}`)
       }
 
-      // Log to audit trail
+      // Log to audit trail (fraud_score/confidence are NOT NULL columns)
       await this.pool.query(
         `INSERT INTO fraud_events (
-          user_id, rule_triggered, evidence, action, created_at
+          user_id, rule_triggered, fraud_score, confidence, evidence, action, created_at
         )
-        VALUES ($1, $2, $3, $4, NOW())`,
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
         [
           user_id,
           'manual_flag',
+          isFlagged ? 1 : 0,
+          1,
           `Manual ${isFlagged ? 'flag' : 'unflag'}: ${reason}`,
           isFlagged ? 'block' : 'allow',
         ]

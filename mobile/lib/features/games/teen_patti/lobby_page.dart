@@ -207,6 +207,43 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                 ),
               ),
             ),
+            const SizedBox(height: 12),
+            // Friends tables — create a private code table or join a friend's
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _searching ? null : () {
+                      if (_balanceValue == null || _balanceValue! < _selectedStake) {
+                        _showLowBalanceDialog();
+                        return;
+                      }
+                      context.push('/games/teen-patti/friends?mode=create&stake=${_selectedStake.toInt()}');
+                    },
+                    icon: const Icon(Icons.group_add_rounded, color: AppColors.gold, size: 18),
+                    label: const Text('Create Friends Table',
+                        style: TextStyle(color: AppColors.gold, fontSize: 13, fontWeight: FontWeight.bold)),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: AppColors.gold.withValues(alpha: 0.6)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _searching ? null : () => context.push('/games/teen-patti/friends?mode=join'),
+                    icon: const Icon(Icons.pin_rounded, color: AppColors.gold, size: 18),
+                    label: const Text('Join with Code',
+                        style: TextStyle(color: AppColors.gold, fontSize: 13, fontWeight: FontWeight.bold)),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: AppColors.gold.withValues(alpha: 0.6)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 24),
             const Text('Select Stake', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),

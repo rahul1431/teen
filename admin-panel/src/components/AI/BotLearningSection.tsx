@@ -44,7 +44,18 @@ export function BotLearningSection() {
     setLoading(true)
     try {
       const res = await adminApi.get('bots/profiles')
-      if (res.data.success) setProfiles(res.data.data.profiles)
+      if (res.data.success) {
+        // pg returns NUMERIC columns as strings — coerce before any .toFixed/math
+        setProfiles((res.data.data.profiles ?? []).map((p: any) => ({
+          ...p,
+          fold_probability: Number(p.fold_probability) || 0,
+          call_probability: Number(p.call_probability) || 0,
+          raise_probability: Number(p.raise_probability) || 0,
+          avg_decision_delay_ms: Number(p.avg_decision_delay_ms) || 0,
+          aggression_score: Number(p.aggression_score) || 0,
+          sample_size: Number(p.sample_size) || 0,
+        })))
+      }
     } catch { message.error('Failed to load bot profiles') }
     finally { setLoading(false) }
   }
@@ -82,7 +93,7 @@ export function BotLearningSection() {
 
   const saveOverride = async (gameType: string, difficulty: string, values: Record<string, unknown>) => {
     try {
-      await adminApi.patch(`/api/admin/bots/profiles/${gameType}/${difficulty}`, {
+      await adminApi.patch(`bots/profiles/${gameType}/${difficulty}`, {
         fold_probability:      parseFloat(String(values.fold_probability)) / 100,
         call_probability:      parseFloat(String(values.call_probability)) / 100,
         avg_decision_delay_ms: parseInt(String(values.avg_decision_delay_ms)),

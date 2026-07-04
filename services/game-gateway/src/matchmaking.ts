@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid'
 import crypto from 'crypto'
 import { RealtimeHub } from './realtime'
 import { getBotProfile, pickBotAction, pickBotDelay } from './bot-profile'
+import { monitorEmitter } from './monitor-emitter'
 
 export interface MatchmakingEntry {
   userId: string
@@ -36,10 +37,10 @@ export class MatchmakingService {
     await this.redis.zadd(key, Date.now(), member)
 
     const configRes = await this.db.query(
-      'SELECT min_players, max_players, bot_fill_enabled, bot_fill_delay_seconds, max_bot_ratio FROM game_configs WHERE game_type = $1',
+      'SELECT min_players, max_players, bot_fill_enabled, bot_fill_delay_seconds, max_bot_ratio, bot_fill_table_size FROM game_configs WHERE game_type = $1',
       [gameType]
     )
-    const config = configRes.rows[0] || { min_players: 2, max_players: 6, bot_fill_enabled: true, bot_fill_delay_seconds: 5, max_bot_ratio: 0.6 }
+    const config = configRes.rows[0] || { min_players: 2, max_players: 6, bot_fill_enabled: true, bot_fill_delay_seconds: 5, max_bot_ratio: 0.6, bot_fill_table_size: null }
 
     await this.tryCreateRoom(gameType, stake, config)
 
@@ -68,15 +69,24 @@ export class MatchmakingService {
 
   private async tryCreateRoom(gameType: string, stake: number, config: any): Promise<void> {
     const key = `matchmaking:${gameType}:${stake}`
-    
+
+    // Games with a fixed bot-fill table size (e.g. Teen Patti's 4) shouldn't
+    // instant-start on the bare min_players threshold — that's how you end up
+    // with e.g. two real players locked into a 2-real/0-bot table the moment
+    // they both happen to be queued, instead of waiting to see if enough real
+    // players show up to skip bots entirely. Only start immediately once
+    // there are enough real players that no bots are needed at all; anything
+    // short of that waits for the bot-fill timer in joinQueue.
+    const noBotThreshold = config.bot_fill_table_size || config.min_players
+
     // Atomically check if enough players are ready, and if so pop them
     const members = await this.redis.eval(
       `
       local key = KEYS[1]
-      local min_players = tonumber(ARGV[1])
+      local no_bot_threshold = tonumber(ARGV[1])
       local max_players = tonumber(ARGV[2])
       local members = redis.call('zrange', key, 0, max_players - 1)
-      if #members < min_players then
+      if #members < no_bot_threshold then
         return {}
       end
       for _, m in ipairs(members) do
@@ -86,11 +96,11 @@ export class MatchmakingService {
       `,
       1,
       key,
-      config.min_players,
+      noBotThreshold,
       config.max_players
     ) as string[]
 
-    if (!members || members.length < config.min_players) return
+    if (!members || members.length < noBotThreshold) return
 
     console.log(`[matchmaking] tryCreateRoom: ${members.length} players ready for ${gameType}:${stake} — starting game`)
     const players: MatchmakingEntry[] = members.map(m => JSON.parse(m))
@@ -121,10 +131,19 @@ export class MatchmakingService {
     const realPlayers: MatchmakingEntry[] = members.map(m => JSON.parse(m))
     console.log(`[matchmaking] botFillRoom: ${realPlayers.length} real players for ${gameType}:${stake} — filling with bots`)
 
-    const maxBots = Math.floor(config.max_players * config.max_bot_ratio)
-    // Ensure at least min_players total (fill gap with bots)
-    const minBotsNeeded = Math.max(0, (config.min_players || 2) - realPlayers.length)
-    const botsNeeded = Math.min(config.max_players - realPlayers.length, Math.max(maxBots, minBotsNeeded))
+    let botsNeeded: number
+    if (config.bot_fill_table_size) {
+      // Fixed target size (e.g. Teen Patti's 4): top up to exactly that many
+      // seats with bots. If enough real players already showed up to hit or
+      // exceed the target (a race with tryCreateRoom), no bots are needed —
+      // just seat the real players, capped at max_players.
+      botsNeeded = Math.max(0, Math.min(config.max_players, config.bot_fill_table_size) - realPlayers.length)
+    } else {
+      const maxBots = Math.floor(config.max_players * config.max_bot_ratio)
+      // Ensure at least min_players total (fill gap with bots)
+      const minBotsNeeded = Math.max(0, (config.min_players || 2) - realPlayers.length)
+      botsNeeded = Math.min(config.max_players - realPlayers.length, Math.max(maxBots, minBotsNeeded))
+    }
     const bots = await this.getBots(gameType, botsNeeded)
 
     // If no bots in DB and real players alone don't meet min_players, re-queue them
@@ -144,6 +163,11 @@ export class MatchmakingService {
     }
 
     await this.startGame(gameType, stake, realPlayers, bots)
+  }
+
+  // Friends tables: start a game for an explicit player list, never bots.
+  async startPrivateGame(gameType: string, stake: number, players: MatchmakingEntry[]): Promise<void> {
+    await this.startGame(gameType, stake, players, [])
   }
 
   private async getBots(gameType: string, count: number): Promise<MatchmakingEntry[]> {
@@ -221,6 +245,19 @@ export class MatchmakingService {
       return
     } finally {
       client.release()
+    }
+
+    // Feed the fraud/analytics pipeline — one room_joined per real player so
+    // per-user rules (co-location, velocity) see each participant.
+    const monitorPlayerIds = allPlayers.map(p => p.userId)
+    for (const p of realPlayers) {
+      monitorEmitter.emit('room_joined', {
+        game_type: gameType,
+        room_id: roomId,
+        user_id: p.userId,
+        players: monitorPlayerIds,
+        stake,
+      })
     }
 
     // Build initial state for gateway Redis (engine keeps its own state)
@@ -524,6 +561,13 @@ export class MatchmakingService {
       console.error('Failed to settle Ludo game', e)
     }
 
+    monitorEmitter.emit('game_result', {
+      game_type: 'ludo',
+      room_id: roomId,
+      winner_id: result?.winner_id,
+      prize_amount: Number(result?.prize) || 0,
+    })
+
     this.hub.sendToRoom(roomId, 'game:result', {
       room_id: roomId,
       winner_id: result.winner_id,
@@ -581,6 +625,13 @@ export class MatchmakingService {
     } catch (e) {
       console.error('[gateway] Failed to settle Teen Patti game', e)
     }
+
+    monitorEmitter.emit('game_result', {
+      game_type: state?.gameType ?? state?.game_type ?? 'teen_patti',
+      room_id: roomId,
+      winner_id: result.winner_id,
+      prize_amount: Number(result.prize) || 0,
+    })
 
     const winner = state.players?.find((p: any) => (p.userId ?? p.user_id ?? p.id) === result.winner_id)
     const winnerUsername = winner ? (winner.username ?? 'Player') : 'Unknown'

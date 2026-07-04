@@ -60,7 +60,7 @@ export function authPlugin(db: Pool, redis: Redis) {
         await client.query('COMMIT')
 
         const accessToken = app.jwt.sign({ sub: user.id, username: user.username }, { expiresIn: process.env.JWT_EXPIRES_IN || '15m' })
-        const refreshToken = app.jwt.sign({ sub: user.id, type: 'refresh' }, { sign: { key: process.env.JWT_REFRESH_SECRET! }, expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d' } as any)
+        const refreshToken = app.jwt.sign({ sub: user.id, type: 'refresh' }, { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d' })
         await redis.setex(`session:${user.id}`, 30 * 24 * 60 * 60, refreshToken)
         return reply.code(201).send({ access_token: accessToken, refresh_token: refreshToken, user: { id: user.id, username: user.username, referral_code: user.referral_code } })
       } catch (err) {
@@ -81,7 +81,7 @@ export function authPlugin(db: Pool, redis: Redis) {
       if (!valid) return reply.code(401).send({ error: 'Invalid credentials' })
 
       const accessToken = app.jwt.sign({ sub: user.id, username: user.username }, { expiresIn: process.env.JWT_EXPIRES_IN || '15m' })
-      const refreshToken = app.jwt.sign({ sub: user.id, type: 'refresh' }, { sign: { key: process.env.JWT_REFRESH_SECRET! }, expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d' } as any)
+      const refreshToken = app.jwt.sign({ sub: user.id, type: 'refresh' }, { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d' })
       await redis.setex(`session:${user.id}`, 30 * 24 * 60 * 60, refreshToken)
       return reply.send({ access_token: accessToken, refresh_token: refreshToken, user: { id: user.id, username: user.username } })
     })
@@ -90,8 +90,11 @@ export function authPlugin(db: Pool, redis: Redis) {
       const body = z.object({ refresh_token: z.string() }).parse(req.body)
       let payload: any
       try {
-        payload = app.jwt.verify(body.refresh_token, { key: process.env.JWT_REFRESH_SECRET! } as any)
+        payload = app.jwt.verify(body.refresh_token)
       } catch {
+        return reply.code(401).send({ error: 'Invalid refresh token' })
+      }
+      if (payload.type !== 'refresh') {
         return reply.code(401).send({ error: 'Invalid refresh token' })
       }
       const stored = await redis.get(`session:${payload.sub}`)
@@ -107,6 +110,30 @@ export function authPlugin(db: Pool, redis: Redis) {
       const user = req.user as any
       await redis.del(`session:${user.sub}`)
       return reply.send({ success: true })
+    })
+
+    // Forgot password: reuses /auth/send-otp for delivery (same OTP store, keyed by
+    // phone), then this verifies the OTP and swaps the password. No existence check
+    // on send — checking here only would let callers enumerate registered numbers.
+    app.post('/auth/reset-password', async (req, reply) => {
+      const body = z.object({
+        phone: z.string().regex(/^\d{10}$/),
+        otp: z.string().length(6),
+        new_password: z.string().min(6),
+      }).parse(req.body)
+
+      const otpValid = await verifyOtp(redis, body.phone, body.otp)
+      if (!otpValid) return reply.code(400).send({ error: 'Invalid or expired OTP' })
+
+      const res = await db.query('SELECT id FROM users WHERE phone = $1 AND is_bot = false', [body.phone])
+      if (!res.rows.length) return reply.code(404).send({ error: 'No account found with this mobile number' })
+      const userId = res.rows[0].id
+
+      const passwordHash = await bcrypt.hash(body.new_password, 12)
+      await db.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [passwordHash, userId])
+      // Invalidate any existing session so old refresh tokens stop working.
+      await redis.del(`session:${userId}`)
+      return reply.send({ success: true, message: 'Password reset successfully' })
     })
 
     app.put('/auth/fcm-token', { onRequest: [app.authenticate] }, async (req, reply) => {

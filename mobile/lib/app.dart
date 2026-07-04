@@ -16,6 +16,7 @@ import 'features/wallet/wallet_page.dart';
 import 'features/games/teen_patti/modes_page.dart';
 import 'features/games/teen_patti/lobby_page.dart';
 import 'features/games/teen_patti/game_page.dart';
+import 'features/games/teen_patti/friends_lobby_page.dart';
 import 'features/games/aviator/aviator_page.dart';
 import 'features/games/ludo/ludo_modes_page.dart';
 import 'features/games/ludo/ludo_lobby_page.dart';
@@ -102,6 +103,10 @@ final GoRouter _router = GoRouter(
     // Fullscreen routes (gameplay & detail pages) — no shell chrome.
     GoRoute(path: '/notifications', builder: (_, __) => const NotificationsPage()),
     GoRoute(path: '/games/teen-patti/lobby', builder: (_, s) => TeenPattiLobbyPage(variation: s.uri.queryParameters['variation'] ?? 'classic')),
+    GoRoute(path: '/games/teen-patti/friends', builder: (_, s) => TeenPattiFriendsPage(
+      mode: s.uri.queryParameters['mode'] ?? 'join',
+      stake: double.tryParse(s.uri.queryParameters['stake'] ?? '') ?? 10,
+    )),
     GoRoute(
       path: '/games/teen-patti/play/:roomId',
       pageBuilder: (context, state) => NoTransitionPage(

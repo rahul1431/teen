@@ -359,7 +359,7 @@ async function start() {
     return reply.send({ success: true })
   })
 
-  // POST /api/admin/users/:id/reset-password â€” support sets a new password for a player
+  // POST /api/admin/users/:id/reset-password — support sets a new password for a player
   // (account-recovery requests via support, not a self-service OTP flow like the app's).
   app.post('/api/admin/users/:id/reset-password', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const admin = req.user as any
@@ -2385,7 +2385,33 @@ async function start() {
     return reply.send(res.rows)
   })
 
+
+  // ── Bank Details Admin Routes ──────────────────────────────────────────────
+
+  // GET /api/admin/bank-details — list all submitted bank accounts
+  app.get('/api/admin/bank-details', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query(
+      `SELECT bd.*, u.username, u.phone, u.email
+       FROM bank_details bd
+       JOIN users u ON u.id = bd.user_id
+       ORDER BY bd.updated_at DESC`
+    )
+    return reply.send({ bank_details: res.rows })
+  })
+
+  // PATCH /api/admin/bank-details/:userId/verify — approve or remove verification
+  app.patch('/api/admin/bank-details/:userId/verify', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { userId } = req.params as any
+    const { verified } = req.body as any
+    await db.query(
+      `UPDATE bank_details SET verified = $1, verified_at = $2, updated_at = NOW() WHERE user_id = $3`,
+      [verified, verified ? new Date().toISOString() : null, userId]
+    )
+    return reply.send({ success: true })
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))
+
 
   const port = parseInt(process.env.PORT || '3008')
   await app.listen({ port, host: '0.0.0.0' })

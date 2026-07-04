@@ -114,10 +114,10 @@ export class ProfileBuilder {
       `SELECT
          gp.user_id,
          COUNT(gp.id)::int            AS games_played,
-         SUM(gp.profit_loss)          AS total_profit,
-         AVG(gp.profit_loss)          AS avg_profit,
-         COUNT(CASE WHEN gp.profit_loss > 0 THEN 1 END)::int AS wins,
-         AVG(gr.stake)                AS avg_stake
+         SUM(gp.prize_won - gp.entry_fee_deducted)          AS total_profit,
+         AVG(gp.prize_won - gp.entry_fee_deducted)          AS avg_profit,
+         COUNT(CASE WHEN gp.prize_won > gp.entry_fee_deducted THEN 1 END)::int AS wins,
+         AVG(gr.entry_fee)            AS avg_stake
        FROM game_participants gp
        JOIN game_rooms gr ON gr.id = gp.room_id
        JOIN users u ON u.id = gp.user_id
