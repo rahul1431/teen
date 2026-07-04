@@ -267,8 +267,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            _buildSocketDebugPanel(),
+            _buildReconnectNotice(),
             const Spacer(),
             if (_searching)
               Column(
@@ -293,54 +292,47 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
     );
   }
 
-  // Live socket diagnostics — visible on-device so connection failures are
-  // observable without adb/server logs. Tap to force a reconnect.
-  Widget _buildSocketDebugPanel() {
-    return GestureDetector(
-      onTap: () => _socket.connect(),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.35),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: AppColors.gold.withValues(alpha: 0.4)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: const [
-                Icon(Icons.bug_report, size: 14, color: AppColors.gold),
-                SizedBox(width: 6),
-                Text('Socket Debug (tap to reconnect)',
-                    style: TextStyle(color: AppColors.gold, fontSize: 11, fontWeight: FontWeight.bold)),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text('URL: ${_socket.url}',
-                style: const TextStyle(color: Colors.white70, fontSize: 10)),
-            Text('Token: ${_socket.tokenPresent ? "present" : "MISSING"}',
-                style: TextStyle(
-                    color: _socket.tokenPresent ? Colors.greenAccent : Colors.redAccent,
-                    fontSize: 10)),
-            ValueListenableBuilder<String>(
-              valueListenable: _socket.status,
-              builder: (_, status, __) => Text('Status: $status',
-                  style: TextStyle(
-                      color: status == 'connected' ? Colors.greenAccent : Colors.orangeAccent,
-                      fontSize: 10, fontWeight: FontWeight.bold)),
-            ),
-            ValueListenableBuilder<String>(
-              valueListenable: _socket.lastError,
-              builder: (_, err, __) => err.isEmpty
-                  ? const SizedBox.shrink()
-                  : Text('Error: $err',
-                      style: const TextStyle(color: Colors.redAccent, fontSize: 10)),
-            ),
-          ],
-        ),
-      ),
+  // Shows only when the socket connection has failed, so players can recover
+  // from a dropped connection with one tap. Hidden while connected or connecting.
+  Widget _buildReconnectNotice() {
+    return ValueListenableBuilder<String>(
+      valueListenable: _socket.status,
+      builder: (_, status, __) {
+        final connected = status == 'connected';
+        final inProgress = status == 'idle' ||
+            status == 'reading-token' ||
+            status == 'auth-retry' ||
+            status.startsWith('connecting') ||
+            status.contains('reconnecting');
+        if (connected || inProgress) return const SizedBox.shrink();
+
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(top: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: AppColors.red.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.red.withValues(alpha: 0.5)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.wifi_off_rounded, size: 18, color: AppColors.red),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text('Connection lost',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+              ),
+              TextButton.icon(
+                onPressed: () => _socket.reconnectNow(),
+                icon: const Icon(Icons.refresh_rounded, size: 16, color: AppColors.gold),
+                label: const Text('Reconnect',
+                    style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
