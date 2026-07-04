@@ -116,6 +116,16 @@ REDIS_URL={redis_url_val}
         app_monitor_env_file.write(app_monitor_env)
         app_monitor_env_file.close()
 
+        # 4e. Create .env for churn-ml-service
+        churn_ml_env = f"""# Churn ML Service Configuration
+PORT=3020
+DATABASE_URL={db_url_val}
+"""
+        print("Writing churn-ml-service .env...")
+        churn_ml_env_file = sftp.open("/opt/teen/services/churn-ml-service/.env", "w")
+        churn_ml_env_file.write(churn_ml_env)
+        churn_ml_env_file.close()
+
         sftp.close()
 
         # 5. Run deploy services script
@@ -164,6 +174,7 @@ REDIS_URL={redis_url_val}
             "pm2 delete teen-monitoring || true",
             "pm2 delete teen-risk || true",
             "pm2 delete teen-churn || true",
+            "pm2 delete teen-churn-ml || true",
             "pm2 delete teen-bot-learning || true",
             "pm2 delete teen-app-monitor || true",
             "cd /opt/teen && pm2 start ecosystem.config.js",

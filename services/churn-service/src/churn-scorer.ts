@@ -115,40 +115,56 @@ export class ChurnScorer {
       ? (Date.now() - lastDepositAt.getTime()) / (1000 * 60 * 60 * 24)
       : null
 
-    // Deposit inactivity score (0-70)
-    let inactivityScore = 0
-    if (daysSinceDeposit !== null) {
-      if (daysSinceDeposit >= cfg.high_threshold_days) {
-        inactivityScore = 70
-      } else if (daysSinceDeposit >= cfg.medium_threshold_days) {
-        // Linear interpolation medium → high
-        const range = cfg.high_threshold_days - cfg.medium_threshold_days
-        const pos = daysSinceDeposit - cfg.medium_threshold_days
-        inactivityScore = 60 + (pos / range) * 10
-      } else if (daysSinceDeposit >= cfg.low_threshold_days) {
-        // Linear interpolation low → medium
-        const range = cfg.medium_threshold_days - cfg.low_threshold_days
-        const pos = daysSinceDeposit - cfg.low_threshold_days
-        inactivityScore = 30 + (pos / range) * 30
-      }
-    }
-
-    // Frequency drop score (0-30)
-    // I6: Removed dead else-if branch — the first branch already covers depositsLast14 === 0
-    let frequencyScore = 0
-    const depositsLast14 = user.deposits_last_14 as number
-    const depositsPrior14 = user.deposits_prior_14 as number
-    if (depositsPrior14 > 0 && depositsLast14 < depositsPrior14) {
-      const dropRate = (depositsPrior14 - depositsLast14) / depositsPrior14
-      frequencyScore = dropRate * 30
-    }
-
-    const totalScore = Math.min(Math.round(inactivityScore + frequencyScore), 100)
-
+    let totalScore = 0
     let riskLevel: 'none' | 'low' | 'medium' | 'high' = 'none'
-    if (totalScore >= 80) riskLevel = 'high'
-    else if (totalScore >= 60) riskLevel = 'medium'
-    else if (totalScore >= 30) riskLevel = 'low'
+    let isMlUsed = false
+
+    try {
+      const mlResponse = await axios.post('http://127.0.0.1:3020/predict', { user_id: user.id }, { timeout: 2000 })
+      if (mlResponse.data && typeof mlResponse.data.churn_risk === 'number') {
+        totalScore = Math.round(mlResponse.data.churn_risk)
+        riskLevel = mlResponse.data.risk_level as any
+        isMlUsed = true
+        this.logger.info({ userId: user.id, score: totalScore, risk: riskLevel }, 'ML churn prediction completed')
+      }
+    } catch (err: any) {
+      this.logger.warn({ userId: user.id, err: err.message }, 'ML churn prediction failed. Falling back to heuristic rules.')
+    }
+
+    if (!isMlUsed) {
+      // Deposit inactivity score (0-70)
+      let inactivityScore = 0
+      if (daysSinceDeposit !== null) {
+        if (daysSinceDeposit >= cfg.high_threshold_days) {
+          inactivityScore = 70
+        } else if (daysSinceDeposit >= cfg.medium_threshold_days) {
+          // Linear interpolation medium → high
+          const range = cfg.high_threshold_days - cfg.medium_threshold_days
+          const pos = daysSinceDeposit - cfg.medium_threshold_days
+          inactivityScore = 60 + (pos / range) * 10
+        } else if (daysSinceDeposit >= cfg.low_threshold_days) {
+          // Linear interpolation low → medium
+          const range = cfg.medium_threshold_days - cfg.low_threshold_days
+          const pos = daysSinceDeposit - cfg.low_threshold_days
+          inactivityScore = 30 + (pos / range) * 30
+        }
+      }
+
+      // Frequency drop score (0-30)
+      let frequencyScore = 0
+      const depositsLast14 = user.deposits_last_14 as number
+      const depositsPrior14 = user.deposits_prior_14 as number
+      if (depositsPrior14 > 0 && depositsLast14 < depositsPrior14) {
+        const dropRate = (depositsPrior14 - depositsLast14) / depositsPrior14
+        frequencyScore = dropRate * 30
+      }
+
+      totalScore = Math.min(Math.round(inactivityScore + frequencyScore), 100)
+      riskLevel = 'none'
+      if (totalScore >= 80) riskLevel = 'high'
+      else if (totalScore >= 60) riskLevel = 'medium'
+      else if (totalScore >= 30) riskLevel = 'low'
+    }
 
     // Upsert score
     await this.pool.query(

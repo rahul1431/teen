@@ -119,6 +119,21 @@ module.exports = {
       env: NODE_OPTS,
     },
 
+    // ── Churn ML: Local Python FastAPI Server ──
+    {
+      name: 'teen-churn-ml',
+      cwd: `${BASE}/churn-ml-service`,
+      script: 'venv/bin/uvicorn',
+      args: 'main:app --host 127.0.0.1 --port 3020',
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      interpreter: 'none',
+      env: {
+        DATABASE_URL: process.env.DATABASE_URL
+      }
+    },
+
     // ── App Monitor: Flutter SDK event ingest ──
     {
       name: 'teen-app-monitor',

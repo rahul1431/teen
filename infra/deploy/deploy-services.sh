@@ -17,6 +17,18 @@ for svc in "${SERVICES[@]}"; do
   fi
 done
 
+echo "==> Setting up Python virtual environment and dependencies for Churn ML..."
+if [ -d "$BASE/services/churn-ml-service" ]; then
+  cd "$BASE/services/churn-ml-service"
+  python3 -m venv venv
+  source venv/bin/activate
+  pip install --upgrade pip
+  pip install -r requirements.txt
+  deactivate
+else
+  echo "  -> Skipping Churn ML (directory does not exist)"
+fi
+
 echo "==> Installing Aviator engine dependencies..."
 cd "$BASE/services/game-engines/aviator"
 npm install --production=false
