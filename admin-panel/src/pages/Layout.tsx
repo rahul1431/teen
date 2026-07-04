@@ -1,10 +1,12 @@
-import { Layout, Menu, Typography, Avatar, Dropdown, Button } from 'antd'
+import { useState } from 'react'
+import { Layout, Menu, Typography, Avatar, Dropdown, Button, Grid, Drawer } from 'antd'
 import {
   DashboardOutlined, UserOutlined, PlayCircleOutlined, DollarOutlined,
-  BellOutlined, SettingOutlined, LogoutOutlined, TrophyOutlined, SafetyOutlined,
+  BellOutlined, LogoutOutlined, TrophyOutlined, SafetyOutlined,
   TeamOutlined, ProfileOutlined, WarningOutlined, CustomerServiceOutlined,
   FundOutlined, RobotOutlined, HistoryOutlined, MonitorOutlined, GiftOutlined,
   PictureOutlined, TagOutlined, AuditOutlined, MobileOutlined, AimOutlined,
+  MenuOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
@@ -50,35 +52,86 @@ export default function AdminLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const { admin, logout } = useAuthStore()
+  const screens = Grid.useBreakpoint()
+  // Below Ant's `lg` (992px) the fixed sidebar is swapped for a slide-in drawer.
+  const isMobile = !screens.lg
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
   const handleLogout = () => {
     logout()
     navigate('/admin/login')
   }
 
+  const brand = (
+    <div style={{ padding: '16px 24px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+      <Typography.Title level={5} style={{ color: '#d4af37', margin: 0 }}>🃏 MyOnlineJoker</Typography.Title>
+      <Typography.Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>Admin Panel</Typography.Text>
+    </div>
+  )
+
+  const nav = (
+    <Menu
+      theme="dark"
+      mode="inline"
+      selectedKeys={[location.pathname]}
+      items={menuItems}
+      onClick={({ key }) => {
+        if (key.startsWith('/')) {
+          navigate(key)
+          setDrawerOpen(false)
+        }
+      }}
+      style={{ marginTop: 8, borderRight: 0 }}
+    />
+  )
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider width={220} theme="dark" style={{ position: 'fixed', height: '100vh', zIndex: 10 }}>
-        <div style={{ padding: '16px 24px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-          <Typography.Title level={5} style={{ color: '#d4af37', margin: 0 }}>🃏 MyOnlineJoker</Typography.Title>
-          <Typography.Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>Admin Panel</Typography.Text>
-        </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          items={menuItems}
-          onClick={({ key }) => {
-            if (key.startsWith('/')) {
-              navigate(key)
-            }
-          }}
-          style={{ marginTop: 8 }}
-        />
-      </Sider>
+      {!isMobile && (
+        <Sider width={220} theme="dark" style={{ position: 'fixed', height: '100vh', zIndex: 10, overflowY: 'auto' }}>
+          {brand}
+          {nav}
+        </Sider>
+      )}
 
-      <Layout style={{ marginLeft: 220 }}>
-        <Header style={{ background: '#fff', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
+      {isMobile && (
+        <Drawer
+          placement="left"
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          width={240}
+          closable={false}
+          styles={{ body: { padding: 0, background: '#001529' } }}
+        >
+          {brand}
+          {nav}
+        </Drawer>
+      )}
+
+      <Layout style={{ marginLeft: isMobile ? 0 : 220 }}>
+        <Header
+          style={{
+            background: '#fff',
+            padding: isMobile ? '0 12px' : '0 24px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+            position: 'sticky',
+            top: 0,
+            zIndex: 9,
+          }}
+        >
+          {isMobile ? (
+            <Button
+              type="text"
+              icon={<MenuOutlined style={{ fontSize: 18 }} />}
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Open menu"
+            />
+          ) : (
+            <span />
+          )}
           <Dropdown menu={{ items: [
             { key: 'profile', icon: <ProfileOutlined />, label: 'Profile & 2FA', onClick: () => navigate('/admin/profile') },
             { type: 'divider' },
@@ -90,7 +143,7 @@ export default function AdminLayout() {
             </Button>
           </Dropdown>
         </Header>
-        <Content style={{ margin: 24, minHeight: 'calc(100vh - 112px)' }}>
+        <Content style={{ margin: isMobile ? 12 : 24, minHeight: 'calc(100vh - 112px)' }}>
           <Outlet />
         </Content>
       </Layout>

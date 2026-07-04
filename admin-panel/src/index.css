@@ -1,0 +1,43 @@
+/* Global responsiveness for the admin panel.
+   Keeps pages usable on phones without touching every page individually. */
+
+html, body, #root {
+  max-width: 100%;
+}
+
+/* Never let a rogue wide element scroll the whole page sideways. */
+body {
+  overflow-x: hidden;
+}
+
+/* Phones (below Ant's `md`). */
+@media (max-width: 767px) {
+  /* Wide data tables scroll inside their own box instead of breaking layout. */
+  .ant-table-wrapper {
+    overflow-x: auto;
+  }
+  .ant-table-wrapper table {
+    min-width: 520px;
+  }
+
+  /* Tighten default paddings so content fits a phone screen. */
+  .ant-card-body {
+    padding: 14px !important;
+  }
+  .ant-layout-content {
+    margin: 12px !important;
+  }
+
+  /* Keep dialogs within the viewport. */
+  .ant-modal {
+    max-width: calc(100vw - 16px) !important;
+    margin: 8px auto !important;
+  }
+  .ant-drawer-content-wrapper {
+    max-width: 92vw;
+  }
+
+  /* Slightly smaller page headings on small screens. */
+  h1 { font-size: 22px !important; }
+  h2 { font-size: 20px !important; }
+}
