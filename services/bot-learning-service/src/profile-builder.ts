@@ -114,9 +114,9 @@ export class ProfileBuilder {
       `SELECT
          gp.user_id,
          COUNT(gp.id)::int            AS games_played,
-         SUM(gp.prize_won - gp.entry_fee_deducted)          AS total_profit,
-         AVG(gp.prize_won - gp.entry_fee_deducted)          AS avg_profit,
-         COUNT(CASE WHEN gp.prize_won > gp.entry_fee_deducted THEN 1 END)::int AS wins,
+         SUM(gp.prize_won - COALESCE(gp.entry_fee_deducted, gr.entry_fee))          AS total_profit,
+         AVG(gp.prize_won - COALESCE(gp.entry_fee_deducted, gr.entry_fee))          AS avg_profit,
+         COUNT(CASE WHEN gp.prize_won > COALESCE(gp.entry_fee_deducted, gr.entry_fee) THEN 1 END)::int AS wins,
          AVG(gr.entry_fee)            AS avg_stake
        FROM game_participants gp
        JOIN game_rooms gr ON gr.id = gp.room_id
