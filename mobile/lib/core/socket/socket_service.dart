@@ -276,15 +276,15 @@ class SocketService {
   bool _isExpired(String jwt) {
     try {
       final parts = jwt.split('.');
-      if (parts.length != 3) return false;
+      if (parts.length != 3) return true;
       final payload = json.decode(
           utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))));
       final exp = payload['exp'];
-      if (exp is! int) return false;
+      if (exp is! int) return true;
       final expiry = DateTime.fromMillisecondsSinceEpoch(exp * 1000);
       return DateTime.now().isAfter(expiry.subtract(const Duration(seconds: 30)));
     } catch (_) {
-      return false;
+      return true;
     }
   }
 

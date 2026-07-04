@@ -6,6 +6,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'core/monitor/monitor_service.dart';
 import 'core/monitor/socket_monitor_wrapper.dart';
+import 'core/services/locale_service.dart';
 import 'core/socket/socket_service.dart';
 import 'app.dart';
 
@@ -37,6 +38,9 @@ void main() async {
   await Hive.initFlutter();
   await Hive.openBox('settings');
   await Hive.openBox('wallet');
+
+  // Load saved language before first frame
+  await locale.load();
 
   // Lock to portrait mode
   await SystemChrome.setPreferredOrientations([

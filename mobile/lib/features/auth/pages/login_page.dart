@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:go_router/go_router.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/constants/app_config.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../shared/theme/app_theme.dart';
@@ -18,6 +20,48 @@ class _LoginPageState extends State<LoginPage> {
   bool _loading = false;
   bool _obscure = true;
   String? _errorMsg;
+  
+  bool _biometricAvailable = false;
+  final _localAuth = LocalAuthentication();
+
+  @override
+  void initState() {
+    super.initState();
+    _checkBiometricSupport();
+  }
+
+  Future<void> _checkBiometricSupport() async {
+    final prefs = await SharedPreferences.getInstance();
+    final enabled = prefs.getBool('biometric_enabled') ?? false;
+    if (enabled) {
+      final canAuth = await _localAuth.canCheckBiometrics;
+      if (canAuth) {
+        final creds = await SecureStorage.getBiometricCredentials();
+        if (creds != null) {
+          setState(() => _biometricAvailable = true);
+          // Wait a brief moment and auto-trigger
+          Future.delayed(const Duration(milliseconds: 300), _loginWithBiometric);
+        }
+      }
+    }
+  }
+
+  Future<void> _loginWithBiometric() async {
+    try {
+      final authenticated = await _localAuth.authenticate(
+        localizedReason: 'Login to your account',
+        options: const AuthenticationOptions(stickyAuth: true),
+      );
+      if (authenticated) {
+        final creds = await SecureStorage.getBiometricCredentials();
+        if (creds != null && mounted) {
+          _phoneCtrl.text = creds['phone']!;
+          _passCtrl.text = creds['password']!;
+          _login();
+        }
+      }
+    } catch (_) {}
+  }
 
   @override
   void dispose() { _phoneCtrl.dispose(); _passCtrl.dispose(); super.dispose(); }
@@ -35,6 +79,10 @@ class _LoginPageState extends State<LoginPage> {
         refreshToken: res.data['refresh_token'],
       );
       await SecureStorage.saveUser(userId: res.data['user']['id'], username: res.data['user']['username']);
+      
+      // Save credentials for biometric login
+      await SecureStorage.saveBiometricCredentials(_phoneCtrl.text.trim(), _passCtrl.text);
+
       if (mounted) context.go('/home');
     } on DioException catch (e) {
       setState(() => _errorMsg = e.response?.data?['error'] ?? 'Login failed. Please try again.');
@@ -106,6 +154,13 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   validator: (v) => (v?.length ?? 0) >= 6 ? null : 'Min 6 characters',
                 ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => context.push('/auth/forgot-password'),
+                    child: const Text('Forgot Password?', style: TextStyle(color: AppColors.gold, fontSize: 13)),
+                  ),
+                ),
                 if (_errorMsg != null) ...[
                   const SizedBox(height: 12),
                   Container(
@@ -125,14 +180,34 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                 ],
                 const SizedBox(height: 32),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _loading ? null : _login,
-                    child: _loading
-                        ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
-                        : const Text('Login'),
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _loading ? null : _login,
+                        child: _loading
+                            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                            : const Text('Login'),
+                      ),
+                    ),
+                    if (_biometricAvailable) ...[
+                      const SizedBox(width: 12),
+                      Container(
+                        height: 52,
+                        width: 52,
+                        decoration: BoxDecoration(
+                          color: AppColors.gold.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: AppColors.gold.withOpacity(0.35)),
+                        ),
+                        child: IconButton(
+                          icon: const Icon(Icons.fingerprint_rounded, color: AppColors.gold, size: 28),
+                          onPressed: _loading ? null : _loginWithBiometric,
+                          tooltip: 'Login with Biometrics',
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
                 const SizedBox(height: 20),
                 Row(

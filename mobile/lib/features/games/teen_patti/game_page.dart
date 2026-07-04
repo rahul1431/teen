@@ -91,6 +91,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   double  _myBalance   = 0;   // fetched from wallet API and kept live
   Timer?  _turnTimer;
   StreamSubscription? _reconnectSub;
+  StreamSubscription? _errorSub;
   StreamSubscription? _roomJoinedSub;
   StreamSubscription? _gameStateSub;
   StreamSubscription? _gameResultSub;
@@ -137,6 +138,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   void dispose() {
     SoundService.instance.stopAmbience();
     _reconnectSub?.cancel();
+    _errorSub?.cancel();
     _roomJoinedSub?.cancel();
     _gameStateSub?.cancel();
     _gameResultSub?.cancel();
@@ -282,10 +284,40 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       final isMe     = (cur?['userId'] ?? cur?['user_id']) == _myUserId;
       final wasMyTurn = _myTurnNotifier.value;
       _myTurnNotifier.value = isMe;
-      if (isMe && !wasMyTurn) _startTurnTimer();
-      else if (!isMe) _turnTimer?.cancel();
+      if (isMe && !wasMyTurn) {
+        _startTurnTimer();
+        _maybeWarnLowBalance();
+      } else if (!isMe) {
+        _turnTimer?.cancel();
+      }
 
       // last_action available for future overlay if needed
+    });
+
+    // Server rejected an action (e.g. wallet lock failed on a low balance).
+    // _sendAction already hid the action bar and deducted the bet optimistically,
+    // so without this the player is left stuck with no buttons while the server
+    // still waits on their turn — restore the turn UI and let them Pack.
+    _errorSub = _socket.on(SocketEvents.errorEvent).listen((data) {
+      if (!mounted) return;
+      final msg = (data is Map ? data['message'] : data)?.toString() ?? 'Action failed';
+      _fetchBalance(); // undo the optimistic deduction with the server truth
+      final gs = _gsNotifier.value;
+      if (gs == null || gs['status'] == 'completed') return;
+      final players = (gs['players'] as List?) ?? [];
+      final idx = ((gs['current_turn'] ?? gs['CurrentTurn'] ?? 0) as num).toInt();
+      final cur = idx < players.length ? players[idx] as Map? : null;
+      final stillMyTurn = (cur?['userId'] ?? cur?['user_id']) == _myUserId;
+      if (stillMyTurn && !_myTurnNotifier.value) {
+        _myTurnNotifier.value = true;
+        _startTurnTimer();
+      }
+      if (msg.toLowerCase().contains('insufficient balance')) {
+        final stake = (gs['min_bet'] as num?)?.toDouble() ?? 0;
+        _showLowBalanceDialog(_isSeen ? stake * 2 : stake);
+      } else {
+        AppSnackBar.show(context, msg, error: true);
+      }
     });
 
     _gameResultSub = _socket.on(SocketEvents.gameResult).listen((data) {
@@ -488,6 +520,94 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       if (n > 0 && n <= 5) HapticFeedback.selectionClick();
       if (n <= 0) { t.cancel(); _sendAction('fold'); }
     });
+  }
+
+  /// Cost of [action] right now, using the same rules the gateway locks with.
+  double _actionCost(String action, {double? amount}) {
+    final gs = _gsNotifier.value;
+    final stake = (gs?['min_bet'] as num?)?.toDouble() ?? 0;
+    switch (action) {
+      case 'call':
+        return _isSeen ? stake * 2 : stake;
+      case 'raise':
+        return amount ?? stake * 2;
+      case 'show':
+        return _isSeen ? stake * 2 : stake;
+      case 'sideshow':
+        return stake * 2;
+      default:
+        return 0; // fold / see / sideshow answers are free
+    }
+  }
+
+  /// Paid actions go through here: if the wallet can't cover the cost the
+  /// server would reject it and freeze the turn, so warn first and offer Pack.
+  void _guardedAction(String action, {double? amount}) {
+    final cost = _actionCost(action, amount: amount);
+    if (!widget.demo && cost > 0 && _myBalance < cost) {
+      HapticFeedback.mediumImpact();
+      _showLowBalanceDialog(cost);
+      return;
+    }
+    _sendAction(action, amount: amount);
+  }
+
+  // One warning per turn so the timer countdown doesn't re-trigger it.
+  bool _lowBalWarned = false;
+
+  void _maybeWarnLowBalance() {
+    final gs = _gsNotifier.value;
+    final stake = (gs?['min_bet'] as num?)?.toDouble() ?? 0;
+    final nextChaal = _isSeen ? stake * 2 : stake;
+    if (nextChaal <= 0 || _myBalance >= nextChaal) {
+      _lowBalWarned = false;
+      return;
+    }
+    if (_lowBalWarned) return;
+    _lowBalWarned = true;
+    _showLowBalanceDialog(nextChaal);
+  }
+
+  void _showLowBalanceDialog(double cost) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1B2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: AppColors.orange, size: 22),
+            SizedBox(width: 8),
+            Text('Low Balance', style: TextStyle(color: Colors.white, fontSize: 18)),
+          ],
+        ),
+        content: Text(
+          'The next Chaal costs ₹${cost.toInt()} but you only have '
+          '₹${_myBalance.toInt()}.\n\nYou can Pack now to fold this hand, '
+          'or add money after the game.',
+          style: const TextStyle(color: Colors.white70, fontSize: 13.5, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx, rootNavigator: true).pop(),
+            child: const Text('Keep Playing', style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(dialogCtx, rootNavigator: true).pop();
+              _sendAction('fold');
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('Pack', style: TextStyle(fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
   }
 
   void _sendAction(String action, {double? amount}) {
@@ -1447,12 +1567,12 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                   SizedBox(width: gap),
                   // Sideshow — seen player can challenge the previous seen player
                   if (_isSeen && activeCount > 2) ...[
-                    _actionBtn('Sideshow', Colors.indigo, () => _sendAction('sideshow'), width: btnSecond),
+                    _actionBtn('Sideshow', Colors.indigo, () => _guardedAction('sideshow'), width: btnSecond),
                     SizedBox(width: gap),
                   ],
                   // Show — final showdown when only 2 players remain
                   if (activeCount == 2) ...[
-                    _actionBtn('Show', Colors.deepPurple, () => _sendAction('show'), width: btnSecond),
+                    _actionBtn('Show', Colors.deepPurple, () => _guardedAction('show'), width: btnSecond),
                     SizedBox(width: gap),
                   ],
                   _stepperBtn('−', () {
@@ -1461,7 +1581,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                   }),
                   SizedBox(width: gap),
                   _actionBtn(label, AppColors.green,
-                      () => _sendAction(bet > minBet ? 'raise' : 'call', amount: bet),
+                      () => _guardedAction(bet > minBet ? 'raise' : 'call', amount: bet),
                       width: btnMain),
                   SizedBox(width: gap),
                   _stepperBtn('+', () {

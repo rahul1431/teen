@@ -300,7 +300,6 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                   _infoRow('Entry Fee', '₹${_selectedStake.toInt()}'),
                   _infoRow('Pot Size', '₹${(_selectedStake * 6).toInt()} (max)'),
                   _infoRow('Platform Fee', '5%'),
-                  _infoRow('Bots', 'Yes (if wait > 10s)'),
                 ],
               ),
             ),

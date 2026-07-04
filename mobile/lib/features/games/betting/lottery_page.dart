@@ -580,7 +580,8 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
         balance: _balance,
         onPurchased: () {
           _loadBalance();
-          if (_tab.index == 1) _loadMyTickets();
+          _loadDraws();
+          _loadMyTickets();
         },
       ),
     );
@@ -829,54 +830,61 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
               ],
             ),
             const SizedBox(height: 16),
-            // Winning number tiles
-            Row(
-              children: [
-                Text('Winning Number  ',
-                    style: TextStyle(color: AppColors.textSecondary.withOpacity(0.7), fontSize: 12)),
-                ...winNum.split('').map((c) => Container(
-                  margin: const EdgeInsets.only(right: 6),
-                  width: 34, height: 40,
+            if (d['winners'] != null && (d['winners'] as List).isNotEmpty) ...[
+              const Text('🎉 Winning Tickets & Prizes:',
+                  style: TextStyle(color: AppColors.goldLight, fontSize: 13, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              ...(d['winners'] as List).map<Widget>((w) {
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF0D9488), Color(0xFF064E45)],
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                    ),
-                    borderRadius: BorderRadius.circular(9),
-                    border: Border.all(color: AppColors.gold.withOpacity(0.45)),
-                    boxShadow: [BoxShadow(color: const Color(0xFF0D9488).withOpacity(0.35), blurRadius: 8)],
+                    color: Colors.white.withOpacity(0.03),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.white.withOpacity(0.06)),
                   ),
-                  alignment: Alignment.center,
-                  child: Text(c,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.goldLight)),
-                )),
-              ],
-            ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.emoji_events_rounded, color: AppColors.gold, size: 16),
+                      const SizedBox(width: 8),
+                      Text('Ticket: ${w['ticket_number']}',
+                          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
+                      const Spacer(),
+                      Text('₹${w['prize']}',
+                          style: const TextStyle(color: AppColors.green, fontWeight: FontWeight.w900, fontSize: 14)),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ] else ...[
+              Row(
+                children: [
+                  Text('Winning Number: ',
+                      style: TextStyle(color: AppColors.textSecondary.withOpacity(0.7), fontSize: 13)),
+                  const SizedBox(width: 6),
+                  Text(winNum.isNotEmpty ? winNum : '—',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                ],
+              ),
+            ],
             const SizedBox(height: 14),
             // Stats
             Row(
               children: [
                 Icon(Icons.confirmation_num_rounded, size: 13,
-                    color: AppColors.textSecondary.withOpacity(0.6)),
+                    color: AppColors.textSecondary.withValues(alpha: 0.6)),
                 const SizedBox(width: 4),
                 Text('$tickets tickets sold',
-                    style: TextStyle(color: AppColors.textSecondary.withOpacity(0.7), fontSize: 12)),
+                    style: TextStyle(color: AppColors.textSecondary.withValues(alpha: 0.7), fontSize: 12)),
                 const SizedBox(width: 14),
                 Icon(Icons.people_alt_rounded, size: 13,
-                    color: AppColors.textSecondary.withOpacity(0.6)),
+                    color: AppColors.textSecondary.withValues(alpha: 0.6)),
                 const SizedBox(width: 4),
-                Text('$winners winner${winners == 1 ? '' : 's'}',
-                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-                if (paid > 0) ...[
-                  const SizedBox(width: 14),
-                  const Icon(Icons.payments_rounded, size: 13, color: AppColors.green),
-                  const SizedBox(width: 4),
-                  Text(_fmtCurrency(paid),
-                      style: const TextStyle(
-                          color: AppColors.green, fontSize: 12, fontWeight: FontWeight.w700)),
-                ],
+                Text('$winners winner${winners != 1 ? 's' : ''}',
+                    style: TextStyle(color: AppColors.textSecondary.withValues(alpha: 0.7), fontSize: 12)),
+                const Spacer(),
+                Text('₹${paid.toStringAsFixed(0)} paid',
+                    style: const TextStyle(color: AppColors.green, fontSize: 12, fontWeight: FontWeight.w600)),
               ],
             ),
           ],
@@ -908,97 +916,63 @@ class _TicketPickerSheet extends StatefulWidget {
 }
 
 class _TicketPickerSheetState extends State<_TicketPickerSheet> {
-  final List<List<TextEditingController>> _tickets = [];
-  final List<List<FocusNode>> _ticketNodes = [];
-  int _activeTicket = 0;
+  late final TextEditingController _controller;
   bool _submitting = false;
   String? _error;
+  List<String> _reserved = [];
 
   @override
   void initState() {
     super.initState();
-    _addTicket();
+    _controller = TextEditingController();
+    final resTickets = widget.draw['reserved_tickets'];
+    if (resTickets is List) {
+      _reserved = resTickets.map((t) => t.toString().trim().toUpperCase()).toList();
+    }
   }
 
   @override
   void dispose() {
-    for (final row in _tickets) { for (final c in row) c.dispose(); }
-    for (final row in _ticketNodes) { for (final n in row) n.dispose(); }
+    _controller.dispose();
     super.dispose();
   }
 
-  void _onFocusChange() { if (mounted) setState(() {}); }
-
-  void _addTicket() {
-    final ctrls = List.generate(widget.digits, (_) => TextEditingController());
-    final nodes = List.generate(widget.digits, (_) => FocusNode()..addListener(_onFocusChange));
-    setState(() {
-      _tickets.add(ctrls);
-      _ticketNodes.add(nodes);
-      _activeTicket = _tickets.length - 1;
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _ticketNodes.isNotEmpty) _ticketNodes.last[0].requestFocus();
-    });
-  }
-
-  void _removeTicket(int idx) {
-    if (_tickets.length <= 1) return;
-    for (final c in _tickets[idx]) c.dispose();
-    for (final n in _ticketNodes[idx]) n.dispose();
-    setState(() {
-      _tickets.removeAt(idx);
-      _ticketNodes.removeAt(idx);
-      _activeTicket = _activeTicket.clamp(0, _tickets.length - 1);
-    });
-  }
-
-  void _luckyDip(int ti) {
-    final rng = Random();
-    for (final c in _tickets[ti]) c.text = rng.nextInt(10).toString();
-    setState(() {});
-    HapticFeedback.mediumImpact();
-    SoundService.instance.play(Sfx.buttonTap);
-  }
-
-  String _num(int ti) => _tickets[ti].map((c) => c.text).join();
-
-  bool _valid(int ti) {
-    final n = _num(ti);
-    return n.length == widget.digits && RegExp(r'^\d+$').hasMatch(n);
-  }
-
-  bool get _allValid => List.generate(_tickets.length, (i) => i).every(_valid);
-
-  double get _totalCost => widget.price * _tickets.length;
+  bool get _isReserved => _reserved.contains(_controller.text.trim().toUpperCase());
 
   Future<void> _submit() async {
-    if (!_allValid) {
-      setState(() => _error = 'Fill all digits for each ticket');
+    final t = _controller.text.trim().toUpperCase();
+    if (t.isEmpty) {
+      setState(() => _error = 'Please enter a ticket number');
       return;
     }
-    if (_totalCost > widget.balance) {
-      setState(() => _error =
-          'Insufficient balance — you have ₹${widget.balance.toStringAsFixed(0)}');
+    if (!RegExp(r'^[a-zA-Z0-9]+$').hasMatch(t)) {
+      setState(() => _error = 'Ticket number must be alphanumeric (letters/numbers only)');
       return;
     }
+    if (t.length > widget.digits) {
+      setState(() => _error = 'Ticket number cannot exceed ${widget.digits} characters');
+      return;
+    }
+    if (_isReserved) {
+      setState(() => _error = 'This ticket number is already reserved');
+      return;
+    }
+    if (widget.price > widget.balance) {
+      setState(() => _error = 'Insufficient balance — you have ₹${widget.balance.toStringAsFixed(0)}');
+      return;
+    }
+    
     setState(() { _submitting = true; _error = null; });
-    int bought = 0;
     try {
-      for (var i = 0; i < _tickets.length; i++) {
-        await ApiClient().dio.post('/api/betting/lottery/buy',
-            data: {'draw_id': widget.draw['id'], 'ticket_number': _num(i)});
-        bought++;
-      }
+      await ApiClient().dio.post('/api/betting/lottery/buy',
+          data: {'draw_id': widget.draw['id'], 'ticket_number': t});
       SoundService.instance.play(Sfx.win);
       HapticFeedback.heavyImpact();
       if (!mounted) return;
       Navigator.pop(context);
       widget.onPurchased();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(bought == 1
-            ? 'Ticket purchased! Good luck 🍀'
-            : '$bought tickets purchased! Good luck 🍀'),
+        content: Text('Ticket "$t" purchased! Good luck 🍀'),
         backgroundColor: AppColors.green,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -1006,9 +980,7 @@ class _TicketPickerSheetState extends State<_TicketPickerSheet> {
     } catch (e) {
       setState(() {
         _submitting = false;
-        _error = e.toString().contains('Insufficient')
-            ? 'Insufficient balance'
-            : 'Purchase failed — please try again';
+        _error = 'Purchase failed — please try again';
       });
     }
   }
@@ -1027,12 +999,16 @@ class _TicketPickerSheetState extends State<_TicketPickerSheet> {
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Handle bar
-            Container(
-              width: 40, height: 4, margin: const EdgeInsets.only(top: 8, bottom: 18),
-              decoration: BoxDecoration(
-                  color: AppColors.border, borderRadius: BorderRadius.circular(2)),
+            Align(
+              alignment: Alignment.center,
+              child: Container(
+                width: 40, height: 4, margin: const EdgeInsets.only(top: 8, bottom: 18),
+                decoration: BoxDecoration(
+                    color: AppColors.border, borderRadius: BorderRadius.circular(2)),
+              ),
             ),
             // Header
             Row(
@@ -1053,7 +1029,7 @@ class _TicketPickerSheetState extends State<_TicketPickerSheet> {
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text(widget.draw['name'] ?? 'Lottery Draw',
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-                    Text('₹${widget.price.toStringAsFixed(0)} per ticket · ${widget.digits}-digit number',
+                    Text('₹${widget.price.toStringAsFixed(0)} per ticket · Max ${widget.digits} chars',
                         style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
                   ]),
                 ),
@@ -1077,19 +1053,66 @@ class _TicketPickerSheetState extends State<_TicketPickerSheet> {
             const SizedBox(height: 20),
             const Divider(color: AppColors.border, height: 1),
             const SizedBox(height: 16),
-            // Ticket entries
-            ..._tickets.asMap().entries.map((e) => _ticketEntry(e.key)),
-            // Add ticket
-            if (_tickets.length < 5)
-              TextButton.icon(
-                onPressed: _addTicket,
-                icon: const Icon(Icons.add_circle_outline_rounded, size: 18),
-                label: const Text('Add another ticket'),
-                style: TextButton.styleFrom(foregroundColor: const Color(0xFF5EEAD4)),
+            
+            // Reserved tickets wrap
+            if (_reserved.isNotEmpty) ...[
+              const Text("🚫 Reserved / Sold Ticket Numbers:",
+                  style: TextStyle(color: AppColors.red, fontSize: 12, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Container(
+                constraints: const BoxConstraints(maxHeight: 100),
+                width: double.infinity,
+                child: SingleChildScrollView(
+                  child: Wrap(
+                    spacing: 6, runSpacing: 6,
+                    children: _reserved.map<Widget>((ticket) => Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.red.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppColors.red.withOpacity(0.3)),
+                      ),
+                      child: Text(ticket, style: const TextStyle(color: AppColors.red, fontSize: 11, fontWeight: FontWeight.bold)),
+                    )).toList(),
+                  ),
+                ),
               ),
+              const SizedBox(height: 20),
+            ],
+
+            const Text("Choose Your Ticket Number",
+                style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            
+            // Input field
+            TextField(
+              controller: _controller,
+              maxLength: widget.digits,
+              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              textCapitalization: TextCapitalization.characters,
+              onChanged: (val) {
+                setState(() {
+                  _error = null;
+                });
+              },
+              decoration: InputDecoration(
+                hintText: 'e.g. LUCKY7, A12, 10',
+                hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                filled: true,
+                fillColor: Colors.black.withOpacity(0.4),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: AppColors.border)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFF0D9488), width: 2)),
+                counterText: '',
+                prefixIcon: const Icon(Icons.edit_rounded, color: AppColors.gold, size: 20),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text("Enter any letters, numbers, or both. Other players cannot select your number once bought.",
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+
             // Error
             if (_error != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 16),
               Container(
                 width: double.infinity, padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -1104,7 +1127,8 @@ class _TicketPickerSheetState extends State<_TicketPickerSheet> {
                 ]),
               ),
             ],
-            const SizedBox(height: 18),
+            const SizedBox(height: 24),
+            
             // Summary + buy button
             Container(
               padding: const EdgeInsets.all(16),
@@ -1116,11 +1140,8 @@ class _TicketPickerSheetState extends State<_TicketPickerSheet> {
               child: Row(
                 children: [
                   Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(
-                      '${_tickets.length} ticket${_tickets.length > 1 ? 's' : ''}',
-                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
-                    ),
-                    Text('₹${_totalCost.toStringAsFixed(0)}',
+                    const Text('1 ticket', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                    Text('₹${widget.price.toStringAsFixed(0)}',
                         style: const TextStyle(
                             fontWeight: FontWeight.w900, fontSize: 22, color: AppColors.goldLight)),
                   ]),
@@ -1131,6 +1152,8 @@ class _TicketPickerSheetState extends State<_TicketPickerSheet> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.gold,
                         foregroundColor: Colors.black,
+                        disabledBackgroundColor: AppColors.border,
+                        disabledForegroundColor: AppColors.textSecondary,
                         minimumSize: const Size.fromHeight(52),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                         textStyle: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
@@ -1146,140 +1169,6 @@ class _TicketPickerSheetState extends State<_TicketPickerSheet> {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _ticketEntry(int ti) {
-    final isActive = _activeTicket == ti;
-    return GestureDetector(
-      onTap: () {
-        setState(() => _activeTicket = ti);
-        _ticketNodes[ti][0].requestFocus();
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        margin: const EdgeInsets.only(bottom: 14),
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-        decoration: BoxDecoration(
-          color: isActive
-              ? const Color(0xFF0D9488).withOpacity(0.06)
-              : AppColors.cardBg.withOpacity(0.5),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isActive
-                ? const Color(0xFF0D9488).withOpacity(0.5)
-                : AppColors.border.withOpacity(0.6),
-            width: isActive ? 1.5 : 1,
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 26, height: 26,
-                  decoration: BoxDecoration(
-                    color: isActive
-                        ? const Color(0xFF0D9488).withOpacity(0.2)
-                        : AppColors.gold.withOpacity(0.12),
-                    shape: BoxShape.circle,
-                  ),
-                  alignment: Alignment.center,
-                  child: Text('${ti + 1}',
-                      style: TextStyle(
-                          color: isActive ? const Color(0xFF5EEAD4) : AppColors.gold,
-                          fontSize: 11, fontWeight: FontWeight.w800)),
-                ),
-                const SizedBox(width: 8),
-                Text('Ticket ${ti + 1}',
-                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: () => _luckyDip(ti),
-                  icon: const Icon(Icons.casino_rounded, size: 14),
-                  label: const Text('Lucky Dip', style: TextStyle(fontSize: 12)),
-                  style: TextButton.styleFrom(
-                      foregroundColor: AppColors.textSecondary,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                ),
-                if (_tickets.length > 1) ...[
-                  const SizedBox(width: 4),
-                  GestureDetector(
-                    onTap: () => _removeTicket(ti),
-                    child: Icon(Icons.close_rounded, size: 18, color: AppColors.red.withOpacity(0.7)),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 14),
-            // Digit boxes row
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(widget.digits, (di) => _digitBox(ti, di)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _digitBox(int ti, int di) {
-    final ctrl = _tickets[ti][di];
-    final node = _ticketNodes[ti][di];
-    final focused = node.hasFocus;
-    final filled = ctrl.text.isNotEmpty;
-    return Expanded(
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 3),
-        height: 56,
-        decoration: BoxDecoration(
-          color: focused
-              ? const Color(0xFF0D9488).withOpacity(0.12)
-              : filled
-                  ? Colors.black.withOpacity(0.45)
-                  : AppColors.cardBg,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: focused
-                ? const Color(0xFF0D9488)
-                : filled
-                    ? AppColors.gold.withOpacity(0.45)
-                    : AppColors.border,
-            width: focused ? 2 : 1,
-          ),
-        ),
-        child: TextField(
-          controller: ctrl,
-          focusNode: node,
-          textAlign: TextAlign.center,
-          keyboardType: TextInputType.number,
-          maxLength: 1,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Colors.white),
-          decoration: const InputDecoration(
-            border: InputBorder.none,
-            counterText: '',
-            contentPadding: EdgeInsets.zero,
-          ),
-          onChanged: (v) {
-            if (v.length > 1) ctrl.text = v[v.length - 1];
-            if (v.isEmpty) {
-              if (di > 0) _ticketNodes[ti][di - 1].requestFocus();
-            } else {
-              if (di < widget.digits - 1) {
-                _ticketNodes[ti][di + 1].requestFocus();
-              } else if (ti < _tickets.length - 1) {
-                _ticketNodes[ti + 1][0].requestFocus();
-                setState(() => _activeTicket = ti + 1);
-              }
-            }
-            setState(() {});
-          },
         ),
       ),
     );

@@ -6,7 +6,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:hive/hive.dart';
 import '../../core/network/api_client.dart';
 import '../../core/constants/app_config.dart';
+import '../../core/services/balance_service.dart';
 import '../../shared/theme/app_theme.dart';
+import '../profile/kyc_page.dart';
 
 // Resolve a possibly-relative server path (e.g. /uploads/qr/x.png) to a full URL.
 String _resolveUrl(String? p) {
@@ -61,6 +63,10 @@ class _WalletPageState extends State<WalletPage> {
         _bonusBalance = bonus;
         _transactions = txnRes.data;
       });
+      BalanceService.instance.set(
+        realBalance: double.tryParse(real),
+        bonusBalance: double.tryParse(bonus),
+      );
       try {
         final box = Hive.box('wallet');
         box.put('real_balance', real);
@@ -110,7 +116,6 @@ class _WalletPageState extends State<WalletPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Wallet')),
       body: RefreshIndicator(
         onRefresh: _loadData,
         child: ListView(
@@ -498,6 +503,48 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
 
   void _snack(String msg, Color c) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: c));
 
+  void _showKycRequiredDialog() {
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.verified_user_rounded, color: AppColors.orange, size: 22),
+            SizedBox(width: 8),
+            Expanded(child: Text('KYC Required for Withdrawal', style: TextStyle(fontSize: 17))),
+          ],
+        ),
+        content: const Text(
+          'To withdraw money you must complete KYC verification first. '
+          'Submit your documents and our team will verify them shortly.',
+          style: TextStyle(color: AppColors.textSecondary, fontSize: 13.5, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('Later', style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final nav = Navigator.of(context, rootNavigator: true);
+              Navigator.pop(dialogCtx);           // close dialog
+              Navigator.pop(context);              // close withdraw sheet
+              nav.push(MaterialPageRoute(builder: (_) => const KycPage()));
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.gold,
+              foregroundColor: Colors.black,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('Complete KYC', style: TextStyle(fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _submit() async {
     final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0;
     if (amount < 100) { _snack('Minimum withdrawal is ₹100', AppColors.red); return; }
@@ -514,7 +561,13 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       final msg = e is DioException ? (e.response?.data?['error']?.toString() ?? 'Request failed') : 'Request failed';
-      _snack(msg, AppColors.red);
+      // KYC gate: server rejects withdrawals until KYC is approved — show a
+      // clear dialog with a shortcut to complete KYC instead of a plain snack.
+      if (e is DioException && e.response?.statusCode == 403 && msg.toLowerCase().contains('kyc')) {
+        if (mounted) _showKycRequiredDialog();
+      } else {
+        _snack(msg, AppColors.red);
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
