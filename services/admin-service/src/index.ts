@@ -301,7 +301,13 @@ async function start() {
     const where = conditions.join(' AND ')
     const [users, countRes] = await Promise.all([
       db.query(`SELECT u.id, u.username, u.phone, u.email, u.kyc_status, u.status, u.referral_code, u.created_at,
-                       w.real_balance, w.bonus_balance
+                       w.real_balance, w.bonus_balance,
+                       COALESCE(
+                         (SELECT SUM(CASE WHEN type = 'game_credit' THEN amount ELSE -amount END)
+                          FROM wallet_transactions
+                          WHERE user_id = u.id AND status = 'completed' AND type IN ('game_credit', 'game_debit')),
+                         0
+                       )::float AS pnl
                 FROM users u LEFT JOIN wallets w ON w.user_id = u.id
                 WHERE ${where} ORDER BY u.created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
         [...params, parseInt(limit), offset]),

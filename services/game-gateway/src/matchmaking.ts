@@ -170,7 +170,49 @@ export class MatchmakingService {
     await this.startGame(gameType, stake, players, [])
   }
 
+  private async autoRefillBots(minRequired: number): Promise<void> {
+    try {
+      const lowBots = await this.db.query(
+        `SELECT u.id, u.username, w.real_balance
+         FROM users u
+         JOIN wallets w ON w.user_id = u.id
+         WHERE u.is_bot = true AND w.real_balance < $1`,
+        [minRequired]
+      )
+      for (const bot of lowBots.rows) {
+        const topUpAmount = 10000 - parseFloat(bot.real_balance)
+        if (topUpAmount <= 0) continue
+
+        const client = await this.db.connect()
+        try {
+          await client.query('BEGIN')
+          const ikey = `autorefill:${bot.id}:${Date.now()}`
+          await client.query(
+            `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, idempotency_key, status, description)
+             VALUES ($1, 'manual_credit', 'real', $2, $3, 10000, $4, 'completed', 'Auto-refill due to low balance')`,
+            [bot.id, topUpAmount, bot.real_balance, ikey]
+          )
+          await client.query(
+            `UPDATE wallets SET real_balance = 10000, updated_at = NOW() WHERE user_id = $1`,
+            [bot.id]
+          )
+          await client.query('COMMIT')
+          console.log(`[matchmaking] Auto-refilled bot ${bot.username} with ₹${topUpAmount}`)
+        } catch (err) {
+          await client.query('ROLLBACK')
+          console.error(`[matchmaking] Failed to auto-refill bot ${bot.username}:`, err)
+        } finally {
+          client.release()
+        }
+      }
+    } catch (globalErr) {
+      console.error('[matchmaking] autoRefillBots failed globally', globalErr)
+    }
+  }
+
   private async getBots(gameType: string, count: number, stake: number): Promise<MatchmakingEntry[]> {
+    await this.autoRefillBots(stake)
+
     const botRes = await this.db.query(
       `SELECT u.id, u.username
        FROM users u

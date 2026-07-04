@@ -11,6 +11,18 @@ import { adminApi } from '../api/client'
 
 const { Text } = Typography
 
+const PERSONALITIES = ['Aggressive (Bluffer)', 'Conservative (Tight)', 'Balanced (Adaptive)']
+const DIFFICULTIES = ['Easy', 'Medium', 'Hard']
+const getBotPersonality = (botId: string) => {
+  let hash = 0
+  for (let i = 0; i < botId.length; i++) {
+    hash = botId.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const pIdx = Math.abs(hash) % PERSONALITIES.length
+  const dIdx = Math.abs(hash >> 2) % DIFFICULTIES.length
+  return { personality: PERSONALITIES[pIdx], difficulty: DIFFICULTIES[dIdx] }
+}
+
 export default function Bots() {
   const [bots, setBots] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -327,13 +339,51 @@ export default function Bots() {
                   render: (v) => <span style={{ fontWeight: 'bold' }}>{v}</span>
                 },
                 {
-                  title: 'Dummy Phone',
-                  dataIndex: 'phone'
+                  title: 'Play Style',
+                  key: 'style',
+                  render: (_, r) => {
+                    const { personality } = getBotPersonality(r.id)
+                    const color = personality.startsWith('Aggressive') ? 'volcano' : personality.startsWith('Conservative') ? 'blue' : 'green'
+                    return <Tag color={color}>{personality}</Tag>
+                  }
+                },
+                {
+                  title: 'Skill Level',
+                  key: 'skill',
+                  render: (_, r) => {
+                    const { difficulty } = getBotPersonality(r.id)
+                    const color = difficulty === 'Hard' ? 'purple' : difficulty === 'Medium' ? 'cyan' : 'default'
+                    return <Tag color={color}>{difficulty}</Tag>
+                  }
                 },
                 {
                   title: 'Real Balance',
                   dataIndex: 'real_balance',
-                  render: (v) => <span style={{ color: '#52c41a', fontWeight: 'bold' }}>₹{Number(v || 0).toLocaleString()}</span>
+                  render: (v) => {
+                    const balance = Number(v || 0)
+                    let statusTag = null
+                    if (balance < 50) {
+                      statusTag = <Tag color="red" style={{ marginLeft: 8 }}>CRITICAL</Tag>
+                    } else if (balance < 500) {
+                      statusTag = <Tag color="orange" style={{ marginLeft: 8 }}>LOW</Tag>
+                    }
+                    return (
+                      <span>
+                        <span style={{ color: '#52c41a', fontWeight: 'bold' }}>₹{balance.toLocaleString()}</span>
+                        {statusTag}
+                      </span>
+                    )
+                  }
+                },
+                {
+                  title: 'Gameplay P&L',
+                  dataIndex: 'pnl',
+                  render: (v) => {
+                    const pnl = Number(v || 0)
+                    const color = pnl > 0 ? '#52c41a' : pnl < 0 ? '#f5222d' : '#888'
+                    const prefix = pnl > 0 ? '+' : ''
+                    return <span style={{ color, fontWeight: 'bold' }}>{prefix}₹{pnl.toLocaleString()}</span>
+                  }
                 },
                 {
                   title: 'Created At',
