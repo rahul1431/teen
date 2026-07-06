@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:hive/hive.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/network/api_client.dart';
 import '../../core/constants/app_config.dart';
 import '../../core/services/balance_service.dart';
@@ -282,6 +283,48 @@ class _DepositSheetState extends State<_DepositSheet> {
     }
   }
 
+  // Launch a UPI app with the admin-configured UPI ID and typed amount
+  // prefilled so the payer only has to confirm. Falls back to the generic
+  // upi:// chooser when the specific app isn't installed.
+  Future<void> _payViaUpiApp(String appScheme) async {
+    final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0;
+    if (amount < 1) { _snack('Enter the amount first', AppColors.orange); return; }
+    final upiId = _selected?['upi_id']?.toString() ?? '';
+    if (upiId.isEmpty) { _snack('No UPI ID configured', AppColors.red); return; }
+    final payeeName = (_selected?['account_name'] ?? _selected?['label'] ?? 'Add Money').toString();
+    final params = 'pa=${Uri.encodeComponent(upiId)}'
+        '&pn=${Uri.encodeComponent(payeeName)}'
+        '&am=${amount.toStringAsFixed(2)}'
+        '&cu=INR'
+        '&tn=${Uri.encodeComponent('Add Money')}';
+    for (final uri in [Uri.parse('$appScheme?$params'), Uri.parse('upi://pay?$params')]) {
+      try {
+        if (await launchUrl(uri, mode: LaunchMode.externalNonBrowserApplication)) return;
+      } catch (_) { /* try the next scheme */ }
+    }
+    _snack('UPI app not installed', AppColors.red);
+  }
+
+  Widget _upiAppButton(String label, Color color, String scheme) {
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 3),
+        child: ElevatedButton(
+          onPressed: () => _payViaUpiApp(scheme),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: color,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+          child: Text(label,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+      ),
+    );
+  }
+
   Widget _detailRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -303,9 +346,21 @@ class _DepositSheetState extends State<_DepositSheet> {
       case 'upi':
         return Column(children: [
           _detailRow('UPI ID', m['upi_id']?.toString() ?? '-'),
+          const SizedBox(height: 10),
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: Text('Pay with (enter amount below first):',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+          ),
+          const SizedBox(height: 8),
+          Row(children: [
+            _upiAppButton('PhonePe', const Color(0xFF5F259F), 'phonepe://pay'),
+            _upiAppButton('Google Pay', const Color(0xFF1A73E8), 'tez://upi/pay'),
+            _upiAppButton('Paytm', const Color(0xFF00B9F1), 'paytmmp://pay'),
+          ]),
           if (m['qr_image_url'] != null) ...[
-            const SizedBox(height: 8),
-            const Text('Scan to pay:', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+            const SizedBox(height: 12),
+            const Text('Or scan to pay:', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
             const SizedBox(height: 6),
             Image.network(_resolveUrl(m['qr_image_url']?.toString()), height: 180,
                 errorBuilder: (_, __, ___) => const SizedBox.shrink()),
@@ -501,6 +556,12 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
   final _bankCtrl = TextEditingController();
   bool _submitting = false;
 
+  // Withdrawal window: 10 AM – 9 PM (device local time, UI-only gate).
+  bool get _withdrawOpen {
+    final h = DateTime.now().hour;
+    return h >= 10 && h < 21;
+  }
+
   void _snack(String msg, Color c) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: c));
 
   void _showKycRequiredDialog() {
@@ -585,11 +646,33 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
           const Text('Withdraw', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           Text('Available: ₹${widget.balance}', style: const TextStyle(color: AppColors.textSecondary)),
+          if (!_withdrawOpen) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.orange.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.orange.withOpacity(0.4)),
+              ),
+              child: const Row(children: [
+                Icon(Icons.schedule, color: AppColors.orange, size: 18),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text('Withdrawals are open 10 AM to 9 PM. Please come back later.',
+                      style: TextStyle(color: AppColors.orange, fontSize: 12.5)),
+                ),
+              ]),
+            ),
+          ],
           const SizedBox(height: 16),
           TextField(
             controller: _amountCtrl,
             keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Amount (₹)', prefixText: '₹ ', helperText: 'Min ₹100. KYC must be approved.'),
+            decoration: const InputDecoration(
+                labelText: 'Amount (₹)', prefixText: '₹ ',
+                helperText: 'Min ₹100 · KYC required · Withdrawals 10 AM – 9 PM'),
           ),
           const SizedBox(height: 12),
           TextField(controller: _upiCtrl, decoration: const InputDecoration(labelText: 'Your UPI ID (optional)', hintText: 'name@bank')),
@@ -599,10 +682,10 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: _submitting ? null : _submit,
+              onPressed: (_submitting || !_withdrawOpen) ? null : _submit,
               child: _submitting
                   ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
-                  : const Text('Request Withdrawal'),
+                  : Text(_withdrawOpen ? 'Request Withdrawal' : 'Available 10 AM – 9 PM'),
             ),
           ),
         ],
