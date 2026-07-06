@@ -34,7 +34,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   late final AnimationController _pulse;
 
   String _phase = 'connecting'; // connecting, betting, flying, crashed
-  double _multiplier = 1.00;       // smoothed value shown on screen
+  double _multiplier = 0.00;       // smoothed value shown on screen (climbs from 0x at takeoff)
   double _serverMultiplier = 1.00; // latest authoritative value from server
   double? _crashAt;
   List<double> _history = [];
@@ -113,7 +113,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       _cashedOut2 = false;
       _myMultiplier1 = null;
       _myMultiplier2 = null;
-      _multiplier = 1.00;
+      _multiplier = 0.00;
       _serverMultiplier = 1.00;
       _crashAt = null;
       _history = _parseHistory(data?['history']);
@@ -147,7 +147,10 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     _bettingTimer?.cancel();
     setState(() {
       _phase = 'flying';
-      _multiplier = 1.00;
+      // Display counts up from 0x at takeoff; the server's authoritative
+      // multiplier (and all payouts) still start at 1.00x — the render loop
+      // eases the shown value 0 → 1.00+ in the first few frames.
+      _multiplier = 0.00;
       _serverMultiplier = 1.00;
     });
   }

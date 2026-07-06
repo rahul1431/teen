@@ -33,7 +33,8 @@ export function leaderboardPlugin(db: Pool, redis: Redis) {
     })
 
     app.post('/internal/leaderboard/update', async (req, reply) => {
-      if (req.headers['x-internal-key'] !== process.env.INTERNAL_SERVICE_KEY) return reply.code(403).send({ error: 'Forbidden' })
+      const key = process.env.INTERNAL_SERVICE_KEY
+      if (!key || req.headers['x-internal-key'] !== key) return reply.code(403).send({ error: 'Forbidden' })
       const { user_id, game_type, score } = req.body as any
       const dailyKey = getLeaderboardKey(game_type, 'daily')
       const weeklyKey = getLeaderboardKey(game_type, 'weekly')

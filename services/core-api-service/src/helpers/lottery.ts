@@ -4,7 +4,7 @@ import { creditPrize } from './wallet-client'
 export async function settleLottery(
   db: Pool,
   drawId: string,
-  winningNumber: string,
+  winnersList: { ticket_number: string; prize: number; rank?: number }[]
 ): Promise<{ tickets: number; winners: number; paid: number }> {
   const client = await db.connect()
   const winnerPayouts: { userId: string; prize: number; ticketId: string }[] = []
@@ -17,11 +17,12 @@ export async function settleLottery(
 
     const drawRes = await client.query('SELECT * FROM lottery_draws WHERE id = $1 FOR UPDATE', [drawId])
     if (!drawRes.rows.length) throw new Error('Draw not found')
-    const multiplier = Number(drawRes.rows[0].prize_multiplier)
+
+    const winningNumbersStr = winnersList.map(w => w.ticket_number).join(', ')
 
     await client.query(
       `UPDATE lottery_draws SET winning_number = $1, status = 'settled' WHERE id = $2`,
-      [winningNumber, drawId],
+      [winningNumbersStr, drawId],
     )
 
     const countRes = await client.query(
@@ -30,25 +31,28 @@ export async function settleLottery(
     )
     tickets = parseInt(countRes.rows[0].total, 10)
 
-    const winnerRes = await client.query(
-      `UPDATE lottery_tickets SET is_winner = true, prize = amount * $1
-       WHERE draw_id = $2 AND ticket_number = $3
-       RETURNING id, user_id, (amount * $1) AS prize`,
-      [multiplier, drawId, winningNumber],
-    )
-
-    for (const row of winnerRes.rows) {
-      winners++
-      const prize = Number(row.prize)
-      paid += prize
-      winnerPayouts.push({ userId: row.user_id, prize, ticketId: row.id })
-    }
-
+    // Mark all tickets as not winning first
     await client.query(
-      `UPDATE lottery_tickets SET is_winner = false
-       WHERE draw_id = $1 AND ticket_number != $2 AND is_winner IS NULL`,
-      [drawId, winningNumber],
+      `UPDATE lottery_tickets SET is_winner = false, prize = 0 WHERE draw_id = $1`,
+      [drawId]
     )
+
+    // Update each winner
+    for (const w of winnersList) {
+      const winnerRes = await client.query(
+        `UPDATE lottery_tickets SET is_winner = true, prize = $1
+         WHERE draw_id = $2 AND ticket_number = $3
+         RETURNING id, user_id`,
+        [Number(w.prize), drawId, w.ticket_number]
+      )
+      
+      if (winnerRes.rows.length > 0) {
+        const row = winnerRes.rows[0]
+        winners++
+        paid += Number(w.prize)
+        winnerPayouts.push({ userId: row.user_id, prize: Number(w.prize), ticketId: row.id })
+      }
+    }
 
     await client.query('COMMIT')
   } catch (err) {
@@ -58,6 +62,7 @@ export async function settleLottery(
     client.release()
   }
 
+  // Process payouts
   await Promise.all(winnerPayouts.map(w =>
     creditPrize({ userId: w.userId, amount: w.prize, referenceId: w.ticketId, idempotencyKey: `lottery_payout_${w.ticketId}` }),
   ))

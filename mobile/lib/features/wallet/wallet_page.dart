@@ -86,6 +86,43 @@ class _WalletPageState extends State<WalletPage> {
     return AppColors.red;
   }
 
+  Widget _buildStatusBadge(String? status) {
+    if (status == null || status == 'completed') return const SizedBox.shrink();
+    Color color;
+    String label;
+    if (status == 'pending') {
+      color = AppColors.orange;
+      label = 'PENDING';
+    } else if (status == 'reversed') {
+      color = AppColors.purple;
+      label = 'REVERSED';
+    } else if (status == 'failed') {
+      color = AppColors.red;
+      label = 'FAILED';
+    } else {
+      color = AppColors.textSecondary;
+      label = status.toUpperCase();
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(left: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withOpacity(0.5), width: 0.5),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 8.5,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
   Future<void> _openDeposit() async {
     final ok = await showModalBottomSheet<bool>(
       context: context,
@@ -176,7 +213,12 @@ class _WalletPageState extends State<WalletPage> {
                   backgroundColor: _txnColor(txn['type']).withOpacity(0.15),
                   child: Icon(txn['type'].contains('credit') || txn['type'] == 'deposit' ? Icons.add : Icons.remove, color: _txnColor(txn['type'])),
                 ),
-                title: Text(txn['type'].toString().replaceAll('_', ' ').toUpperCase(), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                title: Row(
+                  children: [
+                    Text(txn['type'].toString().replaceAll('_', ' ').toUpperCase(), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    _buildStatusBadge(txn['status']?.toString()),
+                  ],
+                ),
                 subtitle: Text(DateTime.parse(txn['created_at']).toLocal().toString().substring(0, 16)),
                 trailing: Text(
                   '${_txnColor(txn['type']) == AppColors.green ? '+' : '-'}₹${double.parse(txn['amount'].toString()).toStringAsFixed(2)}',

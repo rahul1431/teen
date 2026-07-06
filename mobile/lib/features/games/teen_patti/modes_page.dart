@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
+import 'history_page.dart';
 
 class TeenPattiModesPage extends StatefulWidget {
   const TeenPattiModesPage({super.key});
@@ -83,6 +84,13 @@ class _TeenPattiModesPageState extends State<TeenPattiModesPage> {
                 onTap: () => context.push('/games/teen-patti/lobby?variation=ak47'),
               ),
               _modeCard(
+                title: 'No Limit',
+                subtitle: 'Classic · no pot limit',
+                icon: Icons.all_inclusive_rounded,
+                gradient: AppColors.aviatorGrad,
+                onTap: () => context.push('/games/teen-patti/lobby?variation=no_limit'),
+              ),
+              _modeCard(
                 title: 'Practice',
                 subtitle: 'Play vs bots · free',
                 icon: Icons.smart_toy_rounded,
@@ -90,6 +98,44 @@ class _TeenPattiModesPageState extends State<TeenPattiModesPage> {
                 onTap: () => context.push('/games/teen-patti/demo'),
               ),
             ],
+          ),
+          const SizedBox(height: 20),
+          // History — full-width shortcut to past games across all modes
+          GestureDetector(
+            onTap: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const TeenPattiHistoryPage())),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.cardBg,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppColors.gold.withValues(alpha: 0.5), width: 1.5),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 48, height: 48,
+                    decoration: BoxDecoration(
+                        color: AppColors.gold.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(14)),
+                    child: const Icon(Icons.history_rounded, color: AppColors.gold, size: 28),
+                  ),
+                  const SizedBox(width: 14),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Text('History',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                      SizedBox(height: 2),
+                      Text('Your past Teen Patti games',
+                          style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+                    ],
+                  ),
+                  const Spacer(),
+                  const Icon(Icons.chevron_right_rounded, color: AppColors.gold),
+                ],
+              ),
+            ),
           ),
         ],
       ),

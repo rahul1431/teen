@@ -24,6 +24,7 @@ export default function Finance() {
         items={[
           { key: 'withdrawals', label: 'Withdrawals', children: <Withdrawals /> },
           { key: 'deposits', label: 'Deposits', children: <Deposits /> },
+          { key: 'bank_details', label: '🏦 Bank Details', children: <BankDetailsAdmin /> },
           { key: 'methods', label: 'Payment Methods', children: <PaymentMethods /> },
           { key: 'ledger', label: 'Ledger', children: <Ledger /> },
           { key: 'reconciliation', label: 'Reconciliation', children: <Reconciliation /> },
@@ -94,20 +95,29 @@ function Withdrawals() {
             <Tag color={{ created: 'orange', paid: 'green', failed: 'red', refunded: 'purple' }[s] || 'default'}>{s}</Tag>
           )},
           {
-            title: 'Actions', render: (r: any) => r.status === 'created' ? (
-              <Space>
-                <Button size="small" type="primary" icon={<CheckOutlined />}
-                  onClick={() => { setActing({ row: r, action: 'paid' }); setReference(''); setReason('') }}>Approve</Button>
-                <Button size="small" danger icon={<CloseOutlined />}
-                  onClick={() => { setActing({ row: r, action: 'refunded' }); setReference(''); setReason('') }}>Reject</Button>
-              </Space>
-            ) : '-'
+            title: 'Actions', render: (r: any) => (
+              <Select
+                value={r.status}
+                size="small"
+                onChange={(newVal: any) => {
+                  if (newVal === r.status) return
+                  setActing({ row: r, action: newVal })
+                  setReference(r.metadata?.utr || '')
+                  setReason(r.metadata?.refund_reason || '')
+                }}
+                style={{ width: 120 }}
+              >
+                <Select.Option value="created">Pending</Select.Option>
+                <Select.Option value="paid">Approved</Select.Option>
+                <Select.Option value="refunded">Rejected</Select.Option>
+              </Select>
+            )
           },
         ]} />
 
       <Modal
         open={!!acting}
-        title={acting?.action === 'paid' ? 'Approve Withdrawal' : 'Reject Withdrawal'}
+        title={acting?.action === 'paid' ? 'Approve Withdrawal' : acting?.action === 'refunded' ? 'Reject Withdrawal' : 'Revert Withdrawal to Pending'}
         onCancel={() => { setActing(null); setReference(''); setReason('') }}
         onOk={submit}
         okButtonProps={{ danger: acting?.action === 'refunded' }}>
@@ -116,6 +126,7 @@ function Withdrawals() {
             <Descriptions size="small" column={1} bordered style={{ marginBottom: 12 }}>
               <Descriptions.Item label="User">{acting.row.username}</Descriptions.Item>
               <Descriptions.Item label="Amount">₹{parseFloat(acting.row.amount).toFixed(2)}</Descriptions.Item>
+              <Descriptions.Item label="Current Status">{acting.row.status}</Descriptions.Item>
               <Descriptions.Item label="Destination">{acting.row.metadata?.upi_id || acting.row.metadata?.bank_account || '-'}</Descriptions.Item>
             </Descriptions>
             {acting.action === 'paid' ? (
@@ -124,16 +135,91 @@ function Withdrawals() {
                 <Input value={reference} onChange={(e) => setReference(e.target.value)}
                   placeholder="e.g. NEFT/UPI reference number" />
               </>
-            ) : (
+            ) : acting.action === 'refunded' ? (
               <>
                 <p>Reason for rejection (required — held funds will be returned to wallet):</p>
                 <Input.TextArea rows={3} value={reason} onChange={(e) => setReason(e.target.value)}
                   placeholder="e.g. KYC mismatch, suspicious activity, user requested cancellation" />
               </>
+            ) : (
+              <p>Are you sure you want to revert this withdrawal to Pending? This will lock the withdrawal amount in the user's wallet again.</p>
             )}
           </>
         )}
       </Modal>
+    </>
+  )
+}
+
+// ---- Bank Details Verification ----
+function BankDetailsAdmin() {
+  const [rows, setRows] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [verifying, setVerifying] = useState<string | null>(null)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const res = await adminApi.get('/bank-details')
+      setRows(res.data.bank_details || [])
+    } catch { message.error('Failed to load bank details') }
+    finally { setLoading(false) }
+  }
+
+  useEffect(() => { load() }, [])
+
+  const verify = async (userId: string, verified: boolean) => {
+    setVerifying(userId)
+    try {
+      await adminApi.patch(`/bank-details/${userId}/verify`, { verified })
+      message.success(verified ? 'Bank details verified ✓' : 'Verification removed')
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Failed')
+    } finally { setVerifying(null) }
+  }
+
+  const columns = [
+    { title: 'User', key: 'user', render: (r: any) => (
+      <div>
+        <div style={{ fontWeight: 600 }}>{r.username}</div>
+        <div style={{ color: '#888', fontSize: 12 }}>{r.phone}</div>
+      </div>
+    )},
+    { title: 'Account Holder', dataIndex: 'holder_name' },
+    { title: 'Bank', dataIndex: 'bank_name' },
+    { title: 'Account No.', dataIndex: 'account_number', render: (v: string) => (
+      <span style={{ fontFamily: 'monospace' }}>{v.replace(/\d(?=\d{4})/g, '*')}</span>
+    )},
+    { title: 'IFSC', dataIndex: 'ifsc_code' },
+    { title: 'UPI ID', dataIndex: 'upi_id', render: (v: string) => v || '-' },
+    { title: 'Updated', dataIndex: 'updated_at', render: (d: string) => new Date(d).toLocaleDateString() },
+    { title: 'Status', dataIndex: 'verified', render: (v: boolean) => (
+      <Tag color={v ? 'green' : 'orange'}>{v ? '✓ Verified' : 'Pending'}</Tag>
+    )},
+    { title: 'Action', render: (r: any) => r.verified ? (
+      <Button size="small" danger loading={verifying === r.user_id}
+        onClick={() => verify(r.user_id, false)}>Remove Verification</Button>
+    ) : (
+      <Button size="small" type="primary" loading={verifying === r.user_id}
+        icon={<CheckOutlined />} onClick={() => verify(r.user_id, true)}>Verify</Button>
+    )},
+  ]
+
+  return (
+    <>
+      <Space style={{ marginBottom: 16 }}>
+        <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
+        <span style={{ color: '#888' }}>{rows.length} account{rows.length !== 1 ? 's' : ''} submitted</span>
+      </Space>
+      <Table
+        dataSource={rows}
+        rowKey="id"
+        loading={loading}
+        columns={columns}
+        size="small"
+        pagination={{ pageSize: 20 }}
+      />
     </>
   )
 }

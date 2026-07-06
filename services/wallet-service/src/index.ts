@@ -97,7 +97,8 @@ async function start() {
 
   const authenticateInternal = async (req: any, reply: any) => {
     const key = req.headers['x-internal-key']
-    if (key !== process.env.INTERNAL_SERVICE_KEY) return reply.code(403).send({ error: 'Forbidden' })
+    const expected = process.env.INTERNAL_SERVICE_KEY
+    if (!expected || key !== expected) return reply.code(403).send({ error: 'Forbidden' })
   }
 
   // GET /wallet/balance
@@ -519,6 +520,14 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // Internal: POST /internal/wallet/consume (called on withdrawal approval)
+  app.post('/internal/wallet/consume', { onRequest: [authenticateInternal] }, async (req, reply) => {
+    const body = z.object({ user_id: z.string().uuid(), amount: z.number(), room_id: z.string() }).parse(req.body)
+    await walletSvc.consumeLockedFunds(body.user_id, body.amount, undefined, body.room_id)
+    return reply.send({ success: true })
+  })
+
+
   // Internal: POST /internal/wallet/settle-game (called by game-gateway at game end)
   // Each player's fund consumption is independent so one player's issue doesn't
   // block the winner from being credited. The winner credit is the critical path.
@@ -563,12 +572,12 @@ async function start() {
     return reply.send({ success: true, consume_errors: consumeErrors.length ? consumeErrors : undefined })
   })
 
-  // Internal: POST /internal/wallet/credit (called by game-gateway after game result)
+  // Internal: POST /internal/wallet/credit (called by game-gateway after game result or manually on status change)
   app.post('/internal/wallet/credit', { onRequest: [authenticateInternal] }, async (req, reply) => {
     const body = z.object({
       user_id: z.string().uuid(),
       amount: z.number(),
-      type: z.enum(['game_credit', 'bonus', 'referral']),
+      type: z.enum(['game_credit', 'bonus', 'referral', 'manual_credit']),
       reference_id: z.string().optional(),
       idempotency_key: z.string(),
     }).parse(req.body)
@@ -580,7 +589,7 @@ async function start() {
       walletType: 'real',
       referenceId: body.reference_id,
       idempotencyKey: body.idempotency_key,
-      description: `Game prize: ${body.reference_id}`,
+      description: body.type === 'manual_credit' ? `Manual credit: ${body.reference_id || ''}` : `Game prize: ${body.reference_id}`,
     })
     return reply.send({ success: true })
   })

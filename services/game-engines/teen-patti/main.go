@@ -45,17 +45,20 @@ type Player struct {
 }
 
 type GameState struct {
-	RoomID      string   `json:"room_id"`
-	GameType    string   `json:"game_type"`
-	Stake       float64  `json:"stake"`
-	Players     []Player `json:"players"`
-	Status      string   `json:"status"`
-	CurrentTurn int      `json:"current_turn"`
-	Pot         float64  `json:"pot"`
-	Round       int      `json:"round"`
-	MinBet      float64  `json:"min_bet"`
-	DealerID    string   `json:"dealer_id"`
-	CreatedAt   int64    `json:"created_at"`
+	RoomID        string   `json:"room_id"`
+	GameType      string   `json:"game_type"`
+	Stake         float64  `json:"stake"`
+	Players       []Player `json:"players"`
+	Status        string   `json:"status"`
+	CurrentTurn   int      `json:"current_turn"`
+	Pot           float64  `json:"pot"`
+	PotLimit      float64  `json:"pot_limit"`
+	NoLimit       bool     `json:"no_limit"` // true = no pot cap (distinct from legacy PotLimit 0)
+	Round         int      `json:"round"`
+	MinBet        float64  `json:"min_bet"`
+	DealerID      string   `json:"dealer_id"`
+	CreatedAt     int64    `json:"created_at"`
+	BotDifficulty string   `json:"bot_difficulty,omitempty"`
 	// Set while a sideshow request awaits the target's accept/reject. The
 	// requester's turn is frozen until it resolves (or the requester folds).
 	PendingSideshow *SideshowState `json:"pending_sideshow,omitempty"`
@@ -175,15 +178,33 @@ func compareHands(a, b HandResult) int {
 	return 0
 }
 
+func findBestHandIndex(players []Player) int {
+	bestIdx := -1
+	var bestHand HandResult
+	for i := range players {
+		if players[i].Status == "folded" {
+			continue
+		}
+		hand := evaluateHand(players[i].Cards)
+		if bestIdx == -1 || compareHands(hand, bestHand) > 0 {
+			bestIdx = i
+			bestHand = hand
+		}
+	}
+	return bestIdx
+}
+
 type Server struct {
 	db    *pgxpool.Pool
 	redis *redis.Client
 }
 
 type StartGameReq struct {
-	RoomID  string   `json:"room_id"`
-	Players []Player `json:"players"`
-	Stake   float64  `json:"stake"`
+	RoomID        string   `json:"room_id"`
+	Players       []Player `json:"players"`
+	Stake         float64  `json:"stake"`
+	BotDifficulty string   `json:"bot_difficulty"`
+	NoLimit       bool     `json:"no_limit"` // no-limit tables have no pot cap
 }
 
 type ActionReq struct {
@@ -232,18 +253,90 @@ func (s *Server) startGame(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	botDifficulty := req.BotDifficulty
+	if botDifficulty == "" {
+		botDifficulty = "medium"
+	}
+
+	winRateTarget := 50.0 // default
+	if s.db != nil {
+		var target float64
+		err := s.db.QueryRow(context.Background(),
+			`SELECT win_rate_target FROM bot_profiles WHERE game_type = 'teen_patti' AND difficulty = $1`,
+			botDifficulty).Scan(&target)
+		if err == nil {
+			winRateTarget = target
+		} else {
+			switch botDifficulty {
+			case "easy":
+				winRateTarget = 35.0
+			case "medium":
+				winRateTarget = 50.0
+			case "hard":
+				winRateTarget = 100.0 // default hard target is 100% for user testing
+			}
+		}
+	} else {
+		switch botDifficulty {
+		case "easy":
+			winRateTarget = 35.0
+		case "medium":
+			winRateTarget = 50.0
+		case "hard":
+			winRateTarget = 100.0
+		}
+	}
+
+	// DDAS (Dynamic Difficulty and Adaptive Swapping) card distribution bias logic
+	botIndices := []int{}
+	hasHuman := false
+	for i := range players {
+		if players[i].IsBot {
+			botIndices = append(botIndices, i)
+		} else {
+			hasHuman = true
+		}
+	}
+
+	if len(botIndices) > 0 && hasHuman {
+		bestIdx := findBestHandIndex(players)
+		if bestIdx != -1 && !players[bestIdx].IsBot {
+			// Best hand is currently held by a human. Roll to see if we swap it to a bot.
+			nBig, err := cryptoRand.Int(cryptoRand.Reader, big.NewInt(10000))
+			var roll float64
+			if err == nil {
+				roll = float64(nBig.Int64()) / 100.0
+			} else {
+				roll = 50.0
+			}
+
+			if roll < winRateTarget {
+				// Swap cards with the first bot
+				targetBotIdx := botIndices[0]
+				players[bestIdx].Cards, players[targetBotIdx].Cards = players[targetBotIdx].Cards, players[bestIdx].Cards
+				log.Printf("[DDAS] Swapped best hand from human player %s (seat %d) to bot %s (seat %d) based on target win rate %.2f%% (roll: %.2f)",
+					players[bestIdx].Username, players[bestIdx].Seat,
+					players[targetBotIdx].Username, players[targetBotIdx].Seat,
+					winRateTarget, roll)
+			}
+		}
+	}
+
 	state := GameState{
-		RoomID:      req.RoomID,
-		GameType:    "teen_patti",
-		Stake:       req.Stake,
-		Players:     players,
-		Status:      "betting",
-		CurrentTurn: 0,
-		Pot:         req.Stake * float64(len(players)),
-		Round:       1,
-		MinBet:      req.Stake,
-		DealerID:    players[0].UserID,
-		CreatedAt:   time.Now().Unix(),
+		RoomID:        req.RoomID,
+		GameType:      "teen_patti",
+		Stake:         req.Stake,
+		Players:       players,
+		Status:        "betting",
+		CurrentTurn:   0,
+		Pot:           req.Stake * float64(len(players)),
+		PotLimit:      startPotLimit(req),
+		NoLimit:       req.NoLimit,
+		Round:         1,
+		MinBet:        req.Stake,
+		DealerID:      players[0].UserID,
+		CreatedAt:     time.Now().Unix(),
+		BotDifficulty: botDifficulty,
 	}
 
 	stateJSON, _ := json.Marshal(state)
@@ -465,7 +558,21 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 		"see": true, "sideshow": true, "sideshow_accept": true, "sideshow_reject": true,
 	}
 
-	if activePlayers <= 1 || req.Action == "show" {
+	// Pot limit: once the pot reaches the cap for this boot amount, betting
+	// stops and the hand goes straight to showdown among unfolded players.
+	// No-limit tables are exempt. Games dealt before these fields existed
+	// have PotLimit 0 without NoLimit — derive their cap from the stake.
+	potLimit := state.PotLimit
+	if potLimit <= 0 && !state.NoLimit {
+		potLimit = potLimitFor(state.Stake)
+	}
+	potLimitHit := potLimit > 0 && state.Pot >= potLimit
+
+	if activePlayers <= 1 || req.Action == "show" || potLimitHit {
+		if potLimitHit && activePlayers > 1 && req.Action != "show" {
+			state.PendingSideshow = nil
+			response["pot_limit_reached"] = true
+		}
 		// Determine winner
 		gameResult = s.determineWinner(&state)
 		state.Status = "completed"
@@ -491,6 +598,33 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// startPotLimit resolves the pot cap for a new game: 0 (uncapped) for
+// no-limit tables, otherwise the tier for the boot amount.
+func startPotLimit(req StartGameReq) float64 {
+	if req.NoLimit {
+		return 0
+	}
+	return potLimitFor(req.Stake)
+}
+
+// potLimitFor returns the maximum pot for a boot (stake) amount. When the pot
+// reaches this cap, betting stops and the hand goes to a forced showdown.
+// Tiers: ₹10→₹500, ₹50→₹1000, ₹100→₹1500, ₹500→₹10000, ₹1000+→₹20000.
+func potLimitFor(stake float64) float64 {
+	switch {
+	case stake <= 10:
+		return 500
+	case stake <= 50:
+		return 1000
+	case stake <= 100:
+		return 1500
+	case stake <= 500:
+		return 10000
+	default:
+		return 20000
+	}
 }
 
 // loadRakePct reads the admin-configured platform fee for Teen Patti from

@@ -138,19 +138,21 @@ export function AppMonitorTab() {
   const [funnel, setFunnel] = useState<ScreenFunnel[]>([])
   const [sessions, setSessions] = useState<Session[]>([])
   const [serverHealth, setServerHealth] = useState<ServerHealth | null>(null)
+  const [uptime, setUptime] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [errorHours, setErrorHours] = useState(24)
   const [apiHours, setApiHours] = useState(1)
 
   const load = useCallback(async () => {
     try {
-      const [statsRes, errorsRes, apiRes, funnelRes, sessionsRes, serverRes] = await Promise.allSettled([
+      const [statsRes, errorsRes, apiRes, funnelRes, sessionsRes, serverRes, uptimeRes] = await Promise.allSettled([
         adminApi.get('/monitor/stats'),
         adminApi.get('/monitor/errors', { params: { hours: errorHours, limit: 50 } }),
         adminApi.get('/monitor/api-health', { params: { hours: apiHours } }),
         adminApi.get('/monitor/screen-funnel', { params: { hours: 24 } }),
         adminApi.get('/monitor/sessions', { params: { limit: 10, offset: 0 } }),
         adminApi.get('/monitor/server-health'),
+        adminApi.get('/monitor/uptime'),
       ])
       if (statsRes.status === 'fulfilled') setStats(statsRes.value.data?.data ?? null)
       if (errorsRes.status === 'fulfilled') setErrors(errorsRes.value.data?.data ?? [])
@@ -158,6 +160,7 @@ export function AppMonitorTab() {
       if (funnelRes.status === 'fulfilled') setFunnel(funnelRes.value.data?.data ?? [])
       if (sessionsRes.status === 'fulfilled') setSessions(sessionsRes.value.data?.data ?? [])
       if (serverRes.status === 'fulfilled') setServerHealth(serverRes.value.data?.data ?? null)
+      if (uptimeRes.status === 'fulfilled') setUptime(uptimeRes.value.data?.data ?? null)
     } finally {
       setLoading(false)
     }
@@ -183,6 +186,71 @@ export function AppMonitorTab() {
 
   return (
     <Spin spinning={loading && !stats}>
+      {/* ── Live Client-to-Server Connectivity Status ── */}
+      {uptime && (
+        <Card
+          size="small"
+          title={<span style={{ fontWeight: 'bold' }}>📡 Live Client-to-Server Connectivity (Uptime Bot)</span>}
+          style={{ marginBottom: 24, borderLeft: '4px solid #52c41a' }}
+          extra={<Text type="secondary" style={{ fontSize: 11 }}>Checked {new Date(uptime.timestamp).toLocaleTimeString()}</Text>}
+        >
+          <Row gutter={[16, 16]}>
+            <Col span={6}>
+              <Card size="small" type="inner" title="Databases">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 12 }}>PostgreSQL DB</Text>
+                    <Tag color={uptime.database.up ? 'green' : 'red'} style={{ fontSize: 11 }}>
+                      {uptime.database.up ? `ONLINE (${uptime.database.latency}ms)` : 'OFFLINE'}
+                    </Tag>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 12 }}>Redis Cache</Text>
+                    <Tag color={uptime.redis.up ? 'green' : 'red'} style={{ fontSize: 11 }}>
+                      {uptime.redis.up ? `ONLINE (${uptime.redis.latency}ms)` : 'OFFLINE'}
+                    </Tag>
+                  </div>
+                </div>
+              </Card>
+            </Col>
+            <Col span={10}>
+              <Card size="small" type="inner" title="Public WebSocket Handshakes">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 12 }}>Game Gateway (wss://.../ws)</Text>
+                    <Tag color={uptime.publicWebsockets.gateway.up ? 'green' : 'red'} style={{ fontSize: 11 }}>
+                      {uptime.publicWebsockets.gateway.up ? `CONNECTED (${uptime.publicWebsockets.gateway.latency}ms)` : 'REFUSED/TIMEOUT'}
+                    </Tag>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 12 }}>Aviator Engine (wss://.../ws/aviator)</Text>
+                    <Tag color={uptime.publicWebsockets.aviator.up ? 'green' : 'red'} style={{ fontSize: 11 }}>
+                      {uptime.publicWebsockets.aviator.up ? `CONNECTED (${uptime.publicWebsockets.aviator.latency}ms)` : 'REFUSED/TIMEOUT'}
+                    </Tag>
+                  </div>
+                </div>
+              </Card>
+            </Col>
+            <Col span={8}>
+              <Card size="small" type="inner" title="System TCP Diagnostics">
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {Object.keys(uptime.services).map(name => {
+                    const svc = uptime.services[name];
+                    return (
+                      <Tooltip key={name} title={`Port ${svc.port}: ${svc.up ? 'Open' : 'Closed'}`}>
+                        <Tag color={svc.up ? 'green' : 'red'} style={{ fontSize: 10, margin: '2px 0' }}>
+                          {name.split(' ')[0]} ({svc.port})
+                        </Tag>
+                      </Tooltip>
+                    );
+                  })}
+                </div>
+              </Card>
+            </Col>
+          </Row>
+        </Card>
+      )}
+
       {/* ── Section 1: Stats bar ── */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         {[

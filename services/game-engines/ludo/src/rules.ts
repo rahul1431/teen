@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 // ── Ludo rules engine (pure, no I/O) ──────────────────────────────────────
 //
 // Board model (standard 4-player Ludo):
@@ -237,8 +238,7 @@ function passTurn(state: LudoState): void {
 }
 
 function buildResult(state: LudoState, winner: LudoPlayer): ActionResult {
-  const realPlayerCount = state.players.filter(p => !p.is_bot).length
-  const pot = state.stake * realPlayerCount
+  const pot = state.stake * state.players.length
   const rakeFee = Math.round(pot * 0.05 * 100) / 100
   const prize = Math.round((pot - rakeFee) * 100) / 100
   state.status = 'completed'
@@ -253,9 +253,9 @@ function buildResult(state: LudoState, winner: LudoPlayer): ActionResult {
   }
 }
 
-/** Crypto-free fair die (1..6). The engine is server-authoritative. */
+/** Cryptographically secure die roll (1..6). The engine is server-authoritative. */
 export function rollDie(): number {
-  return Math.floor(Math.random() * 6) + 1
+  return crypto.randomInt(1, 7)
 }
 
 /**

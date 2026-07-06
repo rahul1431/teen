@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Divider, Popconfirm
+  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Divider, Popconfirm, Drawer
 } from 'antd'
 import { ReloadOutlined, DeleteOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
@@ -19,6 +19,11 @@ export default function Lottery() {
   const [drawFor, setDrawFor] = useState<any>(null)
   const [cForm] = Form.useForm()
   const [dForm] = Form.useForm()
+
+  const [ticketsOpen, setTicketsOpen] = useState(false)
+  const [selectedDraw, setSelectedDraw] = useState<any>(null)
+  const [tickets, setTickets] = useState<any[]>([])
+  const [loadingTickets, setLoadingTickets] = useState(false)
 
   const loadConfig = () => {
     setLoadingConfig(true)
@@ -50,6 +55,16 @@ export default function Lottery() {
       .finally(() => setLoadingDraws(false))
   }
 
+  const viewTickets = (draw: any) => {
+    setSelectedDraw(draw)
+    setTicketsOpen(true)
+    setLoadingTickets(true)
+    adminApi.get(`/betting/lottery/draws/${draw.id}/tickets`)
+      .then(r => setTickets(r.data.tickets || []))
+      .catch(() => message.error('Failed to load tickets'))
+      .finally(() => setLoadingTickets(false))
+  }
+
   const create = async (v: any) => {
     try {
       await adminApi.post('/betting/lottery/create', {
@@ -68,7 +83,8 @@ export default function Lottery() {
   const declare = async (v: any) => {
     try {
       const r = await adminApi.post('/betting/lottery/draw', {
-        draw_id: drawFor.id, winning_number: v.winning_number,
+        draw_id: drawFor.id,
+        winners: v.winners,
       })
       message.success(`Drawn — ${r.data.winners}/${r.data.tickets} winners, ₹${Number(r.data.paid).toFixed(0)} paid`)
       setDrawFor(null)
@@ -151,17 +167,18 @@ export default function Lottery() {
             <Table rowKey="id" dataSource={draws} size="small" columns={[
               { title: 'Name', dataIndex: 'name' },
               { title: 'Ticket', dataIndex: 'ticket_price', render: (v: any) => `₹${Number(v).toFixed(0)}` },
-              { title: 'Digits', dataIndex: 'digits' },
+              { title: 'Digits Limit', dataIndex: 'digits' },
               { title: 'Multiplier', dataIndex: 'prize_multiplier', render: (v: any) => `${Number(v).toFixed(0)}x` },
-              { title: 'Tickets', dataIndex: 'ticket_count' },
+              { title: 'Tickets Sold', dataIndex: 'ticket_count' },
               { title: 'Draw Time', dataIndex: 'draw_time', render: (v: string) => new Date(v).toLocaleString() },
               { title: 'Status', dataIndex: 'status', render: (s: string) => <Tag color={s === 'settled' ? 'red' : 'green'}>{s}</Tag> },
-              { title: 'Winning #', dataIndex: 'winning_number', render: (v: string) => v || '—' },
+              { title: 'Winning Number(s)', dataIndex: 'winning_number', render: (v: string) => v || '—' },
               {
                 title: 'Action', render: (_: any, d: any) => (
                   <Space size="middle">
                     <Button type="primary" size="small" disabled={d.status === 'settled'}
                       onClick={() => setDrawFor(d)}>Declare Winner</Button>
+                    <Button size="small" onClick={() => viewTickets(d)}>View Tickets</Button>
                     <Popconfirm
                       title="Delete Draw"
                       description="Delete this draw and all associated tickets? This cannot be undone."
@@ -184,20 +201,82 @@ export default function Lottery() {
         <Form form={cForm} layout="vertical" onFinish={create}>
           <Form.Item name="name" label="Name" rules={[{ required: true }]}><Input placeholder="Daily Lucky Draw" /></Form.Item>
           <Form.Item name="ticket_price" label="Ticket Price (₹)" rules={[{ required: true }]} initialValue={10}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
-          <Form.Item name="digits" label="Number Length (digits)" initialValue={4}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="digits" label="Number Length (digits limit)" initialValue={8}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="prize_multiplier" label="Prize Multiplier" initialValue={1000} rules={[{ required: true }]}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="draw_time" label="Draw Time" rules={[{ required: true }]}><DatePicker showTime style={{ width: '100%' }} /></Form.Item>
         </Form>
       </Modal>
 
-      <Modal open={!!drawFor} title={`Declare winner — ${drawFor?.name}`} onCancel={() => setDrawFor(null)} onOk={() => dForm.submit()} okText="Declare">
-        <Form form={dForm} layout="vertical" onFinish={declare}>
-          <Form.Item name="winning_number" label={`Winning Number (${drawFor?.digits} digits)`} rules={[{ required: true }]}>
-            <Input maxLength={drawFor?.digits} placeholder="e.g. 4271" />
-          </Form.Item>
-          <Text type="warning">This settles all tickets and pays winners immediately. It cannot be undone.</Text>
+      <Modal 
+        open={!!drawFor} 
+        title={`Declare winners — ${drawFor?.name}`} 
+        onCancel={() => { setDrawFor(null); dForm.resetFields(); }} 
+        onOk={() => dForm.submit()} 
+        okText="Declare & Settle"
+        width={600}
+      >
+        <Form form={dForm} layout="vertical" onFinish={declare} initialValues={{ winners: [{ ticket_number: '', prize: 1000 }] }}>
+          <Form.List name="winners">
+            {(fields, { add, remove }) => (
+              <>
+                {fields.map(({ key, name, ...restField }) => (
+                  <Space key={key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
+                    <Form.Item
+                      {...restField}
+                      name={[name, 'ticket_number']}
+                      rules={[{ required: true, message: 'Missing ticket number' }]}
+                    >
+                      <Input placeholder="Ticket Number (e.g. 10)" style={{ width: 220 }} />
+                    </Form.Item>
+                    <Form.Item
+                      {...restField}
+                      name={[name, 'prize']}
+                      rules={[{ required: true, message: 'Missing prize amount' }]}
+                    >
+                      <InputNumber min={1} placeholder="Prize (₹)" style={{ width: 180 }} formatter={(v) => `₹ ${v}`} />
+                    </Form.Item>
+                    {fields.length > 1 ? (
+                      <Button danger onClick={() => remove(name)}>Remove</Button>
+                    ) : null}
+                  </Space>
+                ))}
+                <Form.Item>
+                  <Button type="dashed" onClick={() => add()} block style={{ marginTop: 8 }}>
+                    + Add Winner Rank
+                  </Button>
+                </Form.Item>
+              </>
+            )}
+          </Form.List>
+          <Text type="warning">This settles all tickets, credits winning accounts immediately, and cancels/marks all other tickets as lost. This cannot be undone.</Text>
         </Form>
       </Modal>
+
+      <Drawer
+        title={`Tickets Purchased - ${selectedDraw?.name}`}
+        placement="right"
+        width={750}
+        onClose={() => { setTicketsOpen(false); setTickets([]); }}
+        open={ticketsOpen}
+      >
+        <Table
+          rowKey="id"
+          loading={loadingTickets}
+          dataSource={tickets}
+          columns={[
+            { title: 'Ticket Number', dataIndex: 'ticket_number', render: (v) => <Tag color="blue" style={{ fontSize: 13, fontWeight: 'bold' }}>{v}</Tag> },
+            { title: 'User Name', dataIndex: 'username', render: (v) => v || '—' },
+            { title: 'User Phone', dataIndex: 'phone', render: (v) => v || '—' },
+            { title: 'Stake Amount', dataIndex: 'amount', render: (v) => `₹${Number(v).toFixed(0)}` },
+            { title: 'Status', dataIndex: 'is_winner', render: (isWinner, record) => {
+                if (selectedDraw?.status === 'open') return <Tag color="orange">Pending Draw</Tag>
+                return isWinner ? <Tag color="green">Winner (₹{Number(record.prize).toFixed(0)})</Tag> : <Tag color="red">Lost</Tag>
+              }
+            },
+            { title: 'Purchase Time', dataIndex: 'created_at', render: (v) => new Date(v).toLocaleString() }
+          ]}
+        />
+      </Drawer>
     </div>
   )
 }

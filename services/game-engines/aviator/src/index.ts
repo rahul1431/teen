@@ -239,7 +239,7 @@ async function start() {
   await app.register(require('@fastify/jwt'), { secret: process.env.JWT_SECRET! })
   await app.register(require('@fastify/cors'), { origin: true })
 
-  const httpServer = createServer(app.server)
+  const httpServer = app.server
   // pubClient connects automatically (lazyConnect:false); wait for it to be ready
   await new Promise<void>((resolve) => {
     if (pubClient.status === 'ready') { resolve(); return }
@@ -358,6 +358,7 @@ async function start() {
   app.get('/health', async () => ({ status: 'ok', service: 'aviator-engine' }))
 
   const port = parseInt(process.env.PORT || '3005')
+  await app.ready()
   httpServer.listen(port, '0.0.0.0', () => {
     console.log(`Aviator engine running on port ${port} (raw WebSocket /ws/aviator)`)
     // Start first round

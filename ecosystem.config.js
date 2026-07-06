@@ -1,5 +1,20 @@
+const fs = require('fs')
+
 const BASE = '/opt/teen/services'
 const ENV_FILE = (svc) => `${BASE}/${svc}/.env`
+
+// Go binaries can't load dotenv themselves, so parse the service .env here
+// and inject it via pm2's env object.
+const LOAD_ENV = (svc) => {
+  const out = {}
+  try {
+    for (const line of fs.readFileSync(ENV_FILE(svc), 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/)
+      if (m && !m[1].startsWith('#')) out[m[1]] = m[2]
+    }
+  } catch (_) { /* no .env — fall back to defaults baked into the binary */ }
+  return out
+}
 const NODE_OPTS = { NODE_OPTIONS: '--max-old-space-size=120' }
 
 module.exports = {
@@ -65,6 +80,17 @@ module.exports = {
       watch: false,
       max_memory_restart: '200M',
       env: NODE_OPTS,
+    },
+    {
+      name: 'teen-tp-engine',
+      cwd: `${BASE}/game-engines/teen-patti`,
+      script: './teen-patti-engine',
+      interpreter: 'none',
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '200M',
+      env: { PORT: '3010', ...LOAD_ENV('game-engines/teen-patti') },
     },
 
     // ── Admin: keep separate — 2300+ lines with multipart KYC upload ──

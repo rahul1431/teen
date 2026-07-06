@@ -609,35 +609,43 @@ async function start() {
     return reply.send(res.rows)
   })
 
-  // PATCH /api/admin/finance/withdrawals/:id â€” approve (paid) or reject (refunded)
-  // On 'paid', stores the UTR / payment reference in metadata.
+  // PATCH /api/admin/finance/withdrawals/:id — approve (paid) or reject (refunded) or revert to pending (created)
+  // On 'paid', stores the UTR / payment reference in metadata and consumes locked funds.
   // On 'refunded', returns the held amount to the user's wallet via the wallet service.
+  // Supports transitioning between created, paid, and refunded flexibly.
   app.patch('/api/admin/finance/withdrawals/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
     const { status, reference, reason } = z.object({
-      status: z.enum(['paid', 'refunded']),
+      status: z.enum(['created', 'paid', 'refunded']),
       reference: z.string().optional(),
       reason: z.string().optional(),
     }).parse(req.body)
 
     const row = await db.query(`SELECT user_id, amount, status, metadata FROM payment_orders WHERE id = $1 AND type = 'withdrawal'`, [id])
     if (!row.rows.length) return reply.code(404).send({ error: 'Withdrawal not found' })
-    if (row.rows[0].status !== 'created') {
-      return reply.code(400).send({ error: `Withdrawal already ${row.rows[0].status}` })
+
+    const oldStatus = row.rows[0].status
+    const newStatus = status
+
+    if (oldStatus === newStatus) {
+      return reply.send({ success: true })
     }
 
-    const meta = { ...(row.rows[0].metadata || {}) }
-    if (status === 'paid' && reference) meta.utr = reference
-    if (status === 'refunded' && reason) meta.refund_reason = reason
-
-    await db.query('UPDATE payment_orders SET status = $1, metadata = $2, updated_at = NOW() WHERE id = $3',
-      [status, JSON.stringify(meta), id])
-
-    // Refund the held amount back to the user's wallet on reject
-    if (status === 'refunded') {
-      // Restore funds via unlock (real_balance += amount, locked_balance -= amount)
-      // deposit/manual would credit real_balance without clearing locked_balance
+    // Handle wallet balance adjustments based on the transition
+    if (oldStatus === 'created' && newStatus === 'paid') {
+      // 1. created -> paid: Consume locked funds
+      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/consume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+        body: JSON.stringify({
+          user_id: row.rows[0].user_id,
+          amount: parseFloat(row.rows[0].amount),
+          room_id: `withdrawal:${id}`,
+        }),
+      }).catch((e) => console.error('[admin-service] Error calling wallet consume:', e?.message))
+    } else if (oldStatus === 'created' && newStatus === 'refunded') {
+      // 2. created -> refunded: Unlock locked funds (refund to real balance)
       await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
@@ -646,17 +654,106 @@ async function start() {
           amount: parseFloat(row.rows[0].amount),
           room_id: `withdrawal:${id}`,
         }),
-      }).catch(() => null)
+      }).catch((e) => console.error('[admin-service] Error calling wallet unlock:', e?.message))
+    } else if (oldStatus === 'paid' && newStatus === 'refunded') {
+      // 3. paid -> refunded: Funds already consumed, must credit real balance directly
+      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+        body: JSON.stringify({
+          user_id: row.rows[0].user_id,
+          amount: parseFloat(row.rows[0].amount),
+          type: 'manual_credit',
+          idempotency_key: `withdrawal_refund_paid_${id}`,
+          reference_id: `withdrawal:${id}`,
+        }),
+      }).catch((e) => console.error('[admin-service] Error calling wallet credit:', e?.message))
+    } else if (oldStatus === 'refunded' && newStatus === 'paid') {
+      // 4. refunded -> paid: Funds were refunded to real balance, must debit real balance directly
+      await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/debit/manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+        body: JSON.stringify({
+          user_id: row.rows[0].user_id,
+          amount: parseFloat(row.rows[0].amount),
+          request_id: `withdrawal_debit_refunded_${id}`,
+          description: `Withdrawal marked paid (previously rejected): ${id}`,
+        }),
+      }).catch((e) => console.error('[admin-service] Error calling wallet manual debit:', e?.message))
+    } else if (oldStatus === 'paid' && newStatus === 'created') {
+      // 5. paid -> created: Restore funds to real balance, then lock them
+      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+        body: JSON.stringify({
+          user_id: row.rows[0].user_id,
+          amount: parseFloat(row.rows[0].amount),
+          type: 'manual_credit',
+          idempotency_key: `withdrawal_restore_paid_${id}`,
+          reference_id: `withdrawal:${id}`,
+        }),
+      }).catch((e) => console.error('[admin-service] Error calling wallet credit:', e?.message))
+
+      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+        body: JSON.stringify({
+          user_id: row.rows[0].user_id,
+          amount: parseFloat(row.rows[0].amount),
+          room_id: `withdrawal:${id}`,
+          lock_id: `withdraw:${id}`,
+        }),
+      }).catch((e) => console.error('[admin-service] Error calling wallet lock:', e?.message))
+    } else if (oldStatus === 'refunded' && newStatus === 'created') {
+      // 6. refunded -> created: Funds are in real balance, lock them again
+      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+        body: JSON.stringify({
+          user_id: row.rows[0].user_id,
+          amount: parseFloat(row.rows[0].amount),
+          room_id: `withdrawal:${id}`,
+          lock_id: `withdraw:${id}`,
+        }),
+      }).catch((e) => console.error('[admin-service] Error calling wallet lock:', e?.message))
     }
 
+    const meta = { ...(row.rows[0].metadata || {}) }
+    if (newStatus === 'paid') {
+      if (reference) meta.utr = reference
+      delete meta.refund_reason
+    } else if (newStatus === 'refunded') {
+      if (reason) meta.refund_reason = reason
+      delete meta.utr
+    } else {
+      delete meta.utr
+      delete meta.refund_reason
+    }
+
+    await db.query('UPDATE payment_orders SET status = $1, metadata = $2, updated_at = NOW() WHERE id = $3',
+      [newStatus, JSON.stringify(meta), id])
+
+    // Update the corresponding wallet_transactions row status
+    await db.query(
+      `UPDATE wallet_transactions SET status = $1, description = $2 WHERE reference_id = $3 AND type = 'withdrawal'`,
+      [
+        newStatus === 'paid' ? 'completed' : newStatus === 'refunded' ? 'reversed' : 'pending',
+        newStatus === 'paid' ? 'Withdrawal approved' : newStatus === 'refunded' ? `Withdrawal rejected: ${reason || 'Held funds returned'}` : 'Withdrawal pending admin approval',
+        id
+      ]
+    )
+
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'payment_order', $3, $4)`,
-      [admin.sub, `withdrawal_${status}`, id, JSON.stringify({ reference, reason })])
+      [admin.sub, `withdrawal_${newStatus}`, id, JSON.stringify({ reference, reason })])
 
     // Push notification to user
     const amt = parseFloat(row.rows[0].amount)
-    const notifPayload = status === 'paid'
-      ? { title: 'Withdrawal Processed âœ…', body: `Your withdrawal of â‚¹${amt.toFixed(2)} has been paid.${reference ? ` UTR: ${reference}` : ''}`, type: 'withdrawal_paid' }
-      : { title: 'Withdrawal Rejected âŒ', body: `Your withdrawal of â‚¹${amt.toFixed(2)} was rejected.${reason ? ` Reason: ${reason}` : ''} Amount refunded to wallet.`, type: 'withdrawal_rejected' }
+    const notifPayload = newStatus === 'paid'
+      ? { title: 'Withdrawal Processed ✅', body: `Your withdrawal of ₹${amt.toFixed(2)} has been paid.${reference ? ` UTR: ${reference}` : ''}`, type: 'withdrawal_paid' }
+      : newStatus === 'refunded'
+      ? { title: 'Withdrawal Rejected ❌', body: `Your withdrawal of ₹${amt.toFixed(2)} was rejected.${reason ? ` Reason: ${reason}` : ''} Amount refunded to wallet.`, type: 'withdrawal_rejected' }
+      : { title: 'Withdrawal Pending ⏳', body: `Your withdrawal of ₹${amt.toFixed(2)} has been marked as pending review.`, type: 'withdrawal_pending' }
+
     fetch(`${NOTIFICATION_URL}/internal/notifications/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },

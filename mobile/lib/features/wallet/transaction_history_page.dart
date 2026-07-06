@@ -42,6 +42,43 @@ class _TransactionHistoryPageState extends State<TransactionHistoryPage> {
   bool _isCredit(String type) =>
       type.contains('credit') || type == 'deposit' || type == 'bonus' || type == 'referral';
 
+  Widget _buildStatusBadge(String? status) {
+    if (status == null || status == 'completed') return const SizedBox.shrink();
+    Color color;
+    String label;
+    if (status == 'pending') {
+      color = AppColors.orange;
+      label = 'PENDING';
+    } else if (status == 'reversed') {
+      color = AppColors.purple;
+      label = 'REVERSED';
+    } else if (status == 'failed') {
+      color = AppColors.red;
+      label = 'FAILED';
+    } else {
+      color = AppColors.textSecondary;
+      label = status.toUpperCase();
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(left: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withOpacity(0.5), width: 0.5),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 8.5,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
   List<dynamic> get _visible {
     if (_filter == 'all') return _transactions;
     return _transactions.where((t) {
@@ -124,8 +161,13 @@ class _TransactionHistoryPageState extends State<TransactionHistoryPage> {
                 backgroundColor: color.withOpacity(0.15),
                 child: Icon(credit ? Icons.add : Icons.remove, color: color),
               ),
-              title: Text(type.replaceAll('_', ' ').toUpperCase(),
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              title: Row(
+                children: [
+                  Text(type.replaceAll('_', ' ').toUpperCase(),
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                  _buildStatusBadge(txn['status']?.toString()),
+                ],
+              ),
               subtitle: Text(
                 DateTime.parse(txn['created_at']).toLocal().toString().substring(0, 16),
                 style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),

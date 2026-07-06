@@ -23,7 +23,8 @@ export function notificationsPlugin(db: Pool) {
     initFirebase()
 
     const internal = async (req: any, reply: any) => {
-      if (req.headers['x-internal-key'] !== process.env.INTERNAL_SERVICE_KEY) return reply.code(403).send({ error: 'Forbidden' })
+      const key = process.env.INTERNAL_SERVICE_KEY
+      if (!key || req.headers['x-internal-key'] !== key) return reply.code(403).send({ error: 'Forbidden' })
     }
 
     app.get('/notifications/me', { onRequest: [app.authenticate] }, async (req, reply) => {
@@ -49,15 +50,55 @@ export function notificationsPlugin(db: Pool) {
 
     app.post('/internal/notifications/broadcast', { onRequest: [internal] }, async (req, reply) => {
       const { title, body, type = 'broadcast', data } = req.body as any
-      const users = await db.query(`SELECT id, fcm_token FROM users WHERE is_bot = false AND status = $1 AND fcm_token IS NOT NULL`, ['active'])
+      const usersRes = await db.query(`SELECT id, fcm_token FROM users WHERE is_bot = false AND status = $1`, ['active'])
+      const users = usersRes.rows
+      if (users.length === 0) return reply.send({ success: true, sent: 0, total: 0 })
+
+      // 1. Bulk insert DB notifications in batches of 1000 to stay under Postgres parameter limits
+      const dbBatchSize = 1000
+      for (let i = 0; i < users.length; i += dbBatchSize) {
+        const batch = users.slice(i, i + dbBatchSize)
+        const values: any[] = []
+        let queryText = 'INSERT INTO notifications (user_id, type, title, body, data) VALUES '
+        for (let j = 0; j < batch.length; j++) {
+          const u = batch[j]
+          const offset = j * 5
+          queryText += `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5})`
+          if (j < batch.length - 1) queryText += ', '
+          values.push(u.id, type, title, body, JSON.stringify(data || {}))
+        }
+        await db.query(queryText, values)
+      }
+
+      // 2. Batch send push notifications using sendEach in batches of 500
+      const tokens = users.map(u => u.fcm_token).filter(Boolean) as string[]
       let sent = 0
-      for (const user of users.rows) {
-        await db.query('INSERT INTO notifications (user_id, type, title, body, data) VALUES ($1, $2, $3, $4, $5)', [user.id, type, title, body, JSON.stringify(data || {})])
-        if (user.fcm_token) {
-          try { await sendPushNotification(user.fcm_token, title, body, data); sent++ } catch { }
+      if (tokens.length > 0) {
+        if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+          console.log(`[PUSH DEV] Broadcasted to ${tokens.length} tokens: ${title}: ${body}`)
+          sent = tokens.length
+        } else {
+          const fcmMessages = tokens.map(token => ({
+            token,
+            notification: { title, body },
+            data,
+            android: { priority: 'high' } as any,
+            apns: { payload: { aps: { sound: 'default' } } } as any
+          }))
+          const fcmBatchSize = 500
+          for (let i = 0; i < fcmMessages.length; i += fcmBatchSize) {
+            const batch = fcmMessages.slice(i, i + fcmBatchSize)
+            try {
+              const response = await admin.messaging().sendEach(batch)
+              sent += response.successCount
+            } catch (err) {
+              console.error('[broadcast] FCM batch failed:', err)
+            }
+          }
         }
       }
-      return reply.send({ success: true, sent, total: users.rows.length })
+
+      return reply.send({ success: true, sent, total: users.length })
     })
   }
 }

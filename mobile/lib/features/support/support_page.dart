@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../shared/theme/app_theme.dart';
+import 'support_tickets_page.dart';
 
 class SupportPage extends StatelessWidget {
   const SupportPage({super.key});
@@ -69,6 +70,17 @@ class SupportPage extends StatelessWidget {
             title: 'Email',
             subtitle: _email,
             onTap: () => _open(context, Uri.parse('mailto:$_email'), _email),
+          ),
+          _tile(
+            context,
+            icon: Icons.confirmation_number_rounded,
+            color: AppColors.gold,
+            title: 'Raise Ticket',
+            subtitle: 'Open a support ticket or view active ones',
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SupportTicketsPage()),
+            ),
           ),
           const SizedBox(height: 16),
           Container(

@@ -27,9 +27,21 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
 
   String get _variationLabel {
     switch (widget.variation) {
-      case 'ak47': return 'AK47';
-      default:     return 'Classic';
+      case 'ak47':     return 'AK47';
+      case 'no_limit': return 'No Limit';
+      default:         return 'Classic';
     }
+  }
+
+  bool get _isNoLimit => widget.variation == 'no_limit';
+
+  // Mirrors the engine's potLimitFor() tiers.
+  int _potLimitFor(double stake) {
+    if (stake <= 10) return 500;
+    if (stake <= 50) return 1000;
+    if (stake <= 100) return 1500;
+    if (stake <= 500) return 10000;
+    return 20000;
   }
 
   @override
@@ -152,7 +164,11 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   }
 
   void _cancelSearch() {
-    _socket.emit(SocketEvents.leaveMatchmaking, {'game_type': 'teen_patti', 'stake': _selectedStake});
+    _socket.emit(SocketEvents.leaveMatchmaking, {
+      'game_type': 'teen_patti',
+      'stake': _selectedStake,
+      'variation': widget.variation,
+    });
     _roomJoinedSub?.cancel();
     _roomJoinedSub = null;
     setState(() => _searching = false);
@@ -298,7 +314,8 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                   const SizedBox(height: 8),
                   _infoRow('Players', '2-6'),
                   _infoRow('Entry Fee', '₹${_selectedStake.toInt()}'),
-                  _infoRow('Pot Size', '₹${(_selectedStake * 6).toInt()} (max)'),
+                  _infoRow('Pot Limit',
+                      _isNoLimit ? 'No Limit' : '₹${_potLimitFor(_selectedStake)}'),
                   _infoRow('Platform Fee', '5%'),
                 ],
               ),

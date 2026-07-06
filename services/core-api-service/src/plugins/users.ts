@@ -221,5 +221,96 @@ export function usersPlugin(db: Pool) {
       ])
       return reply.send({ kyc_status: userRes.rows[0]?.kyc_status || 'pending', document: kycRes.rows[0] || null })
     })
+
+    // ── Bank Details ──────────────────────────────────────────────────────────
+    app.get('/users/me/bank', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      const res = await db.query(
+        `SELECT id, holder_name, bank_name, account_number, ifsc_code, upi_id, verified, updated_at
+         FROM bank_details WHERE user_id = $1`,
+        [user.sub],
+      )
+      return reply.send({ bank: res.rows[0] || null })
+    })
+
+    app.put('/users/me/bank', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      const body = z.object({
+        holder_name:    z.string().min(2).max(100),
+        bank_name:      z.string().min(2).max(100),
+        account_number: z.string().min(6).max(20).regex(/^\d+$/, 'Must be digits only'),
+        ifsc_code:      z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'Invalid IFSC format'),
+        upi_id:         z.string().max(50).optional(),
+      }).parse(req.body)
+
+      await db.query(
+        `INSERT INTO bank_details (user_id, holder_name, bank_name, account_number, ifsc_code, upi_id, verified)
+         VALUES ($1, $2, $3, $4, $5, $6, false)
+         ON CONFLICT (user_id) DO UPDATE SET
+           holder_name = EXCLUDED.holder_name,
+           bank_name = EXCLUDED.bank_name,
+           account_number = EXCLUDED.account_number,
+           ifsc_code = EXCLUDED.ifsc_code,
+           upi_id = EXCLUDED.upi_id,
+           verified = false,
+           updated_at = NOW()`,
+        [user.sub, body.holder_name, body.bank_name, body.account_number, body.ifsc_code, body.upi_id || null],
+      )
+      return reply.send({ success: true, message: 'Bank details saved. Pending admin verification.' })
+    })
+
+    // ── Transaction History ───────────────────────────────────────────────────
+    app.get('/users/me/transactions', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      const { page = 1, limit = 30, type } = req.query as any
+      const offset = (Number(page) - 1) * Number(limit)
+
+      const whereType = type ? `AND wt.type = $4` : ''
+      const params: any[] = type
+        ? [user.sub, Number(limit), offset, type]
+        : [user.sub, Number(limit), offset]
+
+      const res = await db.query(
+        `SELECT wt.id, wt.type, wt.amount, wt.wallet_type, wt.description, wt.status, wt.created_at,
+                wt.reference_id, wt.reference_type
+         FROM wallet_transactions wt
+         WHERE wt.user_id = $1 ${whereType}
+         ORDER BY wt.created_at DESC
+         LIMIT $2 OFFSET $3`,
+        params,
+      )
+      const countRes = await db.query(
+        `SELECT COUNT(*) FROM wallet_transactions WHERE user_id = $1 ${type ? 'AND type = $2' : ''}`,
+        type ? [user.sub, type] : [user.sub],
+      )
+
+      return reply.send({
+        transactions: res.rows,
+        total: parseInt(countRes.rows[0].count),
+        page: Number(page),
+      })
+    })
+
+    // ── Admin: Bank Details ───────────────────────────────────────────────────
+    app.get('/admin/bank-details', async (_req, reply) => {
+      const res = await db.query(
+        `SELECT bd.*, u.username, u.phone, u.email
+         FROM bank_details bd
+         JOIN users u ON u.id = bd.user_id
+         ORDER BY bd.updated_at DESC`,
+      )
+      return reply.send({ bank_details: res.rows })
+    })
+
+    app.patch('/admin/bank-details/:userId/verify', async (req, reply) => {
+      const { userId } = req.params as any
+      const { verified } = req.body as any
+      await db.query(
+        `UPDATE bank_details SET verified = $1, verified_at = $2, updated_at = NOW() WHERE user_id = $3`,
+        [verified, verified ? new Date() : null, userId],
+      )
+      return reply.send({ success: true })
+    })
   }
 }
+

@@ -13,6 +13,7 @@ import { usersPlugin } from './plugins/users'
 import { leaderboardPlugin } from './plugins/leaderboard'
 import { notificationsPlugin } from './plugins/notifications'
 import { bettingPlugin } from './plugins/betting'
+import { supportPlugin } from './plugins/support'
 
 const PORT = parseInt(process.env.PORT || '3001')
 
@@ -69,12 +70,13 @@ async function start() {
   await app.register(usersPlugin(db))
   await app.register(leaderboardPlugin(db, redis))
   await app.register(notificationsPlugin(db))
+  await app.register(supportPlugin(db))
   await app.register(bettingPlugin(bettingDb))   // isolated pool — heavy queries don't starve auth
 
   app.get('/health', async () => ({
     status: 'ok',
     service: 'core-api',
-    services: ['auth', 'users', 'leaderboard', 'notifications', 'betting'],
+    services: ['auth', 'users', 'leaderboard', 'notifications', 'betting', 'support'],
   }))
 
   await app.listen({ port: PORT, host: '0.0.0.0' })
