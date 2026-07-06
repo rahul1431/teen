@@ -1,12 +1,6 @@
 name: Deploy Backend to VPS
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'services/**'
-      - 'infra/**'
-      - 'ecosystem.config.js'
   workflow_dispatch:
 
 jobs:
@@ -25,11 +19,12 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           password: ${{ secrets.VPS_PASSWORD }}
+          command_timeout: 20m
           script: |
             cd /opt/teen
-            git pull origin main
-            chmod +x infra/deploy/deploy-services.sh
-            bash infra/deploy/deploy-services.sh
+            git stash
+            git pull origin claude/confident-archimedes-e2dd1k
+            bash infra/deploy/go.sh
             pm2 status
 
       - name: Health check
