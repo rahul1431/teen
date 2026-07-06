@@ -48,6 +48,8 @@
                 <data android:scheme="myonlinejoker"/>
             </intent-filter>
             <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme"/>
+            <!-- Route myonlinejoker:// links (e.g. friends-table invites) through go_router -->
+            <meta-data android:name="flutter_deeplinking_enabled" android:value="true"/>
         </activity>
         <meta-data android:name="flutterEmbedding" android:value="2"/>
         <service android:name="com.google.firebase.messaging.FirebaseMessagingService" android:exported="false">

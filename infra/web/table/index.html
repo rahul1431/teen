@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Join the Table — MyOnlineJoker</title>
+  <meta name="description" content="Your friend invited you to a private Teen Patti table. Tap to join!">
+  <style>
+    :root { --gold: #D4AF37; --bg: #07091A; --card: #0F1422; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg); color: #fff; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px 16px;
+      background-image: radial-gradient(ellipse at 50% 20%, #1a1f42 0%, var(--bg) 65%);
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid rgba(212,175,55,0.25);
+      border-radius: 24px; padding: 36px 24px 28px;
+      max-width: 420px; width: 100%; text-align: center;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.7);
+    }
+    .logo { font-size: 44px; margin-bottom: 8px; }
+    .app-name { font-size: 22px; font-weight: 900; color: var(--gold); margin-bottom: 20px; }
+    .invite-box {
+      background: linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.04));
+      border: 1px solid rgba(212,175,55,0.35);
+      border-radius: 16px; padding: 18px 20px 16px; margin-bottom: 24px;
+    }
+    .invite-label { color: rgba(255,255,255,0.45); font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; }
+    .invite-msg { font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+    .code-badge {
+      display: inline-block;
+      background: linear-gradient(135deg, var(--gold), #B8942A);
+      color: #000; font-weight: 900; font-size: 26px; letter-spacing: 6px;
+      padding: 10px 26px; border-radius: 10px;
+      box-shadow: 0 4px 16px rgba(212,175,55,0.35);
+    }
+    .btn {
+      display: block; width: 100%; padding: 15px; border-radius: 14px;
+      font-size: 16px; font-weight: 800; text-decoration: none; margin-bottom: 12px;
+    }
+    .btn-open { background: linear-gradient(135deg, var(--gold), #B8942A); color: #000; }
+    .btn-get { background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); }
+    .hint { color: rgba(255,255,255,0.4); font-size: 12px; line-height: 1.5; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🃏</div>
+    <div class="app-name">MyOnlineJoker</div>
+    <div class="invite-box">
+      <div class="invite-label">Private Teen Patti Table</div>
+      <div class="invite-msg">Your friend is waiting for you!</div>
+      <div class="code-badge" id="tableCode">—</div>
+    </div>
+    <a class="btn btn-open" id="openBtn" href="#">▶ &nbsp;Open in App &amp; Join</a>
+    <a class="btn btn-get" href="/downloads/app-release.apk">⬇ &nbsp;Don't have the app? Download</a>
+    <div class="hint">App already installed but the button doesn't work?<br>
+      Open MyOnlineJoker → Teen Patti → Play with Friends → Join Table and enter the code above.</div>
+  </div>
+  <script>
+    (function () {
+      // /table/ABC123 → ABC123 (also accept ?code=ABC123)
+      var m = location.pathname.match(/\/table\/([A-Za-z0-9]{4,8})/);
+      var code = (m ? m[1] : (new URLSearchParams(location.search).get('code') || '')).toUpperCase();
+      if (code) {
+        document.getElementById('tableCode').textContent = code;
+        document.getElementById('openBtn').href =
+          'myonlinejoker://app/games/teen-patti/friends?mode=join&code=' + encodeURIComponent(code);
+      } else {
+        document.getElementById('tableCode').textContent = 'NO CODE';
+        document.getElementById('openBtn').href = 'myonlinejoker://app/games/teen-patti/friends?mode=join';
+      }
+    })();
+  </script>
+</body>
+</html>

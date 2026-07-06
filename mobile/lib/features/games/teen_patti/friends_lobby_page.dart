@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../core/storage/secure_storage.dart';
@@ -12,9 +13,11 @@ import '../../../shared/theme/app_theme.dart';
 /// the game once 2-6 friends are seated; no bots ever join these tables.
 class TeenPattiFriendsPage extends StatefulWidget {
   /// 'create' opens a new table at [stake]; 'join' asks for a code.
+  /// [code] (from a shared invite deep link) prefills and auto-joins.
   final String mode;
   final double stake;
-  const TeenPattiFriendsPage({super.key, required this.mode, this.stake = 10});
+  final String? code;
+  const TeenPattiFriendsPage({super.key, required this.mode, this.stake = 10, this.code});
 
   @override
   State<TeenPattiFriendsPage> createState() => _TeenPattiFriendsPageState();
@@ -32,6 +35,7 @@ class _TeenPattiFriendsPageState extends State<TeenPattiFriendsPage> {
   String? _myUserId;
   Map<String, dynamic>? _lobby; // null = not in a table yet
   bool _busy = false;
+  bool _enteringGame = false; // suppress private:leave when moving to the table
 
   bool get _isHost => _lobby?['host_id']?.toString() == _myUserId;
   String get _code => _lobby?['code']?.toString() ?? '';
@@ -69,6 +73,8 @@ class _TeenPattiFriendsPageState extends State<TeenPattiFriendsPage> {
       if (!mounted || data is! Map) return;
       _roomJoinedSub?.cancel();
       _roomJoinedSub = null;
+      // The table now outlives the hand (rematch) — don't leave it on dispose.
+      _enteringGame = true;
       context.pushReplacement('/games/teen-patti/play/${data['room_id']}',
           extra: Map<String, dynamic>.from(data));
     });
@@ -81,13 +87,20 @@ class _TeenPattiFriendsPageState extends State<TeenPattiFriendsPage> {
           SnackBar(content: Text(msg), backgroundColor: AppColors.red));
     });
 
-    if (widget.mode == 'create') _createTable();
+    if (widget.mode == 'create') {
+      _createTable();
+    } else if (widget.code != null && widget.code!.length == 6) {
+      // Invite deep link: code came with the URL — join straight away.
+      _codeCtrl.text = widget.code!.toUpperCase();
+      _joinTable();
+    }
   }
 
   @override
   void dispose() {
-    // Leaving the page abandons the lobby (host leaving closes the table).
-    if (_lobby != null) {
+    // Leaving the page abandons the lobby (host leaving hands off or closes
+    // the table) — unless we're moving to the game table for a hand.
+    if (_lobby != null && !_enteringGame) {
       _socket.emit('private:leave', {'code': _code});
     }
     _lobbySub?.cancel();
@@ -126,6 +139,19 @@ class _TeenPattiFriendsPageState extends State<TeenPattiFriendsPage> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Code copied — share it with your friends!'),
         duration: Duration(seconds: 2)));
+  }
+
+  void _shareCode() {
+    final stake = (_lobby?['stake'] as num?)?.toInt() ?? widget.stake.toInt();
+    HapticFeedback.selectionClick();
+    // The /join page shows the code with an "Open in App" deep link, so the
+    // friend lands in this lobby already seated.
+    Share.share(
+      '🃏 Join my Teen Patti table on MyOnlineJoker!\n'
+      'Table code: $_code · Boot ₹$stake\n'
+      'Tap to join: https://game.myonlinejoker.com/table/$_code',
+      subject: 'Teen Patti — join my table',
+    );
   }
 
   @override
@@ -222,6 +248,34 @@ class _TeenPattiFriendsPageState extends State<TeenPattiFriendsPage> {
                 const SizedBox(height: 6),
                 Text('Boot ₹${stake.toInt()} · No bots · Max $maxPlayers players',
                     style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                const SizedBox(height: 10),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _copyCode,
+                      icon: const Icon(Icons.copy_rounded, size: 16, color: AppColors.gold),
+                      label: const Text('Copy',
+                          style: TextStyle(color: AppColors.gold, fontSize: 13)),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: AppColors.gold.withValues(alpha: 0.6)),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    ElevatedButton.icon(
+                      onPressed: _shareCode,
+                      icon: const Icon(Icons.share_rounded, size: 16, color: Colors.black),
+                      label: const Text('Share',
+                          style: TextStyle(
+                              color: Colors.black, fontSize: 13, fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.gold,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),

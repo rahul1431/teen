@@ -106,6 +106,7 @@ final GoRouter _router = GoRouter(
     GoRoute(path: '/games/teen-patti/friends', builder: (_, s) => TeenPattiFriendsPage(
       mode: s.uri.queryParameters['mode'] ?? 'join',
       stake: double.tryParse(s.uri.queryParameters['stake'] ?? '') ?? 10,
+      code: s.uri.queryParameters['code'],
     )),
     GoRoute(
       path: '/games/teen-patti/play/:roomId',

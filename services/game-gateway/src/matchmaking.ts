@@ -185,9 +185,15 @@ export class MatchmakingService {
   }
 
   // Friends tables: start a game for an explicit player list, never bots.
-  async startPrivateGame(gameType: string, stake: number, players: MatchmakingEntry[]): Promise<void> {
-    await this.startGame(gameType, stake, players, [])
+  // Returns the roomId so the caller can map it back to the table code
+  // (null when the start failed and wallets were rolled back).
+  async startPrivateGame(gameType: string, stake: number, players: MatchmakingEntry[], privateCode?: string): Promise<string | null> {
+    return this.startGame(gameType, stake, players, [], 'classic', privateCode)
   }
+
+  // Set by index.ts: called after every settled game so private (friends)
+  // tables can re-open their lobby and auto-start the next hand.
+  onGameEnd?: (roomId: string) => void
 
   private async autoRefillBots(minRequired: number): Promise<void> {
     try {
@@ -243,7 +249,7 @@ export class MatchmakingService {
     return botRes.rows.map(b => ({ userId: b.id, username: b.username }))
   }
 
-  private async startGame(gameType: string, stake: number, realPlayers: MatchmakingEntry[], bots: MatchmakingEntry[], variation = 'classic'): Promise<void> {
+  private async startGame(gameType: string, stake: number, realPlayers: MatchmakingEntry[], bots: MatchmakingEntry[], variation = 'classic', privateCode?: string): Promise<string | null> {
     const roomId = uuid()
     const allPlayers = [...realPlayers, ...bots]
     console.log(`[matchmaking] startGame room=${roomId} ${gameType}:${stake} real=${realPlayers.length} bots=${bots.length}`)
@@ -320,7 +326,7 @@ export class MatchmakingService {
       for (const p of realPlayers) {
         this.hub.sendToUser(p.userId, 'error', { message: `Failed to start game: ${(err as Error).message || err}` })
       }
-      return
+      return null
     } finally {
       client.release()
     }
@@ -426,7 +432,7 @@ export class MatchmakingService {
 
       // If a bot holds the opening turn, start driving bot turns immediately.
       void this.driveLudoBots(roomId)
-      return
+      return roomId
     }
 
     const gameState = engineState || fallbackState
@@ -466,6 +472,8 @@ export class MatchmakingService {
         current_turn: gameState.current_turn ?? gameState.CurrentTurn ?? 0,
         dealer_id: engineState?.dealer_id ?? engineState?.DealerID,
         min_bet: engineState?.min_bet ?? stake,
+        // Friends tables: lets the client offer "Same Table" after the hand.
+        private_code: privateCode,
       })
     }
 
@@ -473,6 +481,8 @@ export class MatchmakingService {
     if (engineState && gameType === 'teen_patti') {
       this.scheduleBotTurn(roomId, engineState, realPlayers, bots)
     }
+
+    return roomId
   }
 
   async scheduleBotTurn(roomId: string, state: any, realPlayers: MatchmakingEntry[], bots: MatchmakingEntry[]): Promise<void> {
@@ -782,5 +792,8 @@ export class MatchmakingService {
         all_hands: result.all_hands ?? [],
       })
     }
+
+    // Friends tables: re-open the private lobby / auto-start the next hand.
+    this.onGameEnd?.(roomId)
   }
 }

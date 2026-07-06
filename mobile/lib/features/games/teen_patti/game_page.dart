@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:go_router/go_router.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import '../../../core/audio/sound_service.dart';
@@ -97,6 +98,14 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   StreamSubscription? _gameResultSub;
   StreamSubscription? _roomChatSub;
   StreamSubscription? _roomTipSub;
+  StreamSubscription? _nextHandSub;
+  StreamSubscription? _privateClosedSub;
+  Timer? _rematchTimer;
+  final _rematchSecsNotifier = ValueNotifier<int>(-1); // -1 = hidden
+
+  // Friends tables: the invite code rides in on room:joined so the result
+  // overlay can offer "Same Table" and the server can auto-start the rematch.
+  String? get _privateCode => widget.initialData?['private_code']?.toString();
   StreamSubscription? _sideshowPromptSub;
   StreamSubscription? _sideshowRevealSub;
   StreamSubscription? _sideshowResultSub;
@@ -139,6 +148,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _gameResultSub?.cancel();
     _roomChatSub?.cancel();
     _roomTipSub?.cancel();
+    _nextHandSub?.cancel();
+    _privateClosedSub?.cancel();
+    _rematchTimer?.cancel();
+    _rematchSecsNotifier.dispose();
     _sideshowPromptSub?.cancel();
     _sideshowRevealSub?.cancel();
     _sideshowResultSub?.cancel();
@@ -335,6 +348,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       }
       // Refresh wallet balance after settlement completes on the server.
       Timer(const Duration(milliseconds: 1200), _fetchBalance);
+      if (_privateCode != null) _startRematchCountdown();
     });
 
     _roomChatSub = _socket.on(SocketEvents.roomChatMsg).listen((data) {
@@ -349,6 +363,26 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         _spawnReaction(msg.userId, msg.text);
       }
     });
+
+    // Friends tables: the server re-opens the lobby after each hand and
+    // auto-starts the next one — a fresh room:joined moves us to that table.
+    if (_privateCode != null) {
+      _nextHandSub = _socket.on(SocketEvents.roomJoined).listen((data) {
+        if (!mounted || data is! Map) return;
+        final newRoom = data['room_id']?.toString();
+        if (newRoom == null || newRoom == widget.roomId) return;
+        _rematchTimer?.cancel();
+        context.pushReplacement('/games/teen-patti/play/$newRoom',
+            extra: Map<String, dynamic>.from(data));
+      });
+      _privateClosedSub = _socket.on('private:closed').listen((data) {
+        if (!mounted) return;
+        final reason =
+            (data is Map ? data['reason']?.toString() : null) ?? 'Table closed';
+        AppSnackBar.show(context, reason);
+        _doExit();
+      });
+    }
 
     // Dealer tips — server broadcasts after the wallet debit succeeds.
     _roomTipSub = _socket.on('room:tip').listen((data) {
@@ -685,6 +719,25 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   String? _chipsOf(Map<String, dynamic> p) {
     final v = p['chips'] ?? p['balance'] ?? p['stack'];
     return v == null ? null : num.tryParse(v.toString())?.toStringAsFixed(0);
+  }
+
+  // Friends tables: 10s client countdown while the server (12s) deals the
+  // next hand automatically. Players who want out tap Exit Lobby in time.
+  void _startRematchCountdown() {
+    _rematchTimer?.cancel();
+    _rematchSecsNotifier.value = 10;
+    _rematchTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) { t.cancel(); return; }
+      final next = _rematchSecsNotifier.value - 1;
+      _rematchSecsNotifier.value = next;
+      if (next <= 0) t.cancel(); // 0 = "Starting next hand…" until room:joined
+    });
+  }
+
+  void _exitPrivateTable() {
+    _rematchTimer?.cancel();
+    _socket.emit('private:leave', {'code': _privateCode});
+    _doExit();
   }
 
   void _doExit() {
@@ -1768,6 +1821,47 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                   textAlign: TextAlign.center),
               const SizedBox(height: 24),
               Row(mainAxisSize: MainAxisSize.min, children: [
+                if (_privateCode != null) ...[
+                  // Friends table: next hand auto-starts server-side.
+                  ValueListenableBuilder<int>(
+                    valueListenable: _rematchSecsNotifier,
+                    builder: (_, secs, __) => ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1E6B1E),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20)),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 12),
+                      ),
+                      onPressed: () {}, // staying is the default — just wait
+                      icon: secs > 0
+                          ? const Icon(Icons.replay)
+                          : const SizedBox(
+                              width: 16, height: 16,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white)),
+                      label: Text(
+                          secs > 0 ? 'Same Table (${secs}s)' : 'Starting next hand…',
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white24,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 12),
+                    ),
+                    onPressed: _exitPrivateTable,
+                    icon: const Icon(Icons.home),
+                    label: const Text('Exit Lobby',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ] else
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: won ? AppColors.gold : Colors.white24,

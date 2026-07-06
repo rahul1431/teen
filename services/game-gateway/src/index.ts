@@ -306,6 +306,8 @@ async function start() {
           hostId: conn.userId,
           players: [{ userId: conn.userId, username: conn.username }],
           createdAt: Date.now(),
+          state: 'lobby',      // 'lobby' | 'playing'
+          gamesPlayed: 0,
         }
         await redis.setex(`private:table:${code}`, PRIVATE_TABLE_TTL, JSON.stringify(table))
         console.log(`[private] table created code=${code} host=${conn.userId} ${gameType}:${stake}`)
@@ -338,15 +340,25 @@ async function start() {
         const raw = await redis.get(`private:table:${code}`)
         if (!raw) return
         const table = JSON.parse(raw)
+        table.players = table.players.filter((p: any) => p.userId !== conn.userId)
         if (conn.userId === table.hostId) {
-          // Host leaving closes the table for everyone
-          await redis.del(`private:table:${code}`)
-          for (const p of table.players) {
-            hub.sendToUser(p.userId, 'private:closed', { code, reason: 'Host left the table' })
+          // Once the table has played a hand, friends keep it alive: hand the
+          // host role to the next player. Before the first hand, the host
+          // leaving still closes the table (they're the one inviting).
+          if ((table.gamesPlayed || 0) > 0 && table.players.length > 0) {
+            table.hostId = table.players[0].userId
+          } else {
+            await redis.del(`private:table:${code}`)
+            for (const p of table.players) {
+              hub.sendToUser(p.userId, 'private:closed', { code, reason: 'Host left the table' })
+            }
+            return
           }
+        }
+        if (table.players.length === 0) {
+          await redis.del(`private:table:${code}`)
           return
         }
-        table.players = table.players.filter((p: any) => p.userId !== conn.userId)
         await redis.setex(`private:table:${code}`, PRIVATE_TABLE_TTL, JSON.stringify(table))
         broadcastPrivateLobby(table)
         return
@@ -363,11 +375,11 @@ async function start() {
         if (table.players.length < 2) {
           return hub.send(conn, 'error', { message: 'Need at least 2 players to start' })
         }
-        // Delete first so a double-tap can't start the game twice
-        await redis.del(`private:table:${code}`)
-        console.log(`[private] starting code=${code} ${table.gameType}:${table.stake} players=${table.players.length}`)
+        if (table.state === 'playing') {
+          return hub.send(conn, 'error', { message: 'Game already in progress' })
+        }
         monitorEmitter.emit('join_matchmaking', { game_type: table.gameType, user_id: conn.userId, stake: table.stake })
-        await matchmaking.startPrivateGame(table.gameType, table.stake, table.players)
+        await startPrivateHand(table)
         return
       }
 
@@ -388,6 +400,66 @@ async function start() {
       if (!(await redis.exists(`private:table:${code}`))) return code
     }
     throw new Error('could not allocate private table code')
+  }
+
+  // Start (or restart) a hand for a private table. The table stays in Redis
+  // marked 'playing' so it survives the hand and the lobby can re-open for a
+  // rematch. On a failed start (e.g. a wallet lock refused) it reverts to
+  // 'lobby' so the table isn't stuck.
+  async function startPrivateHand(table: any): Promise<void> {
+    table.state = 'playing'
+    await redis.setex(`private:table:${table.code}`, PRIVATE_TABLE_TTL, JSON.stringify(table))
+    console.log(`[private] starting code=${table.code} ${table.gameType}:${table.stake} players=${table.players.length} hand=${(table.gamesPlayed || 0) + 1}`)
+    const roomId = await matchmaking.startPrivateGame(table.gameType, table.stake, table.players, table.code)
+    if (!roomId) {
+      table.state = 'lobby'
+      await redis.setex(`private:table:${table.code}`, PRIVATE_TABLE_TTL, JSON.stringify(table))
+      broadcastPrivateLobby(table)
+      return
+    }
+    await redis.setex(`private:room:${roomId}`, PRIVATE_TABLE_TTL, table.code)
+  }
+
+  // After any settled game: if it was a private table's hand, re-open the
+  // lobby and auto-start the next hand after a short countdown (the mobile
+  // result overlay shows "Same Table (10s)"; the server fires at 12s so
+  // leavers have time to opt out via private:leave).
+  const REMATCH_DELAY_MS = 12_000
+  matchmaking.onGameEnd = async (roomId: string) => {
+    try {
+      const code = await redis.get(`private:room:${roomId}`)
+      if (!code) return
+      await redis.del(`private:room:${roomId}`)
+      const raw = await redis.get(`private:table:${code}`)
+      if (!raw) return
+      const table = JSON.parse(raw)
+      table.state = 'lobby'
+      table.gamesPlayed = (table.gamesPlayed || 0) + 1
+      await redis.setex(`private:table:${code}`, PRIVATE_TABLE_TTL, JSON.stringify(table))
+      broadcastPrivateLobby(table)
+
+      setTimeout(async () => {
+        try {
+          const raw2 = await redis.get(`private:table:${code}`)
+          if (!raw2) return
+          const t2 = JSON.parse(raw2)
+          if (t2.state !== 'lobby') return // someone already started it
+          if (t2.players.length >= 2) {
+            console.log(`[private] auto-restart code=${code} players=${t2.players.length}`)
+            await startPrivateHand(t2)
+          } else {
+            await redis.del(`private:table:${code}`)
+            for (const p of t2.players) {
+              hub.sendToUser(p.userId, 'private:closed', { code, reason: 'Not enough players to continue' })
+            }
+          }
+        } catch (e) {
+          console.error(`[private] auto-restart failed code=${code}`, e)
+        }
+      }, REMATCH_DELAY_MS)
+    } catch (e) {
+      console.error('[private] onGameEnd hook failed', e)
+    }
   }
 
   function broadcastPrivateLobby(table: any): void {
