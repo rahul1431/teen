@@ -4,7 +4,7 @@ import {
   Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col,
   Input, Popconfirm, Modal, Typography, Spin
 } from 'antd'
-import { ReloadOutlined, EyeOutlined, PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
+import { ReloadOutlined, EyeOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
 const { Text } = Typography
@@ -61,13 +61,6 @@ export default function TeenPatti() {
   const [newEmojiLabel, setNewEmojiLabel] = useState('')
   const [savingEmoji, setSavingEmoji] = useState(false)
 
-  // Gifts state
-  const [gifts, setGifts] = useState<any[]>([])
-  const [loadingGifts, setLoadingGifts] = useState(false)
-  const [giftModalOpen, setGiftModalOpen] = useState(false)
-  const [editingGift, setEditingGift] = useState<any>(null)
-  const [giftForm, setGiftForm] = useState({ icon: '', name: '', price: '' })
-  const [savingGift, setSavingGift] = useState(false)
 
   const loadConfig = () => {
     setLoadingConfig(true)
@@ -155,63 +148,7 @@ export default function TeenPatti() {
     } catch { message.error('Failed to delete emoji') }
   }
 
-  // ── Gift management ───────────────────────────────────────────
-  const fetchGifts = async () => {
-    setLoadingGifts(true)
-    try {
-      const res = await adminApi.get('/gifts')
-      setGifts(res.data)
-    } catch { message.error('Failed to load gifts') }
-    finally { setLoadingGifts(false) }
-  }
-
-  const openAddGift = () => {
-    setEditingGift(null)
-    setGiftForm({ icon: '', name: '', price: '' })
-    setGiftModalOpen(true)
-  }
-
-  const openEditGift = (g: any) => {
-    setEditingGift(g)
-    setGiftForm({ icon: g.icon, name: g.name, price: String(g.price) })
-    setGiftModalOpen(true)
-  }
-
-  const saveGift = async () => {
-    if (!giftForm.icon.trim() || !giftForm.name.trim()) { message.warning('Icon and name are required'); return }
-    const price = parseFloat(giftForm.price)
-    if (isNaN(price) || price < 0) { message.warning('Enter a valid price (≥ 0)'); return }
-    setSavingGift(true)
-    try {
-      if (editingGift) {
-        await adminApi.patch(`/gifts/${editingGift.id}`, { icon: giftForm.icon.trim(), name: giftForm.name.trim(), price })
-        message.success('Gift updated!')
-      } else {
-        await adminApi.post('/gifts', { icon: giftForm.icon.trim(), name: giftForm.name.trim(), price })
-        message.success('Gift added!')
-      }
-      setGiftModalOpen(false)
-      fetchGifts()
-    } catch { message.error('Failed to save gift') }
-    finally { setSavingGift(false) }
-  }
-
-  const toggleGift = async (id: string, is_active: boolean) => {
-    try {
-      await adminApi.patch(`/gifts/${id}`, { is_active })
-      fetchGifts()
-    } catch { message.error('Failed to update gift') }
-  }
-
-  const deleteGift = async (id: string) => {
-    try {
-      await adminApi.delete(`/gifts/${id}`)
-      message.success('Gift deleted')
-      fetchGifts()
-    } catch { message.error('Failed to delete gift') }
-  }
-
-  useEffect(() => { loadConfig(); fetchEmojis(); fetchGifts() }, [])
+  useEffect(() => { loadConfig(); fetchEmojis() }, [])
   useEffect(() => { fetchRooms() }, [statusFilter])
 
   // When a room drawer opens, pull the live hand's cards (only meaningful while active).
@@ -239,33 +176,6 @@ export default function TeenPatti() {
         <Popconfirm title="Delete this emoji?" onConfirm={() => deleteEmoji(r.id)} okText="Delete" okType="danger">
           <Button size="small" danger icon={<DeleteOutlined />} />
         </Popconfirm>
-      )
-    },
-  ]
-
-  const giftColumns = [
-    { title: 'Icon', dataIndex: 'icon', render: (e: string) => <span style={{ fontSize: 24 }}>{e}</span> },
-    { title: 'Name', dataIndex: 'name' },
-    {
-      title: 'Price (₹)', dataIndex: 'price',
-      render: (p: any) => <Text strong style={{ color: '#d4af37' }}>₹{parseFloat(p).toFixed(2)}</Text>
-    },
-    { title: 'Order', dataIndex: 'sort_order' },
-    {
-      title: 'Active', dataIndex: 'is_active',
-      render: (v: boolean, r: any) => (
-        <Switch checked={v} size="small" onChange={(checked) => toggleGift(r.id, checked)} />
-      )
-    },
-    {
-      title: '', key: 'actions',
-      render: (r: any) => (
-        <Space>
-          <Button size="small" icon={<EditOutlined />} onClick={() => openEditGift(r)} />
-          <Popconfirm title="Delete this gift?" onConfirm={() => deleteGift(r.id)} okText="Delete" okType="danger">
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </Space>
       )
     },
   ]
@@ -351,7 +261,7 @@ export default function TeenPatti() {
         </Col>
       </Row>
 
-      {/* Emoji & Gift Management */}
+      {/* Emoji Management */}
       <Row gutter={[24, 24]} style={{ marginTop: 24 }}>
         <Col xs={24} lg={12}>
           <Card
@@ -376,28 +286,6 @@ export default function TeenPatti() {
           </Card>
         </Col>
 
-        <Col xs={24} lg={12}>
-          <Card
-            title="🎁 Game Gifts"
-            extra={
-              <Space>
-                <Button icon={<ReloadOutlined />} size="small" onClick={fetchGifts} />
-                <Button type="primary" icon={<PlusOutlined />} size="small" onClick={openAddGift}>
-                  Add Gift
-                </Button>
-              </Space>
-            }
-            loading={loadingGifts}
-          >
-            <Table
-              dataSource={gifts}
-              columns={giftColumns}
-              rowKey="id"
-              size="small"
-              pagination={{ pageSize: 10 }}
-            />
-          </Card>
-        </Col>
       </Row>
 
       {/* Add Emoji Modal */}
@@ -431,51 +319,6 @@ export default function TeenPatti() {
         {newEmoji && (
           <div style={{ marginTop: 16, fontSize: 40, textAlign: 'center' }}>{newEmoji}</div>
         )}
-      </Modal>
-
-      {/* Add / Edit Gift Modal */}
-      <Modal
-        title={editingGift ? 'Edit Gift' : 'Add New Gift'}
-        open={giftModalOpen}
-        onOk={saveGift}
-        onCancel={() => setGiftModalOpen(false)}
-        confirmLoading={savingGift}
-        okText={editingGift ? 'Save' : 'Add'}
-      >
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', marginBottom: 4 }}>Icon (emoji)</label>
-          <Input
-            value={giftForm.icon}
-            onChange={e => setGiftForm(f => ({ ...f, icon: e.target.value }))}
-            placeholder="e.g. 🌹"
-            maxLength={8}
-            style={{ fontSize: 24, width: 120 }}
-          />
-          {giftForm.icon && (
-            <span style={{ marginLeft: 12, fontSize: 36 }}>{giftForm.icon}</span>
-          )}
-        </div>
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', marginBottom: 4 }}>Gift name</label>
-          <Input
-            value={giftForm.name}
-            onChange={e => setGiftForm(f => ({ ...f, name: e.target.value }))}
-            placeholder="e.g. Rose"
-            maxLength={32}
-          />
-        </div>
-        <div>
-          <label style={{ display: 'block', marginBottom: 4 }}>Price (₹)</label>
-          <Input
-            value={giftForm.price}
-            onChange={e => setGiftForm(f => ({ ...f, price: e.target.value }))}
-            placeholder="e.g. 25"
-            prefix="₹"
-            type="number"
-            min={0}
-            style={{ width: 140 }}
-          />
-        </div>
       </Modal>
 
       <Drawer title="Room Details" open={!!selectedRoom} onClose={() => setSelectedRoom(null)} width={480}>

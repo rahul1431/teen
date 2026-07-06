@@ -2007,62 +2007,7 @@ async function start() {
     return reply.send({ success: true })
   })
 
-  // â”€â”€ Gift management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-  // GET /api/admin/gifts — list all gifts
-  app.get('/api/admin/gifts', { onRequest: [authenticate] }, async (_req, reply) => {
-    const res = await db.query(
-      `SELECT id, icon, name, price, is_active, sort_order, created_at
-       FROM game_gifts ORDER BY sort_order ASC, price ASC`
-    )
-    return reply.send(res.rows)
-  })
-
-  // POST /admin/gifts â€” add gift with price
-  app.post('/api/admin/gifts', { onRequest: [authenticate] }, async (req, reply) => {
-    const { icon, name, price, sort_order = 0 } = req.body as any
-    if (!icon || !name) return reply.code(400).send({ error: 'icon and name required' })
-    const numPrice = parseFloat(price)
-    if (isNaN(numPrice) || numPrice < 0) return reply.code(400).send({ error: 'price must be >= 0' })
-    const res = await db.query(
-      `INSERT INTO game_gifts (icon, name, price, sort_order) VALUES ($1, $2, $3, $4) RETURNING *`,
-      [icon.trim(), name.trim(), numPrice, parseInt(sort_order) || 0]
-    )
-    return reply.code(201).send(res.rows[0])
-  })
-
-  // PATCH /admin/gifts/:id â€” update price / toggle / reorder
-  app.patch('/api/admin/gifts/:id', { onRequest: [authenticate] }, async (req, reply) => {
-    const { id } = req.params as any
-    const { price, is_active, sort_order, name, icon } = req.body as any
-    const fields: string[] = []
-    const vals: unknown[] = []
-    if (price !== undefined) {
-      const p = parseFloat(price)
-      if (isNaN(p) || p < 0) return reply.code(400).send({ error: 'invalid price' })
-      fields.push(`price = $${vals.push(p)}`)
-    }
-    if (is_active !== undefined) fields.push(`is_active = $${vals.push(is_active)}`)
-    if (sort_order !== undefined) fields.push(`sort_order = $${vals.push(parseInt(sort_order))}`)
-    if (name !== undefined) fields.push(`name = $${vals.push(name)}`)
-    if (icon !== undefined) fields.push(`icon = $${vals.push(icon)}`)
-    if (!fields.length) return reply.code(400).send({ error: 'nothing to update' })
-    vals.push(id)
-    const res = await db.query(
-      `UPDATE game_gifts SET ${fields.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals
-    )
-    if (!res.rows.length) return reply.code(404).send({ error: 'Not found' })
-    return reply.send(res.rows[0])
-  })
-
-  // DELETE /admin/gifts/:id
-  app.delete('/api/admin/gifts/:id', { onRequest: [authenticate] }, async (req, reply) => {
-    const { id } = req.params as any
-    await db.query('DELETE FROM game_gifts WHERE id = $1', [id])
-    return reply.send({ success: true })
-  })
-
-  // â”€â”€ Public config (emojis/gifts for mobile game) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // â”€â”€ Public config (emojis for mobile game) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   // GET /config/emojis â€” active emojis for game use (no auth)
   app.get('/api/admin/config/emojis', async (_req, reply) => {
@@ -2070,14 +2015,6 @@ async function start() {
       `SELECT emoji, label FROM game_emojis WHERE is_active = true ORDER BY sort_order ASC`
     )
     return reply.send(res.rows.map((r: any) => r.emoji))
-  })
-
-  // GET /config/gifts â€” active gifts with prices for game use (no auth)
-  app.get('/api/admin/config/gifts', async (_req, reply) => {
-    const res = await db.query(
-      `SELECT id, icon, name, price FROM game_gifts WHERE is_active = true ORDER BY sort_order ASC`
-    )
-    return reply.send(res.rows)
   })
 
   // ── Daily Login Bonus Config ──────────────────────────────────────────────────

@@ -20,6 +20,9 @@ const redisOpts = {
 const redis = new Redis(process.env.REDIS_URL!, redisOpts)
 redis.on('error', (err) => console.error('[redis] pub error', err.message))
 
+// Dealer-tip presets; must match the mobile tip tray.
+const TIP_AMOUNTS = [5, 10, 20, 50]
+
 async function start() {
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.JWT_SECRET! })
@@ -116,7 +119,8 @@ async function start() {
     switch (event) {
       case 'join_matchmaking': {
         const { game_type, stake } = data
-        console.log(`[matchmaking] join request: user=${conn.userId} game=${game_type} stake=${stake}`)
+        const variation = typeof data.variation === 'string' && data.variation ? data.variation : 'classic'
+        console.log(`[matchmaking] join request: user=${conn.userId} game=${game_type} variation=${variation} stake=${stake}`)
         if (!game_type || !stake) return hub.send(conn, 'error', { message: 'game_type and stake required' })
 
         const configRes = await db.query('SELECT is_active FROM game_configs WHERE game_type = $1', [game_type])
@@ -125,10 +129,10 @@ async function start() {
           return hub.send(conn, 'error', { message: 'Game not available' })
         }
         try {
-          await matchmaking.joinQueue(game_type, stake, { userId: conn.userId, username: conn.username })
-          hub.send(conn, 'matchmaking:joined', { game_type, stake })
+          await matchmaking.joinQueue(game_type, stake, { userId: conn.userId, username: conn.username }, variation)
+          hub.send(conn, 'matchmaking:joined', { game_type, stake, variation })
           monitorEmitter.emit('join_matchmaking', { game_type, user_id: conn.userId, stake })
-          console.log(`[matchmaking] ${conn.userId} queued for ${game_type}:${stake}`)
+          console.log(`[matchmaking] ${conn.userId} queued for ${game_type}:${variation}:${stake}`)
         } catch (err) {
           console.error(`[matchmaking] joinQueue failed for ${conn.userId}:`, err)
           hub.send(conn, 'error', { message: 'Failed to join matchmaking. Please try again.' })
@@ -138,7 +142,8 @@ async function start() {
 
       case 'leave_matchmaking': {
         const { game_type, stake } = data
-        await matchmaking.leaveQueue(game_type, stake, conn.userId)
+        const variation = typeof data.variation === 'string' && data.variation ? data.variation : 'classic'
+        await matchmaking.leaveQueue(game_type, stake, conn.userId, variation)
         hub.send(conn, 'matchmaking:left', {})
         monitorEmitter.emit('leave_matchmaking', { game_type, user_id: conn.userId })
         return
@@ -217,7 +222,7 @@ async function start() {
       case 'room:chat': {
         const { room_id, message, type } = data
         if (!message || message.length > 200) return
-        const msgType = ['text', 'emoji', 'gift'].includes(type) ? type : 'text'
+        const msgType = ['text', 'emoji'].includes(type) ? type : 'text'
         hub.sendToRoom(room_id, 'room:chat', {
           user_id: conn.userId,
           username: conn.username,
@@ -226,6 +231,55 @@ async function start() {
           timestamp: Date.now(),
         })
         monitorEmitter.emit('room_chat', { room_id, user_id: conn.userId })
+        return
+      }
+
+      case 'room:tip': {
+        // Tip the dealer: debit the player's real balance (house keeps it)
+        // and broadcast the tip to the table for the animation.
+        const { room_id } = data
+        const tip = Number(data.amount)
+        if (!room_id || !TIP_AMOUNTS.includes(tip)) {
+          return hub.send(conn, 'error', { message: 'Invalid tip amount' })
+        }
+        const client = await db.connect()
+        try {
+          await client.query('BEGIN')
+          const walletRes = await client.query(
+            'SELECT real_balance FROM wallets WHERE user_id = $1 FOR UPDATE',
+            [conn.userId]
+          )
+          const balance = walletRes.rows.length ? parseFloat(walletRes.rows[0].real_balance) : 0
+          if (balance < tip) {
+            await client.query('ROLLBACK')
+            // Don't say "insufficient balance" — the mobile error handler
+            // matches that phrase to pop the low-balance game dialog.
+            return hub.send(conn, 'error', { message: 'Not enough balance to tip the dealer' })
+          }
+          const ikey = `tip:${conn.userId}:${room_id}:${Date.now()}`
+          await client.query(
+            `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
+             VALUES ($1, 'tip_dealer', 'real', $2, $3, $4, $5, $6, 'completed', 'Dealer tip')`,
+            [conn.userId, tip, balance, balance - tip, room_id, ikey]
+          )
+          await client.query(
+            'UPDATE wallets SET real_balance = real_balance - $1, updated_at = NOW() WHERE user_id = $2',
+            [tip, conn.userId]
+          )
+          await client.query('COMMIT')
+        } catch (err) {
+          await client.query('ROLLBACK')
+          console.error('[ws] room:tip failed', err)
+          return hub.send(conn, 'error', { message: 'Tip failed, please try again' })
+        } finally {
+          client.release()
+        }
+        hub.sendToRoom(room_id, 'room:tip', {
+          user_id: conn.userId,
+          username: conn.username,
+          amount: tip,
+          timestamp: Date.now(),
+        })
         return
       }
 

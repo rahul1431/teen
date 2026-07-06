@@ -31,8 +31,16 @@ export class MatchmakingService {
     await this.redis.setex(`game:room:${roomId}`, 3600, JSON.stringify(state))
   }
 
-  async joinQueue(gameType: string, stake: number, entry: MatchmakingEntry): Promise<void> {
-    const key = `matchmaking:${gameType}:${stake}`
+  // Variations (classic / ak47 / no_limit) queue separately so e.g. players
+  // choosing a No Limit table only ever match with other No Limit players.
+  private queueKey(gameType: string, stake: number, variation: string): string {
+    return variation === 'classic'
+      ? `matchmaking:${gameType}:${stake}`
+      : `matchmaking:${gameType}:${variation}:${stake}`
+  }
+
+  async joinQueue(gameType: string, stake: number, entry: MatchmakingEntry, variation = 'classic'): Promise<void> {
+    const key = this.queueKey(gameType, stake, variation)
     const member = JSON.stringify(entry)
     await this.redis.zadd(key, Date.now(), member)
 
@@ -41,23 +49,29 @@ export class MatchmakingService {
       [gameType]
     )
     const config = configRes.rows[0] || { min_players: 2, max_players: 6, bot_fill_enabled: true, bot_fill_delay_seconds: 5, max_bot_ratio: 0.6, bot_fill_table_size: null }
+    // Teen Patti must always fill to a 4-seat table (1RP+3B / 2RP+2B / 3RP+1B,
+    // 4+ real players → no bots). Guard against the DB value being wiped to
+    // NULL (e.g. by an admin GameConfig save with the field left blank).
+    if (gameType === 'teen_patti' && config.bot_fill_enabled && !config.bot_fill_table_size) {
+      config.bot_fill_table_size = 4
+    }
 
-    await this.tryCreateRoom(gameType, stake, config)
+    await this.tryCreateRoom(gameType, stake, config, variation)
 
     if (config.bot_fill_enabled) {
-      const timerKey = `${gameType}:${stake}`
+      const timerKey = `${gameType}:${variation}:${stake}`
       if (!this.timers.has(timerKey)) {
         const timer = setTimeout(async () => {
           this.timers.delete(timerKey)
-          await this.botFillRoom(gameType, stake, config)
+          await this.botFillRoom(gameType, stake, config, variation)
         }, config.bot_fill_delay_seconds * 1000)
         this.timers.set(timerKey, timer)
       }
     }
   }
 
-  async leaveQueue(gameType: string, stake: number, userId: string): Promise<void> {
-    const key = `matchmaking:${gameType}:${stake}`
+  async leaveQueue(gameType: string, stake: number, userId: string, variation = 'classic'): Promise<void> {
+    const key = this.queueKey(gameType, stake, variation)
     const members = await this.redis.zrange(key, 0, -1)
     for (const m of members) {
       if (JSON.parse(m).userId === userId) {
@@ -67,8 +81,8 @@ export class MatchmakingService {
     }
   }
 
-  private async tryCreateRoom(gameType: string, stake: number, config: any): Promise<void> {
-    const key = `matchmaking:${gameType}:${stake}`
+  private async tryCreateRoom(gameType: string, stake: number, config: any, variation = 'classic'): Promise<void> {
+    const key = this.queueKey(gameType, stake, variation)
 
     // Games with a fixed bot-fill table size (e.g. Teen Patti's 4) shouldn't
     // instant-start on the bare min_players threshold — that's how you end up
@@ -107,13 +121,13 @@ export class MatchmakingService {
 
     if (!members || members.length < noBotThreshold) return
 
-    console.log(`[matchmaking] tryCreateRoom: ${members.length} players ready for ${gameType}:${stake} — starting game`)
+    console.log(`[matchmaking] tryCreateRoom: ${members.length} players ready for ${gameType}:${variation}:${stake} — starting game`)
     const players: MatchmakingEntry[] = members.map(m => JSON.parse(m))
-    await this.startGame(gameType, stake, players, [])
+    await this.startGame(gameType, stake, players, [], variation)
   }
 
-  private async botFillRoom(gameType: string, stake: number, config: any): Promise<void> {
-    const key = `matchmaking:${gameType}:${stake}`
+  private async botFillRoom(gameType: string, stake: number, config: any, variation = 'classic'): Promise<void> {
+    const key = this.queueKey(gameType, stake, variation)
     
     // Atomically pop all waiting players from the queue
     const members = await this.redis.eval(
@@ -160,14 +174,14 @@ export class MatchmakingService {
       }
       // Retry bot fill after another delay
       const timer = setTimeout(async () => {
-        this.timers.delete(`${gameType}:${stake}`)
-        await this.botFillRoom(gameType, stake, config)
+        this.timers.delete(`${gameType}:${variation}:${stake}`)
+        await this.botFillRoom(gameType, stake, config, variation)
       }, (config.bot_fill_delay_seconds || 10) * 1000)
-      this.timers.set(`${gameType}:${stake}`, timer)
+      this.timers.set(`${gameType}:${variation}:${stake}`, timer)
       return
     }
 
-    await this.startGame(gameType, stake, realPlayers, bots)
+    await this.startGame(gameType, stake, realPlayers, bots, variation)
   }
 
   // Friends tables: start a game for an explicit player list, never bots.
@@ -229,10 +243,23 @@ export class MatchmakingService {
     return botRes.rows.map(b => ({ userId: b.id, username: b.username }))
   }
 
-  private async startGame(gameType: string, stake: number, realPlayers: MatchmakingEntry[], bots: MatchmakingEntry[]): Promise<void> {
+  private async startGame(gameType: string, stake: number, realPlayers: MatchmakingEntry[], bots: MatchmakingEntry[], variation = 'classic'): Promise<void> {
     const roomId = uuid()
     const allPlayers = [...realPlayers, ...bots]
     console.log(`[matchmaking] startGame room=${roomId} ${gameType}:${stake} real=${realPlayers.length} bots=${bots.length}`)
+
+    let botDifficulty = 'medium'
+    try {
+      const configRes = await this.db.query(
+        'SELECT bot_difficulty FROM game_configs WHERE game_type = $1',
+        [gameType]
+      )
+      if (configRes.rows.length > 0 && configRes.rows[0].bot_difficulty) {
+        botDifficulty = configRes.rows[0].bot_difficulty
+      }
+    } catch (configErr) {
+      console.error('[matchmaking] Failed to query bot_difficulty from game_configs', configErr)
+    }
 
     const client = await this.db.connect()
     const lockedUserIds: string[] = []
@@ -324,13 +351,15 @@ export class MatchmakingService {
       roomId,
       gameType,
       stake,
+      variation,
+      no_limit: variation === 'no_limit',
       players: gatewayPlayers,
       status: 'active',
       currentTurn: 0,
       pot: allPlayers.length * stake,
       round: 1,
       createdAt: Date.now(),
-      botDifficulty: 'medium',  // I3: default bot difficulty written into room state
+      botDifficulty: botDifficulty,  // I3: default bot difficulty written into room state
     }
 
     let engineState: any = null
@@ -345,6 +374,8 @@ export class MatchmakingService {
           body: JSON.stringify({
             room_id: roomId,
             stake,
+            bot_difficulty: botDifficulty,
+            no_limit: variation === 'no_limit',
             players: gatewayPlayers.map(p => ({ user_id: p.userId, username: p.username, seat: p.seat, is_bot: p.isBot, status: 'active', bet: 0, is_seen: false })),
           }),
           signal: AbortSignal.timeout(5000),

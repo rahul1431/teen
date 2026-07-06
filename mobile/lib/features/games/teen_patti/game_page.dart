@@ -26,7 +26,7 @@ import 'coin_rain.dart';
 //    7. Right emoji panel
 //    8. Reconnect banner (conditional)
 //    9. Bottom action bar: Pack / − / Chaal / + (SafeArea-padded)
-//   10. Chat / gift overlays (conditional)
+//   10. Chat / tip overlays (conditional)
 //   11. Result overlay (AnimatedSwitcher, no Positioned in ScaleTransition)
 //
 //  Anti-flicker: all mutable state flows through ValueNotifiers; only leaf
@@ -96,23 +96,18 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   StreamSubscription? _gameStateSub;
   StreamSubscription? _gameResultSub;
   StreamSubscription? _roomChatSub;
+  StreamSubscription? _roomTipSub;
   StreamSubscription? _sideshowPromptSub;
   StreamSubscription? _sideshowRevealSub;
   StreamSubscription? _sideshowResultSub;
   Timer? _sideshowPromptTimer;
-  bool _ready        = false;
-  bool _showGiftTray = false;
-  int  _reactionId   = 0;
+  bool _ready       = false;
+  bool _showTipTray = false;
+  int  _reactionId  = 0;
 
   List<String> _quickEmojis = ['😀', '😂', '😎', '😮', '😭', '🔥', '👏', '🤔'];
-  List<Map<String, dynamic>> _gifts = [
-    {'icon': '🌹', 'name': 'Rose', 'price': 5.0},
-    {'icon': '🎁', 'name': 'Gift', 'price': 10.0},
-    {'icon': '💎', 'name': 'Diamond', 'price': 50.0},
-    {'icon': '🍺', 'name': 'Beer', 'price': 15.0},
-    {'icon': '👑', 'name': 'Crown', 'price': 100.0},
-    {'icon': '🚀', 'name': 'Rocket', 'price': 25.0},
-  ];
+  // Dealer-tip presets; must match the gateway's TIP_AMOUNTS whitelist.
+  static const List<int> _tipAmounts = [5, 10, 20, 50];
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   @override
@@ -143,6 +138,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _gameStateSub?.cancel();
     _gameResultSub?.cancel();
     _roomChatSub?.cancel();
+    _roomTipSub?.cancel();
     _sideshowPromptSub?.cancel();
     _sideshowRevealSub?.cancel();
     _sideshowResultSub?.cancel();
@@ -235,14 +231,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
   Future<void> _loadConfig() async {
     try {
-      final res = await Future.wait([
-        _api.dio.get('/api/admin/config/emojis'),
-        _api.dio.get('/api/admin/config/gifts'),
-      ]);
-      final emojis = (res[0].data as List?)?.cast<String>();
-      final gifts  = (res[1].data as List?)?.cast<Map<String, dynamic>>();
+      final res = await _api.dio.get('/api/admin/config/emojis');
+      final emojis = (res.data as List?)?.cast<String>();
       if (emojis != null && emojis.isNotEmpty && mounted) setState(() => _quickEmojis = emojis);
-      if (gifts  != null && gifts.isNotEmpty  && mounted) setState(() => _gifts = gifts);
     } catch (_) { /* keep defaults on error */ }
   }
 
@@ -355,7 +346,21 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           text:     data['message']?.toString()  ?? '',
           type:     type);
       if (msg.userId != _myUserId && type != 'text') {
-        _spawnReaction(msg.userId, msg.text, isGift: type == 'gift');
+        _spawnReaction(msg.userId, msg.text);
+      }
+    });
+
+    // Dealer tips — server broadcasts after the wallet debit succeeds.
+    _roomTipSub = _socket.on('room:tip').listen((data) {
+      if (!mounted || data is! Map) return;
+      final userId = data['user_id']?.toString() ?? '';
+      final name   = data['username']?.toString() ?? 'Player';
+      final amount = (data['amount'] as num?)?.toInt() ?? 0;
+      _spawnReaction(userId, '💰 ₹$amount', isTip: true);
+      if (userId == _myUserId) {
+        _fetchBalance(); // reflect the debit with the server truth
+      } else {
+        AppSnackBar.show(context, '$name tipped the dealer ₹$amount');
       }
     });
 
@@ -657,17 +662,17 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     HapticFeedback.selectionClick();
   }
 
-  void _sendGift(String icon) {
-    _socket.emit(SocketEvents.roomChat,
-        {'room_id': widget.roomId, 'message': icon, 'type': 'gift'});
-    _spawnReaction(_myUserId ?? '', icon, isGift: true);
-    setState(() => _showGiftTray = false);
+  void _sendTip(int amount) {
+    // No optimistic reaction/balance change — the server broadcasts room:tip
+    // only after the wallet debit succeeds.
+    _socket.emit('room:tip', {'room_id': widget.roomId, 'amount': amount});
+    setState(() => _showTipTray = false);
     SoundService.instance.play(Sfx.chipBet);
     HapticFeedback.mediumImpact();
   }
 
-  void _spawnReaction(String userId, String emoji, {bool isGift = false}) {
-    final r = _Reaction(id: ++_reactionId, userId: userId, emoji: emoji, isGift: isGift);
+  void _spawnReaction(String userId, String emoji, {bool isTip = false}) {
+    final r = _Reaction(id: ++_reactionId, userId: userId, emoji: emoji, isTip: isTip);
     _reactionsNotifier.value = [..._reactionsNotifier.value, r];
     if (userId != _myUserId) SoundService.instance.play(Sfx.buttonTap, volume: 0.5);
     Timer(2600.ms, () {
@@ -821,8 +826,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                           ),
                     ),
 
-                    // ⑬ Gift tray
-                    if (_showGiftTray) _buildGiftTray(w, h),
+                    // ⑬ Tip tray
+                    if (_showTipTray) _buildTipTray(w, h),
 
 
                     // ⑮ Result overlay
@@ -1118,13 +1123,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                             fontWeight: FontWeight.bold)),
                   ),
                 ],
-                if (isBot) ...[
-                  SizedBox(height: (2 * _ls).clamp(1, 4)),
-                  Text('BOT',
-                      style: TextStyle(color: Colors.orange,
-                          fontSize: (7 * _ls).clamp(5.5, 9),
-                          fontWeight: FontWeight.bold)),
-                ],
               ],
             ),
           ),
@@ -1254,15 +1252,28 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                 blurRadius: 10, spreadRadius: 1),
           ],
         ),
-        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Text('🪙 ', style: TextStyle(fontSize: (13 * _ls).clamp(10, 18))),
-          Text('₹${gs?['pot'] ?? 0}',
-              style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold,
-                  fontSize: (14 * _ls).clamp(11, 18))),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Text('🪙 ', style: TextStyle(fontSize: (13 * _ls).clamp(10, 18))),
+            Text('₹${gs?['pot'] ?? 0}',
+                style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold,
+                    fontSize: (14 * _ls).clamp(11, 18))),
+          ]),
+          if (_potLimitOf(gs) > 0)
+            Text('Limit ₹${_fmtAmount(_potLimitOf(gs))}',
+                style: TextStyle(color: Colors.black87,
+                    fontSize: (8.5 * _ls).clamp(7, 11),
+                    fontWeight: FontWeight.w600)),
         ]),
       ),
     );
   }
+
+  double _potLimitOf(Map<String, dynamic>? gs) =>
+      ((gs?['pot_limit'] ?? gs?['potLimit']) as num?)?.toDouble() ?? 0;
+
+  String _fmtAmount(double v) =>
+      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2);
 
   // ⑦ My chips strip — anchored to bottom-left in landscape
   Widget _buildMyChips(Map<String, dynamic>? gs) {
@@ -1381,6 +1392,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
             _infoLine('Table ID', widget.roomId),
             _infoLine('Stake', '₹$stake'),
             _infoLine('Pot', '₹$pot'),
+            _infoLine('Pot Limit',
+                _potLimitOf(gs) > 0 ? '₹${_fmtAmount(_potLimitOf(gs))}' : 'No Limit'),
             _infoLine('Players', '${(gs?['players'] as List?)?.length ?? 0}'),
           ],
         ),
@@ -1402,7 +1415,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     ]),
   );
 
-  // ⑨ Right panel — gift button + scrollable emoji list
+  // ⑨ Right panel — tip button + scrollable emoji list
   Widget _buildRightPanel(double w, double h, double tt) {
     return Positioned(
       right: 0, top: 0, bottom: 0, width: _rightPanelW,
@@ -1414,10 +1427,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           ),
           child: Column(
             children: [
-              // Gift button — fixed at top
+              // Tip-the-dealer button — fixed at top
               const SizedBox(height: 8),
               GestureDetector(
-                onTap: () => setState(() { _showGiftTray = !_showGiftTray; }),
+                onTap: () => setState(() { _showTipTray = !_showTipTray; }),
                 child: Container(
                   width: 38, height: 38,
                   decoration: BoxDecoration(
@@ -1429,7 +1442,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     boxShadow: [BoxShadow(color: AppColors.gold.withOpacity(0.4),
                         blurRadius: 8, spreadRadius: 1)],
                   ),
-                  child: const Icon(Icons.card_giftcard, color: Colors.black, size: 20),
+                  child: const Icon(Icons.paid, color: Colors.black, size: 20),
                 ),
               ),
               const SizedBox(height: 6),
@@ -1471,7 +1484,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         key: ValueKey('rx_${r.id}'),
         left: tableW * 0.5 - 20 + (r.id % 5 - 2) * 18.0,
         top: h * 0.45,
-        child: _ReactionBubble(emoji: r.emoji, isGift: r.isGift),
+        child: _ReactionBubble(emoji: r.emoji, isTip: r.isTip),
       );
     }).toList());
   }
@@ -1649,9 +1662,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑬ Gift tray — scrollable so all gifts are reachable on any screen size
-  Widget _buildGiftTray(double w, double h) {
-    final maxH = (h * 0.70).clamp(180.0, 420.0);
+  // ⑬ Tip tray — preset amounts, debited server-side to the house
+  Widget _buildTipTray(double w, double h) {
     return Positioned(
       right: _rightPanelW + 8,
       top: h * 0.14,
@@ -1659,7 +1671,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         onTap: () {}, // absorb taps so table doesn't close tray
         child: Container(
           width: 200,
-          constraints: BoxConstraints(maxHeight: maxH),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
               color: Colors.black.withOpacity(0.92),
@@ -1670,49 +1681,36 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(children: [
-                const Text('Send a Gift',
+                const Text('Tip the Dealer',
                     style: TextStyle(
                         color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
                 const Spacer(),
                 GestureDetector(
-                  onTap: () => setState(() => _showGiftTray = false),
+                  onTap: () => setState(() => _showTipTray = false),
                   child: const Icon(Icons.close, color: Colors.white54, size: 18),
                 ),
               ]),
               const SizedBox(height: 8),
-              Flexible(
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  child: Wrap(
-                    spacing: 8, runSpacing: 8,
-                    children: _gifts.map((g) {
-                      final price = double.tryParse(g['price']?.toString() ?? '0') ?? 0;
-                      return GestureDetector(
-                        onTap: () {
-                          _sendGift(g['icon']?.toString() ?? '');
-                          setState(() => _showGiftTray = false);
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                              color: Colors.white10,
-                              borderRadius: BorderRadius.circular(10)),
-                          child: Column(children: [
-                            Text(g['icon']?.toString() ?? '',
-                                style: const TextStyle(fontSize: 22)),
-                            Text(g['name']?.toString() ?? '',
-                                style: const TextStyle(color: Colors.white70, fontSize: 9)),
-                            if (price > 0)
-                              Text('₹${price.toInt()}',
-                                  style: const TextStyle(
-                                      color: AppColors.gold, fontSize: 9,
-                                      fontWeight: FontWeight.bold)),
-                          ]),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ),
+              Wrap(
+                spacing: 8, runSpacing: 8,
+                children: _tipAmounts.map((amount) {
+                  return GestureDetector(
+                    onTap: () => _sendTip(amount),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                          color: Colors.white10,
+                          borderRadius: BorderRadius.circular(10)),
+                      child: Column(children: [
+                        const Text('💰', style: TextStyle(fontSize: 22)),
+                        Text('₹$amount',
+                            style: const TextStyle(
+                                color: AppColors.gold, fontSize: 11,
+                                fontWeight: FontWeight.bold)),
+                      ]),
+                    ),
+                  );
+                }).toList(),
               ),
             ],
           ),
@@ -1997,17 +1995,17 @@ class _ChatMsg {
 class _Reaction {
   final int    id;
   final String userId, emoji;
-  final bool   isGift;
+  final bool   isTip;
   _Reaction(
       {required this.id, required this.userId, required this.emoji,
-      this.isGift = false});
+      this.isTip = false});
 }
 
 // ── Reaction bubble ───────────────────────────────────────────────────────────
 class _ReactionBubble extends StatefulWidget {
   final String emoji;
-  final bool isGift;
-  const _ReactionBubble({required this.emoji, this.isGift = false});
+  final bool isTip;
+  const _ReactionBubble({required this.emoji, this.isTip = false});
   @override
   State<_ReactionBubble> createState() => _ReactionBubbleState();
 }
@@ -2028,7 +2026,7 @@ class _ReactionBubbleState extends State<_ReactionBubble>
         child: Opacity(
           opacity: (1 - t).clamp(0.0, 1.0),
           child: Transform.scale(
-            scale: widget.isGift ? 1.0 + t * 0.5 : 1.0,
+            scale: widget.isTip ? 1.0 + t * 0.5 : 1.0,
             child: Text(widget.emoji, style: const TextStyle(fontSize: 28)),
           ),
         ),
