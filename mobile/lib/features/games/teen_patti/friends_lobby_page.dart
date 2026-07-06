@@ -149,7 +149,7 @@ class _TeenPattiFriendsPageState extends State<TeenPattiFriendsPage> {
     Share.share(
       '🃏 Join my Teen Patti table on MyOnlineJoker!\n'
       'Table code: $_code · Boot ₹$stake\n'
-      'Tap to join: https://game.myonlinejoker.com/table/$_code',
+      'Tap to join: https://game.myonlinejoker.com/table/?code=$_code',
       subject: 'Teen Patti — join my table',
     );
   }
