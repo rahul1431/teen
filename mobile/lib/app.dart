@@ -110,8 +110,13 @@ final GoRouter _router = GoRouter(
     )),
     GoRoute(
       path: '/games/teen-patti/play/:roomId',
+      // Key by roomId: a friends-table rematch replaces this route with the
+      // SAME path but a new room — without distinct keys Flutter reuses the
+      // old page State and the new hand never initializes.
       pageBuilder: (context, state) => NoTransitionPage(
+        key: ValueKey('tp-play-${state.pathParameters['roomId']}'),
         child: TeenPattiGamePage(
+          key: ValueKey('tp-game-${state.pathParameters['roomId']}'),
           roomId: state.pathParameters['roomId']!,
           initialData: state.extra as Map<String, dynamic>?,
         ),

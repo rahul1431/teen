@@ -87,12 +87,23 @@ class _TeenPattiFriendsPageState extends State<TeenPattiFriendsPage> {
           SnackBar(content: Text(msg), backgroundColor: AppColors.red));
     });
 
+    // On a cold start (invite deep link) the socket is still connecting and
+    // emit() drops messages — wait for the connection before create/join.
+    await _waitForSocket();
+    if (!mounted) return;
+
     if (widget.mode == 'create') {
       _createTable();
     } else if (widget.code != null && widget.code!.length == 6) {
       // Invite deep link: code came with the URL — join straight away.
       _codeCtrl.text = widget.code!.toUpperCase();
       _joinTable();
+    }
+  }
+
+  Future<void> _waitForSocket() async {
+    for (var i = 0; i < 40 && !_socket.isConnected; i++) {
+      await Future.delayed(const Duration(milliseconds: 250));
     }
   }
 
@@ -111,12 +122,13 @@ class _TeenPattiFriendsPageState extends State<TeenPattiFriendsPage> {
     super.dispose();
   }
 
-  void _createTable() {
+  Future<void> _createTable() async {
     setState(() => _busy = true);
+    await _waitForSocket();
     _socket.emit('private:create', {'game_type': 'teen_patti', 'stake': widget.stake});
   }
 
-  void _joinTable() {
+  Future<void> _joinTable() async {
     final code = _codeCtrl.text.trim().toUpperCase();
     if (code.length != 6) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -125,6 +137,7 @@ class _TeenPattiFriendsPageState extends State<TeenPattiFriendsPage> {
       return;
     }
     setState(() => _busy = true);
+    await _waitForSocket();
     _socket.emit('private:join', {'code': code});
   }
 
