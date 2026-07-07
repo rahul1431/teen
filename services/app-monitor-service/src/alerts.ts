@@ -76,13 +76,18 @@ export class AlertEngine {
       return
     }
 
+    // NO --update-env, and a minimal env for the pm2 CLI: otherwise the
+    // restarted service inherits THIS process's environment (PORT=3015 etc.)
+    // and crash-loops on a port conflict — dotenv won't override vars that
+    // are already set.
     const cmd = mode === 'start'
       ? `cd /opt/teen && pm2 start ecosystem.config.js --only ${name} && pm2 save`
-      : `pm2 restart ${name} --update-env`
+      : `pm2 restart ${name}`
+    const cleanEnv = { PATH: process.env.PATH!, HOME: process.env.HOME || '/root', PM2_HOME: process.env.PM2_HOME || '/root/.pm2' }
     let ok = false
     let error = ''
     try {
-      execSync(cmd, { timeout: 60000 })
+      execSync(cmd, { timeout: 60000, env: cleanEnv })
       await new Promise(r => setTimeout(r, 8000))
       const after: any[] = JSON.parse(execSync('pm2 jlist 2>/dev/null', { timeout: 5000 }).toString())
       ok = after.some(p => p.name === name && p.pm2_env?.status === 'online')
