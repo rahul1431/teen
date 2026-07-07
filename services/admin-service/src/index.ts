@@ -2114,6 +2114,29 @@ async function start() {
     return reply.send(res.rows.map((r: any) => r.emoji))
   })
 
+  // ── Game Watchdog (idle-game reaper) ─────────────────────────────────────
+
+  // GET /api/admin/watchdog/events — recent reaps + aggregate stats
+  app.get('/api/admin/watchdog/events', { onRequest: [authenticate] }, async (_req, reply) => {
+    const [events, stats, active] = await Promise.all([
+      db.query(
+        `SELECT id, room_id, game_type, action, refunds, total_refunded, created_at
+         FROM watchdog_events ORDER BY created_at DESC LIMIT 100`
+      ),
+      db.query(
+        `SELECT count(*)::int AS total_reaped,
+                COALESCE(sum(total_refunded), 0) AS total_refunded,
+                count(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS reaped_24h,
+                COALESCE(sum(total_refunded) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours'), 0) AS refunded_24h
+         FROM watchdog_events`
+      ),
+      db.query(
+        `SELECT count(*)::int AS active_rooms FROM game_rooms WHERE status IN ('waiting','active')`
+      ),
+    ])
+    return reply.send({ events: events.rows, stats: { ...stats.rows[0], ...active.rows[0] } })
+  })
+
   // ── Daily Login Bonus Config ──────────────────────────────────────────────────
 
   // GET /api/admin/bonus/login-config — fetch current day schedule

@@ -44,8 +44,11 @@ export class GameWatchdog {
 
   private async reap(roomId: string, gameType: string): Promise<void> {
     console.log(`[watchdog] reaping idle room=${roomId} (${gameType})`)
+    const refunds: Array<{ user_id: string; username: string; is_bot: boolean; amount: number }> = []
     const parts = await this.db.query(
-      'SELECT user_id, entry_fee_deducted FROM game_participants WHERE room_id = $1',
+      `SELECT gp.user_id, gp.entry_fee_deducted, gp.is_bot, u.username
+       FROM game_participants gp JOIN users u ON u.id = gp.user_id
+       WHERE gp.room_id = $1`,
       [roomId]
     )
     for (const p of parts.rows) {
@@ -69,6 +72,7 @@ export class GameWatchdog {
           continue
         }
         console.log(`[watchdog] refunded ₹${fee} to user=${p.user_id} room=${roomId}`)
+        refunds.push({ user_id: p.user_id, username: p.username, is_bot: p.is_bot, amount: fee })
       } catch (err) {
         console.error(`[watchdog] unlock error user=${p.user_id} room=${roomId}`, err)
         continue
@@ -77,5 +81,17 @@ export class GameWatchdog {
     await this.db.query("UPDATE game_rooms SET status = 'cancelled' WHERE id = $1", [roomId])
     await this.redis.del(`game:room:${roomId}`, `game:lastaction:${roomId}`, `private:room:${roomId}`)
     this.hub.sendToRoom(roomId, 'error', { message: 'Game cancelled due to inactivity — entry fee refunded' })
+
+    // Event log — surfaced in the admin panel's AI Control Center.
+    try {
+      const total = refunds.reduce((s, r) => s + r.amount, 0)
+      await this.db.query(
+        `INSERT INTO watchdog_events (room_id, game_type, action, refunds, total_refunded)
+         VALUES ($1, $2, 'reaped', $3, $4)`,
+        [roomId, gameType, JSON.stringify(refunds), total]
+      )
+    } catch (err) {
+      console.error('[watchdog] failed to log event', err)
+    }
   }
 }

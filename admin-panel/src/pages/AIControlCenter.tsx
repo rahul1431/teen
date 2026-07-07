@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Tabs, Card, Alert, Button, Space, Tag, Divider } from 'antd'
-import { RobotOutlined, SettingOutlined, DashboardOutlined, SyncOutlined, AlertOutlined, AimOutlined } from '@ant-design/icons'
+import { RobotOutlined, SettingOutlined, DashboardOutlined, SyncOutlined, AlertOutlined, AimOutlined, SafetyOutlined } from '@ant-design/icons'
 import { AIPromptConsole } from '../components/AI/AIPromptConsole'
 import { MLConfigPanel } from '../components/AI/MLConfigPanel'
 import { WorkflowDashboard } from '../components/AI/WorkflowDashboard'
 import { ChurnTab } from '../components/AI/ChurnTab'
+import { WatchdogTab } from '../components/AI/WatchdogTab'
 import PlayerTracking from './PlayerTracking'
 
 export function AIControlCenter() {
@@ -73,6 +74,17 @@ export function AIControlCenter() {
       ),
       children: <PlayerTracking />,
       extra: <Tag color="gold">Live Players</Tag>,
+    },
+    {
+      key: '6',
+      label: (
+        <span>
+          <SafetyOutlined />
+          Game Watchdog
+        </span>
+      ),
+      children: <WatchdogTab />,
+      extra: <Tag color="purple">Self-Healing</Tag>,
     },
   ]
 
