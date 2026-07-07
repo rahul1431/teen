@@ -102,6 +102,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   StreamSubscription? _privateClosedSub;
   Timer? _rematchTimer;
   final _rematchSecsNotifier = ValueNotifier<int>(-1); // -1 = hidden
+  final _tipBannerNotifier = ValueNotifier<String?>(null);
+  Timer? _tipBannerTimer;
 
   // Friends tables: the invite code rides in on room:joined so the result
   // overlay can offer "Same Table" and the server can auto-start the rematch.
@@ -152,6 +154,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _privateClosedSub?.cancel();
     _rematchTimer?.cancel();
     _rematchSecsNotifier.dispose();
+    _tipBannerTimer?.cancel();
+    _tipBannerNotifier.dispose();
     _sideshowPromptSub?.cancel();
     _sideshowRevealSub?.cancel();
     _sideshowResultSub?.cancel();
@@ -384,17 +388,23 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       });
     }
 
-    // Dealer tips — server broadcasts after the wallet debit succeeds.
+    // Dealer tips — server broadcasts after the wallet debit succeeds, so
+    // everyone seated at the table sees the same golden banner + coin.
     _roomTipSub = _socket.on('room:tip').listen((data) {
       if (!mounted || data is! Map) return;
       final userId = data['user_id']?.toString() ?? '';
       final name   = data['username']?.toString() ?? 'Player';
       final amount = (data['amount'] as num?)?.toInt() ?? 0;
       _spawnReaction(userId, '💰 ₹$amount', isTip: true);
+      final who = userId == _myUserId ? 'You' : name;
+      _tipBannerNotifier.value = '💰 $who tipped the dealer ₹$amount';
+      _tipBannerTimer?.cancel();
+      _tipBannerTimer = Timer(2600.ms, () {
+        if (mounted) _tipBannerNotifier.value = null;
+      });
+      SoundService.instance.play(Sfx.chipBet);
       if (userId == _myUserId) {
         _fetchBalance(); // reflect the debit with the server truth
-      } else {
-        AppSnackBar.show(context, '$name tipped the dealer ₹$amount');
       }
     });
 
@@ -850,6 +860,47 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                       valueListenable: _reactionsNotifier,
                       builder: (_, reactions, __) =>
                           _buildReactions(reactions, w, h),
+                    ),
+
+                    // ⑩b Table-wide tip banner (everyone at the table sees it)
+                    ValueListenableBuilder<String?>(
+                      valueListenable: _tipBannerNotifier,
+                      builder: (_, banner, __) => banner == null
+                          ? const SizedBox.shrink()
+                          : Positioned(
+                              top: h * 0.30,
+                              left: 0,
+                              right: _rightPanelW,
+                              child: Center(
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 18, vertical: 9),
+                                  decoration: BoxDecoration(
+                                    gradient: const LinearGradient(colors: [
+                                      Color(0xFFFFE082), Color(0xFFD4AF37),
+                                    ]),
+                                    borderRadius: BorderRadius.circular(24),
+                                    boxShadow: [
+                                      BoxShadow(
+                                          color: AppColors.gold.withOpacity(0.55),
+                                          blurRadius: 18, spreadRadius: 2),
+                                    ],
+                                  ),
+                                  child: Text(banner,
+                                      style: const TextStyle(
+                                          color: Colors.black,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 14)),
+                                )
+                                    .animate()
+                                    .scale(
+                                        begin: const Offset(0.4, 0.4),
+                                        curve: Curves.elasticOut,
+                                        duration: 600.ms)
+                                    .then(delay: 1600.ms)
+                                    .fadeOut(duration: 400.ms),
+                              ),
+                            ),
                     ),
 
                     // ⑪ Reconnect banner

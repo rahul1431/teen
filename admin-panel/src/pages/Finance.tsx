@@ -26,10 +26,57 @@ export default function Finance() {
           { key: 'deposits', label: 'Deposits', children: <Deposits /> },
           { key: 'bank_details', label: '🏦 Bank Details', children: <BankDetailsAdmin /> },
           { key: 'methods', label: 'Payment Methods', children: <PaymentMethods /> },
+          { key: 'tips', label: '💰 Dealer Tips', children: <DealerTips /> },
           { key: 'ledger', label: 'Ledger', children: <Ledger /> },
           { key: 'reconciliation', label: 'Reconciliation', children: <Reconciliation /> },
         ]}
       />
+    </div>
+  )
+}
+
+// ---- Dealer Tips (Teen Patti tip-the-dealer revenue) ----
+function DealerTips() {
+  const [stats, setStats] = useState<any>(null)
+  const [tips, setTips] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const res = await adminApi.get('/finance/tips')
+      setStats(res.data.stats)
+      setTips(res.data.tips)
+    } catch { message.error('Failed to load tips') }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [])
+
+  return (
+    <div>
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Col span={6}><Card size="small"><Statistic title="Tips Today (₹)" value={parseFloat(stats?.today_amount ?? 0)} precision={2} /></Card></Col>
+        <Col span={6}><Card size="small"><Statistic title="Tips Today (count)" value={stats?.today_count ?? 0} /></Card></Col>
+        <Col span={6}><Card size="small"><Statistic title="Last 7 Days (₹)" value={parseFloat(stats?.week_amount ?? 0)} precision={2} /></Card></Col>
+        <Col span={6}><Card size="small"><Statistic title="All Time (₹)" value={parseFloat(stats?.total_amount ?? 0)} precision={2} suffix={`· ${stats?.total_count ?? 0} tips`} /></Card></Col>
+      </Row>
+      <Card size="small" title="Recent Tips"
+        extra={<Button size="small" onClick={load} loading={loading}>Refresh</Button>}>
+        <Table
+          dataSource={tips}
+          rowKey="id"
+          size="small"
+          loading={loading}
+          pagination={{ pageSize: 15 }}
+          columns={[
+            { title: 'Time', dataIndex: 'created_at', width: 180, render: (v: string) => new Date(v).toLocaleString() },
+            { title: 'Player', dataIndex: 'username', render: (u: string) => <Tag color="green">{u}</Tag> },
+            { title: 'Amount (₹)', dataIndex: 'amount', width: 120, render: (a: any) => <b style={{ color: '#d4af37' }}>₹{parseFloat(a).toFixed(2)}</b> },
+            { title: 'Room', dataIndex: 'room_id', render: (r: string) => r ? <code>{r.slice(0, 8)}</code> : '—' },
+          ]}
+          locale={{ emptyText: 'No tips received yet' }}
+        />
+      </Card>
     </div>
   )
 }

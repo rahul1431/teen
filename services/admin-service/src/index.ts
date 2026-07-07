@@ -2114,6 +2114,30 @@ async function start() {
     return reply.send(res.rows.map((r: any) => r.emoji))
   })
 
+  // ── Dealer tips (Teen Patti room:tip debits) ─────────────────────────────
+
+  // GET /api/admin/finance/tips — totals + recent tip list
+  app.get('/api/admin/finance/tips', { onRequest: [authenticate] }, async (_req, reply) => {
+    const [stats, recent] = await Promise.all([
+      db.query(
+        `SELECT COALESCE(sum(amount), 0)                                            AS total_amount,
+                count(*)::int                                                        AS total_count,
+                COALESCE(sum(amount) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS today_amount,
+                count(*)  FILTER (WHERE created_at::date = CURRENT_DATE)::int        AS today_count,
+                COALESCE(sum(amount) FILTER (WHERE created_at > NOW() - INTERVAL '7 days'), 0) AS week_amount
+         FROM wallet_transactions
+         WHERE type = 'tip_dealer' AND status = 'completed'`
+      ),
+      db.query(
+        `SELECT wt.id, u.username, wt.amount, wt.reference_id AS room_id, wt.created_at
+         FROM wallet_transactions wt JOIN users u ON u.id = wt.user_id
+         WHERE wt.type = 'tip_dealer' AND wt.status = 'completed'
+         ORDER BY wt.created_at DESC LIMIT 100`
+      ),
+    ])
+    return reply.send({ stats: stats.rows[0], tips: recent.rows })
+  })
+
   // ── Game Watchdog (idle-game reaper) ─────────────────────────────────────
 
   // GET /api/admin/watchdog/events — recent reaps + aggregate stats
