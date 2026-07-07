@@ -44,6 +44,22 @@ export class AlertEngine {
       list = JSON.parse(execSync('pm2 jlist 2>/dev/null', { timeout: 5000 }).toString())
     } catch { return /* pm2 unavailable (dev) */ }
     const names = new Set(list.map((p: any) => p.name))
+    // Auto-resolve: a service that is online again acknowledges its own
+    // open service alerts, so the panel banner clears without manual clicks.
+    const online = list.filter((p: any) => p.pm2_env?.status === 'online').map((p: any) => p.name)
+    if (online.length) {
+      try {
+        await this.db.query(
+          `UPDATE monitor_alerts SET acknowledged = TRUE
+           WHERE acknowledged = FALSE
+             AND kind IN ('service_down', 'remediation_failed', 'remediation_exhausted')
+             AND details->>'process' = ANY($1)`,
+          [online]
+        )
+      } catch (err) {
+        this.logger.error({ err }, 'alert auto-resolve failed')
+      }
+    }
     // Critical process missing from pm2 entirely (e.g. dropped by a restart
     // from a stale ecosystem config — this is how tp-engine vanished).
     for (const name of CRITICAL_PROCESSES) {
