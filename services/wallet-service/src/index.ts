@@ -58,7 +58,7 @@ async function tryTriggerReferralReward(userId: string, db: Pool, walletSvc: any
         userId: referral.referrer_id,
         amount: parseFloat(referral.reward_amount),
         type: 'referral',
-        walletType: 'real',
+        walletType: 'bonus', // promotional money is never withdrawable
         referenceId: referral.id,
         idempotencyKey: ikey,
         description: 'Referral bonus — friend made first deposit',
@@ -580,16 +580,23 @@ async function start() {
       type: z.enum(['game_credit', 'bonus', 'referral', 'manual_credit']),
       reference_id: z.string().optional(),
       idempotency_key: z.string(),
+      description: z.string().optional(),
     }).parse(req.body)
+
+    // Promotional credits (daily bonus, promo codes, referrals) always land in
+    // the bonus wallet — bonus money is never withdrawable. Game winnings and
+    // manual admin credits go to the real (withdrawable) wallet.
+    const walletType = body.type === 'bonus' || body.type === 'referral' ? 'bonus' : 'real'
 
     await walletSvc.credit({
       userId: body.user_id,
       amount: body.amount,
       type: body.type,
-      walletType: 'real',
+      walletType,
       referenceId: body.reference_id,
       idempotencyKey: body.idempotency_key,
-      description: body.type === 'manual_credit' ? `Manual credit: ${body.reference_id || ''}` : `Game prize: ${body.reference_id}`,
+      description: body.description
+        || (body.type === 'manual_credit' ? `Manual credit: ${body.reference_id || ''}` : `Game prize: ${body.reference_id}`),
     })
     return reply.send({ success: true })
   })

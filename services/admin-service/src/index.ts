@@ -820,6 +820,23 @@ async function start() {
           description: `Manual deposit reconciliation${reference ? ` (ref: ${reference})` : ''}`,
         }),
       })
+      // Credit the promo-code bonus recorded at submit time (non-withdrawable
+      // bonus wallet). Idempotency key is tied to the order so retries are safe.
+      const promoBonus = parseFloat(meta.promo_bonus || '0')
+      if (promoBonus > 0) {
+        await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+          body: JSON.stringify({
+            user_id: row.rows[0].user_id,
+            amount: promoBonus,
+            type: 'bonus',
+            reference_id: id,
+            idempotency_key: `promo_bonus:${id}`,
+            description: `Promo code ${meta.promo_code || ''} bonus`,
+          }),
+        }).catch((err: any) => console.error('[deposit-approve] promo bonus credit failed:', err))
+      }
     } else {
       await db.query(`UPDATE payment_orders SET status='failed', metadata=$1, updated_at=NOW() WHERE id=$2`,
         [JSON.stringify(meta), id])

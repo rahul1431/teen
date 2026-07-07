@@ -170,10 +170,38 @@ class _WalletPageState extends State<WalletPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Available Balance', style: TextStyle(color: AppColors.textSecondary)),
-                  Text('₹$_realBalance', style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: AppColors.gold)),
-                  const SizedBox(height: 8),
-                  Text('Bonus: ₹$_bonusBalance', style: const TextStyle(color: AppColors.orange)),
+                  const Text('Total Balance', style: TextStyle(color: AppColors.textSecondary)),
+                  Text(
+                    '₹${((double.tryParse(_realBalance) ?? 0) + (double.tryParse(_bonusBalance) ?? 0)).toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: AppColors.gold),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Withdrawable', style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+                            const SizedBox(height: 2),
+                            Text('₹$_realBalance',
+                                style: const TextStyle(color: AppColors.green, fontWeight: FontWeight.w700, fontSize: 15)),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Bonus · not withdrawable', style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+                            const SizedBox(height: 2),
+                            Text('₹$_bonusBalance',
+                                style: const TextStyle(color: AppColors.orange, fontWeight: FontWeight.w700, fontSize: 15)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),

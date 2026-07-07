@@ -152,7 +152,7 @@ export function usersPlugin(db: Pool) {
         await fetch(`${walletUrl}/internal/wallet/credit`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY || '' },
-          body: JSON.stringify({ user_id: user.sub, amount: bonusAmount, type: 'bonus', wallet_type: dayConfig.bonus_type === 'bonus' ? 'bonus' : 'real', idempotency_key: `daily_login:${user.sub}:${todayDate}`, description: `Daily login bonus — Day ${dayNumber}` }),
+          body: JSON.stringify({ user_id: user.sub, amount: bonusAmount, type: 'bonus', wallet_type: 'bonus', idempotency_key: `daily_login:${user.sub}:${todayDate}`, description: `Daily login bonus — Day ${dayNumber}` }),
         }).catch(err => console.error('[daily-bonus] wallet credit failed:', err))
         return reply.send({ success: true, bonus_amount: bonusAmount, bonus_type: dayConfig.bonus_type, day_number: dayNumber, new_streak: newStreak, label: dayConfig.label, emoji: dayConfig.emoji })
       } catch (err) {
