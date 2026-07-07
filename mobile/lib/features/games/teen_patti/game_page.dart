@@ -110,9 +110,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   StreamSubscription? _sideshowRevealSub;
   StreamSubscription? _sideshowResultSub;
   Timer? _sideshowPromptTimer;
-  bool _ready       = false;
-  bool _showTipTray = false;
-  int  _reactionId  = 0;
+  bool _ready         = false;
+  bool _showEmojiTray = false;
+  int  _reactionId    = 0;
 
   List<String> _quickEmojis = ['😀', '😂', '😎', '😮', '😭', '🔥', '👏', '🤔'];
   // Dealer-tip presets; must match the gateway's TIP_AMOUNTS whitelist.
@@ -700,7 +700,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     // No optimistic reaction/balance change — the server broadcasts room:tip
     // only after the wallet debit succeeds.
     _socket.emit('room:tip', {'room_id': widget.roomId, 'amount': amount});
-    setState(() => _showTipTray = false);
     SoundService.instance.play(Sfx.chipBet);
     HapticFeedback.mediumImpact();
   }
@@ -879,8 +878,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                           ),
                     ),
 
-                    // ⑬ Tip tray
-                    if (_showTipTray) _buildTipTray(w, h),
+                    // ⑬ Emoji tray
+                    if (_showEmojiTray) _buildEmojiTray(w, h),
 
 
                     // ⑮ Result overlay
@@ -1468,7 +1467,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     ]),
   );
 
-  // ⑨ Right panel — tip button + scrollable emoji list
+  // ⑨ Right panel — emoji button (opens tray) + scrollable tip list
   Widget _buildRightPanel(double w, double h, double tt) {
     return Positioned(
       right: 0, top: 0, bottom: 0, width: _rightPanelW,
@@ -1480,10 +1479,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           ),
           child: Column(
             children: [
-              // Tip-the-dealer button — fixed at top
+              // Emoji button — fixed at top, opens the emoji tray
               const SizedBox(height: 8),
               GestureDetector(
-                onTap: () => setState(() { _showTipTray = !_showTipTray; }),
+                onTap: () => setState(() { _showEmojiTray = !_showEmojiTray; }),
                 child: Container(
                   width: 38, height: 38,
                   decoration: BoxDecoration(
@@ -1495,25 +1494,31 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     boxShadow: [BoxShadow(color: AppColors.gold.withOpacity(0.4),
                         blurRadius: 8, spreadRadius: 1)],
                   ),
-                  child: const Icon(Icons.paid, color: Colors.black, size: 20),
+                  child: const Icon(Icons.emoji_emotions, color: Colors.black, size: 20),
                 ),
               ),
               const SizedBox(height: 6),
               Container(height: 1, color: Colors.white10,
                   margin: const EdgeInsets.symmetric(horizontal: 8)),
               const SizedBox(height: 4),
-              // Scrollable emoji list — shows all emojis, user can scroll
+              // Scrollable dealer-tip list — tap an amount to tip
               Expanded(
                 child: ScrollConfiguration(
                   behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
                   child: SingleChildScrollView(
                     physics: const BouncingScrollPhysics(),
                     child: Column(
-                      children: _quickEmojis.map((e) => GestureDetector(
-                        onTap: () => _sendEmoji(e),
+                      children: _tipAmounts.map((amount) => GestureDetector(
+                        onTap: () => _sendTip(amount),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 5),
-                          child: Text(e, style: const TextStyle(fontSize: 24)),
+                          child: Column(children: [
+                            const Text('💰', style: TextStyle(fontSize: 20)),
+                            Text('₹$amount',
+                                style: const TextStyle(
+                                    color: AppColors.gold, fontSize: 10,
+                                    fontWeight: FontWeight.bold)),
+                          ]),
                         ),
                       )).toList(),
                     ),
@@ -1715,8 +1720,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑬ Tip tray — preset amounts, debited server-side to the house
-  Widget _buildTipTray(double w, double h) {
+  // ⑬ Emoji tray — full emoji grid (quick list lives in the right panel now)
+  Widget _buildEmojiTray(double w, double h) {
     return Positioned(
       right: _rightPanelW + 8,
       top: h * 0.14,
@@ -1724,6 +1729,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         onTap: () {}, // absorb taps so table doesn't close tray
         child: Container(
           width: 200,
+          constraints: BoxConstraints(maxHeight: (h * 0.70).clamp(160.0, 420.0)),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
               color: Colors.black.withOpacity(0.92),
@@ -1734,36 +1740,32 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(children: [
-                const Text('Tip the Dealer',
+                const Text('Send an Emoji',
                     style: TextStyle(
                         color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
                 const Spacer(),
                 GestureDetector(
-                  onTap: () => setState(() => _showTipTray = false),
+                  onTap: () => setState(() => _showEmojiTray = false),
                   child: const Icon(Icons.close, color: Colors.white54, size: 18),
                 ),
               ]),
               const SizedBox(height: 8),
-              Wrap(
-                spacing: 8, runSpacing: 8,
-                children: _tipAmounts.map((amount) {
-                  return GestureDetector(
-                    onTap: () => _sendTip(amount),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      decoration: BoxDecoration(
-                          color: Colors.white10,
-                          borderRadius: BorderRadius.circular(10)),
-                      child: Column(children: [
-                        const Text('💰', style: TextStyle(fontSize: 22)),
-                        Text('₹$amount',
-                            style: const TextStyle(
-                                color: AppColors.gold, fontSize: 11,
-                                fontWeight: FontWeight.bold)),
-                      ]),
-                    ),
-                  );
-                }).toList(),
+              Flexible(
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Wrap(
+                    spacing: 10, runSpacing: 10,
+                    children: _quickEmojis.map((e) {
+                      return GestureDetector(
+                        onTap: () {
+                          _sendEmoji(e);
+                          setState(() => _showEmojiTray = false);
+                        },
+                        child: Text(e, style: const TextStyle(fontSize: 26)),
+                      );
+                    }).toList(),
+                  ),
+                ),
               ),
             ],
           ),
