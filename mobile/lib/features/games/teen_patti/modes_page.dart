@@ -91,6 +91,20 @@ class _TeenPattiModesPageState extends State<TeenPattiModesPage> {
                 onTap: () => context.push('/games/teen-patti/lobby?variation=no_limit'),
               ),
               _modeCard(
+                title: 'Muflis',
+                subtitle: 'Lowest hand wins',
+                icon: Icons.swap_vert_rounded,
+                gradient: AppColors.teenPattiGrad,
+                onTap: () => context.push('/games/teen-patti/lobby?variation=muflis'),
+              ),
+              _modeCard(
+                title: 'Joker',
+                subtitle: 'Random wild rank each hand',
+                icon: Icons.theater_comedy_rounded,
+                gradient: AppColors.premiumGrad,
+                onTap: () => context.push('/games/teen-patti/lobby?variation=joker'),
+              ),
+              _modeCard(
                 title: 'Practice',
                 subtitle: 'Play vs bots · free',
                 icon: Icons.smart_toy_rounded,

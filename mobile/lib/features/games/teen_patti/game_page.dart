@@ -841,6 +841,11 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                       valueListenable: _gsNotifier,
                       builder: (_, gs, __) => _buildPotChip(gs, w, tt, tw, th),
                     ),
+                    // ⑥b Variant chip — Muflis / Joker / AK47 rules reminder
+                    ValueListenableBuilder<Map<String, dynamic>?>(
+                      valueListenable: _gsNotifier,
+                      builder: (_, gs, __) => _buildVariantChip(gs, tt, tw),
+                    ),
                     // ⑦ Wallet balance + Blind/Seen pills — above action bar
                     ValueListenableBuilder<bool>(
                       valueListenable: _myTurnNotifier,
@@ -1368,6 +1373,50 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     fontSize: (8.5 * _ls).clamp(7, 11),
                     fontWeight: FontWeight.w600)),
         ]),
+      ),
+    );
+  }
+
+  /// Small pill under the top bar reminding players of the table's special
+  /// rules: Muflis (lowest wins), Joker (this hand's wild rank), AK47.
+  Widget _buildVariantChip(Map<String, dynamic>? gs, double tt, double tw) {
+    final variation = gs?['variation']?.toString() ?? '';
+    String? label;
+    switch (variation) {
+      case 'muflis':
+        label = '🔻 MUFLIS · Lowest hand wins';
+        break;
+      case 'joker':
+        final jv = gs?['joker_value']?.toString();
+        label = jv == null || jv.isEmpty
+            ? '🃏 JOKER · Wild card table'
+            : '🃏 JOKER · All ${jv}s are wild';
+        break;
+      case 'ak47':
+        label = '✨ AK47 · A · K · 4 · 7 are wild';
+        break;
+    }
+    if (label == null) return const SizedBox.shrink();
+    return Positioned(
+      left: 0,
+      width: tw,
+      top: tt + (8 * _ls).clamp(6, 12),
+      child: Center(
+        child: Container(
+          padding: EdgeInsets.symmetric(
+              horizontal: (10 * _ls).clamp(8, 14),
+              vertical: (4 * _ls).clamp(3, 6)),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.55),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.gold.withOpacity(0.5)),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  color: AppColors.gold,
+                  fontWeight: FontWeight.w700,
+                  fontSize: (10 * _ls).clamp(8.5, 13))),
+        ),
       ),
     );
   }

@@ -110,7 +110,7 @@ func TestDDASCardSwapping(t *testing.T) {
 	}
 
 	if len(botIndices) > 0 && hasHuman {
-		bestIdx := findBestHandIndex(players)
+		bestIdx := findBestHandIndex(players, "classic", 0)
 		if bestIdx != -1 && !players[bestIdx].IsBot {
 			// Best hand is held by human. Swap cards with the first bot.
 			targetBotIdx := botIndices[0]
@@ -139,6 +139,72 @@ func TestDDASCardSwapping(t *testing.T) {
 			}
 			cardMap[cardKey] = true
 		}
+	}
+}
+
+func TestMuflisInvertsRanking(t *testing.T) {
+	trail := []Card{
+		{Value: "A", Suit: Spades, Rank: 14},
+		{Value: "A", Suit: Hearts, Rank: 14},
+		{Value: "A", Suit: Clubs, Rank: 14},
+	}
+	low := []Card{
+		{Value: "2", Suit: Spades, Rank: 2},
+		{Value: "3", Suit: Hearts, Rank: 3},
+		{Value: "5", Suit: Clubs, Rank: 5},
+	}
+	trailHand := evaluateHandVariant("muflis", 0, trail)
+	lowHand := evaluateHandVariant("muflis", 0, low)
+	if compareHandsVariant("muflis", lowHand, trailHand) <= 0 {
+		t.Errorf("muflis: expected 2-3-5 to beat trail of Aces")
+	}
+	// determineWinner end-to-end: the low hand must win the pot
+	state := &GameState{
+		Variation: "muflis",
+		Players: []Player{
+			{UserID: "p1", Status: "active", Cards: trail},
+			{UserID: "p2", Status: "active", Cards: low},
+		},
+		CurrentTurn: 0,
+		Pot:         100,
+	}
+	srv := &Server{}
+	if res := srv.determineWinner(state); res.WinnerID != "p2" {
+		t.Errorf("muflis: expected p2 (worst classic hand) to win, got %s", res.WinnerID)
+	}
+}
+
+func TestJokerWildSubstitution(t *testing.T) {
+	// Jokers this hand: 9s. A pair of Kings + a 9 must evaluate as Trail of Kings.
+	cards := []Card{
+		{Value: "K", Suit: Spades, Rank: 13},
+		{Value: "K", Suit: Hearts, Rank: 13},
+		{Value: "9", Suit: Clubs, Rank: 9},
+	}
+	hand := evaluateHandVariant("joker", 9, cards)
+	if hand.Rank != Trail {
+		t.Errorf("joker: expected K-K-9 (9s wild) to be Trail, got rank %d", hand.Rank)
+	}
+	// Without the wild it stays a pair
+	plain := evaluateHandVariant("joker", 5, cards)
+	if plain.Rank != Pair {
+		t.Errorf("joker: expected K-K-9 (5s wild) to be Pair, got rank %d", plain.Rank)
+	}
+}
+
+func TestAK47WildSubstitution(t *testing.T) {
+	// A, K, 4, 7 are wild in AK47: Q-Q-4 must evaluate as Trail of Queens.
+	cards := []Card{
+		{Value: "Q", Suit: Spades, Rank: 12},
+		{Value: "Q", Suit: Hearts, Rank: 12},
+		{Value: "4", Suit: Clubs, Rank: 4},
+	}
+	if hand := evaluateHandVariant("ak47", 0, cards); hand.Rank != Trail {
+		t.Errorf("ak47: expected Q-Q-4 to be Trail, got rank %d", hand.Rank)
+	}
+	// Classic evaluation of the same cards stays a pair
+	if hand := evaluateHandVariant("classic", 0, cards); hand.Rank != Pair {
+		t.Errorf("classic: expected Q-Q-4 to be Pair, got rank %d", hand.Rank)
 	}
 }
 

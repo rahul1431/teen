@@ -29,6 +29,8 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
     switch (widget.variation) {
       case 'ak47':     return 'AK47';
       case 'no_limit': return 'No Limit';
+      case 'muflis':   return 'Muflis';
+      case 'joker':    return 'Joker';
       default:         return 'Classic';
     }
   }

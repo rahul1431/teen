@@ -59,6 +59,12 @@ type GameState struct {
 	DealerID      string   `json:"dealer_id"`
 	CreatedAt     int64    `json:"created_at"`
 	BotDifficulty string   `json:"bot_difficulty,omitempty"`
+	// Variation: classic (default) / ak47 / no_limit / muflis / joker.
+	Variation string `json:"variation,omitempty"`
+	// Joker mode only: the rank (2..14) wild for this hand, and its display
+	// value ("2".."A") so clients can announce it on the table.
+	JokerRank  int    `json:"joker_rank,omitempty"`
+	JokerValue string `json:"joker_value,omitempty"`
 	// Set while a sideshow request awaits the target's accept/reject. The
 	// requester's turn is frozen until it resolves (or the requester folds).
 	PendingSideshow *SideshowState `json:"pending_sideshow,omitempty"`
@@ -178,15 +184,85 @@ func compareHands(a, b HandResult) int {
 	return 0
 }
 
-func findBestHandIndex(players []Player) int {
+// wildRanks returns the card ranks that act as jokers under a variation:
+// AK47 fixes them to A/K/4/7; Joker mode uses the rank drawn at deal time.
+func wildRanks(variation string, jokerRank int) map[int]bool {
+	switch variation {
+	case "ak47":
+		return map[int]bool{14: true, 13: true, 4: true, 7: true}
+	case "joker":
+		if jokerRank > 0 {
+			return map[int]bool{jokerRank: true}
+		}
+	}
+	return nil
+}
+
+// compareHandsVariant orders two evaluated hands under a variation.
+// Muflis (lowball) inverts the classic ranking: the worst classic hand wins.
+func compareHandsVariant(variation string, a, b HandResult) int {
+	c := compareHands(a, b)
+	if variation == "muflis" {
+		return -c
+	}
+	return c
+}
+
+// evaluateHandVariant evaluates a hand honoring the variation's wild cards:
+// each joker is brute-forced over all 52 substitutions and the strongest
+// resulting hand (under the variation's ordering) is kept. With no wilds it
+// falls through to the classic evaluator.
+func evaluateHandVariant(variation string, jokerRank int, cards []Card) HandResult {
+	wilds := wildRanks(variation, jokerRank)
+	if len(wilds) == 0 {
+		return evaluateHand(cards)
+	}
+	wildIdx := []int{}
+	for i, c := range cards {
+		if wilds[c.Rank] {
+			wildIdx = append(wildIdx, i)
+		}
+	}
+	if len(wildIdx) == 0 {
+		return evaluateHand(cards)
+	}
+	work := make([]Card, len(cards))
+	copy(work, cards)
+	var best HandResult
+	haveBest := false
+	var trySubstitutions func(k int)
+	trySubstitutions = func(k int) {
+		if k == len(wildIdx) {
+			h := evaluateHand(work)
+			if !haveBest || compareHandsVariant(variation, h, best) > 0 {
+				best = h
+				haveBest = true
+			}
+			return
+		}
+		i := wildIdx[k]
+		orig := work[i]
+		for _, suit := range []string{Spades, Hearts, Diamonds, Clubs} {
+			for _, val := range values {
+				work[i] = Card{Value: val, Suit: suit, Rank: rankCard(val)}
+				trySubstitutions(k + 1)
+			}
+		}
+		work[i] = orig
+	}
+	trySubstitutions(0)
+	return best
+}
+
+func findBestHandIndex(players []Player, variation string, jokerRank int) int {
 	bestIdx := -1
 	var bestHand HandResult
 	for i := range players {
 		if players[i].Status == "folded" {
 			continue
 		}
-		hand := evaluateHand(players[i].Cards)
-		if bestIdx == -1 || compareHands(hand, bestHand) > 0 {
+		hand := evaluateHandVariant(variation, jokerRank, players[i].Cards)
+		if bestIdx == -1 || compareHandsVariant(variation, hand, bestHand) > 0 {
 			bestIdx = i
 			bestHand = hand
 		}
@@ -204,7 +280,8 @@ type StartGameReq struct {
 	Players       []Player `json:"players"`
 	Stake         float64  `json:"stake"`
 	BotDifficulty string   `json:"bot_difficulty"`
-	NoLimit       bool     `json:"no_limit"` // no-limit tables have no pot cap
+	NoLimit       bool     `json:"no_limit"`  // no-limit tables have no pot cap
+	Variation     string   `json:"variation"` // classic / ak47 / no_limit / muflis / joker
 }
 
 type ActionReq struct {
@@ -236,6 +313,23 @@ func (s *Server) startGame(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
+	}
+
+	variation := req.Variation
+	if variation == "" {
+		variation = "classic"
+	}
+	jokerRank := 0
+	jokerValue := ""
+	if variation == "joker" {
+		// Draw this hand's wild rank (2..14 → "2".."A")
+		nBig, err := cryptoRand.Int(cryptoRand.Reader, big.NewInt(13))
+		if err == nil {
+			jokerRank = int(nBig.Int64()) + 2
+		} else {
+			jokerRank = 7
+		}
+		jokerValue = values[jokerRank-2]
 	}
 
 	deck := newDeck()
@@ -299,7 +393,7 @@ func (s *Server) startGame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(botIndices) > 0 && hasHuman {
-		bestIdx := findBestHandIndex(players)
+		bestIdx := findBestHandIndex(players, variation, jokerRank)
 		if bestIdx != -1 && !players[bestIdx].IsBot {
 			// Best hand is currently held by a human. Roll to see if we swap it to a bot.
 			nBig, err := cryptoRand.Int(cryptoRand.Reader, big.NewInt(10000))
@@ -337,6 +431,9 @@ func (s *Server) startGame(w http.ResponseWriter, r *http.Request) {
 		DealerID:      players[0].UserID,
 		CreatedAt:     time.Now().Unix(),
 		BotDifficulty: botDifficulty,
+		Variation:     variation,
+		JokerRank:     jokerRank,
+		JokerValue:    jokerValue,
 	}
 
 	stateJSON, _ := json.Marshal(state)
@@ -659,16 +756,16 @@ func (s *Server) determineWinner(state *GameState) *GameResult {
 		if p.Status == "folded" {
 			continue
 		}
-		hand := evaluateHand(p.Cards)
+		hand := evaluateHandVariant(state.Variation, state.JokerRank, p.Cards)
 		allHands = append(allHands, map[string]interface{}{
 			"user_id":   p.UserID,
 			"hand_rank": handRankName(hand.Rank),
 			"cards":     p.Cards,
 		})
-		if bestPlayer == nil || compareHands(hand, bestHand) > 0 {
+		if bestPlayer == nil || compareHandsVariant(state.Variation, hand, bestHand) > 0 {
 			bestPlayer = p
 			bestHand = hand
-		} else if compareHands(hand, bestHand) == 0 {
+		} else if compareHandsVariant(state.Variation, hand, bestHand) == 0 {
 			// Tiebreaker:
 			// 1. Blind player wins over Seen player
 			// 2. If both blind or both seen, the player who did NOT request the show wins (defender wins)

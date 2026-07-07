@@ -384,6 +384,7 @@ export class MatchmakingService {
             stake,
             bot_difficulty: botDifficulty,
             no_limit: variation === 'no_limit',
+            variation,
             players: gatewayPlayers.map(p => ({ user_id: p.userId, username: p.username, seat: p.seat, is_bot: p.isBot, status: 'active', bet: 0, is_seen: false })),
           }),
           signal: AbortSignal.timeout(5000),
@@ -474,6 +475,9 @@ export class MatchmakingService {
         current_turn: gameState.current_turn ?? gameState.CurrentTurn ?? 0,
         dealer_id: engineState?.dealer_id ?? engineState?.DealerID,
         min_bet: engineState?.min_bet ?? stake,
+        variation,
+        joker_rank: engineState?.joker_rank,
+        joker_value: engineState?.joker_value,
         // Friends tables: lets the client offer "Same Table" after the hand.
         private_code: privateCode,
       })
