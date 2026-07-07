@@ -4,8 +4,8 @@ import {
   DashboardOutlined, UserOutlined, PlayCircleOutlined, DollarOutlined,
   BellOutlined, LogoutOutlined, TrophyOutlined, SafetyOutlined,
   TeamOutlined, ProfileOutlined, WarningOutlined, CustomerServiceOutlined,
-  FundOutlined, RobotOutlined, HistoryOutlined, MonitorOutlined, GiftOutlined,
-  PictureOutlined, TagOutlined, AuditOutlined, MobileOutlined, AimOutlined,
+  FundOutlined, RobotOutlined, HistoryOutlined, GiftOutlined,
+  PictureOutlined, TagOutlined, AuditOutlined, MobileOutlined,
   MenuOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
@@ -43,9 +43,8 @@ const menuItems = [
   { key: '/admin/support', icon: <CustomerServiceOutlined />, label: 'Support & CMS' },
   { key: '/admin/leaderboard', icon: <TrophyOutlined />, label: 'Leaderboard' },
   { key: '/admin/security', icon: <SafetyOutlined />, label: 'Security' },
+  // App Monitor and Player Tracking live inside the AI Control Center tabs.
   { key: '/admin/changelog', icon: <HistoryOutlined />, label: 'Changelog' },
-  { key: '/admin/app-monitor', icon: <MonitorOutlined />, label: 'App Monitor' },
-  { key: '/admin/player-tracking', icon: <AimOutlined />, label: 'Player Tracking' },
 ]
 
 export default function AdminLayout() {
