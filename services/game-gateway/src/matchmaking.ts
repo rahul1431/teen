@@ -3,6 +3,7 @@ import { Pool } from 'pg'
 import { v4 as uuid } from 'uuid'
 import crypto from 'crypto'
 import { RealtimeHub } from './realtime'
+import { GameWatchdog } from './watchdog'
 import { getBotProfile, pickBotAction, pickBotDelay } from './bot-profile'
 import { monitorEmitter } from './monitor-emitter'
 
@@ -251,6 +252,7 @@ export class MatchmakingService {
 
   private async startGame(gameType: string, stake: number, realPlayers: MatchmakingEntry[], bots: MatchmakingEntry[], variation = 'classic', privateCode?: string): Promise<string | null> {
     const roomId = uuid()
+    void GameWatchdog.touch(this.redis, roomId) // liveness for the idle-game reaper
     const allPlayers = [...realPlayers, ...bots]
     console.log(`[matchmaking] startGame room=${roomId} ${gameType}:${stake} real=${realPlayers.length} bots=${bots.length}`)
 
@@ -516,6 +518,7 @@ export class MatchmakingService {
 
     const timer = setTimeout(async () => {
       this.botTimers.delete(roomId)
+      void GameWatchdog.touch(this.redis, roomId) // liveness for the idle-game reaper
       const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
 
       // Hoist action/amount so the catch block can use them in the retry (I5)
@@ -643,6 +646,7 @@ export class MatchmakingService {
   async driveLudoBots(roomId: string): Promise<void> {
     const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
     for (let guard = 0; guard < 400; guard++) {
+      void GameWatchdog.touch(this.redis, roomId) // liveness for the idle-game reaper
       const state = await this.getRoomState(roomId)
       if (!state || state.status === 'completed') return
       const turnIdx = state.current_turn ?? state.currentTurn ?? 0

@@ -8,6 +8,7 @@ import { Pool } from 'pg'
 import Redis from 'ioredis'
 import crypto from 'crypto'
 import { MatchmakingService } from './matchmaking'
+import { GameWatchdog } from './watchdog'
 import { RealtimeHub, Conn } from './realtime'
 import { monitorEmitter } from './monitor-emitter'
 
@@ -52,6 +53,7 @@ async function start() {
 
   const matchmaking = new MatchmakingService(redis, db, hub)
   monitorEmitter.start()
+  new GameWatchdog(db, redis, hub).start()
 
   // Raw WebSocket transport (replaces socket.io). Path /ws; token via the
   // ?token= query param or the Authorization header.
@@ -150,6 +152,7 @@ async function start() {
       }
 
       case 'game:action': {
+        void GameWatchdog.touch(redis, data.room_id) // liveness for the idle-game reaper
         const rawState = await matchmaking.getRoomState(data.room_id)
         if (rawState && (rawState.gameType === 'ludo' || rawState.game_type === 'ludo')) {
           return handleLudoAction(conn, data.room_id, data)
