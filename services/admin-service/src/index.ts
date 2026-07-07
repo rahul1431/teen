@@ -435,7 +435,7 @@ async function start() {
     // Push notification to user
     if (status === 'approved' || status === 'rejected') {
       const kycNotif = status === 'approved'
-        ? { title: 'KYC Approved âœ…', body: 'Your KYC verification has been approved. You can now make withdrawals.', type: 'kyc_approved' }
+        ? { title: 'KYC Approved ✅', body: 'Your KYC verification has been approved. You can now make withdrawals.', type: 'kyc_approved' }
         : { title: 'KYC Rejected âŒ', body: `Your KYC was rejected.${reason ? ` Reason: ${reason}` : ''} Please re-submit your documents.`, type: 'kyc_rejected' }
       fetch(`${NOTIFICATION_URL}/internal/notifications/send`, {
         method: 'POST',
@@ -848,8 +848,8 @@ async function start() {
     // Push notification to user
     const dAmt = parseFloat(row.rows[0].amount)
     const dNotif = action === 'mark_paid_and_credit'
-      ? { title: 'Deposit Approved âœ…', body: `Your deposit of â‚¹${dAmt.toFixed(2)} has been credited to your wallet.`, type: 'deposit_approved' }
-      : { title: 'Deposit Failed âŒ', body: `Your deposit of â‚¹${dAmt.toFixed(2)} could not be processed.${reason ? ` Reason: ${reason}` : ''}`, type: 'deposit_failed' }
+      ? { title: 'Deposit Approved ✅', body: `Your deposit of ₹${dAmt.toFixed(2)} has been credited to your wallet.`, type: 'deposit_approved' }
+      : { title: 'Deposit Failed ❌', body: `Your deposit of ₹${dAmt.toFixed(2)} could not be processed.${reason ? ` Reason: ${reason}` : ''}`, type: 'deposit_failed' }
     fetch(`${NOTIFICATION_URL}/internal/notifications/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },

@@ -80,7 +80,12 @@ class SoundService {
     try {
       for (final p in _pool) {
         await p.setReleaseMode(ReleaseMode.stop);
-        await p.setPlayerMode(PlayerMode.lowLatency);
+        // NOTE: deliberately NOT PlayerMode.lowLatency — on Android that maps
+        // to SoundPool, which plays silently when the sample hasn't finished
+        // loading (and every stop()+play() here reloads the asset). The
+        // default MediaPlayer mode trades a few ms of latency for actually
+        // audible effects.
+        await p.setPlayerMode(PlayerMode.mediaPlayer);
       }
       await _ambience.setReleaseMode(ReleaseMode.loop);
     } catch (e) {

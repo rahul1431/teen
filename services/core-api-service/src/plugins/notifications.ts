@@ -45,6 +45,12 @@ export function notificationsPlugin(db: Pool) {
       return reply.send({ success: true })
     })
 
+    app.delete('/notifications/all', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      await db.query('DELETE FROM notifications WHERE user_id = $1', [user.sub])
+      return reply.send({ success: true })
+    })
+
     app.put('/notifications/read/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
       const user = req.user as any
       const { id } = req.params as any

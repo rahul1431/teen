@@ -55,6 +55,34 @@ class _NotificationsPageState extends State<NotificationsPage> {
     } catch (_) {}
   }
 
+  Future<void> _clearAll() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Clear all notifications?'),
+        content: const Text('This will permanently delete all your notifications.',
+            style: TextStyle(color: AppColors.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Clear All', style: TextStyle(color: AppColors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ApiClient().dio.delete('/api/notifications/all');
+      if (mounted) setState(() => _notifications = []);
+      NotificationService.instance.refresh();
+    } catch (_) {}
+  }
+
   void _openDetail(Map<String, dynamic> n, int i) {
     if (n['read'] != true) _markRead(n['id'] as String, i);
     final type = n['type'] as String? ?? '';
@@ -154,6 +182,12 @@ class _NotificationsPageState extends State<NotificationsPage> {
             TextButton(
               onPressed: _markAllRead,
               child: const Text('Mark all read', style: TextStyle(color: AppColors.gold, fontSize: 13)),
+            ),
+          if (_notifications.isNotEmpty)
+            IconButton(
+              onPressed: _clearAll,
+              tooltip: 'Clear all',
+              icon: const Icon(Icons.delete_sweep_rounded, color: AppColors.textSecondary, size: 22),
             ),
         ],
       ),
