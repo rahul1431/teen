@@ -28,6 +28,15 @@ interface ErrorGroup {
   last_seen: string
 }
 
+interface MonitorAlert {
+  id: string
+  kind: string
+  severity: 'warning' | 'critical'
+  message: string
+  acknowledged: boolean
+  created_at: string
+}
+
 interface ApiEndpoint {
   endpoint: string
   method: string
@@ -139,13 +148,14 @@ export function AppMonitorTab() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [serverHealth, setServerHealth] = useState<ServerHealth | null>(null)
   const [uptime, setUptime] = useState<any>(null)
+  const [alerts, setAlerts] = useState<MonitorAlert[]>([])
   const [loading, setLoading] = useState(true)
   const [errorHours, setErrorHours] = useState(24)
   const [apiHours, setApiHours] = useState(1)
 
   const load = useCallback(async () => {
     try {
-      const [statsRes, errorsRes, apiRes, funnelRes, sessionsRes, serverRes, uptimeRes] = await Promise.allSettled([
+      const [statsRes, errorsRes, apiRes, funnelRes, sessionsRes, serverRes, uptimeRes, alertsRes] = await Promise.allSettled([
         adminApi.get('/monitor/stats'),
         adminApi.get('/monitor/errors', { params: { hours: errorHours, limit: 50 } }),
         adminApi.get('/monitor/api-health', { params: { hours: apiHours } }),
@@ -153,6 +163,7 @@ export function AppMonitorTab() {
         adminApi.get('/monitor/sessions', { params: { limit: 10, offset: 0 } }),
         adminApi.get('/monitor/server-health'),
         adminApi.get('/monitor/uptime'),
+        adminApi.get('/monitor/alerts', { params: { limit: 30 } }),
       ])
       if (statsRes.status === 'fulfilled') setStats(statsRes.value.data?.data ?? null)
       if (errorsRes.status === 'fulfilled') setErrors(errorsRes.value.data?.data ?? [])
@@ -161,10 +172,18 @@ export function AppMonitorTab() {
       if (sessionsRes.status === 'fulfilled') setSessions(sessionsRes.value.data?.data ?? [])
       if (serverRes.status === 'fulfilled') setServerHealth(serverRes.value.data?.data ?? null)
       if (uptimeRes.status === 'fulfilled') setUptime(uptimeRes.value.data?.data ?? null)
+      if (alertsRes.status === 'fulfilled') setAlerts(alertsRes.value.data?.data ?? [])
     } finally {
       setLoading(false)
     }
   }, [errorHours, apiHours])
+
+  const ackAlert = async (id: string) => {
+    try {
+      await adminApi.post(`/monitor/alerts/${id}/ack`)
+      setAlerts(a => a.map(al => al.id === id ? { ...al, acknowledged: true } : al))
+    } catch { /* transient — next refresh corrects */ }
+  }
 
   useEffect(() => {
     load()
@@ -184,8 +203,32 @@ export function AppMonitorTab() {
     return 'green'
   }
 
+  const openAlerts = alerts.filter(a => !a.acknowledged)
+
   return (
     <Spin spinning={loading && !stats}>
+      {/* ── Alerts (raised by the app-monitor alert engine, 2-min sweeps) ── */}
+      {openAlerts.length > 0 && (
+        <Card
+          size="small"
+          title={<span style={{ fontWeight: 'bold' }}>🚨 Active Alerts ({openAlerts.length})</span>}
+          style={{ marginBottom: 24, borderLeft: '4px solid #ff4d4f' }}
+        >
+          {openAlerts.map(a => (
+            <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0' }}>
+              <div>
+                <Tag color={a.severity === 'critical' ? 'red' : 'orange'}>{a.severity.toUpperCase()}</Tag>
+                <Text strong>{a.message}</Text>
+                <Text type="secondary" style={{ marginLeft: 8, fontSize: 11 }}>
+                  {new Date(a.created_at).toLocaleString()}
+                </Text>
+              </div>
+              <a onClick={() => ackAlert(a.id)} style={{ fontSize: 12 }}>Acknowledge</a>
+            </div>
+          ))}
+        </Card>
+      )}
+
       {/* ── Live Client-to-Server Connectivity Status ── */}
       {uptime && (
         <Card

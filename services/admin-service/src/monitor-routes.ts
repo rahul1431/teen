@@ -144,4 +144,17 @@ export async function registerMonitorRoutes(
       try { const res = await axios.get(`${MONITOR_URL}/api/monitor/engagement`, { params: req.query }); return reply.send(res.data) }
       catch (err: any) { return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'App monitor service unavailable' }) }
     })
+
+  // Alerts raised by the app-monitor alert engine
+  app.get<{ Querystring: { limit?: string } }>('/api/admin/monitor/alerts',
+    { onRequest: [authenticate] }, async (req, reply) => {
+      try { const res = await axios.get(`${MONITOR_URL}/api/monitor/alerts`, { params: req.query }); return reply.send(res.data) }
+      catch (err: any) { return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'App monitor service unavailable' }) }
+    })
+
+  app.post<{ Params: { id: string } }>('/api/admin/monitor/alerts/:id/ack',
+    { onRequest: [authenticate] }, async (req, reply) => {
+      try { const res = await axios.post(`${MONITOR_URL}/api/monitor/alerts/${encodeURIComponent(req.params.id)}/ack`); return reply.send(res.data) }
+      catch (err: any) { return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'App monitor service unavailable' }) }
+    })
 }

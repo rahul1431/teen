@@ -7,6 +7,7 @@ import pino from 'pino'
 import os from 'os'
 import { execSync } from 'child_process'
 import { MonitorIngestor } from './monitor-ingestor'
+import { AlertEngine } from './alerts'
 import { parseClientIp, GeoLookup } from './geo'
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' })
@@ -19,6 +20,32 @@ const app = Fastify({ logger: false })
 
 const ingestor = new MonitorIngestor(pool, redis, logger)
 const geoLookup = new GeoLookup(process.env.GEOLITE2_CITY_PATH)
+new AlertEngine(pool, redis, ingestor, logger).start()
+
+// ── Alerts (raised by AlertEngine, shown in the admin AI Control Center) ──
+app.get<{ Querystring: { limit?: string } }>('/api/monitor/alerts', async (req, reply) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '50'), 200)
+    const res = await pool.query(
+      `SELECT id, kind, severity, message, details, acknowledged, created_at
+       FROM monitor_alerts ORDER BY created_at DESC LIMIT $1`, [limit]
+    )
+    return reply.send({ success: true, data: res.rows })
+  } catch (err: any) {
+    logger.error({ err }, 'alerts list')
+    return reply.code(500).send({ success: false, error: 'Failed to fetch alerts' })
+  }
+})
+
+app.post<{ Params: { id: string } }>('/api/monitor/alerts/:id/ack', async (req, reply) => {
+  try {
+    await pool.query('UPDATE monitor_alerts SET acknowledged = TRUE WHERE id = $1', [req.params.id])
+    return reply.send({ success: true })
+  } catch (err: any) {
+    logger.error({ err }, 'alert ack')
+    return reply.code(500).send({ success: false, error: 'Failed to acknowledge' })
+  }
+})
 
 app.get('/health', async (_req, reply) => {
   try {
