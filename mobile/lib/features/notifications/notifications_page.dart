@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/network/api_client.dart';
+import '../../core/services/notification_service.dart';
 import '../../shared/theme/app_theme.dart';
 
 class NotificationsPage extends StatefulWidget {
@@ -22,6 +23,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     try {
       final res = await ApiClient().dio.get('/api/notifications/me');
       if (mounted) setState(() { _notifications = res.data as List; _loading = false; });
+      NotificationService.instance.refresh();
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -35,15 +37,86 @@ class _NotificationsPageState extends State<NotificationsPage> {
           _notifications[index] = {...Map<String, dynamic>.from(_notifications[index]), 'read': true};
         });
       }
+      NotificationService.instance.refresh();
     } catch (_) {}
   }
 
   Future<void> _markAllRead() async {
-    for (int i = 0; i < _notifications.length; i++) {
-      if (_notifications[i]['read'] == false) {
-        await _markRead(_notifications[i]['id'] as String, i);
+    try {
+      await ApiClient().dio.put('/api/notifications/read-all');
+      if (mounted) {
+        setState(() {
+          _notifications = _notifications
+              .map((n) => {...Map<String, dynamic>.from(n), 'read': true})
+              .toList();
+        });
       }
-    }
+      NotificationService.instance.refresh();
+    } catch (_) {}
+  }
+
+  void _openDetail(Map<String, dynamic> n, int i) {
+    if (n['read'] != true) _markRead(n['id'] as String, i);
+    final type = n['type'] as String? ?? '';
+    final color = _iconColor(type);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.45,
+        maxChildSize: 0.85,
+        builder: (_, scrollCtrl) => SingleChildScrollView(
+          controller: scrollCtrl,
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36, height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Container(
+                    width: 44, height: 44,
+                    decoration: BoxDecoration(shape: BoxShape.circle, color: color.withOpacity(0.15)),
+                    child: Icon(_icon(type), color: color, size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      n['title'] as String? ?? '',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                timeAgo(n['created_at'] as String? ?? ''),
+                style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                n['body'] as String? ?? '',
+                style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, height: 1.5),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   IconData _icon(String type) {
@@ -115,7 +188,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     final type = n['type'] as String? ?? '';
     final color = _iconColor(type);
     return InkWell(
-      onTap: isRead ? null : () => _markRead(n['id'] as String, i),
+      onTap: () => _openDetail(n, i),
       child: Container(
         color: isRead ? Colors.transparent : AppColors.gold.withOpacity(0.05),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -149,6 +222,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
                   ),
                   const SizedBox(height: 3),
                   Text(n['body'] as String? ?? '',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
                   const SizedBox(height: 4),
                   Text(

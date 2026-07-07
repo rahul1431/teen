@@ -10,7 +10,6 @@ import 'features/auth/pages/register_page.dart';
 import 'features/auth/pages/otp_page.dart';
 import 'features/auth/pages/forgot_password_page.dart';
 import 'features/auth/pages/reset_password_page.dart';
-import 'features/auth/pages/offline_demo_page.dart';
 import 'features/home/home_page.dart';
 import 'features/wallet/wallet_page.dart';
 import 'features/games/teen_patti/modes_page.dart';
@@ -61,7 +60,6 @@ final GoRouter _router = GoRouter(
   routes: [
     GoRoute(path: '/splash', builder: (_, __) => const SplashPage()),
     GoRoute(path: '/auth/login', builder: (_, __) => const LoginPage()),
-    GoRoute(path: '/auth/offline-demo', builder: (_, __) => const OfflineDemoPage()),
     GoRoute(path: '/auth/register', builder: (_, state) => RegisterPage(phone: state.uri.queryParameters['phone'] ?? '', otp: state.uri.queryParameters['otp'] ?? '')),
     GoRoute(path: '/auth/otp', builder: (_, state) => OtpPage(phone: state.uri.queryParameters['phone'] ?? '')),
     GoRoute(path: '/auth/forgot-password', builder: (_, __) => const ForgotPasswordPage()),

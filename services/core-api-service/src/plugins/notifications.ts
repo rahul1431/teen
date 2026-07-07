@@ -33,6 +33,18 @@ export function notificationsPlugin(db: Pool) {
       return reply.send(res.rows)
     })
 
+    app.get('/notifications/unread-count', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      const res = await db.query('SELECT COUNT(*)::int AS count FROM notifications WHERE user_id = $1 AND read = false', [user.sub])
+      return reply.send({ count: res.rows[0].count })
+    })
+
+    app.put('/notifications/read-all', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      await db.query('UPDATE notifications SET read = true, read_at = NOW() WHERE user_id = $1 AND read = false', [user.sub])
+      return reply.send({ success: true })
+    })
+
     app.put('/notifications/read/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
       const user = req.user as any
       const { id } = req.params as any

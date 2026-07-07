@@ -220,30 +220,6 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 32),
-                Row(children: [
-                  const Expanded(child: Divider(color: AppColors.border)),
-                  const Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('OR', style: TextStyle(color: AppColors.textSecondary, fontSize: 12))),
-                  const Expanded(child: Divider(color: AppColors.border)),
-                ]),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => context.push('/auth/offline-demo'),
-                    icon: const Icon(Icons.videogame_asset_outlined, color: AppColors.gold, size: 20),
-                    label: const Text('Play Offline Practice Games', style: TextStyle(color: AppColors.gold)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: AppColors.border),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Center(
-                  child: Text('No login or internet needed · Play vs local Bots',
-                    style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
-                ),
               ],
             ),
           ),
