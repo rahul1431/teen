@@ -152,6 +152,12 @@ export async function registerMonitorRoutes(
       catch (err: any) { return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'App monitor service unavailable' }) }
     })
 
+  app.get<{ Querystring: { limit?: string } }>('/api/admin/monitor/remediations',
+    { onRequest: [authenticate] }, async (req, reply) => {
+      try { const res = await axios.get(`${MONITOR_URL}/api/monitor/remediations`, { params: req.query }); return reply.send(res.data) }
+      catch (err: any) { return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'App monitor service unavailable' }) }
+    })
+
   app.post<{ Params: { id: string } }>('/api/admin/monitor/alerts/:id/ack',
     { onRequest: [authenticate] }, async (req, reply) => {
       try { const res = await axios.post(`${MONITOR_URL}/api/monitor/alerts/${encodeURIComponent(req.params.id)}/ack`); return reply.send(res.data) }

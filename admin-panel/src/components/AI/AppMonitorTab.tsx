@@ -37,6 +37,15 @@ interface MonitorAlert {
   created_at: string
 }
 
+interface Remediation {
+  id: string
+  target: string
+  action: string
+  result: 'fixed' | 'failed'
+  details: { strikes?: number; error?: string }
+  created_at: string
+}
+
 interface ApiEndpoint {
   endpoint: string
   method: string
@@ -149,13 +158,14 @@ export function AppMonitorTab() {
   const [serverHealth, setServerHealth] = useState<ServerHealth | null>(null)
   const [uptime, setUptime] = useState<any>(null)
   const [alerts, setAlerts] = useState<MonitorAlert[]>([])
+  const [remediations, setRemediations] = useState<Remediation[]>([])
   const [loading, setLoading] = useState(true)
   const [errorHours, setErrorHours] = useState(24)
   const [apiHours, setApiHours] = useState(1)
 
   const load = useCallback(async () => {
     try {
-      const [statsRes, errorsRes, apiRes, funnelRes, sessionsRes, serverRes, uptimeRes, alertsRes] = await Promise.allSettled([
+      const [statsRes, errorsRes, apiRes, funnelRes, sessionsRes, serverRes, uptimeRes, alertsRes, remediationsRes] = await Promise.allSettled([
         adminApi.get('/monitor/stats'),
         adminApi.get('/monitor/errors', { params: { hours: errorHours, limit: 50 } }),
         adminApi.get('/monitor/api-health', { params: { hours: apiHours } }),
@@ -164,6 +174,7 @@ export function AppMonitorTab() {
         adminApi.get('/monitor/server-health'),
         adminApi.get('/monitor/uptime'),
         adminApi.get('/monitor/alerts', { params: { limit: 30 } }),
+        adminApi.get('/monitor/remediations', { params: { limit: 30 } }),
       ])
       if (statsRes.status === 'fulfilled') setStats(statsRes.value.data?.data ?? null)
       if (errorsRes.status === 'fulfilled') setErrors(errorsRes.value.data?.data ?? [])
@@ -173,6 +184,7 @@ export function AppMonitorTab() {
       if (serverRes.status === 'fulfilled') setServerHealth(serverRes.value.data?.data ?? null)
       if (uptimeRes.status === 'fulfilled') setUptime(uptimeRes.value.data?.data ?? null)
       if (alertsRes.status === 'fulfilled') setAlerts(alertsRes.value.data?.data ?? [])
+      if (remediationsRes.status === 'fulfilled') setRemediations(remediationsRes.value.data?.data ?? [])
     } finally {
       setLoading(false)
     }
@@ -226,6 +238,38 @@ export function AppMonitorTab() {
               <a onClick={() => ackAlert(a.id)} style={{ fontSize: 12 }}>Acknowledge</a>
             </div>
           ))}
+        </Card>
+      )}
+
+      {/* ── Auto-Fix History (Level-1 self-healing remediator) ── */}
+      {remediations.length > 0 && (
+        <Card
+          size="small"
+          title={<span style={{ fontWeight: 'bold' }}>🔧 Auto-Fix History</span>}
+          style={{ marginBottom: 24, borderLeft: '4px solid #722ed1' }}
+        >
+          <Table
+            dataSource={remediations}
+            rowKey="id"
+            size="small"
+            pagination={{ pageSize: 5 }}
+            columns={[
+              { title: 'Time', dataIndex: 'created_at', width: 170,
+                render: (v: string) => new Date(v).toLocaleString() },
+              { title: 'Service', dataIndex: 'target', width: 160,
+                render: (t: string) => <Text code>{t}</Text> },
+              { title: 'Action', dataIndex: 'action', width: 90,
+                render: (a: string) => <Tag color="blue">{a.toUpperCase()}</Tag> },
+              { title: 'Result', dataIndex: 'result', width: 90,
+                render: (r: string) => <Tag color={r === 'fixed' ? 'green' : 'red'}>{r.toUpperCase()}</Tag> },
+              { title: 'Details', dataIndex: 'details',
+                render: (d: Remediation['details']) => (
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    attempt {d?.strikes ?? 1}/3{d?.error ? ` — ${d.error.slice(0, 80)}` : ''}
+                  </Text>
+                ) },
+            ]}
+          />
         </Card>
       )}
 

@@ -37,6 +37,20 @@ app.get<{ Querystring: { limit?: string } }>('/api/monitor/alerts', async (req, 
   }
 })
 
+app.get<{ Querystring: { limit?: string } }>('/api/monitor/remediations', async (req, reply) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '50'), 200)
+    const res = await pool.query(
+      `SELECT id, target, action, result, details, created_at
+       FROM remediation_actions ORDER BY created_at DESC LIMIT $1`, [limit]
+    )
+    return reply.send({ success: true, data: res.rows })
+  } catch (err: any) {
+    logger.error({ err }, 'remediations list')
+    return reply.code(500).send({ success: false, error: 'Failed to fetch remediations' })
+  }
+})
+
 app.post<{ Params: { id: string } }>('/api/monitor/alerts/:id/ack', async (req, reply) => {
   try {
     await pool.query('UPDATE monitor_alerts SET acknowledged = TRUE WHERE id = $1', [req.params.id])

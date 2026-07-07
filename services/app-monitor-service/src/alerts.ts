@@ -43,16 +43,72 @@ export class AlertEngine {
     try {
       list = JSON.parse(execSync('pm2 jlist 2>/dev/null', { timeout: 5000 }).toString())
     } catch { return /* pm2 unavailable (dev) */ }
+    const names = new Set(list.map((p: any) => p.name))
+    // Critical process missing from pm2 entirely (e.g. dropped by a restart
+    // from a stale ecosystem config — this is how tp-engine vanished).
+    for (const name of CRITICAL_PROCESSES) {
+      if (name !== 'teen-app-monitor' && !names.has(name)) {
+        await this.remediate(name, 'start')
+      }
+    }
     for (const p of list) {
       const status = p.pm2_env?.status ?? 'unknown'
       if (status === 'online') continue
-      const critical = CRITICAL_PROCESSES.has(p.name)
+      if (p.name === 'teen-app-monitor') continue // can't restart ourselves
+      await this.remediate(p.name, 'restart')
+    }
+  }
+
+  // Level-1 self-healing: restart/start a downed pm2 process, verify it came
+  // back, and log the action. Strikes cap at 3 per hour so a crash-looping
+  // service escalates to a critical alert instead of restarting forever.
+  private async remediate(name: string, mode: 'start' | 'restart'): Promise<void> {
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) return // pm2 names only — never shell metachars
+    const strikeKey = `remediate:strikes:${name}`
+    const strikes = await this.redis.incr(strikeKey)
+    if (strikes === 1) await this.redis.expire(strikeKey, 3600)
+    if (strikes > 3) {
       await this.raise(
-        'service_down',
-        critical ? 'critical' : 'warning',
-        `Service ${p.name} is ${status}`,
-        { process: p.name, status, restarts: p.pm2_env?.restart_time ?? 0 },
-        `service_down:${p.name}`,
+        'remediation_exhausted', 'critical',
+        `Service ${name} keeps going down (${strikes - 1} auto-fixes in the last hour) — manual intervention needed`,
+        { process: name }, `remediation_exhausted:${name}`,
+      )
+      return
+    }
+
+    const cmd = mode === 'start'
+      ? `cd /opt/teen && pm2 start ecosystem.config.js --only ${name} && pm2 save`
+      : `pm2 restart ${name} --update-env`
+    let ok = false
+    let error = ''
+    try {
+      execSync(cmd, { timeout: 60000 })
+      await new Promise(r => setTimeout(r, 8000))
+      const after: any[] = JSON.parse(execSync('pm2 jlist 2>/dev/null', { timeout: 5000 }).toString())
+      ok = after.some(p => p.name === name && p.pm2_env?.status === 'online')
+    } catch (e: any) {
+      error = e?.message ?? String(e)
+    }
+
+    try {
+      await this.db.query(
+        `INSERT INTO remediation_actions (target, action, result, details) VALUES ($1, $2, $3, $4)`,
+        [name, mode, ok ? 'fixed' : 'failed', JSON.stringify({ strikes, ...(error ? { error } : {}) })]
+      )
+    } catch (err) {
+      this.logger.error({ err }, 'failed to log remediation')
+    }
+
+    if (ok) {
+      // Strikes intentionally NOT reset — a crash-loop that "fixes" then dies
+      // again must still hit the 3-strike escalation within the hour.
+      this.logger.warn({ name, mode }, 'AUTO-FIX succeeded')
+      await this.sendTelegram('warning', `Auto-fixed: ${name} was down — ${mode} succeeded`)
+    } else {
+      await this.raise(
+        'remediation_failed', 'critical',
+        `Auto-${mode} of ${name} FAILED — manual intervention needed`,
+        { process: name, error }, `remediation_failed:${name}`,
       )
     }
   }
