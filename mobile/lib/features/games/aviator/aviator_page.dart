@@ -15,9 +15,9 @@ import '../../../shared/theme/app_theme.dart';
 // place_bet / cashout intents. A local 60fps interpolation keeps the plane
 // motion smooth between the server's multiplier ticks.
 //
-// Gameplay: supports auto-cashout (cash out automatically at a target
-// multiplier) and auto-bet (re-bet the same stake each round), matching the
-// feel of mainstream crash games, plus full SFX + a cash-out celebration.
+// Gameplay: supports auto-cashout (target sent with the bet and executed
+// server-side on the authoritative tick, immune to network lag) and auto-bet
+// (re-bet the same stake each round), plus a per-user bet history sheet.
 class AviatorPage extends StatefulWidget {
   const AviatorPage({super.key});
   @override
@@ -48,21 +48,28 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   bool _betPlaced1 = false;
   bool _cashedOut1 = false;
   double? _myMultiplier1;
+  double _prize1 = 0.0; // actual payout from server (rake + max-win applied)
   bool _autoCashout1 = false;
   double _autoTarget1 = 2.0;
   bool _autoBet1 = false;
+  bool _serverAuto1 = false; // server holds the auto-cashout target for this bet
 
   // Panel 2 State
   double _betAmount2 = 50;
   bool _betPlaced2 = false;
   bool _cashedOut2 = false;
   double? _myMultiplier2;
+  double _prize2 = 0.0;
   bool _autoCashout2 = false;
   double _autoTarget2 = 2.0;
   bool _autoBet2 = false;
+  bool _serverAuto2 = false;
 
   bool _showWinBurst = false;
   double _lastWinPrize = 0.0;
+
+  // My bet history (fetched from the engine over the WS). null = loading.
+  final ValueNotifier<List<Map<String, dynamic>>?> _myHistory = ValueNotifier(null);
 
   @override
   void initState() {
@@ -85,6 +92,8 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     _subs.add(_aviator.on(SocketEvents.aviatorRoundState).listen(_onRoundState));
     _subs.add(_aviator.on(SocketEvents.aviatorBetPlaced).listen(_onBetPlaced));
     _subs.add(_aviator.on(SocketEvents.aviatorCashedOut).listen(_onCashedOut));
+    _subs.add(_aviator.on(SocketEvents.aviatorMyHistory).listen(_onMyHistory));
+    _subs.add(_aviator.on(SocketEvents.aviatorMaintenance).listen(_onMaintenance));
     _subs.add(_aviator.on(SocketEvents.errorEvent).listen(_onError));
   }
 
@@ -113,6 +122,10 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       _cashedOut2 = false;
       _myMultiplier1 = null;
       _myMultiplier2 = null;
+      _prize1 = 0.0;
+      _prize2 = 0.0;
+      _serverAuto1 = false;
+      _serverAuto2 = false;
       _multiplier = 0.00;
       _serverMultiplier = 1.00;
       _crashAt = null;
@@ -160,11 +173,13 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     if (m == null) return;
     _serverMultiplier = m;
     if (_phase != 'flying') setState(() => _phase = 'flying');
-    // Auto-cashout: fire as soon as the authoritative value hits the target.
-    if (_autoCashout1 && _betPlaced1 && !_cashedOut1 && m >= _autoTarget1) {
+    // Auto-cashout normally executes SERVER-side (target sent with the bet),
+    // immune to network lag. Fire from here only as a fallback when the user
+    // enabled auto AFTER the bet was already placed.
+    if (_autoCashout1 && !_serverAuto1 && _betPlaced1 && !_cashedOut1 && m >= _autoTarget1) {
       _cashout(1);
     }
-    if (_autoCashout2 && _betPlaced2 && !_cashedOut2 && m >= _autoTarget2) {
+    if (_autoCashout2 && !_serverAuto2 && _betPlaced2 && !_cashedOut2 && m >= _autoTarget2) {
       _cashout(2);
     }
   }
@@ -198,11 +213,14 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   void _onBetPlaced(dynamic data) {
     if (!mounted) return;
     final betIndex = data?['bet_index'] as int? ?? 1;
+    final serverAuto = data?['auto_cashout'] != null;
     setState(() {
       if (betIndex == 1) {
         _betPlaced1 = true;
+        _serverAuto1 = serverAuto;
       } else {
         _betPlaced2 = true;
+        _serverAuto2 = serverAuto;
       }
     });
     HapticFeedback.mediumImpact();
@@ -218,9 +236,11 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       if (betIndex == 1) {
         _cashedOut1 = true;
         _myMultiplier1 = m;
+        _prize1 = prize;
       } else {
         _cashedOut2 = true;
         _myMultiplier2 = m;
+        _prize2 = prize;
       }
       _showWinBurst = true;
       _lastWinPrize = prize;
@@ -229,6 +249,17 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     Future.delayed(const Duration(milliseconds: 1600), () {
       if (mounted) setState(() => _showWinBurst = false);
     });
+  }
+
+  void _onMyHistory(dynamic data) {
+    final raw = data?['bets'];
+    if (raw is! List) { _myHistory.value = []; return; }
+    _myHistory.value = raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+  }
+
+  void _onMaintenance(dynamic data) {
+    if (!mounted) return;
+    setState(() => _phase = 'maintenance');
   }
 
   void _onError(dynamic data) {
@@ -266,7 +297,14 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
         _betPlaced2 = true;
       }
     });
-    _aviator.emit(SocketEvents.aviatorPlaceBet, {'amount': amount, 'bet_index': betIndex});
+    final autoOn = betIndex == 1 ? _autoCashout1 : _autoCashout2;
+    final target = betIndex == 1 ? _autoTarget1 : _autoTarget2;
+    _aviator.emit(SocketEvents.aviatorPlaceBet, {
+      'amount': amount,
+      'bet_index': betIndex,
+      // Server executes the auto-cashout on its authoritative tick.
+      if (autoOn) 'auto_cashout': target,
+    });
     HapticFeedback.mediumImpact();
   }
 
@@ -280,6 +318,117 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     _aviator.emit(SocketEvents.aviatorCashout, {'bet_index': betIndex});
   }
 
+  // ── My History (per-user bet history from the engine) ──────────────────
+  void _showMyHistory() {
+    _myHistory.value = null; // show loading
+    _aviator.emit(SocketEvents.aviatorGetHistory, {});
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF0F1322),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.of(context).size.height * 0.6,
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('MY BETS',
+                    style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 2)),
+              ),
+              Expanded(
+                child: ValueListenableBuilder<List<Map<String, dynamic>>?>(
+                  valueListenable: _myHistory,
+                  builder: (_, items, __) {
+                    if (items == null) {
+                      return const Center(
+                        child: SizedBox(width: 28, height: 28,
+                            child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 3)),
+                      );
+                    }
+                    if (items.isEmpty) {
+                      return const Center(
+                        child: Text('No bets yet — place your first bet!',
+                            style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                      );
+                    }
+                    return ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      itemCount: items.length,
+                      itemBuilder: (_, i) => _historyRow(items[i]),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _historyRow(Map<String, dynamic> bet) {
+    final amount = (bet['amount'] as num?)?.toDouble() ?? 0;
+    final payout = (bet['payout'] as num?)?.toDouble() ?? 0;
+    final cashoutM = (bet['cashout_multiplier'] as num?)?.toDouble();
+    final crashAt = (bet['crash_at'] as num?)?.toDouble() ?? 0;
+    final won = payout > 0;
+    final when = DateTime.tryParse(bet['created_at']?.toString() ?? '')?.toLocal();
+    final whenText = when == null
+        ? ''
+        : '${when.day.toString().padLeft(2, '0')}/${when.month.toString().padLeft(2, '0')} '
+          '${when.hour.toString().padLeft(2, '0')}:${when.minute.toString().padLeft(2, '0')}';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF161F38).withOpacity(0.8),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: (won ? AppColors.green : AppColors.red).withOpacity(0.25)),
+      ),
+      child: Row(
+        children: [
+          Icon(won ? Icons.trending_up_rounded : Icons.trending_down_rounded,
+              size: 20, color: won ? AppColors.green : AppColors.red),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  won
+                      ? 'Cashed out @ ${cashoutM?.toStringAsFixed(2) ?? '—'}x'
+                      : 'Crashed @ ${crashAt.toStringAsFixed(2)}x',
+                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 2),
+                Text('Bet ₹${amount.toStringAsFixed(0)} · $whenText',
+                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 10)),
+              ],
+            ),
+          ),
+          Text(
+            won ? '+${formatCurrency(payout)}' : '-${formatCurrency(amount)}',
+            style: TextStyle(
+                color: won ? AppColors.green : AppColors.red,
+                fontSize: 13,
+                fontWeight: FontWeight.w900),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _bettingTimer?.cancel();
@@ -287,6 +436,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     _aviator.disconnect();
     _ticker.dispose();
     _pulse.dispose();
+    _myHistory.dispose();
     super.dispose();
   }
 
@@ -307,6 +457,11 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
         title: const Text('Aviator', style: TextStyle(color: Colors.white)),
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.history_rounded, color: Colors.white70),
+            tooltip: 'My History',
+            onPressed: _showMyHistory,
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14),
             child: Center(
@@ -444,6 +599,20 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   );
 
   Widget _buildCenterReadout(bool crashed) {
+    if (_phase == 'maintenance') {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.build_rounded, color: AppColors.orange, size: 36),
+          const SizedBox(height: 12),
+          Text('UNDER MAINTENANCE'.toUpperCase(),
+              style: const TextStyle(color: AppColors.orange, letterSpacing: 2, fontSize: 13, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 6),
+          const Text('Aviator is temporarily unavailable — back soon',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
+        ],
+      );
+    }
     if (_phase == 'connecting') {
       return Column(
         mainAxisSize: MainAxisSize.min,
@@ -539,7 +708,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
                     borderRadius: BorderRadius.circular(20), 
                     border: Border.all(color: AppColors.green.withOpacity(0.6)),
                   ),
-                  child: Text('Bet 1 Out @ ${_myMultiplier1!.toStringAsFixed(2)}x · +${formatCurrency(_betAmount1 * _myMultiplier1!)}',
+                  child: Text('Bet 1 Out @ ${_myMultiplier1!.toStringAsFixed(2)}x · +${formatCurrency(_prize1)}',
                       style: const TextStyle(color: AppColors.green, fontSize: 11, fontWeight: FontWeight.bold)),
                 ),
               if (_cashedOut2 && _myMultiplier2 != null)
@@ -551,7 +720,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
                     borderRadius: BorderRadius.circular(20), 
                     border: Border.all(color: AppColors.green.withOpacity(0.6)),
                   ),
-                  child: Text('Bet 2 Out @ ${_myMultiplier2!.toStringAsFixed(2)}x · +${formatCurrency(_betAmount2 * _myMultiplier2!)}',
+                  child: Text('Bet 2 Out @ ${_myMultiplier2!.toStringAsFixed(2)}x · +${formatCurrency(_prize2)}',
                       style: const TextStyle(color: AppColors.green, fontSize: 11, fontWeight: FontWeight.bold)),
                 ),
             ],

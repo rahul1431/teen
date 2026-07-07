@@ -29,4 +29,7 @@ class SocketEvents {
   static const String aviatorCashedOut = 'aviator:cashed_out';
   static const String aviatorLiveBets = 'aviator:live_bets';
   static const String aviatorRoundState = 'aviator:round_state';
+  static const String aviatorGetHistory = 'aviator:get_history';
+  static const String aviatorMyHistory = 'aviator:my_history';
+  static const String aviatorMaintenance = 'aviator:maintenance';
 }

@@ -1,15 +1,20 @@
 {
+  "_note": "REFERENCE ONLY — the engine reads live values from the game_configs DB table (special_rules JSON). Keep this file in sync with the engine defaults in services/game-engines/aviator/src/index.ts.",
   "id": "aviator",
   "displayName": "Aviator",
   "enabled": true,
   "houseEdgePercent": 3,
+  "rakePercent": 5,
+  "rakeAppliesTo": "profit",
   "bettingWindowSeconds": 5,
   "tickIntervalMs": 100,
   "minBet": 10,
-  "maxBet": 10000,
+  "maxBet": 5000,
+  "maxWin": 0,
   "maxAutoCashoutMultiplier": 100,
   "provablyFair": {
     "algorithm": "HMAC-SHA256",
+    "commitSeedHashBeforeRound": true,
     "revealServerSeedAfterRound": true
   }
 }
