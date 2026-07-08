@@ -16,7 +16,7 @@ export class MatchmakingService {
   private timers = new Map<string, NodeJS.Timeout>()
   private botTimers = new Map<string, { timer: NodeJS.Timeout; turnIdx: number }>()
   private ludoAfkTimers = new Map<string, NodeJS.Timeout>()
-  private static readonly LUDO_TURN_TIMEOUT_MS = 25000
+  private static readonly LUDO_TURN_TIMEOUT_MS = 30000
 
   constructor(
     private redis: Redis,

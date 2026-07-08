@@ -28,7 +28,7 @@ export interface LudoPlayer {
   color: string
   tokens: number[]       // progress for each of the 4 tokens
   finished: number       // count of tokens that reached HOME
-  status: string         // 'active' | 'finished'
+  status: string         // 'active' | 'finished' | 'disconnected'
 }
 
 export type BotDifficulty = 'easy' | 'medium' | 'hard'
@@ -51,7 +51,7 @@ export interface LudoState {
 }
 
 export interface ActionResult {
-  winner_id: string
+  winner_id: string | null   // null when a game ends with no winner (all real players left)
   prize: number
   rake_fee: number
   rankings: { user_id: string; finished: number }[]
@@ -233,29 +233,72 @@ function passTurn(state: LudoState): void {
   state.movable_tokens = []
   const n = state.players.length
   let next = state.current_turn
-  // Skip players who have already finished all four tokens.
+  // Skip players who are no longer in play — finished all four tokens, or
+  // left the table (disconnected/forfeited). Only 'active' players take turns.
   for (let i = 0; i < n; i++) {
     next = (next + 1) % n
-    if (state.players[next].status !== 'finished') break
+    if (state.players[next].status === 'active') break
   }
   if (next <= state.current_turn) state.round += 1
   state.current_turn = next
 }
 
-function buildResult(state: LudoState, winner: LudoPlayer): ActionResult {
+function buildResult(state: LudoState, winner: LudoPlayer | null): ActionResult {
   const pot = state.stake * state.players.length
-  const rakeFee = Math.round(pot * 0.05 * 100) / 100
-  const prize = Math.round((pot - rakeFee) * 100) / 100
+  const rakeFee = winner ? Math.round(pot * 0.05 * 100) / 100 : 0
+  const prize = winner ? Math.round((pot - rakeFee) * 100) / 100 : 0
   state.status = 'completed'
-  state.winner_id = winner.user_id
+  state.winner_id = winner ? winner.user_id : null
   return {
-    winner_id: winner.user_id,
+    winner_id: winner ? winner.user_id : null,
     prize,
     rake_fee: rakeFee,
     rankings: [...state.players]
       .sort((a, b) => b.finished - a.finished)
       .map(p => ({ user_id: p.user_id, finished: p.finished })),
   }
+}
+
+/**
+ * A real player left the table (tapped Leave — a deliberate forfeit, not a
+ * transient network drop). The leaver forfeits their stake (settled into the
+ * pot at game end), their tokens go back to base, and they're removed from
+ * the turn rotation. Then:
+ *   - if no real (non-bot) players remain active → the game ends with no
+ *     winner (e.g. the lone human in a vs-bots game left);
+ *   - if exactly one active player remains → that player wins the pot;
+ *   - otherwise the game continues with whoever is left (no bot backfills the
+ *     vacated seat).
+ * Returns a non-null result once the game has ended.
+ */
+export function forfeitPlayer(
+  state: LudoState,
+  userId: string,
+): { state: LudoState; result: ActionResult | null } {
+  const player = state.players.find(p => p.user_id === userId)
+  if (!player || player.status !== 'active') return { state, result: null }
+
+  const wasCurrent = state.players[state.current_turn]?.user_id === userId
+  player.status = 'disconnected'
+  player.tokens = [-1, -1, -1, -1]
+  player.finished = 0
+
+  const active = state.players.filter(p => p.status === 'active')
+  const activeHumans = active.filter(p => !p.is_bot)
+
+  // No real players left → end with no winner; every lock is consumed (the
+  // leaver's stake is forfeited, not refunded).
+  if (activeHumans.length === 0) {
+    return { state, result: buildResult(state, null) }
+  }
+  // Last player standing takes the pot.
+  if (active.length === 1) {
+    return { state, result: buildResult(state, active[0]) }
+  }
+  // Game continues. If the leaver was on turn, advance to the next active
+  // player; the roll/move state is reset so the new player rolls fresh.
+  if (wasCurrent) passTurn(state)
+  return { state, result: null }
 }
 
 /** Cryptographically secure die roll (1..6). The engine is server-authoritative. */

@@ -161,6 +161,16 @@ async function start() {
         return handleGameAction(conn, room_id, action, amount, sequence_num)
       }
 
+      case 'leave_room': {
+        // A player deliberately left a game mid-match. Only Ludo has
+        // server-side forfeit handling; other games ignore this (unchanged).
+        const rawState = await matchmaking.getRoomState(data.room_id)
+        if (rawState && (rawState.gameType === 'ludo' || rawState.game_type === 'ludo')) {
+          return handleLudoLeave(conn, data.room_id)
+        }
+        return
+      }
+
       case 'join_room': {
         const { room_id } = data
         if (!room_id) return
@@ -525,6 +535,44 @@ async function start() {
     } catch (e) {
       console.error('Ludo action failed', e)
       hub.send(conn, 'error', { message: 'Engine unavailable' })
+    }
+  }
+
+  // A real player tapped Leave in a Ludo game — forfeit. The engine marks them
+  // disconnected, sends their tokens home, and either ends the game (no real
+  // players left, or a last player standing wins) or lets it continue. The
+  // leaver's stake is consumed at settlement (no refund).
+  async function handleLudoLeave(conn: Conn, room_id: string): Promise<void> {
+    const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
+    try {
+      const res = await fetch(`${engineUrl}/leave`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id, user_id: conn.userId }),
+      })
+      if (!res.ok) {
+        console.error(`Ludo /leave returned ${res.status} for room ${room_id}`)
+        return
+      }
+      const out = await res.json() as any
+      const newState = out.state
+      if (!newState) return
+      await matchmaking.setRoomState(room_id, { ...newState, gameType: 'ludo' })
+      hub.sendToRoom(room_id, 'game:state_update', {
+        room_id,
+        state: newState,
+        last_action: { user_id: conn.userId, action: 'leave' },
+        result: out.result ?? null,
+      })
+      if (out.result) {
+        await matchmaking.handleLudoEnd(room_id, out.result)
+      } else {
+        // Continue: drive any bot whose turn it now is, and re-arm the AFK
+        // timer if the next seat is a connected human.
+        void matchmaking.driveLudoBots(room_id)
+      }
+    } catch (e) {
+      console.error('Ludo leave failed', e)
     }
   }
 
