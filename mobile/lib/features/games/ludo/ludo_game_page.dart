@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/audio/sound_service.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
+import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'ludo_engine.dart';
 import 'ludo_board.dart';
@@ -31,7 +33,50 @@ class _LudoGamePageState extends State<LudoGamePage>
     with TickerProviderStateMixin {
   final _engine = LudoEngine();
   final _socket = SocketService();
+  final _api = ApiClient();
   final _subs = <StreamSubscription>[];
+
+  // ── Emoji reactions + dealer tips (online only) ────────────────────────────
+  static const List<int> _tipAmounts = [5, 10, 20, 50];
+  List<String> _quickEmojis = ['😀', '😂', '😎', '😮', '😭', '🔥', '👏', '🤔'];
+  bool _showEmojiTray = false;
+  int _reactionId = 0;
+  final List<_Reaction> _reactions = [];
+
+  bool _muted = false;
+
+  // Visible countdown while it's the local player's turn to roll — mirrors
+  // the server-side per-turn AFK auto-play window (LUDO_TURN_TIMEOUT_MS in
+  // game-gateway) so a slow player can actually see time running out
+  // instead of being surprised when their turn gets auto-played.
+  static const int _turnTimerSeconds = 30;
+  Timer? _turnTimer;
+  int _turnSecondsLeft = _turnTimerSeconds;
+
+  void _syncTurnTimer() {
+    final active =
+        _isMyTurn && _state?.awaiting == 'roll' && !_rolling && !_botBusy;
+    if (active) {
+      _turnTimer ??= Timer.periodic(const Duration(seconds: 1), (t) {
+        if (!mounted) {
+          t.cancel();
+          return;
+        }
+        setState(() {
+          _turnSecondsLeft--;
+          if (_turnSecondsLeft <= 0) {
+            _turnSecondsLeft = 0;
+            t.cancel();
+            _turnTimer = null;
+          }
+        });
+      });
+    } else {
+      _turnTimer?.cancel();
+      _turnTimer = null;
+      _turnSecondsLeft = _turnTimerSeconds;
+    }
+  }
 
   LudoState? _state;
   int _mySeatIndex = 0;
@@ -61,13 +106,42 @@ class _LudoGamePageState extends State<LudoGamePage>
   void initState() {
     super.initState();
     SoundService.instance.init();
+    _muted = SoundService.instance.muted;
     widget.offline ? _initOffline() : _initOnline();
-    SoundService.instance.loopAmbience('ludo_bgm.mp3', volume: 0.3);
+    SoundService.instance.loopAmbience('ludo_ambience.wav', volume: 0.5);
+    if (!widget.offline) _loadEmojiConfig();
+  }
+
+  void _toggleMute() {
+    SoundService.instance.toggleMute();
+    final m = SoundService.instance.muted;
+    setState(() => _muted = m);
+    if (m) {
+      SoundService.instance.stopAmbience();
+    } else {
+      SoundService.instance.loopAmbience('ludo_ambience.wav', volume: 0.5);
+    }
+  }
+
+  // Same admin-configurable emoji list already used on the Teen Patti table
+  // (/api/admin/config/emojis) — falls back to the hardcoded defaults on
+  // any failure so this never blocks the game from loading.
+  Future<void> _loadEmojiConfig() async {
+    try {
+      final res = await _api.dio.get('/api/admin/config/emojis');
+      final emojis = (res.data as List?)?.cast<String>();
+      if (emojis != null && emojis.isNotEmpty && mounted) {
+        setState(() => _quickEmojis = emojis);
+      }
+    } catch (_) {
+      /* keep defaults */
+    }
   }
 
   @override
   void dispose() {
     _diceCtrl.dispose();
+    _turnTimer?.cancel();
     for (final s in _subs) {
       s.cancel();
     }
@@ -150,7 +224,6 @@ class _LudoGamePageState extends State<LudoGamePage>
           () => _banner = '${s.players[s.currentTurn].username} is playing…');
       await Future.delayed(const Duration(milliseconds: 900));
       final dice = _engine.rollDie();
-      SoundService.instance.play(Sfx.diceRoll);
       _diceCtrl.forward(from: 0);
       await Future.delayed(const Duration(milliseconds: 450));
       final canMove = _engine.applyRoll(s, dice);
@@ -159,7 +232,14 @@ class _LudoGamePageState extends State<LudoGamePage>
         final tok = _engine.chooseBotToken(s, s.currentTurn, dice);
         await Future.delayed(const Duration(milliseconds: 350));
         final res = _engine.applyMove(s, tok);
-        _playMoveSounds(res);
+        // Capture/home are rare, notable events worth hearing even for a
+        // bot's move — unlike plain tokenMove, which stays silent here to
+        // avoid the every-~1.3s repeat noise bots caused during their turns.
+        if (res['captured'] == true) {
+          SoundService.instance.play(Sfx.tokenCapture);
+        } else if (res['home'] == true) {
+          SoundService.instance.play(Sfx.tokenHome);
+        }
         if (res['win'] == true) {
           setState(() {});
           _botBusy = false;
@@ -171,7 +251,6 @@ class _LudoGamePageState extends State<LudoGamePage>
     _botBusy = false;
     if (mounted && s.status == 'active') {
       setState(() => _banner = 'Your turn — roll the dice');
-      SoundService.instance.play(Sfx.yourTurn);
     }
   }
 
@@ -193,8 +272,9 @@ class _LudoGamePageState extends State<LudoGamePage>
       final prevPlayers = _state?.players;
       final newState =
           LudoState.fromJson(Map<String, dynamic>.from(d['state']));
-      // Infer capture for SFX: a token went back to base since last update.
+      // Infer capture/home for SFX by diffing token state since last update.
       final captured = _detectCapture(prevPlayers, newState.players);
+      final homed = _detectHome(prevPlayers, newState.players);
       setState(() {
         _state = newState;
         _banner = _isMyTurn
@@ -218,24 +298,36 @@ class _LudoGamePageState extends State<LudoGamePage>
             .username;
       }
       if (la != null && la['dice'] != null) {
-        SoundService.instance.play(Sfx.diceRoll);
         _diceCtrl.forward(from: 0);
         _showRoll(actorName!, (la['dice'] as num).toInt());
       }
+      // Plain-move sound only for the local player's own move_token action —
+      // the gateway includes a 'dice' field on every broadcast (roll AND
+      // move), so this used to fire unconditionally on every single state
+      // update from anyone at the table, which read as a non-stop bell in
+      // online games. Capture/home are rare, genuinely notable events
+      // (unlike every-broadcast dice noise) so those play for ANY player.
+      final isMyMove =
+          la != null && la['action'] == 'move_token' && la['user_id'] == _myUserId;
       if (captured) {
         SoundService.instance.play(Sfx.tokenCapture);
         if (actorName != null) _logActivity('$actorName captured a token! 💥');
-      } else {
+      } else if (homed) {
+        SoundService.instance.play(Sfx.tokenHome);
+      } else if (isMyMove) {
         SoundService.instance.play(Sfx.tokenMove);
       }
       if (d['result'] != null) {
-        _finish(d['result']['winner_id'], rankings: d['result']['rankings']);
+        _finish(d['result']['winner_id'],
+            rankings: d['result']['rankings'],
+            prize: (d['result']['prize'] as num?)?.toDouble());
       }
     }));
 
     _subs.add(_socket.on(SocketEvents.gameResult).listen((d) {
       if (!mounted) return;
-      _finish(d?['winner_id'], rankings: d?['rankings']);
+      _finish(d?['winner_id'],
+          rankings: d?['rankings'], prize: (d?['prize'] as num?)?.toDouble());
     }));
 
     // Server rejected an action (stale room, engine unavailable, not-your-turn
@@ -249,6 +341,50 @@ class _LudoGamePageState extends State<LudoGamePage>
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(content: Text(msg)));
     }));
+
+    // Emoji reactions — room:chat/room:tip are generic room-scoped events
+    // (the gateway routes them purely by room_id, not game_type), so this
+    // reuses the exact same backend the Teen Patti table already uses.
+    _subs.add(_socket.on(SocketEvents.roomChatMsg).listen((data) {
+      if (!mounted || data is! Map) return;
+      final type = (data['type'] ?? 'text').toString();
+      final userId = data['user_id']?.toString() ?? '';
+      final msg = data['message']?.toString() ?? '';
+      if (userId != _myUserId && type == 'emoji') _spawnReaction(userId, msg);
+    }));
+
+    _subs.add(_socket.on('room:tip').listen((data) {
+      if (!mounted || data is! Map) return;
+      final userId = data['user_id']?.toString() ?? '';
+      final name = data['username']?.toString() ?? 'Player';
+      final amount = (data['amount'] as num?)?.toInt() ?? 0;
+      _spawnReaction(userId, '💰 ₹$amount', isTip: true);
+      final who = userId == _myUserId ? 'You' : name;
+      _logActivity('$who tipped the dealer ₹$amount');
+    }));
+  }
+
+  void _sendEmoji(String emoji) {
+    _socket.emit(SocketEvents.roomChat,
+        {'room_id': widget.roomId, 'message': emoji, 'type': 'emoji'});
+    _spawnReaction(_myUserId ?? '', emoji);
+    SoundService.instance.play(Sfx.buttonTap);
+  }
+
+  void _sendTip(int amount) {
+    // No optimistic reaction — the server only broadcasts room:tip after the
+    // wallet debit actually succeeds (mirrors the Teen Patti tip flow).
+    _socket.emit('room:tip', {'room_id': widget.roomId, 'amount': amount});
+  }
+
+  void _spawnReaction(String userId, String emoji, {bool isTip = false}) {
+    final r = _Reaction(
+        id: ++_reactionId, userId: userId, emoji: emoji, isTip: isTip);
+    setState(() => _reactions.add(r));
+    Timer(const Duration(milliseconds: 2400), () {
+      if (!mounted) return;
+      setState(() => _reactions.removeWhere((x) => x.id == r.id));
+    });
   }
 
   bool _detectCapture(List<LudoPlayer>? before, List<LudoPlayer> after) {
@@ -263,8 +399,21 @@ class _LudoGamePageState extends State<LudoGamePage>
     return afterBase > beforeBase;
   }
 
+  bool _detectHome(List<LudoPlayer>? before, List<LudoPlayer> after) {
+    if (before == null) return false;
+    var beforeFinished = 0, afterFinished = 0;
+    for (final p in before) {
+      beforeFinished += p.finished;
+    }
+    for (final p in after) {
+      afterFinished += p.finished;
+    }
+    return afterFinished > beforeFinished;
+  }
+
   void _onlineRoll() {
     if (!_isMyTurn || _state?.awaiting != 'roll') return;
+    SoundService.instance.play(Sfx.diceRoll);
     _socket.emit(SocketEvents.gameAction,
         {'room_id': widget.roomId, 'action': 'roll_dice'});
   }
@@ -303,7 +452,6 @@ class _LudoGamePageState extends State<LudoGamePage>
       // back to a static "1" in that case.
       _lastDice = dice;
     });
-    _logActivity('$playerName rolled a $dice');
     Future.delayed(const Duration(milliseconds: 1600), () {
       if (mounted) setState(() => _showRollNotif = false);
     });
@@ -315,7 +463,7 @@ class _LudoGamePageState extends State<LudoGamePage>
     widget.offline ? _offlineMove(tokenIndex) : _onlineMove(tokenIndex);
   }
 
-  void _finish(String? winnerId, {List<dynamic>? rankings}) {
+  void _finish(String? winnerId, {List<dynamic>? rankings, double? prize}) {
     final won = winnerId == (widget.offline ? 'me' : _myUserId);
     // Server computes full standings (rankings: [{user_id, finished}, ...],
     // already sorted best-first) but until now the dialog only ever showed a
@@ -329,7 +477,7 @@ class _LudoGamePageState extends State<LudoGamePage>
         if (idx >= 0) standings.add(players[idx].username);
       }
     }
-    SoundService.instance.play(won ? Sfx.win : Sfx.lose);
+    SoundService.instance.play(won ? Sfx.ludoWin : Sfx.lose);
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -413,6 +561,30 @@ class _LudoGamePageState extends State<LudoGamePage>
                     fontSize: 15,
                   ),
                 ),
+                if (won && prize != null && prize > 0) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 10),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Text(
+                      'You Won ${formatCurrency(prize)}',
+                      style: const TextStyle(
+                        color: Colors.black,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ),
+                ],
                 if (standings.isNotEmpty) ...[
                   const SizedBox(height: 20),
                   ...List.generate(standings.length, (i) {
@@ -485,101 +657,130 @@ class _LudoGamePageState extends State<LudoGamePage>
   @override
   Widget build(BuildContext context) {
     final s = _state;
-    return Scaffold(
-      body: s == null
-          ? const Center(
-              child: CircularProgressIndicator(color: AppColors.gold))
-          : Container(
-              decoration: const BoxDecoration(
-                gradient: RadialGradient(
-                  center: Alignment(0, -0.15),
-                  radius: 1.35,
-                  colors: [
-                    Color(0xFF7A2CC4), // Bright purple spotlight
-                    Color(0xFF4A1B87), // Deep violet
-                    Color(0xFF23103E), // Dark purple corners
-                  ],
-                  stops: [0.0, 0.6, 1.0],
+    if (s != null) _syncTurnTimer();
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _confirmExit();
+      },
+      child: Scaffold(
+        body: s == null
+            ? const Center(
+                child: CircularProgressIndicator(color: AppColors.gold))
+            : Container(
+                decoration: const BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment(0, -0.15),
+                    radius: 1.35,
+                    colors: [
+                      Color(0xFF7A2CC4), // Bright purple spotlight
+                      Color(0xFF4A1B87), // Deep violet
+                      Color(0xFF23103E), // Dark purple corners
+                    ],
+                    stops: [0.0, 0.6, 1.0],
+                  ),
                 ),
-              ),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    _buildAppBar(context),
-                    _playersBar(s),
-                    Expanded(
-                      child: Column(
-                        children: [
-                          Expanded(
-                            child: Stack(
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 4),
-                                  child: AspectRatio(
-                                    aspectRatio: 1,
-                                    child: LudoBoard(
-                                      state: s,
-                                      mySeatIndex: _mySeatIndex,
-                                      onTokenTap: _onTokenTap,
+                child: SafeArea(
+                  child: Column(
+                    children: [
+                      _buildAppBar(context),
+                      _playersBar(s),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Expanded(
+                              child: Stack(
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 2, vertical: 2),
+                                    child: AspectRatio(
+                                      aspectRatio: 1,
+                                      child: LudoBoard(
+                                        state: s,
+                                        mySeatIndex: _mySeatIndex,
+                                        onTokenTap: _onTokenTap,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                // Dice roll notification overlay
-                                if (_rollNotif != null)
-                                  Positioned(
-                                    top: 16,
-                                    left: 0,
-                                    right: 0,
-                                    child: Center(
-                                      child: AnimatedOpacity(
-                                        opacity: _showRollNotif ? 1.0 : 0.0,
-                                        duration:
-                                            const Duration(milliseconds: 280),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 20, vertical: 10),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFF0F1322)
-                                                .withOpacity(0.92),
-                                            borderRadius:
-                                                BorderRadius.circular(24),
-                                            border: Border.all(
-                                                color: AppColors.gold
-                                                    .withOpacity(0.4)),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: Colors.black
-                                                    .withOpacity(0.5),
-                                                blurRadius: 12,
-                                                offset: const Offset(0, 4),
-                                              )
-                                            ],
-                                          ),
-                                          child: Text(
-                                            _rollNotif!,
-                                            style: const TextStyle(
-                                              color: AppColors.goldLight,
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w900,
+                                  // Dice roll notification overlay
+                                  if (_rollNotif != null)
+                                    Positioned(
+                                      top: 16,
+                                      left: 0,
+                                      right: 0,
+                                      child: Center(
+                                        child: AnimatedOpacity(
+                                          opacity: _showRollNotif ? 1.0 : 0.0,
+                                          duration:
+                                              const Duration(milliseconds: 280),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 20, vertical: 10),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFF0F1322)
+                                                  .withOpacity(0.92),
+                                              borderRadius:
+                                                  BorderRadius.circular(24),
+                                              border: Border.all(
+                                                  color: AppColors.gold
+                                                      .withOpacity(0.4)),
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: Colors.black
+                                                      .withOpacity(0.5),
+                                                  blurRadius: 12,
+                                                  offset: const Offset(0, 4),
+                                                )
+                                              ],
+                                            ),
+                                            child: Text(
+                                              _rollNotif!,
+                                              style: const TextStyle(
+                                                color: AppColors.goldLight,
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w900,
+                                              ),
                                             ),
                                           ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                              ],
+                                  // Floating emoji/tip reactions from anyone
+                                  // at the table, centered over the board.
+                                  ..._reactions.map((r) => Positioned(
+                                        key: ValueKey('rx_${r.id}'),
+                                        left:
+                                            MediaQuery.of(context).size.width /
+                                                    2 -
+                                                30 +
+                                                (r.id % 5 - 2) * 18.0,
+                                        top:
+                                            MediaQuery.of(context).size.height *
+                                                0.22,
+                                        child: _ReactionBubble(
+                                            emoji: r.emoji, isTip: r.isTip),
+                                      )),
+                                  if (_showEmojiTray)
+                                    Positioned(
+                                      top: 4,
+                                      right: 4,
+                                      child: _buildEmojiTray(),
+                                    ),
+                                ],
+                              ),
                             ),
-                          ),
-                          if (_activityLog.isNotEmpty) _activityPanel(),
-                        ],
+                            if (_activityLog.isNotEmpty) _activityPanel(),
+                          ],
+                        ),
                       ),
-                    ),
-                    _controlBar(s),
-                  ],
+                      _tipBar(),
+                      _controlBar(s),
+                    ],
+                  ),
                 ),
               ),
-            ),
+      ),
     );
   }
 
@@ -621,6 +822,113 @@ class _LudoGamePageState extends State<LudoGamePage>
     );
   }
 
+  // Emoji picker popup opened from the app-bar emoji button. Dealer tips
+  // moved out to their own always-visible strip above the control bar
+  // (_tipBar) so they're not buried behind a tap.
+  Widget _buildEmojiTray() {
+    return GestureDetector(
+      onTap: () {}, // absorb taps so the board behind it doesn't react
+      child: Container(
+        width: 220,
+        constraints: const BoxConstraints(maxHeight: 360),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.92),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.gold.withOpacity(0.5)),
+        ),
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Text('Send an Emoji',
+                      style: TextStyle(
+                          color: AppColors.gold,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13)),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () => setState(() => _showEmojiTray = false),
+                    child: const Icon(Icons.close,
+                        color: Colors.white54, size: 18),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: _quickEmojis.map((e) {
+                  return GestureDetector(
+                    onTap: () {
+                      _sendEmoji(e);
+                      setState(() => _showEmojiTray = false);
+                    },
+                    child: Text(e, style: const TextStyle(fontSize: 26)),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Leaving mid-match previously popped instantly with no warning, even in a
+  // real-money online game — matches the confirm-before-leave pattern already
+  // used on the Teen Patti table.
+  void _doExit() {
+    if (!widget.offline) {
+      _socket.emit('leave_room', {'room_id': widget.roomId});
+    }
+    Navigator.of(context).pop();
+  }
+
+  void _confirmExit() {
+    if (widget.offline) {
+      // Practice mode has no stake to forfeit — just leave.
+      Navigator.of(context).pop();
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Leave Match?',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: const Text(
+            "You'll forfeit your stake and lose your progress in this game.",
+            style: TextStyle(color: Colors.white70, fontSize: 14)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Stay', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _doExit();
+            },
+            child: const Text('Leave',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAppBar(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -628,7 +936,7 @@ class _LudoGamePageState extends State<LudoGamePage>
         children: [
           IconButton(
             icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: _confirmExit,
           ),
           const SizedBox(width: 4),
           Text(
@@ -641,7 +949,39 @@ class _LudoGamePageState extends State<LudoGamePage>
             ),
           ),
           const Spacer(),
-          if (!widget.offline)
+          IconButton(
+            icon: Icon(
+              _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+              color: Colors.white70,
+              size: 20,
+            ),
+            onPressed: _toggleMute,
+          ),
+          if (!widget.offline) ...[
+            GestureDetector(
+              onTap: () => setState(() => _showEmojiTray = !_showEmojiTray),
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                        color: AppColors.gold.withOpacity(0.4),
+                        blurRadius: 8,
+                        spreadRadius: 1),
+                  ],
+                ),
+                child: const Icon(Icons.emoji_emotions,
+                    color: Colors.black, size: 18),
+              ),
+            ),
+            const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
@@ -663,6 +1003,7 @@ class _LudoGamePageState extends State<LudoGamePage>
                 ],
               ),
             ),
+          ],
         ],
       ),
     );
@@ -683,13 +1024,16 @@ class _LudoGamePageState extends State<LudoGamePage>
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: List.generate(s.players.length, (i) {
           final p = s.players[i];
-          final active = i == s.currentTurn;
+          final disconnected = p.status == 'disconnected';
+          final active = i == s.currentTurn && !disconnected;
           final color = seatColors[(p.seat - 1) % 4];
           final initials = p.username.length > 1
               ? p.username.substring(0, 2).toUpperCase()
               : p.username.toUpperCase();
 
-          return AnimatedContainer(
+          return Opacity(
+            opacity: disconnected ? 0.4 : 1.0,
+            child: AnimatedContainer(
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeOut,
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -766,38 +1110,117 @@ class _LudoGamePageState extends State<LudoGamePage>
                   ],
                 ),
                 const SizedBox(height: 4),
-                // Token dots (4 slots)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: List.generate(4, (ti) {
-                    final home = ti < p.finished;
-                    final onBoard = !home && p.tokens[ti] != -1;
-                    return Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 1),
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: home
-                            ? color
-                            : onBoard
-                                ? color.withOpacity(0.5)
-                                : Colors.white.withOpacity(0.15),
-                        boxShadow: home
-                            ? [
-                                BoxShadow(
-                                    color: color.withOpacity(0.6),
-                                    blurRadius: 3)
-                              ]
-                            : [],
-                      ),
-                    );
-                  }),
-                ),
+                // 'Left' label for a player who forfeited, else token dots.
+                if (disconnected)
+                  const Text('LEFT',
+                      style: TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.5))
+                else
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: List.generate(4, (ti) {
+                      final home = ti < p.finished;
+                      final onBoard = !home && p.tokens[ti] != -1;
+                      return Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 1),
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: home
+                              ? color
+                              : onBoard
+                                  ? color.withOpacity(0.5)
+                                  : Colors.white.withOpacity(0.15),
+                          boxShadow: home
+                              ? [
+                                  BoxShadow(
+                                      color: color.withOpacity(0.6),
+                                      blurRadius: 3)
+                                ]
+                              : [],
+                        ),
+                      );
+                    }),
+                  ),
               ],
             ),
+          ),
           );
         }),
+      ),
+    );
+  }
+
+  // Always-visible dealer-tip strip, directly above the dice/roll control
+  // bar — replaces the old tip-inside-emoji-popup placement so tipping
+  // doesn't require opening a tray first. Online only (no dealer to tip
+  // in offline practice).
+  Widget _tipBar() {
+    if (widget.offline) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.gold.withOpacity(0.22)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.card_giftcard_rounded,
+                  color: AppColors.gold.withOpacity(0.85), size: 14),
+              const SizedBox(width: 6),
+              const Text('TIP THE DEALER',
+                  style: TextStyle(
+                      color: AppColors.gold,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11,
+                      letterSpacing: 1.2)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: _tipAmounts.map((amount) {
+              return GestureDetector(
+                onTap: () => _sendTip(amount),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                          color: AppColors.gold.withOpacity(0.3),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2)),
+                    ],
+                  ),
+                  child: Text('₹$amount',
+                      style: const TextStyle(
+                          color: Colors.black,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12)),
+                ),
+              );
+            }).toList(),
+          ),
+        ],
       ),
     );
   }
@@ -866,6 +1289,16 @@ class _LudoGamePageState extends State<LudoGamePage>
                               fontWeight: FontWeight.w900,
                               fontSize: 12,
                               letterSpacing: 1)),
+                      if (s.awaiting == 'roll') ...[
+                        const SizedBox(width: 8),
+                        Text('${_turnSecondsLeft}s',
+                            style: TextStyle(
+                                color: _turnSecondsLeft <= 10
+                                    ? Colors.redAccent
+                                    : Colors.white54,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 11)),
+                      ],
                     ],
                   )
                 else
@@ -892,7 +1325,9 @@ class _LudoGamePageState extends State<LudoGamePage>
                   ),
                 const SizedBox(height: 3),
                 Text(
-                  _banner ?? '',
+                  // "Your turn — roll the dice" is redundant with the
+                  // YOUR TURN badge + enabled ROLL button right next to it.
+                  _banner == 'Your turn — roll the dice' ? '' : (_banner ?? ''),
                   style: const TextStyle(
                       color: AppColors.textSecondary, fontSize: 11),
                   overflow: TextOverflow.ellipsis,
@@ -1078,4 +1513,55 @@ class _PipsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _PipsPainter old) => old.value != value;
+}
+
+// ── Emoji/tip reaction bubble ─────────────────────────────────────────────────
+class _Reaction {
+  final int id;
+  final String userId, emoji;
+  final bool isTip;
+  _Reaction(
+      {required this.id,
+      required this.userId,
+      required this.emoji,
+      this.isTip = false});
+}
+
+class _ReactionBubble extends StatefulWidget {
+  final String emoji;
+  final bool isTip;
+  const _ReactionBubble({required this.emoji, this.isTip = false});
+  @override
+  State<_ReactionBubble> createState() => _ReactionBubbleState();
+}
+
+class _ReactionBubbleState extends State<_ReactionBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 2400))
+    ..forward();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _c,
+        builder: (_, __) {
+          final t = _c.value;
+          return Transform.translate(
+            offset: Offset(math.sin(t * math.pi * 2) * 6, -50 * t),
+            child: Opacity(
+              opacity: (1 - t).clamp(0.0, 1.0),
+              child: Transform.scale(
+                scale: widget.isTip ? 1.0 + t * 0.5 : 1.0,
+                child: Text(widget.emoji, style: const TextStyle(fontSize: 28)),
+              ),
+            ),
+          );
+        },
+      );
 }

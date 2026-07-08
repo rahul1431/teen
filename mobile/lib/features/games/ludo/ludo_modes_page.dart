@@ -172,13 +172,13 @@ class _LudoModesPageState extends State<LudoModesPage> {
                 },
               ),
               _modeCard(
-                title: 'How to Play',
-                subtitle: 'Rules & tips',
-                icon: Icons.menu_book_rounded,
+                title: 'History',
+                subtitle: 'Your past games',
+                icon: Icons.history_rounded,
                 gradient: AppColors.premiumGrad,
                 onTap: () {
                   SoundService.instance.play(Sfx.buttonTap);
-                  _rulesSheet();
+                  context.push('/games/ludo/history');
                 },
               ),
             ],
@@ -216,7 +216,7 @@ class _LudoModesPageState extends State<LudoModesPage> {
             ElevatedButton.icon(
               onPressed: () {
                 Navigator.pop(ctx);
-                context.push('/games/ludo/lobby?private=create');
+                context.push('/games/ludo/friends?mode=create&stake=10');
               },
               icon: const Icon(Icons.add_circle_outline_rounded),
               label: const Text('Create Private Room'),
@@ -244,50 +244,13 @@ class _LudoModesPageState extends State<LudoModesPage> {
                 final code = codeCtrl.text.trim().toUpperCase();
                 if (code.isEmpty) return;
                 Navigator.pop(ctx);
-                context.push('/games/ludo/lobby?private=join&code=$code');
+                context.push('/games/ludo/friends?mode=join&code=$code');
               },
               icon: const Icon(Icons.login_rounded),
               label: const Text('Join Room'),
               style: OutlinedButton.styleFrom(
                   minimumSize: const Size.fromHeight(48)),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _rulesSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.surface,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.7,
-        builder: (_, controller) => ListView(
-          controller: controller,
-          padding: const EdgeInsets.all(22),
-          children: const [
-            Text('How to Play Ludo',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
-            SizedBox(height: 14),
-            _Rule('🎯', 'Goal',
-                'Be the first to move all 4 of your tokens around the board and into your home.'),
-            _Rule('🎲', 'Open a token',
-                'Roll a 6 to move a token out of your base onto the track.'),
-            _Rule('➡️', 'Move',
-                'Each roll moves a chosen token that many steps. You must land exactly on home — overshoots are not allowed.'),
-            _Rule('⭐', 'Safe cells',
-                'Star and coloured start squares are safe — tokens there can\'t be captured.'),
-            _Rule('⚔️', 'Capture',
-                'Land on a single opponent token (off a safe cell) to send it back to base.'),
-            _Rule('🔁', 'Extra turn',
-                'Rolling a 6, capturing a token, or sending one home earns another roll. Three 6s in a row forfeits the turn.'),
-            _Rule('🏆', 'Win',
-                'First player to bring all 4 tokens home wins the pot (minus a small platform fee).'),
           ],
         ),
       ),
@@ -380,35 +343,3 @@ class _HeroDotsPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-class _Rule extends StatelessWidget {
-  final String emoji;
-  final String title;
-  final String body;
-  const _Rule(this.emoji, this.title, this.body);
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(bottom: 16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(emoji, style: const TextStyle(fontSize: 22)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w800, fontSize: 15)),
-                  const SizedBox(height: 2),
-                  Text(body,
-                      style: const TextStyle(
-                          color: AppColors.textSecondary, fontSize: 13, height: 1.35)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-}

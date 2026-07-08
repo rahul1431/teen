@@ -1,20 +1,20 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:go_router/go_router.dart';
 import '../network/api_client.dart';
 import '../storage/secure_storage.dart';
 
-// Singleton that wires FCM → local notification display → deep-link routing.
+// Wires FCM → deep-link routing. Foreground pushes are never shown as a
+// system notification (previously done via flutter_local_notifications) —
+// Android notification channels are immutable once created on-device, so a
+// "silence this channel" code change silently did nothing for anyone whose
+// app already created the old sound-on channel. Dropping the local
+// notification entirely sidesteps that instead of chasing channel IDs.
 // Call PushNotificationService.init(router) once after login is confirmed.
 class PushNotificationService {
   PushNotificationService._();
   static final _instance = PushNotificationService._();
   static PushNotificationService get instance => _instance;
 
-  static const _channelId = 'myonlinejoker_main';
-  static const _channelName = 'MyOnlineJoker Notifications';
-
-  final _local = FlutterLocalNotificationsPlugin();
   GoRouter? _router;
   bool _initialized = false;
 
@@ -23,35 +23,11 @@ class PushNotificationService {
     _initialized = true;
     _router = router;
 
-    // Local notification channel (Android 8+)
-    await _local.initialize(
-      const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-        iOS: DarwinInitializationSettings(),
-      ),
-      onDidReceiveNotificationResponse: (details) {
-        final payload = details.payload;
-        if (payload != null && payload.isNotEmpty) _navigate(payload);
-      },
-    );
-
-    const androidChannel = AndroidNotificationChannel(
-      _channelId, _channelName,
-      importance: Importance.high,
-      playSound: true,
-    );
-    await _local
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(androidChannel);
-
     // Register FCM token with backend
     await _registerToken();
 
     // Listen for token refresh
     FirebaseMessaging.instance.onTokenRefresh.listen(_uploadToken);
-
-    // Foreground messages → show local notification
-    FirebaseMessaging.onMessage.listen(_onForeground);
 
     // Background tap (app was in background, user tapped notification)
     FirebaseMessaging.onMessageOpenedApp.listen((msg) => _routeMessage(msg));
@@ -74,26 +50,6 @@ class PushNotificationService {
       if (accessToken == null) return;
       await ApiClient().dio.put('/api/auth/fcm-token', data: {'token': token});
     } catch (_) {}
-  }
-
-  void _onForeground(RemoteMessage message) {
-    final n = message.notification;
-    if (n == null) return;
-    _local.show(
-      message.hashCode,
-      n.title,
-      n.body,
-      NotificationDetails(
-        android: AndroidNotificationDetails(
-          _channelId, _channelName,
-          importance: Importance.high,
-          priority: Priority.high,
-          icon: '@mipmap/ic_launcher',
-        ),
-        iOS: const DarwinNotificationDetails(sound: 'default'),
-      ),
-      payload: message.data['route'] as String? ?? '',
-    );
   }
 
   void _routeMessage(RemoteMessage message) {

@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'ludo_engine.dart';
@@ -52,6 +53,23 @@ const Color _cellFill = Color(0xFFFFFFFF);
 const Color _cellLine = Color(0xFF8A8A8A);
 const Color _starOutline = Color(0xFF9AA0A6);
 
+// Glossy linear-gradient fill: lightened top-left → true color → darkened
+// bottom-right, so flat colored regions (corners, lanes, center) read as
+// gently lit surfaces instead of solid flat blocks.
+Paint _glossFill(Rect rect, Color base) {
+  return Paint()
+    ..shader = ui.Gradient.linear(
+      rect.topLeft,
+      rect.bottomRight,
+      [
+        Color.lerp(base, Colors.white, 0.32)!,
+        base,
+        Color.lerp(base, Colors.black, 0.22)!,
+      ],
+      const [0.0, 0.5, 1.0],
+    );
+}
+
 Offset _cellCenter(num col, num row, double size) {
   final s = size / 15.0;
   return Offset((col + 0.5) * s, (row + 0.5) * s);
@@ -59,8 +77,13 @@ Offset _cellCenter(num col, num row, double size) {
 
 Offset tokenPosition(int seatIndex, int tokenIndex, int progress, double size) {
   if (progress == -1) {
+    // _baseDots are already-centered pixel-grid coordinates (e.g. 1.5, 10.5)
+    // — same values _drawBaseQuadrant uses directly for the slot circles.
+    // Do NOT route through _cellCenter, which adds another +0.5 cell offset
+    // and was shifting every base token away from its drawn circle.
     final d = _baseDots[seatIndex % 4][tokenIndex % 4];
-    return _cellCenter(d[0], d[1], size);
+    final s = size / 15.0;
+    return Offset(d[0] * s, d[1] * s);
   }
   if (progress <= 50) {
     final cell = _track[absoluteCell(seatIndex, progress)];
@@ -108,7 +131,7 @@ class _LudoBoardState extends State<LudoBoard>
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, constraints) {
       final outer = constraints.maxWidth;
-      const framePad = 8.0;
+      const framePad = 4.0;
       final boardSize = outer - framePad * 2;
 
       return Container(
@@ -157,7 +180,7 @@ class _LudoBoardState extends State<LudoBoard>
   List<Widget> _buildTokens(double size) {
     final widgets = <Widget>[];
     final s = size / 15.0;
-    final tokenSize = s * 0.92;
+    final tokenSize = s * 1.05;
 
     for (var pi = 0; pi < widget.state.players.length; pi++) {
       final player = widget.state.players[pi];
@@ -168,6 +191,12 @@ class _LudoBoardState extends State<LudoBoard>
           widget.state.awaiting == 'move' &&
           (widget.mySeatIndex == null || isMine);
 
+      // Every token belonging to the player whose turn it is jumps gently —
+      // an at-a-glance "it's their turn" cue that doesn't depend on staring
+      // at the board's corner glow. Tokens that are actually tappable right
+      // now (movable) additionally get the stronger highlight-glow ring.
+      final isActiveTurnPlayer = pi == widget.state.currentTurn;
+
       for (var ti = 0; ti < player.tokens.length; ti++) {
         final progress = player.tokens[ti];
         final pos = tokenPosition(seatIdx, ti, progress, size);
@@ -176,9 +205,9 @@ class _LudoBoardState extends State<LudoBoard>
         widgets.add(AnimatedPositioned(
           duration: const Duration(milliseconds: 340),
           curve: Curves.easeOutBack,
-          // Pin points down: anchor the tip near the cell centre.
+          // Pawn is centered on the cell/base-slot centre.
           left: pos.dx - tokenSize / 2,
-          top: pos.dy - tokenSize * 0.78,
+          top: pos.dy - tokenSize / 2,
           width: tokenSize,
           height: tokenSize,
           child: GestureDetector(
@@ -187,6 +216,7 @@ class _LudoBoardState extends State<LudoBoard>
               color: color,
               number: ti + 1,
               highlighted: movable,
+              bouncing: isActiveTurnPlayer,
             ),
           ),
         ));
@@ -196,18 +226,35 @@ class _LudoBoardState extends State<LudoBoard>
   }
 }
 
-// ── Token widget — classic location-pin marker ───────────────────────────────
+// ── Token widget — glossy 3D pawn marker ─────────────────────────────────────
+
+// Head (the ball the number sits in) is centered at this fraction of the
+// token's height — shared between the painter, the highlight glow, and the
+// number badge so they all line up on the same spot. The whole pawn
+// (head + neck + base + drop shadow) must fit inside a single sz×sz box,
+// since the parent AnimatedPositioned gives this widget tight constraints.
+const double _pawnHeadCenterY = 0.24;
+const double _pawnHeadRadius = 0.26; // fraction of width
 
 class _Token extends StatelessWidget {
   final Color color;
   final int number;
   final bool highlighted;
-  const _Token({required this.color, required this.number, required this.highlighted});
+  final bool bouncing;
+  const _Token({
+    required this.color,
+    required this.number,
+    required this.highlighted,
+    this.bouncing = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     Widget pin = LayoutBuilder(builder: (context, c) {
       final sz = c.maxWidth;
+      final headCenter = Offset(sz * 0.5, sz * _pawnHeadCenterY);
+      final headR = sz * _pawnHeadRadius;
+
       return SizedBox(
         width: sz,
         height: sz,
@@ -217,10 +264,11 @@ class _Token extends StatelessWidget {
           children: [
             if (highlighted)
               Positioned(
-                top: sz * 0.06,
+                left: headCenter.dx - headR * 1.05,
+                top: headCenter.dy - headR * 1.05,
                 child: Container(
-                  width: sz * 0.7,
-                  height: sz * 0.7,
+                  width: headR * 2.1,
+                  height: headR * 2.1,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     boxShadow: [
@@ -233,17 +281,14 @@ class _Token extends StatelessWidget {
                   ),
                 ),
               ),
-            Icon(
-              Icons.location_pin,
-              size: sz,
-              color: color,
-              shadows: const [
-                Shadow(color: Colors.black45, blurRadius: 3, offset: Offset(0, 2)),
-              ],
+            CustomPaint(
+              size: Size(sz, sz),
+              painter: _PawnPainter(color: color),
             ),
-            // White head disc with the token number.
+            // White head disc with the token number, centered on the pawn head.
             Positioned(
-              top: sz * 0.13,
+              left: headCenter.dx - sz * 0.23,
+              top: headCenter.dy - sz * 0.23,
               child: Container(
                 width: sz * 0.46,
                 height: sz * 0.46,
@@ -269,13 +314,101 @@ class _Token extends StatelessWidget {
       );
     });
 
-    return highlighted ? _BouncingToken(child: pin) : pin;
+    if (highlighted) return _BouncingToken(child: pin);
+    // Gentler jump for "it's this player's turn" vs the stronger bounce a
+    // tap-ready token gets — keeps the turn cue readable without every
+    // token on an active player's side looking equally urgent/tappable.
+    if (bouncing) return _BouncingToken(intensity: 0.45, child: pin);
+    return pin;
   }
+}
+
+// Paints a glossy 3D bowling-pin/pawn silhouette (round head, tapered neck,
+// rounded base) with a radial highlight and an elliptical drop shadow —
+// replaces the earlier flat Icons.location_pin marker.
+class _PawnPainter extends CustomPainter {
+  final Color color;
+  const _PawnPainter({required this.color});
+
+  Path _pinPath(double w, double h) {
+    final headC = Offset(w * 0.5, h * _pawnHeadCenterY);
+    final headR = w * _pawnHeadRadius;
+    final head = Path()..addOval(Rect.fromCircle(center: headC, radius: headR));
+
+    final baseRect = Rect.fromCenter(
+        center: Offset(w * 0.5, h * 0.66), width: w * 0.60, height: h * 0.20);
+    final base = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+          baseRect, Radius.circular(baseRect.height / 2)));
+
+    final neck = Path()
+      ..moveTo(w * 0.32, h * 0.32)
+      ..lineTo(w * 0.68, h * 0.32)
+      ..lineTo(w * 0.63, h * 0.58)
+      ..lineTo(w * 0.37, h * 0.58)
+      ..close();
+
+    return Path.combine(
+      PathOperation.union,
+      Path.combine(PathOperation.union, head, neck),
+      base,
+    );
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final path = _pinPath(w, h);
+
+    // Elliptical drop shadow beneath the base.
+    final shadowRect = Rect.fromCenter(
+        center: Offset(w * 0.5, h * 0.80), width: w * 0.62, height: h * 0.08);
+    canvas.drawOval(
+      shadowRect,
+      Paint()
+        ..color = Colors.black.withOpacity(0.35)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.0),
+    );
+
+    // Glossy radial-gradient body — light source top-left.
+    final bounds = path.getBounds();
+    final gloss = Paint()
+      ..shader = ui.Gradient.radial(
+        Offset(bounds.left + bounds.width * 0.35,
+            bounds.top + bounds.height * 0.28),
+        bounds.longestSide * 0.9,
+        [
+          Color.lerp(color, Colors.white, 0.55)!,
+          color,
+          Color.lerp(color, Colors.black, 0.30)!,
+        ],
+        const [0.0, 0.55, 1.0],
+      );
+    canvas.drawPath(path, gloss);
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2
+        ..color = Colors.black.withOpacity(0.25),
+    );
+
+    // Small highlight streak for extra gloss.
+    final highlightC = Offset(w * 0.40, h * 0.20);
+    canvas.drawOval(
+      Rect.fromCenter(center: highlightC, width: w * 0.18, height: h * 0.10),
+      Paint()..color = Colors.white.withOpacity(0.55),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _PawnPainter old) => old.color != color;
 }
 
 class _BouncingToken extends StatefulWidget {
   final Widget child;
-  const _BouncingToken({required this.child});
+  final double intensity;
+  const _BouncingToken({required this.child, this.intensity = 1.0});
   @override
   State<_BouncingToken> createState() => _BouncingTokenState();
 }
@@ -298,8 +431,9 @@ class _BouncingTokenState extends State<_BouncingToken>
     return AnimatedBuilder(
       animation: _ctrl,
       builder: (_, child) => Transform.translate(
-        offset: Offset(0, -6 * _ctrl.value),
-        child: Transform.scale(scale: 1.0 + 0.06 * _ctrl.value, child: child),
+        offset: Offset(0, -6 * widget.intensity * _ctrl.value),
+        child: Transform.scale(
+            scale: 1.0 + 0.06 * widget.intensity * _ctrl.value, child: child),
       ),
       child: widget.child,
     );
@@ -331,7 +465,12 @@ class _BoardPainter extends CustomPainter {
     for (var i = 0; i < _track.length; i++) {
       final c = _track[i];
       final rect = Rect.fromLTWH(c[0] * s, c[1] * s, s, s);
-      canvas.drawRect(rect, Paint()..color = _cellFill);
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..shader = ui.Gradient.linear(rect.topLeft, rect.bottomRight,
+              [_cellFill, const Color(0xFFEDEDED)]),
+      );
       canvas.drawRect(
         rect,
         Paint()
@@ -351,7 +490,7 @@ class _BoardPainter extends CustomPainter {
       for (var j = 0; j < _homeLanes[seat].length; j++) {
         final c = _homeLanes[seat][j];
         final rect = Rect.fromLTWH(c[0] * s, c[1] * s, s, s);
-        canvas.drawRect(rect, Paint()..color = color);
+        canvas.drawRect(rect, _glossFill(rect, color));
         canvas.drawRect(
           rect,
           Paint()
@@ -364,7 +503,7 @@ class _BoardPainter extends CustomPainter {
 
       final startCoord = _track[kStartOffsets[seat]];
       final sr = Rect.fromLTWH(startCoord[0] * s, startCoord[1] * s, s, s);
-      canvas.drawRect(sr, Paint()..color = color);
+      canvas.drawRect(sr, _glossFill(sr, color));
       canvas.drawRect(
         sr,
         Paint()
@@ -386,7 +525,7 @@ class _BoardPainter extends CustomPainter {
       Canvas canvas, double s, int col, int row, Color color, int seatIndex) {
     final outer = Rect.fromLTWH(col * s, row * s, 6 * s, 6 * s);
 
-    canvas.drawRect(outer, Paint()..color = color);
+    canvas.drawRect(outer, _glossFill(outer, color));
 
     // Active-turn breathing glow.
     if (seatIndex == activeSeatIndex) {
@@ -460,7 +599,7 @@ class _BoardPainter extends CustomPainter {
         ..lineTo((t[2] as Offset).dx, (t[2] as Offset).dy)
         ..lineTo(centre.dx, centre.dy)
         ..close();
-      canvas.drawPath(path, Paint()..color = t[0] as Color);
+      canvas.drawPath(path, _glossFill(path.getBounds(), t[0] as Color));
       canvas.drawPath(
         path,
         Paint()
