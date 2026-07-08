@@ -15,11 +15,12 @@ const FALLBACK_PROFILES: Record<string, Record<string, BotDecisionProfile>> = {
     medium: { fold_probability: 0.30, call_probability: 0.47, raise_probability: 0.23, avg_decision_delay_ms: 2000 },
     hard:   { fold_probability: 0.18, call_probability: 0.42, raise_probability: 0.40, avg_decision_delay_ms: 1400 },
   },
-  ludo: {
-    easy:   { fold_probability: 0.45, call_probability: 0.45, raise_probability: 0.10, avg_decision_delay_ms: 3000 },
-    medium: { fold_probability: 0.30, call_probability: 0.50, raise_probability: 0.20, avg_decision_delay_ms: 2200 },
-    hard:   { fold_probability: 0.15, call_probability: 0.45, raise_probability: 0.40, avg_decision_delay_ms: 1200 },
-  },
+  // No 'ludo' entry: Ludo has no fold/call/raise decisions (it's a roll/move
+  // game), and its bots never go through getBotProfile() below — they're
+  // driven by the Ludo engine's own difficulty-aware chooseBotToken() instead
+  // (see services/game-engines/ludo/src/rules.ts). A copy-pasted fold/call/
+  // raise entry used to sit here unreferenced; removed to avoid the confusion
+  // of a config that looked wired but never actually did anything for Ludo.
   aviator: {
     easy:   { fold_probability: 0.50, call_probability: 0.40, raise_probability: 0.10, avg_decision_delay_ms: 3500 },
     medium: { fold_probability: 0.35, call_probability: 0.45, raise_probability: 0.20, avg_decision_delay_ms: 2500 },

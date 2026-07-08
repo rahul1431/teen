@@ -511,7 +511,10 @@ async function start() {
       hub.sendToRoom(room_id, 'game:state_update', {
         room_id,
         state: newState,
-        last_action: { user_id: conn.userId, action: data.action, dice: newState.dice, token_index: data.token_index },
+        // out.dice is the value actually rolled this action, preserved by the
+        // engine even when it auto-passed the turn (which clears newState.dice
+        // back to null) — without it, rolls with no legal move show no toast.
+        last_action: { user_id: conn.userId, action: data.action, dice: out.dice ?? newState.dice, token_index: data.token_index },
         result: out.result ?? null,
       })
       if (out.result) {

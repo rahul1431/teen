@@ -15,6 +15,8 @@ export interface MatchmakingEntry {
 export class MatchmakingService {
   private timers = new Map<string, NodeJS.Timeout>()
   private botTimers = new Map<string, { timer: NodeJS.Timeout; turnIdx: number }>()
+  private ludoAfkTimers = new Map<string, NodeJS.Timeout>()
+  private static readonly LUDO_TURN_TIMEOUT_MS = 25000
 
   constructor(
     private redis: Redis,
@@ -399,23 +401,69 @@ export class MatchmakingService {
     // different state shape, so it gets a dedicated cache + room:joined branch.
     if (gameType === 'ludo') {
       const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
+      const callLudoStart = () => fetch(`${engineUrl}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          room_id: roomId,
+          stake,
+          bot_difficulty: botDifficulty,
+          players: gatewayPlayers.map(p => ({ user_id: p.userId, username: p.username, seat: p.seat, is_bot: p.isBot })),
+        }),
+        signal: AbortSignal.timeout(5000),
+      })
       try {
-        const res = await fetch(`${engineUrl}/start`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            room_id: roomId,
-            stake,
-            players: gatewayPlayers.map(p => ({ user_id: p.userId, username: p.username, seat: p.seat, is_bot: p.isBot })),
-          }),
-          signal: AbortSignal.timeout(5000),
-        })
+        const res = await callLudoStart()
         if (res.ok) engineState = await res.json()
+        else console.error(`Ludo engine /start returned ${res.status}`)
       } catch (e) {
-        console.error('Ludo engine unavailable', e)
+        console.error('Ludo engine unavailable, will retry once', e)
       }
 
-      const ludoState = engineState || { ...fallbackState, game_type: 'ludo', current_turn: 0 }
+      // Retry once (mirrors the bot-turn retry pattern elsewhere in this file)
+      // before giving up. Without a confirmed engine response there is no real
+      // ludo:game:<roomId> state in Redis, so every future roll/move would 404
+      // forever and the player is left staring at a dead, unresponsive board
+      // (reproduced live) until the 15-min idle watchdog eventually refunds them.
+      if (!engineState) {
+        await new Promise(r => setTimeout(r, 1500))
+        try {
+          const res = await callLudoStart()
+          if (res.ok) engineState = await res.json()
+          else console.error(`Ludo engine /start retry returned ${res.status}`)
+        } catch (e) {
+          console.error('Ludo engine still unavailable after retry', e)
+        }
+      }
+
+      if (!engineState) {
+        // Give up immediately instead of handing players a broken table:
+        // unlock stakes, mark the room cancelled, and tell real players so
+        // they aren't left waiting on a room that can never accept an action.
+        if (stake > 0) {
+          for (const p of allPlayers) {
+            try {
+              await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+                body: JSON.stringify({ user_id: p.userId, amount: stake, room_id: roomId }),
+              })
+            } catch (unlockErr) {
+              console.error(`Failed to unlock wallet for user=${p.userId} after Ludo engine start failure:`, unlockErr)
+            }
+          }
+        }
+        await this.db.query("UPDATE game_rooms SET status = 'cancelled' WHERE id = $1", [roomId])
+          .catch(e => console.error('Failed to mark cancelled Ludo room', e))
+        for (const p of realPlayers) {
+          this.hub.sendToUser(p.userId, 'error', {
+            message: 'Could not start the Ludo table — your stake has been refunded. Please try again.',
+          })
+        }
+        return roomId
+      }
+
+      const ludoState = engineState
       await this.redis.setex(`game:room:${roomId}`, 3600, JSON.stringify({ ...ludoState, gameType: 'ludo', stake }))
 
       console.log(`[matchmaking] emitting room:joined (ludo) to ${realPlayers.length} players for room=${roomId}`)
@@ -655,7 +703,13 @@ export class MatchmakingService {
       if (!state || state.status === 'completed') return
       const turnIdx = state.current_turn ?? state.currentTurn ?? 0
       const cur = state.players?.[turnIdx]
-      if (!cur || !cur.is_bot) return // human's turn — stop and wait for input
+      if (!cur || !cur.is_bot) {
+        // It's a connected human's turn now — arm the per-turn AFK timer so a
+        // stalling player doesn't tie up the whole table (previously only a
+        // whole-room 15-minute idle watchdog existed; see GameWatchdog).
+        this.scheduleLudoAfkTimer(roomId)
+        return
+      }
 
       await new Promise(r => setTimeout(r, 1200)) // pacing so the table feels live
       try {
@@ -683,8 +737,80 @@ export class MatchmakingService {
     }
   }
 
+  // Arm a per-turn timeout for a connected-but-idle human player. Only a
+  // whole-room 15-min idle watchdog existed before (GameWatchdog), so a
+  // player who stayed connected but simply never acted could stall a live,
+  // real-money table for the full 15 minutes. Re-arms on every call (each new
+  // turn/action clears and replaces the previous room timer).
+  private scheduleLudoAfkTimer(roomId: string): void {
+    const existing = this.ludoAfkTimers.get(roomId)
+    if (existing) clearTimeout(existing)
+    this.ludoAfkTimers.delete(roomId)
+
+    const timer = setTimeout(() => {
+      this.ludoAfkTimers.delete(roomId)
+      void this.autoPlayIdleLudoTurn(roomId)
+    }, MatchmakingService.LUDO_TURN_TIMEOUT_MS)
+    this.ludoAfkTimers.set(roomId, timer)
+  }
+
+  // Fires when a human's turn has sat idle past the timeout. Re-checks state
+  // immediately before acting (the player may have acted in the last instant)
+  // and plays the minimum legal action on their behalf: roll if a roll is
+  // owed, or the first legal token if a move is owed (no strategy needed —
+  // this only exists to unstick the table, not to play well for them).
+  private async autoPlayIdleLudoTurn(roomId: string): Promise<void> {
+    const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
+    const state = await this.getRoomState(roomId)
+    if (!state || state.status === 'completed') return
+    const turnIdx = state.current_turn ?? state.currentTurn ?? 0
+    const cur = state.players?.[turnIdx]
+    if (!cur || cur.is_bot) return // already handled elsewhere, or turn moved on
+
+    try {
+      const awaiting = state.awaiting
+      const res = awaiting === 'move'
+        ? await fetch(`${engineUrl}/action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              room_id: roomId,
+              user_id: cur.user_id,
+              action: 'move_token',
+              token_index: (state.movable_tokens ?? [])[0] ?? 0,
+            }),
+            signal: AbortSignal.timeout(5000),
+          })
+        : await fetch(`${engineUrl}/bot-turn`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ room_id: roomId, user_id: cur.user_id }),
+            signal: AbortSignal.timeout(5000),
+          })
+      if (!res.ok) return
+      const data = await res.json() as any
+      const newState = data.state
+      await this.setRoomState(roomId, { ...newState, gameType: 'ludo' })
+      this.hub.sendToUser(cur.user_id, 'error', {
+        message: 'You took too long — your turn was played automatically.',
+      })
+      this.hub.sendToRoom(roomId, 'game:state_update', {
+        room_id: roomId,
+        state: newState,
+        last_action: { user_id: cur.user_id, action: 'auto_afk', dice: data.dice ?? newState.dice, moved_token: data.moved_token },
+        result: data.result ?? null,
+      })
+      if (data.result) { await this.handleLudoEnd(roomId, data.result); return }
+      void this.driveLudoBots(roomId)
+    } catch (e) {
+      console.error('Ludo AFK auto-play failed', e)
+    }
+  }
+
   // Credit the Ludo winner and broadcast the final result to the room.
   async handleLudoEnd(roomId: string, result: any): Promise<void> {
+    const afkTimer = this.ludoAfkTimers.get(roomId)
+    if (afkTimer) { clearTimeout(afkTimer); this.ludoAfkTimers.delete(roomId) }
     try {
       const parts = await this.db.query(
         'SELECT user_id, entry_fee_deducted, is_bot FROM game_participants WHERE room_id = $1',
@@ -700,23 +826,60 @@ export class MatchmakingService {
 
       console.log(`[gateway] handleLudoEnd room=${roomId} winner=${result?.winner_id} prize=${effectivePrize}`)
 
-      const settleRes = await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/settle-game`, {
+      // idempotency_key makes a retry safe (settle-game won't double-credit).
+      // Previously a single failure here was only console.error'd with no
+      // retry or record — a partial settlement failure (e.g. one loser's
+      // locked stake failing to consume) went unnoticed and un-reconciled.
+      const settlePayload = JSON.stringify({
+        room_id: roomId,
+        winner_id: effectiveWinnerId,
+        prize: effectivePrize,
+        players,
+        idempotency_key: `settle_${roomId}`,
+      })
+      const callSettle = () => fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/settle-game`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
-          room_id: roomId,
-          winner_id: effectiveWinnerId,
-          prize: effectivePrize,
-          players,
-          idempotency_key: `settle_${roomId}`,
-        }),
+        body: settlePayload,
       })
+
+      let settleRes = await callSettle()
+      let errBody = ''
       if (!settleRes.ok) {
-        const errBody = await settleRes.text().catch(() => '(unreadable)')
-        console.error(`[gateway] settle-game failed ${settleRes.status} for Ludo room ${roomId}:`, errBody)
+        errBody = await settleRes.text().catch(() => '(unreadable)')
+        console.error(`[gateway] settle-game failed ${settleRes.status} for Ludo room ${roomId}, retrying once:`, errBody)
+        await new Promise(r => setTimeout(r, 2000))
+        settleRes = await callSettle()
+        if (!settleRes.ok) errBody = await settleRes.text().catch(() => '(unreadable)')
+      }
+      if (!settleRes.ok) {
+        console.error(`[gateway] settle-game failed again ${settleRes.status} for Ludo room ${roomId}:`, errBody)
+        try {
+          await this.redis.rpush('ludo:reconcile:failed', JSON.stringify({
+            room_id: roomId,
+            winner_id: effectiveWinnerId,
+            prize: effectivePrize,
+            players,
+            failed_at: Date.now(),
+            reason: `settle-game HTTP ${settleRes.status}: ${errBody}`,
+          }))
+        } catch (redisErr) {
+          console.error(`[RECONCILE-NEEDED] Could not record settle-game failure for room=${roomId}`, redisErr)
+        }
       }
     } catch (e) {
       console.error('Failed to settle Ludo game', e)
+      try {
+        await this.redis.rpush('ludo:reconcile:failed', JSON.stringify({
+          room_id: roomId,
+          winner_id: result?.winner_id ?? null,
+          prize: Number(result?.prize) || 0,
+          failed_at: Date.now(),
+          reason: `settle-game threw: ${e instanceof Error ? e.message : String(e)}`,
+        }))
+      } catch (redisErr) {
+        console.error(`[RECONCILE-NEEDED] Could not record settle-game exception for room=${roomId}`, redisErr)
+      }
     }
 
     monitorEmitter.emit('game_result', {

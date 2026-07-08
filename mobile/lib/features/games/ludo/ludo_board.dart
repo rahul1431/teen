@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import '../../../shared/theme/app_theme.dart';
 import 'ludo_engine.dart';
 
 // ── Coordinate tables (UNCHANGED — game logic depends on these) ───────────────
@@ -36,11 +37,13 @@ const List<List<List<double>>> _baseDots = [
 // Bright classic seat colors, mapped so corners match the reference board:
 // seat0 = red (bottom-left), seat1 = blue (top-left),
 // seat2 = yellow (top-right), seat3 = green (bottom-right).
+// Sourced from AppColors.ludo* so the rest of the Ludo screen (avatars, chips,
+// turn borders) always matches these exact token colors — see app_theme.dart.
 const List<Color> _seatColors = [
-  Color(0xFFE33B3B), // red
-  Color(0xFF1E7FD6), // blue
-  Color(0xFFF7C815), // yellow
-  Color(0xFF1FA855), // green
+  AppColors.ludoRed,
+  AppColors.ludoBlue,
+  AppColors.ludoYellow,
+  AppColors.ludoGreen,
 ];
 
 // Board surface + grid tones (classic bright look).

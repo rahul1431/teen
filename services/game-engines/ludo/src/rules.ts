@@ -31,6 +31,8 @@ export interface LudoPlayer {
   status: string         // 'active' | 'finished'
 }
 
+export type BotDifficulty = 'easy' | 'medium' | 'hard'
+
 export interface LudoState {
   room_id: string
   game_type: 'ludo'
@@ -45,6 +47,7 @@ export interface LudoState {
   winner_id: string | null
   round: number
   created_at: number
+  bot_difficulty: BotDifficulty
 }
 
 export interface ActionResult {
@@ -64,6 +67,7 @@ export function createInitialState(
   roomId: string,
   stake: number,
   players: { user_id: string; username: string; seat: number; is_bot: boolean }[],
+  botDifficulty: BotDifficulty = 'medium',
 ): LudoState {
   return {
     room_id: roomId,
@@ -88,6 +92,7 @@ export function createInitialState(
     winner_id: null,
     round: 1,
     created_at: Date.now(),
+    bot_difficulty: botDifficulty,
   }
 }
 
@@ -259,13 +264,28 @@ export function rollDie(): number {
 }
 
 /**
- * Pick a token for a bot to move from the allowed set. Strategy: prefer a
- * capture, then advancing a token toward home, then leaving base.
+ * Pick a token for a bot to move from the allowed set. Strategy scales with
+ * difficulty:
+ *  - easy:   mostly plays a random legal move (rarely hunts captures) so
+ *            newer players have room to win against easy bots.
+ *  - medium: prefer a capture, then advance the most-progressed token.
+ *  - hard:   same as medium, but when no capture is available it also avoids
+ *            leaving a token within an opponent's striking distance (1-6
+ *            cells behind, on an unsafe cell) if a non-exposed move exists.
  */
-export function chooseBotToken(state: LudoState, playerIdx: number, dice: number): number {
+export function chooseBotToken(
+  state: LudoState,
+  playerIdx: number,
+  dice: number,
+  difficulty: BotDifficulty = 'medium',
+): number {
   const movable = movableTokens(state, playerIdx, dice)
   if (movable.length === 0) return -1
   const player = state.players[playerIdx]
+
+  if (difficulty === 'easy' && Math.random() < 0.8) {
+    return movable[Math.floor(Math.random() * movable.length)]
+  }
 
   // Prefer a move that captures an opponent.
   for (const t of movable) {
@@ -278,6 +298,30 @@ export function chooseBotToken(state: LudoState, playerIdx: number, dice: number
         const here = state.players[p].tokens.filter((tp) => absoluteCell(p, tp) === cell)
         if (here.length === 1) return t
       }
+    }
+  }
+
+  if (difficulty === 'hard') {
+    const safeMoves = movable.filter((t) => {
+      const prog = player.tokens[t]
+      if (prog === -1) return true // entering play this turn is never "exposed" yet
+      const cell = absoluteCell(playerIdx, prog + dice)
+      if (cell === -1 || SAFE_CELLS.has(cell)) return true
+      for (let p = 0; p < state.players.length; p++) {
+        if (p === playerIdx) continue
+        for (const tp of state.players[p].tokens) {
+          const oc = absoluteCell(p, tp)
+          if (oc === -1) continue
+          const dist = (cell - oc + MAIN_TRACK) % MAIN_TRACK
+          if (dist >= 1 && dist <= 6) return false
+        }
+      }
+      return true
+    })
+    if (safeMoves.length > 0) {
+      let best = safeMoves[0]
+      for (const t of safeMoves) if (player.tokens[t] > player.tokens[best]) best = t
+      return best
     }
   }
 

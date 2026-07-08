@@ -40,6 +40,19 @@ class _LudoGamePageState extends State<LudoGamePage>
   String? _banner;
   String? _rollNotif;
   bool _showRollNotif = false;
+  int _lastDice = 1;
+  // Recent-events log — newest first, capped short. Fills the empty space
+  // below the board (a fixed-size square inside an Expanded region) with
+  // something useful instead of leaving it idle.
+  final List<String> _activityLog = [];
+  static const int _maxActivityLog = 6;
+
+  void _logActivity(String entry) {
+    setState(() {
+      _activityLog.insert(0, entry);
+      if (_activityLog.length > _maxActivityLog) _activityLog.removeLast();
+    });
+  }
 
   late final AnimationController _diceCtrl = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 500));
@@ -132,10 +145,9 @@ class _LudoGamePageState extends State<LudoGamePage>
     final s = _state;
     if (s == null || _botBusy) return;
     _botBusy = true;
-    while (mounted &&
-        s.status == 'active' &&
-        s.players[s.currentTurn].isBot) {
-      setState(() => _banner = '${s.players[s.currentTurn].username} is playing…');
+    while (mounted && s.status == 'active' && s.players[s.currentTurn].isBot) {
+      setState(
+          () => _banner = '${s.players[s.currentTurn].username} is playing…');
       await Future.delayed(const Duration(milliseconds: 900));
       final dice = _engine.rollDie();
       SoundService.instance.play(Sfx.diceRoll);
@@ -179,35 +191,63 @@ class _LudoGamePageState extends State<LudoGamePage>
     _subs.add(_socket.on(SocketEvents.gameStateUpdate).listen((d) {
       if (!mounted || d == null || d['state'] == null) return;
       final prevPlayers = _state?.players;
-      final newState = LudoState.fromJson(Map<String, dynamic>.from(d['state']));
+      final newState =
+          LudoState.fromJson(Map<String, dynamic>.from(d['state']));
       // Infer capture for SFX: a token went back to base since last update.
       final captured = _detectCapture(prevPlayers, newState.players);
       setState(() {
         _state = newState;
         _banner = _isMyTurn
-            ? (newState.awaiting == 'move'
-                ? 'Tap a token'
-                : 'Your turn — roll')
+            ? (newState.awaiting == 'move' ? 'Tap a token' : 'Your turn — roll')
             : '${newState.players[newState.currentTurn].username} is playing…';
       });
       final la = d['last_action'];
+      // last_action.user_id is the authoritative actor (it's the request's own
+      // conn.userId server-side, or the acting bot's user_id) — look up their
+      // username directly instead of guessing from turn-index math, which
+      // broke once a finished player caused passTurn to skip a seat.
+      String? actorName;
+      if (la != null) {
+        final actorId = la['user_id'];
+        final actorSeatIdx =
+            newState.players.indexWhere((p) => p.userId == actorId);
+        actorName = newState
+            .players[actorSeatIdx >= 0
+                ? actorSeatIdx
+                : newState.currentTurn.clamp(0, newState.players.length - 1)]
+            .username;
+      }
       if (la != null && la['dice'] != null) {
         SoundService.instance.play(Sfx.diceRoll);
         _diceCtrl.forward(from: 0);
-        final rollerIdx = newState.currentTurn == _mySeatIndex
-            ? (newState.currentTurn + (newState.awaiting == 'move' ? 0 : -1)) % newState.players.length
-            : newState.currentTurn;
-        final rollerName = newState.players[rollerIdx.clamp(0, newState.players.length - 1)].username;
-        _showRoll(rollerName, (la['dice'] as num).toInt());
+        _showRoll(actorName!, (la['dice'] as num).toInt());
       }
-      if (captured) SoundService.instance.play(Sfx.tokenCapture);
-      else SoundService.instance.play(Sfx.tokenMove);
-      if (d['result'] != null) _finish(d['result']['winner_id']);
+      if (captured) {
+        SoundService.instance.play(Sfx.tokenCapture);
+        if (actorName != null) _logActivity('$actorName captured a token! 💥');
+      } else {
+        SoundService.instance.play(Sfx.tokenMove);
+      }
+      if (d['result'] != null) {
+        _finish(d['result']['winner_id'], rankings: d['result']['rankings']);
+      }
     }));
 
     _subs.add(_socket.on(SocketEvents.gameResult).listen((d) {
       if (!mounted) return;
-      _finish(d?['winner_id']);
+      _finish(d?['winner_id'], rankings: d?['rankings']);
+    }));
+
+    // Server rejected an action (stale room, engine unavailable, not-your-turn
+    // desync, etc). Without this the player is left staring at a dead ROLL
+    // button with zero feedback — surface it and let them retry.
+    _subs.add(_socket.on(SocketEvents.errorEvent).listen((d) {
+      if (!mounted) return;
+      final msg = (d is Map ? d['message'] : d)?.toString() ?? 'Action failed';
+      setState(() => _banner = msg);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(msg)));
     }));
   }
 
@@ -256,7 +296,14 @@ class _LudoGamePageState extends State<LudoGamePage>
     setState(() {
       _rollNotif = '$playerName rolled ${emojis[dice.clamp(1, 6)]} $dice';
       _showRollNotif = true;
+      // state.dice gets cleared back to null server-side (and in the offline
+      // engine) the instant a roll auto-passes with no legal move — which is
+      // the common case. Track the raw rolled value separately so the dice
+      // face widget actually shows what was rolled instead of always falling
+      // back to a static "1" in that case.
+      _lastDice = dice;
     });
+    _logActivity('$playerName rolled a $dice');
     Future.delayed(const Duration(milliseconds: 1600), () {
       if (mounted) setState(() => _showRollNotif = false);
     });
@@ -268,8 +315,20 @@ class _LudoGamePageState extends State<LudoGamePage>
     widget.offline ? _offlineMove(tokenIndex) : _onlineMove(tokenIndex);
   }
 
-  void _finish(String? winnerId) {
+  void _finish(String? winnerId, {List<dynamic>? rankings}) {
     final won = winnerId == (widget.offline ? 'me' : _myUserId);
+    // Server computes full standings (rankings: [{user_id, finished}, ...],
+    // already sorted best-first) but until now the dialog only ever showed a
+    // binary Victory/Game Over with no final placement info.
+    final players = _state?.players;
+    final standings = <String>[];
+    if (rankings != null && players != null) {
+      for (final r in rankings) {
+        final uid = r is Map ? r['user_id'] : null;
+        final idx = players.indexWhere((p) => p.userId == uid);
+        if (idx >= 0) standings.add(players[idx].username);
+      }
+    }
     SoundService.instance.play(won ? Sfx.win : Sfx.lose);
     showDialog(
       context: context,
@@ -278,91 +337,140 @@ class _LudoGamePageState extends State<LudoGamePage>
       builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.symmetric(horizontal: 28),
-        child: Container(
-          padding: const EdgeInsets.all(28),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: won
-                  ? [const Color(0xFF1A1200), const Color(0xFF2A1E00), const Color(0xFF0D0D0D)]
-                  : [const Color(0xFF0D0D16), const Color(0xFF161B2E), const Color(0xFF0D0D0D)],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: won
-                  ? AppColors.gold.withOpacity(0.6)
-                  : Colors.white.withOpacity(0.1),
-              width: 1.5,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: won ? AppColors.gold.withOpacity(0.3) : Colors.blue.withOpacity(0.15),
-                blurRadius: 40,
-                spreadRadius: 5,
-              ),
-            ],
+        // Simple scale+fade entrance — self-contained via TweenAnimationBuilder
+        // (no extra AnimationController/lifecycle to manage) so the result
+        // dialog doesn't just snap into place against the polished in-game
+        // board animations.
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.0, end: 1.0),
+          duration: const Duration(milliseconds: 380),
+          curve: Curves.easeOutBack,
+          builder: (context, t, child) => Opacity(
+            opacity: t.clamp(0.0, 1.0),
+            child: Transform.scale(scale: 0.85 + 0.15 * t, child: child),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Trophy / Sad emoji
-              Text(
-                won ? '🏆' : '😔',
-                style: const TextStyle(fontSize: 64),
+          child: Container(
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: won
+                    ? [
+                        const Color(0xFF1A1200),
+                        const Color(0xFF2A1E00),
+                        const Color(0xFF0D0D0D)
+                      ]
+                    : [
+                        const Color(0xFF0D0D16),
+                        const Color(0xFF161B2E),
+                        const Color(0xFF0D0D0D)
+                      ],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
               ),
-              const SizedBox(height: 16),
-              Text(
-                won ? 'VICTORY!' : 'GAME OVER',
-                style: TextStyle(
-                  color: won ? AppColors.gold : Colors.white70,
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 3,
-                  shadows: won
-                      ? [const Shadow(color: AppColors.gold, blurRadius: 20)]
-                      : [],
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: won
+                    ? AppColors.gold.withOpacity(0.6)
+                    : Colors.white.withOpacity(0.1),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: won
+                      ? AppColors.gold.withOpacity(0.3)
+                      : Colors.blue.withOpacity(0.15),
+                  blurRadius: 40,
+                  spreadRadius: 5,
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                won
-                    ? 'All tokens home first!'
-                    : 'Better luck next time',
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 15,
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Trophy / Sad emoji
+                Text(
+                  won ? '🏆' : '😔',
+                  style: const TextStyle(fontSize: 64),
                 ),
-              ),
-              const SizedBox(height: 28),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    if (mounted) context.pop();
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: won ? AppColors.gold : const Color(0xFF1E2840),
-                    foregroundColor: won ? Colors.black : Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                    side: won
-                        ? null
-                        : BorderSide(color: Colors.white.withOpacity(0.2)),
+                const SizedBox(height: 16),
+                Text(
+                  won ? 'VICTORY!' : 'GAME OVER',
+                  style: TextStyle(
+                    color: won ? AppColors.gold : Colors.white70,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 3,
+                    shadows: won
+                        ? [const Shadow(color: AppColors.gold, blurRadius: 20)]
+                        : [],
                   ),
-                  child: Text(
-                    won ? 'Claim Victory' : 'Back to Lobby',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.5,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  won ? 'All tokens home first!' : 'Better luck next time',
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 15,
+                  ),
+                ),
+                if (standings.isNotEmpty) ...[
+                  const SizedBox(height: 20),
+                  ...List.generate(standings.length, (i) {
+                    const medals = ['🥇', '🥈', '🥉', '4️⃣'];
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Row(
+                        children: [
+                          Text(medals[i.clamp(0, 3)],
+                              style: const TextStyle(fontSize: 16)),
+                          const SizedBox(width: 8),
+                          Text(
+                            standings[i],
+                            style: TextStyle(
+                              color: i == 0
+                                  ? AppColors.gold
+                                  : AppColors.textSecondary,
+                              fontWeight:
+                                  i == 0 ? FontWeight.w800 : FontWeight.w500,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+                const SizedBox(height: 28),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      if (mounted) context.pop();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          won ? AppColors.gold : const Color(0xFF1E2840),
+                      foregroundColor: won ? Colors.black : Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      side: won
+                          ? null
+                          : BorderSide(color: Colors.white.withOpacity(0.2)),
+                    ),
+                    child: Text(
+                      won ? 'Claim Victory' : 'Back to Lobby',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -379,7 +487,8 @@ class _LudoGamePageState extends State<LudoGamePage>
     final s = _state;
     return Scaffold(
       body: s == null
-          ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.gold))
           : Container(
               decoration: const BoxDecoration(
                 gradient: RadialGradient(
@@ -399,55 +508,70 @@ class _LudoGamePageState extends State<LudoGamePage>
                     _buildAppBar(context),
                     _playersBar(s),
                     Expanded(
-                      child: Stack(
+                      child: Column(
                         children: [
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                            child: AspectRatio(
-                              aspectRatio: 1,
-                              child: LudoBoard(
-                                state: s,
-                                mySeatIndex: _mySeatIndex,
-                                onTokenTap: _onTokenTap,
-                              ),
-                            ),
-                          ),
-                          // Dice roll notification overlay
-                          if (_rollNotif != null)
-                            Positioned(
-                              top: 16,
-                              left: 0,
-                              right: 0,
-                              child: Center(
-                                child: AnimatedOpacity(
-                                  opacity: _showRollNotif ? 1.0 : 0.0,
-                                  duration: const Duration(milliseconds: 280),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF0F1322).withOpacity(0.92),
-                                      borderRadius: BorderRadius.circular(24),
-                                      border: Border.all(color: AppColors.gold.withOpacity(0.4)),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withOpacity(0.5),
-                                          blurRadius: 12,
-                                          offset: const Offset(0, 4),
-                                        )
-                                      ],
-                                    ),
-                                    child: Text(
-                                      _rollNotif!,
-                                      style: const TextStyle(
-                                        color: AppColors.goldLight,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w900,
-                                      ),
+                          Expanded(
+                            child: Stack(
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 4),
+                                  child: AspectRatio(
+                                    aspectRatio: 1,
+                                    child: LudoBoard(
+                                      state: s,
+                                      mySeatIndex: _mySeatIndex,
+                                      onTokenTap: _onTokenTap,
                                     ),
                                   ),
                                 ),
-                              ),
+                                // Dice roll notification overlay
+                                if (_rollNotif != null)
+                                  Positioned(
+                                    top: 16,
+                                    left: 0,
+                                    right: 0,
+                                    child: Center(
+                                      child: AnimatedOpacity(
+                                        opacity: _showRollNotif ? 1.0 : 0.0,
+                                        duration:
+                                            const Duration(milliseconds: 280),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 20, vertical: 10),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF0F1322)
+                                                .withOpacity(0.92),
+                                            borderRadius:
+                                                BorderRadius.circular(24),
+                                            border: Border.all(
+                                                color: AppColors.gold
+                                                    .withOpacity(0.4)),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: Colors.black
+                                                    .withOpacity(0.5),
+                                                blurRadius: 12,
+                                                offset: const Offset(0, 4),
+                                              )
+                                            ],
+                                          ),
+                                          child: Text(
+                                            _rollNotif!,
+                                            style: const TextStyle(
+                                              color: AppColors.goldLight,
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
+                          ),
+                          if (_activityLog.isNotEmpty) _activityPanel(),
                         ],
                       ),
                     ),
@@ -456,6 +580,44 @@ class _LudoGamePageState extends State<LudoGamePage>
                 ),
               ),
             ),
+    );
+  }
+
+  // Compact recent-events strip shown below the board. The board is a fixed
+  // square inside an Expanded column, which otherwise left a large idle gap
+  // beneath it on most phone aspect ratios — this fills it with something
+  // useful (who rolled what, who got captured) instead of empty space.
+  Widget _activityPanel() {
+    // A plain Column child (sibling of the board's Expanded above it), not a
+    // Stack overlay — must not return a Positioned root widget.
+    return Container(
+      margin: const EdgeInsets.fromLTRB(10, 6, 10, 8),
+      constraints: const BoxConstraints(maxHeight: 92),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F1322).withOpacity(0.55),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+      ),
+      child: ListView.builder(
+        padding: EdgeInsets.zero,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: _activityLog.length,
+        itemBuilder: (context, i) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 1.5),
+          child: Text(
+            _activityLog[i],
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: i == 0 ? Colors.white70 : Colors.white38,
+              fontSize: 11.5,
+              fontWeight: i == 0 ? FontWeight.w600 : FontWeight.w400,
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -493,7 +655,10 @@ class _LudoGamePageState extends State<LudoGamePage>
                   const Text('🪙 ', style: TextStyle(fontSize: 11)),
                   Text(
                     formatCurrency(_state?.stake ?? 0),
-                    style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 11),
+                    style: const TextStyle(
+                        color: AppColors.gold,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11),
                   ),
                 ],
               ),
@@ -538,7 +703,12 @@ class _LudoGamePageState extends State<LudoGamePage>
                 width: 1.5,
               ),
               boxShadow: active
-                  ? [BoxShadow(color: color.withOpacity(0.3), blurRadius: 12, spreadRadius: 1)]
+                  ? [
+                      BoxShadow(
+                          color: color.withOpacity(0.3),
+                          blurRadius: 12,
+                          spreadRadius: 1)
+                    ]
                   : [],
             ),
             child: Column(
@@ -554,14 +724,18 @@ class _LudoGamePageState extends State<LudoGamePage>
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         gradient: RadialGradient(
-                          colors: [color.withOpacity(0.9), color.withOpacity(0.5)],
+                          colors: [
+                            color.withOpacity(0.9),
+                            color.withOpacity(0.5)
+                          ],
                         ),
                         border: Border.all(
                           color: active ? Colors.white : color.withOpacity(0.4),
                           width: active ? 2.0 : 1.0,
                         ),
                         boxShadow: [
-                          BoxShadow(color: color.withOpacity(0.5), blurRadius: 6),
+                          BoxShadow(
+                              color: color.withOpacity(0.5), blurRadius: 6),
                         ],
                       ),
                       child: Center(
@@ -610,7 +784,11 @@ class _LudoGamePageState extends State<LudoGamePage>
                                 ? color.withOpacity(0.5)
                                 : Colors.white.withOpacity(0.15),
                         boxShadow: home
-                            ? [BoxShadow(color: color.withOpacity(0.6), blurRadius: 3)]
+                            ? [
+                                BoxShadow(
+                                    color: color.withOpacity(0.6),
+                                    blurRadius: 3)
+                              ]
                             : [],
                       ),
                     );
@@ -629,7 +807,15 @@ class _LudoGamePageState extends State<LudoGamePage>
     final myTurn = _isMyTurn;
     final turnIdx = s.currentTurn.clamp(0, s.players.length - 1);
     final activePlayer = s.players[turnIdx];
-    final seatColors = [AppColors.ludoRed, AppColors.ludoGreen, AppColors.ludoYellow, AppColors.ludoBlue];
+    // Must match _playersBar's order (seat0 red, seat1 blue, seat2 yellow, seat3
+    // green) — this array previously had green/blue swapped, so the active-turn
+    // border color didn't match the same player's color everywhere else on screen.
+    final seatColors = [
+      AppColors.ludoRed,
+      AppColors.ludoBlue,
+      AppColors.ludoYellow,
+      AppColors.ludoGreen
+    ];
     final activeColor = seatColors[(activePlayer.seat - 1) % 4];
 
     return Container(
@@ -637,24 +823,26 @@ class _LudoGamePageState extends State<LudoGamePage>
       decoration: BoxDecoration(
         color: const Color(0xFF0B0F1E),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-        border: Border(top: BorderSide(color: activeColor.withOpacity(0.3), width: 1.5)),
+        border: Border(
+            top: BorderSide(color: activeColor.withOpacity(0.3), width: 1.5)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.5),
             blurRadius: 16,
             offset: const Offset(0, -4),
           ),
-          if (myTurn) BoxShadow(
-            color: AppColors.gold.withOpacity(0.08),
-            blurRadius: 20,
-            offset: const Offset(0, -2),
-          ),
+          if (myTurn)
+            BoxShadow(
+              color: AppColors.gold.withOpacity(0.08),
+              blurRadius: 20,
+              offset: const Offset(0, -2),
+            ),
         ],
       ),
       child: Row(
         children: [
           // Dice
-          _DiceWidget(value: s.dice ?? 1, controller: _diceCtrl),
+          _DiceWidget(value: s.dice ?? _lastDice, controller: _diceCtrl),
           const SizedBox(width: 16),
           // Middle info
           Expanded(
@@ -666,26 +854,37 @@ class _LudoGamePageState extends State<LudoGamePage>
                   Row(
                     children: [
                       Container(
-                        width: 8, height: 8,
-                        decoration: const BoxDecoration(color: Colors.greenAccent, shape: BoxShape.circle),
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                            color: Colors.greenAccent, shape: BoxShape.circle),
                       ),
                       const SizedBox(width: 6),
                       const Text('YOUR TURN',
-                          style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.w900, fontSize: 12, letterSpacing: 1)),
+                          style: TextStyle(
+                              color: Colors.greenAccent,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 12,
+                              letterSpacing: 1)),
                     ],
                   )
                 else
                   Row(
                     children: [
                       Container(
-                        width: 8, height: 8,
-                        decoration: BoxDecoration(color: activeColor, shape: BoxShape.circle),
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                            color: activeColor, shape: BoxShape.circle),
                       ),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
                           '${activePlayer.username} playing…',
-                          style: TextStyle(color: activeColor, fontWeight: FontWeight.w700, fontSize: 12),
+                          style: TextStyle(
+                              color: activeColor,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
@@ -694,7 +893,8 @@ class _LudoGamePageState extends State<LudoGamePage>
                 const SizedBox(height: 3),
                 Text(
                   _banner ?? '',
-                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                  style: const TextStyle(
+                      color: AppColors.textSecondary, fontSize: 11),
                   overflow: TextOverflow.ellipsis,
                 ),
               ],
@@ -704,13 +904,21 @@ class _LudoGamePageState extends State<LudoGamePage>
           // Roll button
           AnimatedContainer(
             duration: const Duration(milliseconds: 250),
-            decoration: canRoll ? BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [BoxShadow(color: AppColors.gold.withOpacity(0.4), blurRadius: 14, offset: const Offset(0, 3))],
-            ) : null,
+            decoration: canRoll
+                ? BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                          color: AppColors.gold.withOpacity(0.4),
+                          blurRadius: 14,
+                          offset: const Offset(0, 3))
+                    ],
+                  )
+                : null,
             child: myTurn && s.awaiting == 'move'
                 ? Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 18, vertical: 14),
                     decoration: BoxDecoration(
                       color: activeColor.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(14),
@@ -718,20 +926,28 @@ class _LudoGamePageState extends State<LudoGamePage>
                     ),
                     child: Text(
                       'TAP TOKEN',
-                      style: TextStyle(color: activeColor, fontWeight: FontWeight.w900, fontSize: 12, letterSpacing: 0.5),
+                      style: TextStyle(
+                          color: activeColor,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 12,
+                          letterSpacing: 0.5),
                     ),
                   )
                 : ElevatedButton.icon(
                     onPressed: canRoll ? _onRoll : null,
                     icon: const Icon(Icons.casino_rounded, size: 18),
-                    label: const Text('ROLL', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+                    label: const Text('ROLL',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w900, fontSize: 13)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.gold,
                       foregroundColor: Colors.black,
                       disabledBackgroundColor: Colors.white.withOpacity(0.04),
                       disabledForegroundColor: Colors.white24,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
                       elevation: 0,
                     ),
                   ),
@@ -804,7 +1020,8 @@ class _DiceWidget extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.white.withOpacity(0.5), width: 1.0),
+            border:
+                Border.all(color: Colors.white.withOpacity(0.5), width: 1.0),
           ),
           child: CustomPaint(painter: _PipsPainter(v)),
         ),
@@ -821,7 +1038,7 @@ class _PipsPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     // Red color for 1 and 4, dark gray/black for others (standard casino style)
     final isRed = value == 1 || value == 4;
-    
+
     final r = size.width * 0.095;
     final cells = {
       'tl': Offset(size.width * 0.28, size.height * 0.28),
@@ -842,15 +1059,20 @@ class _PipsPainter extends CustomPainter {
     };
     for (final key in layout[value] ?? ['c']) {
       final center = cells[key]!;
-      canvas.drawCircle(center, r, Paint()..shader = RadialGradient(
-        colors: isRed 
-            ? [const Color(0xFFFF5252), const Color(0xFFB71C1C)] 
-            : [const Color(0xFF424242), const Color(0xFF000000)],
-        center: const Alignment(-0.35, -0.35),
-      ).createShader(Rect.fromCircle(center: center, radius: r)));
-      
+      canvas.drawCircle(
+          center,
+          r,
+          Paint()
+            ..shader = RadialGradient(
+              colors: isRed
+                  ? [const Color(0xFFFF5252), const Color(0xFFB71C1C)]
+                  : [const Color(0xFF424242), const Color(0xFF000000)],
+              center: const Alignment(-0.35, -0.35),
+            ).createShader(Rect.fromCircle(center: center, radius: r)));
+
       // Highlight dot
-      canvas.drawCircle(Offset(center.dx - r * 0.35, center.dy - r * 0.35), r * 0.2, Paint()..color = Colors.white70);
+      canvas.drawCircle(Offset(center.dx - r * 0.35, center.dy - r * 0.35),
+          r * 0.2, Paint()..color = Colors.white70);
     }
   }
 
