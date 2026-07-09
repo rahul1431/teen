@@ -108,7 +108,9 @@ class _LudoGamePageState extends State<LudoGamePage>
     SoundService.instance.init();
     _muted = SoundService.instance.muted;
     widget.offline ? _initOffline() : _initOnline();
-    SoundService.instance.loopAmbience('ludo_ambience.wav', volume: 0.5);
+    // Game-start sting as the table opens, then the looping ambience under it.
+    SoundService.instance.play(Sfx.ludoStart);
+    SoundService.instance.loopAmbience('ludo_ambience.mp3', volume: 0.5);
     if (!widget.offline) _loadEmojiConfig();
   }
 
@@ -119,7 +121,7 @@ class _LudoGamePageState extends State<LudoGamePage>
     if (m) {
       SoundService.instance.stopAmbience();
     } else {
-      SoundService.instance.loopAmbience('ludo_ambience.wav', volume: 0.5);
+      SoundService.instance.loopAmbience('ludo_ambience.mp3', volume: 0.5);
     }
   }
 
@@ -307,15 +309,14 @@ class _LudoGamePageState extends State<LudoGamePage>
       // update from anyone at the table, which read as a non-stop bell in
       // online games. Capture/home are rare, genuinely notable events
       // (unlike every-broadcast dice noise) so those play for ANY player.
-      final isMyMove =
-          la != null && la['action'] == 'move_token' && la['user_id'] == _myUserId;
+      // Per-cell stepping "tik" is emitted by the token sprite itself as it
+      // travels (see _TokenSprite), so we only fire the rarer capture/home
+      // cues here — no more per-move bell on every broadcast.
       if (captured) {
         SoundService.instance.play(Sfx.tokenCapture);
         if (actorName != null) _logActivity('$actorName captured a token! 💥');
       } else if (homed) {
         SoundService.instance.play(Sfx.tokenHome);
-      } else if (isMyMove) {
-        SoundService.instance.play(Sfx.tokenMove);
       }
       if (d['result'] != null) {
         _finish(d['result']['winner_id'],
@@ -368,7 +369,7 @@ class _LudoGamePageState extends State<LudoGamePage>
     _socket.emit(SocketEvents.roomChat,
         {'room_id': widget.roomId, 'message': emoji, 'type': 'emoji'});
     _spawnReaction(_myUserId ?? '', emoji);
-    SoundService.instance.play(Sfx.buttonTap);
+    SoundService.instance.play(Sfx.ludoTap);
   }
 
   void _sendTip(int amount) {
@@ -431,12 +432,12 @@ class _LudoGamePageState extends State<LudoGamePage>
   bool get _isMyTurn => _state != null && _state!.currentTurn == _mySeatIndex;
 
   void _playMoveSounds(Map<String, bool> res) {
+    // Per-cell stepping "tik" (and the safe-cell chime) are emitted by the
+    // token sprite as it travels — here we only add the rarer capture/home cues.
     if (res['captured'] == true) {
       SoundService.instance.play(Sfx.tokenCapture);
     } else if (res['home'] == true) {
       SoundService.instance.play(Sfx.tokenHome);
-    } else {
-      SoundService.instance.play(Sfx.tokenMove);
     }
   }
 
@@ -463,6 +464,20 @@ class _LudoGamePageState extends State<LudoGamePage>
     widget.offline ? _offlineMove(tokenIndex) : _onlineMove(tokenIndex);
   }
 
+  // Original confetti burst overlaid on the whole screen when the local player
+  // wins — the celebratory "fireworks" moment, drawn with a CustomPainter (no
+  // video asset). Self-removes when the animation finishes.
+  void _showWinBurst() {
+    final overlay = Overlay.of(context);
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => _WinBurst(onDone: () {
+        entry.remove();
+      }),
+    );
+    overlay.insert(entry);
+  }
+
   void _finish(String? winnerId, {List<dynamic>? rankings, double? prize}) {
     final won = winnerId == (widget.offline ? 'me' : _myUserId);
     // Server computes full standings (rankings: [{user_id, finished}, ...],
@@ -478,6 +493,7 @@ class _LudoGamePageState extends State<LudoGamePage>
       }
     }
     SoundService.instance.play(won ? Sfx.ludoWin : Sfx.lose);
+    if (won) _showWinBurst();
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1010,12 +1026,12 @@ class _LudoGamePageState extends State<LudoGamePage>
   }
 
   Widget _playersBar(LudoState s) {
-    // Order matches the reskinned board: seat0 red, seat1 blue, seat2 yellow, seat3 green.
+    // Order matches the reskinned board: seat0 red, seat1 green, seat2 yellow, seat3 blue.
     final seatColors = [
       AppColors.ludoRed,
-      AppColors.ludoBlue,
-      AppColors.ludoYellow,
       AppColors.ludoGreen,
+      AppColors.ludoYellow,
+      AppColors.ludoBlue,
     ];
     return Container(
       height: 80,
@@ -1235,9 +1251,9 @@ class _LudoGamePageState extends State<LudoGamePage>
     // border color didn't match the same player's color everywhere else on screen.
     final seatColors = [
       AppColors.ludoRed,
-      AppColors.ludoBlue,
+      AppColors.ludoGreen,
       AppColors.ludoYellow,
-      AppColors.ludoGreen
+      AppColors.ludoBlue
     ];
     final activeColor = seatColors[(activePlayer.seat - 1) % 4];
 
@@ -1564,4 +1580,129 @@ class _ReactionBubbleState extends State<_ReactionBubble>
           );
         },
       );
+}
+
+/// Full-screen confetti celebration shown when the local player wins.
+/// A short one-shot particle burst rendered with a [CustomPainter]; calls
+/// [onDone] so its host [OverlayEntry] can remove itself.
+class _WinBurst extends StatefulWidget {
+  final VoidCallback onDone;
+  const _WinBurst({required this.onDone});
+
+  @override
+  State<_WinBurst> createState() => _WinBurstState();
+}
+
+class _WinBurstState extends State<_WinBurst>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2600),
+  );
+  late final List<_Confetto> _pieces;
+
+  static const _palette = [
+    AppColors.ludoRed,
+    AppColors.ludoGreen,
+    AppColors.ludoYellow,
+    AppColors.ludoBlue,
+    Color(0xFFFFFFFF),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    final rnd = math.Random();
+    // Two launch points near the top corners so the burst reads as fireworks
+    // fountaining inward across the screen.
+    _pieces = List.generate(90, (i) {
+      final fromLeft = i.isEven;
+      final ox = fromLeft ? 0.18 : 0.82;
+      final angle = (fromLeft ? -0.15 : math.pi + 0.15) +
+          (rnd.nextDouble() - 0.5) * 1.5;
+      final speed = 0.55 + rnd.nextDouble() * 0.75;
+      return _Confetto(
+        originX: ox,
+        vx: math.cos(angle) * speed,
+        vy: -(0.9 + rnd.nextDouble() * 0.9),
+        color: _palette[rnd.nextInt(_palette.length)],
+        size: 5 + rnd.nextDouble() * 7,
+        spin: (rnd.nextDouble() - 0.5) * 8,
+        delay: rnd.nextDouble() * 0.25,
+      );
+    });
+    _c.forward().whenComplete(widget.onDone);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) => CustomPaint(
+          size: Size.infinite,
+          painter: _ConfettiPainter(_pieces, _c.value),
+        ),
+      ),
+    );
+  }
+}
+
+class _Confetto {
+  final double originX; // 0..1 of width
+  final double vx, vy; // initial velocity (screen fractions/sec-ish)
+  final Color color;
+  final double size;
+  final double spin;
+  final double delay; // 0..1 of the timeline before this piece launches
+  const _Confetto({
+    required this.originX,
+    required this.vx,
+    required this.vy,
+    required this.color,
+    required this.size,
+    required this.spin,
+    required this.delay,
+  });
+}
+
+class _ConfettiPainter extends CustomPainter {
+  final List<_Confetto> pieces;
+  final double t; // 0..1
+  _ConfettiPainter(this.pieces, this.t);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final g = 1.8; // gravity
+    for (final p in pieces) {
+      final lt = ((t - p.delay) / (1 - p.delay)).clamp(0.0, 1.0);
+      if (lt <= 0) continue;
+      // Simple projectile: position integrated from initial velocity + gravity.
+      final x = size.width * p.originX + p.vx * size.width * 0.6 * lt;
+      final y = size.height * 0.16 +
+          (p.vy * lt + 0.5 * g * lt * lt) * size.height * 0.7;
+      final opacity = (1 - lt).clamp(0.0, 1.0);
+      canvas.save();
+      canvas.translate(x, y);
+      canvas.rotate(p.spin * lt);
+      final paint = Paint()..color = p.color.withOpacity(opacity);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromCenter(center: Offset.zero, width: p.size, height: p.size * 0.6),
+          const Radius.circular(1.5),
+        ),
+        paint,
+      );
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ConfettiPainter old) => old.t != t;
 }

@@ -10,9 +10,12 @@ enum Sfx {
   // touch the shared win.mp3 used by the locked Teen Patti/Aviator/lottery).
   diceRoll('dice_roll.mp3'),
   tokenMove('token_move.mp3'),
-  tokenCapture('ludo_capture.wav'),
-  tokenHome('ludo_home.wav'),
-  ludoWin('ludo_win.wav'),
+  tokenCapture('ludo_capture.mp3'),
+  tokenHome('ludo_home.mp3'),
+  ludoWin('ludo_win.mp3'),
+  ludoStart('ludo_start.mp3'),
+  ludoSafe('ludo_safe.mp3'),
+  ludoTap('ludo_tap.mp3'),
   // Teen Patti
   cardDeal('card_deal.mp3'),
   chipBet('chip_bet.mp3'),

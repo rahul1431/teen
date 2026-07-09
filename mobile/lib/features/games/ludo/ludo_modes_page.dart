@@ -147,7 +147,7 @@ class _LudoModesPageState extends State<LudoModesPage> {
                 icon: Icons.bolt_rounded,
                 gradient: AppColors.ludoGrad,
                 onTap: () {
-                  SoundService.instance.play(Sfx.buttonTap);
+                  SoundService.instance.play(Sfx.ludoTap);
                   context.push('/games/ludo/lobby');
                 },
               ),
@@ -157,7 +157,7 @@ class _LudoModesPageState extends State<LudoModesPage> {
                 icon: Icons.smart_toy_rounded,
                 gradient: AppColors.variationsGrad,
                 onTap: () {
-                  SoundService.instance.play(Sfx.buttonTap);
+                  SoundService.instance.play(Sfx.ludoTap);
                   context.push('/games/ludo/practice');
                 },
               ),
@@ -167,7 +167,7 @@ class _LudoModesPageState extends State<LudoModesPage> {
                 icon: Icons.group_rounded,
                 gradient: AppColors.aviatorGrad,
                 onTap: () {
-                  SoundService.instance.play(Sfx.buttonTap);
+                  SoundService.instance.play(Sfx.ludoTap);
                   _friendsSheet();
                 },
               ),
@@ -177,7 +177,7 @@ class _LudoModesPageState extends State<LudoModesPage> {
                 icon: Icons.history_rounded,
                 gradient: AppColors.premiumGrad,
                 onTap: () {
-                  SoundService.instance.play(Sfx.buttonTap);
+                  SoundService.instance.play(Sfx.ludoTap);
                   context.push('/games/ludo/history');
                 },
               ),
