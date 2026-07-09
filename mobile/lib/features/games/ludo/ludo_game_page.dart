@@ -14,6 +14,12 @@ import 'ludo_board.dart';
 ///  - **offline practice** (`offline: true`) — local [LudoEngine] vs 3 bots,
 ///  - **online** (`roomId` + `initialData` from room:joined) — server-driven
 ///    over /ws; this page only renders state and sends roll/move actions.
+class _ActivityRecord {
+  final int id;
+  final String text;
+  _ActivityRecord(this.id, this.text);
+}
+
 class LudoGamePage extends StatefulWidget {
   final bool offline;
   final String roomId;
@@ -89,13 +95,22 @@ class _LudoGamePageState extends State<LudoGamePage>
   // Recent-events log — newest first, capped short. Fills the empty space
   // below the board (a fixed-size square inside an Expanded region) with
   // something useful instead of leaving it idle.
-  final List<String> _activityLog = [];
+  final List<_ActivityRecord> _activityLog = [];
   static const int _maxActivityLog = 6;
+  int _activityId = 0;
 
   void _logActivity(String entry) {
+    final id = ++_activityId;
+    final record = _ActivityRecord(id, entry);
     setState(() {
-      _activityLog.insert(0, entry);
+      _activityLog.insert(0, record);
       if (_activityLog.length > _maxActivityLog) _activityLog.removeLast();
+    });
+    Timer(const Duration(seconds: 10), () {
+      if (!mounted) return;
+      setState(() {
+        _activityLog.removeWhere((x) => x.id == id);
+      });
     });
   }
 
@@ -239,15 +254,15 @@ class _LudoGamePageState extends State<LudoGamePage>
     while (mounted && s.status == 'active' && s.players[s.currentTurn].isBot) {
       setState(
           () => _banner = '${s.players[s.currentTurn].username} is playing…');
-      await Future.delayed(const Duration(milliseconds: 900));
+      await Future.delayed(const Duration(milliseconds: 1500)); // Increased from 900
       final dice = _engine.rollDie();
       _diceCtrl.forward(from: 0);
-      await Future.delayed(const Duration(milliseconds: 450));
+      await Future.delayed(const Duration(milliseconds: 800)); // Increased from 450
       final canMove = _engine.applyRoll(s, dice);
       _showRoll(s.players[s.currentTurn].username, dice);
       if (canMove) {
         final tok = _engine.chooseBotToken(s, s.currentTurn, dice);
-        await Future.delayed(const Duration(milliseconds: 350));
+        await Future.delayed(const Duration(milliseconds: 1400)); // Increased from 350
         final res = _engine.applyMove(s, tok);
         // Capture/home are rare, notable events worth hearing even for a
         // bot's move — unlike plain tokenMove, which stays silent here to
@@ -765,7 +780,7 @@ class _LudoGamePageState extends State<LudoGamePage>
                             alignment: Alignment.center,
                             children: [
                               Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                                padding: const EdgeInsets.symmetric(horizontal: 6), // Reduced padding to enlarge cells
                                 child: AspectRatio(
                                   aspectRatio: 1,
                                   child: LudoBoard(
@@ -775,44 +790,6 @@ class _LudoGamePageState extends State<LudoGamePage>
                                   ),
                                 ),
                               ),
-                              // Dice roll notification overlay
-                              if (_rollNotif != null)
-                                Positioned(
-                                  top: 16,
-                                  left: 0,
-                                  right: 0,
-                                  child: IgnorePointer(
-                                    child: Center(
-                                      child: AnimatedOpacity(
-                                        opacity: _showRollNotif ? 1.0 : 0.0,
-                                        duration: const Duration(milliseconds: 280),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFF0F1322).withOpacity(0.92),
-                                            borderRadius: BorderRadius.circular(24),
-                                            border: Border.all(color: AppColors.gold.withOpacity(0.4)),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: Colors.black.withOpacity(0.5),
-                                                blurRadius: 12,
-                                                offset: const Offset(0, 4),
-                                              )
-                                            ],
-                                          ),
-                                          child: Text(
-                                            _rollNotif!,
-                                            style: const TextStyle(
-                                              color: AppColors.goldLight,
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w900,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
                               // Floating reactions
                               ..._reactions.map((r) => Positioned(
                                     key: ValueKey('rx_${r.id}'),
@@ -874,7 +851,7 @@ class _LudoGamePageState extends State<LudoGamePage>
         itemBuilder: (context, i) => Padding(
           padding: const EdgeInsets.symmetric(vertical: 1.5),
           child: Text(
-            _activityLog[i],
+            _activityLog[i].text,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -1330,7 +1307,6 @@ class _LudoGamePageState extends State<LudoGamePage>
       ),
     );
   }
-}
 }
 
 /// Animated dice — tumbles (rotate + scale) while the controller runs, then

@@ -171,13 +171,29 @@ class _LudoBoardState extends State<LudoBoard>
   }
 
   List<Widget> _buildTokens(double size) {
-    // Two z-layers: normal tokens first, movable (tappable) tokens LAST so they
-    // always sit on top of any token sharing the same cell — otherwise an
-    // opponent's opaque token could cover your movable one and swallow the tap.
     final base = <Widget>[];
     final onTop = <Widget>[];
     final s = size / 15.0;
-    final tokenSize = s * 1.05;
+    final tokenSize = s * 1.28; // Increased from 1.05 for larger tokens!
+
+    // Compute overlapping tokens grouping
+    final cellGroups = <String, List<MapEntry<int, int>>>{};
+    for (var pi = 0; pi < widget.state.players.length; pi++) {
+      final player = widget.state.players[pi];
+      final seatIdx = (player.seat - 1).clamp(0, 3);
+      for (var ti = 0; ti < player.tokens.length; ti++) {
+        final prog = player.tokens[ti];
+        if (prog == -1 || prog >= 57) continue;
+
+        String cellKey;
+        if (prog <= 50) {
+          cellKey = 'track_${absoluteCell(seatIdx, prog)}';
+        } else {
+          cellKey = 'home_${seatIdx}_$prog';
+        }
+        cellGroups.putIfAbsent(cellKey, () => []).add(MapEntry(pi, ti));
+      }
+    }
 
     for (var pi = 0; pi < widget.state.players.length; pi++) {
       final player = widget.state.players[pi];
@@ -188,19 +204,58 @@ class _LudoBoardState extends State<LudoBoard>
           widget.state.awaiting == 'move' &&
           (widget.mySeatIndex == null || isMine);
 
-      // Every token belonging to the player whose turn it is jumps gently —
-      // an at-a-glance "it's their turn" cue that doesn't depend on staring
-      // at the board's corner glow. Tokens that are actually tappable right
-      // now (movable) additionally get the stronger highlight-glow ring.
       final isActiveTurnPlayer = pi == widget.state.currentTurn;
 
       for (var ti = 0; ti < player.tokens.length; ti++) {
         final progress = player.tokens[ti];
         final movable = canMoveNow && widget.state.movableTokens.contains(ti);
 
+        // Get overlap style
+        Offset offset = Offset.zero;
+        double scale = 1.0;
+
+        if (progress != -1 && progress < 57) {
+          String cellKey;
+          if (progress <= 50) {
+            cellKey = 'track_${absoluteCell(seatIdx, progress)}';
+          } else {
+            cellKey = 'home_${seatIdx}_$progress';
+          }
+          final list = cellGroups[cellKey] ?? [];
+          final count = list.length;
+          if (count > 1) {
+            final idx = list.indexWhere((e) => e.key == pi && e.value == ti);
+            if (idx != -1) {
+              if (count == 2) {
+                final offsets = [
+                  Offset(-s * 0.18, -s * 0.18),
+                  Offset(s * 0.18, s * 0.18),
+                ];
+                offset = offsets[idx % 2];
+                scale = 0.75;
+              } else if (count == 3) {
+                final offsets = [
+                  Offset(0, -s * 0.20),
+                  Offset(-s * 0.20, s * 0.16),
+                  Offset(s * 0.20, s * 0.16),
+                ];
+                offset = offsets[idx % 3];
+                scale = 0.68;
+              } else {
+                final offsets = [
+                  Offset(-s * 0.20, -s * 0.20),
+                  Offset(s * 0.20, -s * 0.20),
+                  Offset(-s * 0.20, s * 0.20),
+                  Offset(s * 0.20, s * 0.20),
+                ];
+                offset = offsets[idx % 4];
+                scale = 0.60;
+              }
+            }
+          }
+        }
+
         final sprite = _TokenSprite(
-          // Stable identity so the sprite's own animation state survives the
-          // frequent parent rebuilds (turn changes, breathing, etc.).
           key: ValueKey('tok_${pi}_$ti'),
           seatIndex: seatIdx,
           tokenIndex: ti,
@@ -212,6 +267,8 @@ class _LudoBoardState extends State<LudoBoard>
           highlighted: movable,
           bouncing: isActiveTurnPlayer,
           mySeatIndex: widget.mySeatIndex,
+          positionOffset: offset,
+          scaleFactor: scale,
           onTap: movable ? () => widget.onTokenTap?.call(pi, ti) : null,
         );
         (movable ? onTop : base).add(sprite);
@@ -273,6 +330,8 @@ class _TokenSprite extends StatefulWidget {
   final bool highlighted;
   final bool bouncing;
   final int? mySeatIndex;
+  final Offset positionOffset;
+  final double scaleFactor;
   final VoidCallback? onTap;
 
   const _TokenSprite({
@@ -287,6 +346,8 @@ class _TokenSprite extends StatefulWidget {
     required this.highlighted,
     required this.bouncing,
     this.mySeatIndex,
+    required this.positionOffset,
+    required this.scaleFactor,
     this.onTap,
   });
 
@@ -317,11 +378,8 @@ class _TokenSpriteState extends State<_TokenSprite>
     final from = old.progress, to = widget.progress;
 
     if (to == -1 && from >= 0) {
-      // Captured → reappears in its base slot with a pop.
-      _display = -1.0;
-      _homeFlourish = false;
-      _fx.forward(from: 0);
-      setState(() {});
+      // Captured → slide back to 0, then snap to base slot (-1)
+      _animateCapture(from.toDouble());
     } else if (from < 0 && to >= 0) {
       // Entering the board from base — snap on with a small pop.
       _display = to.toDouble();
@@ -334,6 +392,30 @@ class _TokenSpriteState extends State<_TokenSprite>
       _display = to.toDouble();
       setState(() {});
     }
+  }
+
+  void _animateCapture(double from) {
+    _from = from;
+    _to = 0.0;
+    _lastTick = from.floor();
+    
+    // Slide back in ~750ms
+    _move.duration = const Duration(milliseconds: 750);
+    _move.reset();
+    
+    late void Function(AnimationStatus) captureListener;
+    captureListener = (st) {
+      if (st == AnimationStatus.completed) {
+        _move.removeStatusListener(captureListener);
+        setState(() {
+          _display = -1.0;
+          _homeFlourish = false;
+        });
+        _fx.forward(from: 0);
+      }
+    };
+    _move.addStatusListener(captureListener);
+    _move.forward();
   }
 
   void _animateSteps(double from, double to) {
@@ -392,8 +474,9 @@ class _TokenSpriteState extends State<_TokenSprite>
 
   @override
   Widget build(BuildContext context) {
-    final pos = _tokenPixel(
+    final rawPos = _tokenPixel(
         widget.seatIndex, widget.tokenIndex, _display, widget.boardSize, widget.mySeatIndex);
+    final pos = rawPos + widget.positionOffset;
 
     // Hop arc while stepping: lifts the token between cells.
     final frac = _display - _display.floorToDouble();
@@ -415,11 +498,14 @@ class _TokenSpriteState extends State<_TokenSprite>
             : (1.0 + 0.6 * (1 - t) * (t < 0.2 ? t / 0.2 : 1));
         return Transform.scale(scale: scale, child: child);
       },
-      child: _Token(
-        color: widget.color,
-        number: widget.number,
-        highlighted: widget.highlighted,
-        bouncing: widget.bouncing && !moving,
+      child: Transform.scale(
+        scale: widget.scaleFactor,
+        child: _Token(
+          color: widget.color,
+          number: widget.number,
+          highlighted: widget.highlighted,
+          bouncing: widget.bouncing && !moving,
+        ),
       ),
     );
 
@@ -718,7 +804,7 @@ class _BoardPainter extends CustomPainter {
     ];
     for (var seat = 0; seat < 4; seat++) {
       final color = _seatColors[seat];
-      for (var j = 0; j < _homeLanes[seat].length; j++) {
+      for (var j = 0; j < _homeLanes[seat].length - 1; j++) {
         final c = _homeLanes[seat][j];
         final rect = Rect.fromLTWH(c[0] * s, c[1] * s, s, s);
         canvas.drawRect(rect, _flatFill(color));
@@ -801,11 +887,19 @@ class _BoardPainter extends CustomPainter {
         ..strokeWidth = 2.0,
     );
 
-    // Empty token slots — flat solid-colour filled discs (no ring), matching the
-    // reference board's four solid dots per home.
+    // Empty token slots — larger double-ring design filling the base area cleanly.
     for (final d in _baseDots[seatIndex]) {
       final center = Offset(d[0] * s, d[1] * s);
-      canvas.drawCircle(center, s * 0.6, Paint()..color = color);
+      canvas.drawCircle(center, s * 0.85, Paint()..color = color.withOpacity(0.18));
+      canvas.drawCircle(center, s * 0.70, Paint()..color = color);
+      canvas.drawCircle(
+        center,
+        s * 0.70,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..color = Colors.white
+          ..strokeWidth = 1.6,
+      );
     }
   }
 
