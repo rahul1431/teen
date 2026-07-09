@@ -152,16 +152,6 @@ class _LudoModesPageState extends State<LudoModesPage> {
                 },
               ),
               _modeCard(
-                title: 'Practice',
-                subtitle: 'Offline vs bots · free',
-                icon: Icons.smart_toy_rounded,
-                gradient: AppColors.variationsGrad,
-                onTap: () {
-                  SoundService.instance.play(Sfx.ludoTap);
-                  context.push('/games/ludo/practice');
-                },
-              ),
-              _modeCard(
                 title: 'Friends',
                 subtitle: 'Private room',
                 icon: Icons.group_rounded,
@@ -169,6 +159,16 @@ class _LudoModesPageState extends State<LudoModesPage> {
                 onTap: () {
                   SoundService.instance.play(Sfx.ludoTap);
                   _friendsSheet();
+                },
+              ),
+              _modeCard(
+                title: 'Practice',
+                subtitle: 'Offline vs bots · free',
+                icon: Icons.smart_toy_rounded,
+                gradient: AppColors.variationsGrad,
+                onTap: () {
+                  SoundService.instance.play(Sfx.ludoTap);
+                  context.push('/games/ludo/practice');
                 },
               ),
               _modeCard(

@@ -98,6 +98,7 @@ class _LudoGamePageState extends State<LudoGamePage>
   final List<_ActivityRecord> _activityLog = [];
   static const int _maxActivityLog = 6;
   int _activityId = 0;
+  bool _isInitialState = true;
 
   void _logActivity(String entry) {
     final id = ++_activityId;
@@ -329,7 +330,9 @@ class _LudoGamePageState extends State<LudoGamePage>
                 : newState.currentTurn.clamp(0, newState.players.length - 1)]
             .username;
       }
-      if (la != null && la['dice'] != null) {
+      final isFirst = _isInitialState;
+      _isInitialState = false;
+      if (!isFirst && la != null && la['dice'] != null) {
         _diceCtrl.forward(from: 0);
         _showRoll(actorName!, (la['dice'] as num).toInt());
       }
@@ -767,8 +770,8 @@ class _LudoGamePageState extends State<LudoGamePage>
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            _buildCornerPlayer(s, (widget.offline ? 0 : _mySeatIndex + 1) % 4, isLeft: true),
-                            _buildCornerPlayer(s, (widget.offline ? 0 : _mySeatIndex + 2) % 4, isLeft: false),
+                            _buildCornerPlayer(s, widget.offline ? 1 : (_mySeatIndex + 1) % 4, isLeft: true),
+                            _buildCornerPlayer(s, widget.offline ? 2 : (_mySeatIndex + 2) % 4, isLeft: false),
                           ],
                         ),
                       ),
@@ -816,8 +819,8 @@ class _LudoGamePageState extends State<LudoGamePage>
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            _buildCornerPlayer(s, (widget.offline ? 0 : _mySeatIndex) % 4, isLeft: true), // Always local player at Bottom-Left
-                            _buildCornerPlayer(s, (widget.offline ? 0 : _mySeatIndex + 3) % 4, isLeft: false),
+                            _buildCornerPlayer(s, widget.offline ? 0 : (_mySeatIndex) % 4, isLeft: true), // Always local player at Bottom-Left
+                            _buildCornerPlayer(s, widget.offline ? 3 : (_mySeatIndex + 3) % 4, isLeft: false),
                           ],
                         ),
                       ),
