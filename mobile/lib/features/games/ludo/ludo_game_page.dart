@@ -1497,11 +1497,15 @@ class _DiceWidget extends StatelessWidget {
         final t = controller.value;
         final angle = t * 4 * 3.14159; // two full spins
         final scale = 1 + 0.25 * (t < 0.5 ? t * 2 : (1 - t) * 2);
+        // While tumbling, flip through faces so it reads as a real roll, then
+        // lock onto the settled value in the last stretch of the animation.
+        final rolling = controller.isAnimating && t < 0.82;
+        final shown = rolling ? (1 + ((t * 46).floor() % 6)) : value;
         return Transform.scale(
           scale: scale,
           child: Transform.rotate(
             angle: angle,
-            child: _face(value),
+            child: _face(shown),
           ),
         );
       },
