@@ -19,6 +19,9 @@ class LudoLobbyPage extends StatefulWidget {
 class _LudoLobbyPageState extends State<LudoLobbyPage> {
   final _socket = SocketService();
   double _selectedStake = 10;
+  // Chosen colour as a 1-based seat (1=red, 2=green, 3=yellow, 4=blue) matching
+  // the board's seat→colour order. null = no preference (server's choice).
+  int? _preferredSeat;
   bool _searching = false;
   String? _balance;
   double? _balanceValue;
@@ -46,8 +49,11 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
     });
     _socket.onReconnect(() {
       if (!mounted || !_searching) return;
-      _socket.emit(SocketEvents.joinMatchmaking,
-          {'game_type': 'ludo', 'stake': _selectedStake});
+      _socket.emit(SocketEvents.joinMatchmaking, {
+        'game_type': 'ludo',
+        'stake': _selectedStake,
+        if (_preferredSeat != null) 'preferred_seat': _preferredSeat,
+      });
     });
   }
 
@@ -84,8 +90,11 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
       return;
     }
     setState(() => _searching = true);
-    _socket.emit(SocketEvents.joinMatchmaking,
-        {'game_type': 'ludo', 'stake': _selectedStake});
+    _socket.emit(SocketEvents.joinMatchmaking, {
+      'game_type': 'ludo',
+      'stake': _selectedStake,
+      if (_preferredSeat != null) 'preferred_seat': _preferredSeat,
+    });
   }
 
   void _cancelSearch() {
@@ -231,6 +240,33 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
                 );
               }).toList(),
             ),
+            const SizedBox(height: 28),
+            Row(
+              children: [
+                const Text('Choose Your Colour',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(width: 8),
+                Text(
+                  _preferredSeat == null ? '(optional)' : 'guaranteed',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _preferredSeat == null
+                        ? AppColors.textSecondary
+                        : AppColors.ludoGreen,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _colorSwatch(AppColors.ludoRed, 1),
+                _colorSwatch(AppColors.ludoGreen, 2),
+                _colorSwatch(AppColors.ludoYellow, 3),
+                _colorSwatch(AppColors.ludoBlue, 4),
+              ],
+            ),
             const SizedBox(height: 32),
             Container(
               padding: const EdgeInsets.all(16),
@@ -273,6 +309,38 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
                 ],
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  // Tappable colour disc → sets the preferred seat (colour). Tapping the
+  // selected one again clears the choice (back to server's pick).
+  Widget _colorSwatch(Color color, int seat) {
+    final selected = _preferredSeat == seat;
+    return Expanded(
+      child: GestureDetector(
+        onTap: _searching
+            ? null
+            : () => setState(
+                () => _preferredSeat = selected ? null : seat),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 6),
+          height: 56,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected ? Colors.white : Colors.transparent,
+              width: 3,
+            ),
+            boxShadow: selected
+                ? [BoxShadow(color: color.withOpacity(0.7), blurRadius: 12, spreadRadius: 1)]
+                : null,
+          ),
+          child: selected
+              ? const Icon(Icons.check_rounded, color: Colors.white, size: 26)
+              : null,
         ),
       ),
     );

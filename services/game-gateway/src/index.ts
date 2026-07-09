@@ -122,6 +122,11 @@ async function start() {
       case 'join_matchmaking': {
         const { game_type, stake } = data
         const variation = typeof data.variation === 'string' && data.variation ? data.variation : 'classic'
+        // Ludo colour choice: 1-based seat (1=red,2=green,3=yellow,4=blue).
+        const preferredSeat =
+          Number.isInteger(data.preferred_seat) && data.preferred_seat >= 1 && data.preferred_seat <= 4
+            ? data.preferred_seat
+            : undefined
         console.log(`[matchmaking] join request: user=${conn.userId} game=${game_type} variation=${variation} stake=${stake}`)
         if (!game_type || !stake) return hub.send(conn, 'error', { message: 'game_type and stake required' })
 
@@ -131,7 +136,7 @@ async function start() {
           return hub.send(conn, 'error', { message: 'Game not available' })
         }
         try {
-          await matchmaking.joinQueue(game_type, stake, { userId: conn.userId, username: conn.username }, variation)
+          await matchmaking.joinQueue(game_type, stake, { userId: conn.userId, username: conn.username, preferredSeat }, variation)
           hub.send(conn, 'matchmaking:joined', { game_type, stake, variation })
           monitorEmitter.emit('join_matchmaking', { game_type, user_id: conn.userId, stake })
           console.log(`[matchmaking] ${conn.userId} queued for ${game_type}:${variation}:${stake}`)

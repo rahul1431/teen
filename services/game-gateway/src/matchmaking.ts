@@ -10,6 +10,10 @@ import { monitorEmitter } from './monitor-emitter'
 export interface MatchmakingEntry {
   userId: string
   username: string
+  // Ludo colour choice: preferred 1-based seat (1=red, 2=green, 3=yellow,
+  // 4=blue), matching the client board's seat→colour order. Optional — other
+  // games (and players who don't pick) leave it undefined and keep join order.
+  preferredSeat?: number
 }
 
 export class MatchmakingService {
@@ -252,10 +256,43 @@ export class MatchmakingService {
     return botRes.rows.map(b => ({ userId: b.id, username: b.username }))
   }
 
+  // Seat order = board colour. When any real player expressed a colour
+  // preference (Ludo), place each at the array index matching their chosen
+  // seat (FCFS by queue order; conflicts fall through to the next free seat),
+  // then fill the rest with the remaining real players and bots. Games without
+  // a preference keep the legacy [...real, ...bots] order untouched.
+  private orderBySeatPreference(
+    realPlayers: MatchmakingEntry[],
+    bots: MatchmakingEntry[],
+  ): MatchmakingEntry[] {
+    const total = realPlayers.length + bots.length
+    const anyPref = realPlayers.some(
+      p => p.preferredSeat && p.preferredSeat >= 1 && p.preferredSeat <= total,
+    )
+    if (!anyPref) return [...realPlayers, ...bots]
+
+    const slots: (MatchmakingEntry | null)[] = new Array(total).fill(null)
+    const leftover: MatchmakingEntry[] = []
+    for (const p of realPlayers) {
+      const idx = (p.preferredSeat ?? 0) - 1
+      if (idx >= 0 && idx < total && slots[idx] === null) {
+        slots[idx] = p
+      } else {
+        leftover.push(p) // no pick, or their colour was already taken
+      }
+    }
+    const fillers = [...leftover, ...bots]
+    let fi = 0
+    for (let i = 0; i < total; i++) {
+      if (slots[i] === null) slots[i] = fillers[fi++]
+    }
+    return slots as MatchmakingEntry[]
+  }
+
   private async startGame(gameType: string, stake: number, realPlayers: MatchmakingEntry[], bots: MatchmakingEntry[], variation = 'classic', privateCode?: string): Promise<string | null> {
     const roomId = uuid()
     void GameWatchdog.touch(this.redis, roomId) // liveness for the idle-game reaper
-    const allPlayers = [...realPlayers, ...bots]
+    const allPlayers = this.orderBySeatPreference(realPlayers, bots)
     console.log(`[matchmaking] startGame room=${roomId} ${gameType}:${stake} real=${realPlayers.length} bots=${bots.length}`)
 
     let botDifficulty = 'medium'
