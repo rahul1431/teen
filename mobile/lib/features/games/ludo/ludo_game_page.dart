@@ -431,6 +431,18 @@ class _LudoGamePageState extends State<LudoGamePage>
   // ── Shared ────────────────────────────────────────────────────────────────
   bool get _isMyTurn => _state != null && _state!.currentTurn == _mySeatIndex;
 
+  // Amount the winner actually takes home: pot (stake × seats) minus the 5%
+  // platform rake — mirrors the server formula in
+  // services/game-engines/ludo/src/rules.ts (pot * 0.05 rake → pot * 0.95 prize)
+  // so the header matches the "You Won …" result exactly.
+  static const double _ludoRake = 0.05;
+  double get _winningAmount {
+    final s = _state;
+    if (s == null) return 0;
+    final pot = s.stake * s.players.length;
+    return (pot * (1 - _ludoRake) * 100).roundToDouble() / 100;
+  }
+
   void _playMoveSounds(Map<String, bool> res) {
     // Per-cell stepping "tik" (and the safe-cell chime) are emitted by the
     // token sprite as it travels — here we only add the rarer capture/home cues.
@@ -719,13 +731,18 @@ class _LudoGamePageState extends State<LudoGamePage>
                                       ),
                                     ),
                                   ),
-                                  // Dice roll notification overlay
+                                  // Dice roll notification overlay.
+                                  // IgnorePointer: it floats over the top of the
+                                  // board (faded, but kept in the tree), and
+                                  // without this it silently swallowed taps on
+                                  // tokens sitting near the top-centre cells.
                                   if (_rollNotif != null)
                                     Positioned(
                                       top: 16,
                                       left: 0,
                                       right: 0,
-                                      child: Center(
+                                      child: IgnorePointer(
+                                        child: Center(
                                         child: AnimatedOpacity(
                                           opacity: _showRollNotif ? 1.0 : 0.0,
                                           duration:
@@ -760,10 +777,13 @@ class _LudoGamePageState extends State<LudoGamePage>
                                             ),
                                           ),
                                         ),
+                                        ),
                                       ),
                                     ),
                                   // Floating emoji/tip reactions from anyone
                                   // at the table, centered over the board.
+                                  // IgnorePointer so a lingering bubble can't
+                                  // swallow a tap on a token beneath it.
                                   ..._reactions.map((r) => Positioned(
                                         key: ValueKey('rx_${r.id}'),
                                         left:
@@ -774,8 +794,10 @@ class _LudoGamePageState extends State<LudoGamePage>
                                         top:
                                             MediaQuery.of(context).size.height *
                                                 0.22,
-                                        child: _ReactionBubble(
-                                            emoji: r.emoji, isTip: r.isTip),
+                                        child: IgnorePointer(
+                                          child: _ReactionBubble(
+                                              emoji: r.emoji, isTip: r.isTip),
+                                        ),
                                       )),
                                   if (_showEmojiTray)
                                     Positioned(
@@ -1005,12 +1027,14 @@ class _LudoGamePageState extends State<LudoGamePage>
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: AppColors.gold.withOpacity(0.3)),
               ),
+              // Winning amount (what the winner takes home) rather than the
+              // per-player stake — the prize is the number players care about.
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('🪙 ', style: TextStyle(fontSize: 11)),
+                  const Text('🏆 ', style: TextStyle(fontSize: 11)),
                   Text(
-                    formatCurrency(_state?.stake ?? 0),
+                    formatCurrency(_winningAmount),
                     style: const TextStyle(
                         color: AppColors.gold,
                         fontWeight: FontWeight.bold,

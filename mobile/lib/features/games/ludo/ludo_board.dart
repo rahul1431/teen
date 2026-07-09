@@ -382,35 +382,42 @@ class _TokenSpriteState extends State<_TokenSprite>
     // only claims its own hit-box — full-board layers were swallowing taps for
     // tokens sharing a cell. This sprite is a direct child of the board Stack,
     // so returning a Positioned here is valid.
+    final visual = AnimatedBuilder(
+      animation: _fx,
+      builder: (context, child) {
+        if (!_fx.isAnimating && _fx.value == 0) return child!;
+        final t = _fx.value;
+        // Home flourish: overshoot bounce. Capture pop: quick punch-in.
+        final scale = _homeFlourish
+            ? 1.0 + 0.35 * math.sin(t * math.pi)
+            : (1.0 + 0.6 * (1 - t) * (t < 0.2 ? t / 0.2 : 1));
+        return Transform.scale(scale: scale, child: child);
+      },
+      child: _Token(
+        color: widget.color,
+        number: widget.number,
+        highlighted: widget.highlighted,
+        bouncing: widget.bouncing && !moving,
+      ),
+    );
+
+    // Only a movable token is interactive: it gets an opaque hit-box (whole
+    // square tappable, even where the pawn art is transparent). Non-movable
+    // tokens are wrapped in IgnorePointer so they can NEVER absorb a tap meant
+    // for a movable token sharing/overlapping their cell.
+    final tappable = widget.onTap != null;
     return Positioned(
       left: pos.dx - widget.tokenSize / 2,
       top: pos.dy - widget.tokenSize / 2 - hop,
       width: widget.tokenSize,
       height: widget.tokenSize,
-      child: GestureDetector(
-        // Opaque so the whole box is tappable even where the pawn art is
-        // transparent (the pawn's silhouette doesn't fill the square).
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        child: AnimatedBuilder(
-          animation: _fx,
-          builder: (context, child) {
-            if (!_fx.isAnimating && _fx.value == 0) return child!;
-            final t = _fx.value;
-            // Home flourish: overshoot bounce. Capture pop: quick punch-in.
-            final scale = _homeFlourish
-                ? 1.0 + 0.35 * math.sin(t * math.pi)
-                : (1.0 + 0.6 * (1 - t) * (t < 0.2 ? t / 0.2 : 1));
-            return Transform.scale(scale: scale, child: child);
-          },
-          child: _Token(
-            color: widget.color,
-            number: widget.number,
-            highlighted: widget.highlighted,
-            bouncing: widget.bouncing && !moving,
-          ),
-        ),
-      ),
+      child: tappable
+          ? GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onTap,
+              child: visual,
+            )
+          : IgnorePointer(child: visual),
     );
   }
 }
