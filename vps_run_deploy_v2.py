@@ -18,7 +18,7 @@ def run_deploy():
 
         # 1. Pull the latest commits on our branch
         cmds = [
-            "cd /opt/teen && git clean -fd && git reset --hard && git checkout feature/admin-responsive && git pull origin feature/admin-responsive"
+            "cd /opt/teen && git clean -fd && git reset --hard && git fetch origin && (git checkout feature/admin-responsive || git checkout -b feature/admin-responsive origin/feature/admin-responsive) && git reset --hard origin/feature/admin-responsive"
         ]
         for cmd in cmds:
             print(f"---> CMD: {cmd}")
