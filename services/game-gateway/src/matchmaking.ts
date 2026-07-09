@@ -56,6 +56,19 @@ export class MatchmakingService {
       [gameType]
     )
     const config = configRes.rows[0] || { min_players: 2, max_players: 6, bot_fill_enabled: true, bot_fill_delay_seconds: 5, max_bot_ratio: 0.6, bot_fill_table_size: null }
+
+    // Real-players-only high-stakes tables. For Teen Patti, the ₹100 / ₹500 /
+    // ₹1000 stakes are reserved for real players — no bot is ever seated. To
+    // avoid stranding 2-3 real players who could otherwise play each other,
+    // these tables also start as soon as min_players real players are queued
+    // (see tryCreateRoom): disabling bot-fill here drops the no-bot threshold
+    // to min_players and suppresses the bot-fill timer below. (Fixes: "more
+    // than 1 RP cannot join the match" + "100/500/1000 no bots".)
+    const realPlayersOnly = gameType === 'teen_patti' && stake >= 100
+    if (realPlayersOnly) {
+      config.bot_fill_enabled = false
+    }
+
     // Teen Patti must always fill to a 4-seat table (1RP+3B / 2RP+2B / 3RP+1B,
     // 4+ real players → no bots). Guard against the DB value being wiped to
     // NULL (e.g. by an admin GameConfig save with the field left blank).

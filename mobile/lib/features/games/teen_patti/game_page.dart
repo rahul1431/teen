@@ -70,7 +70,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
   // Derived seat dimensions (updated via _ls in build)
   double get _seatW   => (100 * _ls).clamp(68, 118);
-  double get _seatCH  => (118 * _ls).clamp(82, 138); // container height
+  double get _seatCH  => (130 * _ls).clamp(90, 150); // container height
   double get _cardBH  => (32  * _ls).clamp(24, 40);  // card-backs row height
   double get _totalSH => _cardBH + 4 + _seatCH;      // total seat widget height
   double get _cardW   => (58  * _ls).clamp(40, 76);  // player card width
@@ -1099,8 +1099,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final avatarD  = (44 * _ls).clamp(32.0, 54.0);
     final avatarR  = avatarD * 0.5;
     final badgeD   = (16 * _ls).clamp(12.0, 20.0);
-    final fUsername = (9.5 * _ls).clamp(7.5, 12.0);
-    final fChips    = (7.5 * _ls).clamp(6.0, 10.0);
+    final fUsername = (12 * _ls).clamp(9.5, 15.0);
+    final fChips    = (9.5 * _ls).clamp(8.0, 13.0);
     final padH     = (7 * _ls).clamp(5.0, 10.0);
     final padV     = (5 * _ls).clamp(4.0, 8.0);
     final brCorner = (12 * _ls).clamp(8.0, 16.0);
@@ -1169,7 +1169,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                         (p['username']?.toString() ?? '?')[0].toUpperCase(),
                         style: TextStyle(
                             color: Colors.white, fontWeight: FontWeight.bold,
-                            fontSize: (13 * _ls).clamp(9, 17)),
+                            fontSize: (15 * _ls).clamp(11, 20)),
                       ),
                     ),
                     // Dealer chip — small "D" at bottom-right of avatar, not overlapping
@@ -1362,15 +1362,15 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         ),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Text('🪙 ', style: TextStyle(fontSize: (13 * _ls).clamp(10, 18))),
+            Text('🪙 ', style: TextStyle(fontSize: (16 * _ls).clamp(13, 22))),
             Text('₹${gs?['pot'] ?? 0}',
                 style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold,
-                    fontSize: (14 * _ls).clamp(11, 18))),
+                    fontSize: (17 * _ls).clamp(14, 22))),
           ]),
           if (_potLimitOf(gs) > 0)
             Text('Limit ₹${_fmtAmount(_potLimitOf(gs))}',
                 style: TextStyle(color: Colors.black87,
-                    fontSize: (8.5 * _ls).clamp(7, 11),
+                    fontSize: (10 * _ls).clamp(8.5, 13),
                     fontWeight: FontWeight.w600)),
         ]),
       ),
@@ -2097,7 +2097,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         border: Border.all(color: Colors.white24),
       ),
       child: Text(label,
-          style: TextStyle(color: Colors.white, fontSize: (8.5 * s).clamp(7, 11),
+          style: TextStyle(color: Colors.white, fontSize: (10.5 * s).clamp(9, 14),
               fontWeight: FontWeight.bold, letterSpacing: 0.4)),
     );
   }
