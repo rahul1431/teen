@@ -613,7 +613,7 @@ class _MatkaPanelChartDialogState extends State<MatkaPanelChartDialog> {
                               children: [
                                 // Table Header row
                                 TableRow(
-                                  backgroundColor: Colors.white.withOpacity(0.04),
+                                  decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.04)),
                                   children: ['Date', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) {
                                     return Padding(
                                       padding: const EdgeInsets.symmetric(vertical: 8),
