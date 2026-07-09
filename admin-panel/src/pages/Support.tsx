@@ -3,7 +3,7 @@ import {
   Card, Tabs, Table, Tag, Button, Modal, Form, Input, Select, Space, message, Popconfirm,
   Switch, InputNumber, Drawer, Typography, Divider, Badge, Empty,
 } from 'antd'
-import { MessageOutlined, FileTextOutlined, NotificationOutlined, PlusOutlined } from '@ant-design/icons'
+import { MessageOutlined, FileTextOutlined, NotificationOutlined, PlusOutlined, BookOutlined } from '@ant-design/icons'
 import { adminApi } from '../api/client'
 
 const statusColor: Record<string, string> = {
@@ -479,6 +479,306 @@ function BannersTab() {
   )
 }
 
+
+import { useAuthStore } from '../store/auth'
+
+const KB_CATEGORIES: Record<string, { label: string, color: string }> = {
+  deposits: { label: 'Deposits & Withdrawals', color: 'blue' },
+  kyc: { label: 'KYC & Verification', color: 'purple' },
+  game_rules: { label: 'Game Rules', color: 'green' },
+  technical: { label: 'Technical & Systems', color: 'orange' },
+  general: { label: 'General / Other', color: 'cyan' },
+}
+
+function renderMarkdown(md: string) {
+  if (!md) return null
+  let html = md
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+
+  // Headers
+  html = html.replace(/^### (.*?)$/gm, '<h3>$1</h3>')
+  html = html.replace(/^## (.*?)$/gm, '<h2>$1</h2>')
+  html = html.replace(/^# (.*?)$/gm, '<h1>$1</h1>')
+
+  // Bold / Italic
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>')
+
+  // Lists
+  html = html.replace(/^\*\s+(.*?)$/gm, '<li>$1</li>')
+  html = html.replace(/^\d+\.\s+(.*?)$/gm, '<li>$1</li>')
+
+  // Paragraphs
+  const paragraphs = html.split(/\n\n+/)
+  html = paragraphs.map(p => {
+    const trimmed = p.trim()
+    if (trimmed.startsWith('<h') || trimmed.startsWith('<li') || trimmed.startsWith('<li>')) {
+      return p
+    }
+    return `<p>${p.replace(/\n/g, '<br/>')}</p>`
+  }).join('\n')
+
+  return (
+    <div
+      style={{
+        lineHeight: '1.7',
+        fontSize: '14px',
+        color: '#434343',
+      }}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  )
+}
+
+function KnowledgeBaseTab() {
+  const { admin } = useAuthStore()
+  const [articles, setArticles] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [search, setSearch] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState<string | undefined>()
+  
+  const [viewerArticle, setViewerArticle] = useState<any>(null)
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [editingArticle, setEditingArticle] = useState<any>(null)
+  const [form] = Form.useForm()
+
+  const canWrite = admin?.role === 'superadmin' || admin?.role === 'support'
+  const isSuper = admin?.role === 'superadmin'
+
+  const load = () => {
+    setLoading(true)
+    adminApi.get('/support/kb', { params: { search, category: categoryFilter } })
+      .then(r => setArticles(r.data))
+      .catch(() => message.error('Failed to load knowledge base articles'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    load()
+  }, [search, categoryFilter])
+
+  const handleSave = async (v: any) => {
+    try {
+      if (editingArticle) {
+        await adminApi.patch(`/support/kb/${editingArticle.id}`, v)
+        message.success('Article updated successfully')
+      } else {
+        await adminApi.post('/support/kb', v)
+        message.success('Article created successfully')
+      }
+      setEditorOpen(false)
+      setEditingArticle(null)
+      form.resetFields()
+      load()
+      if (viewerArticle && editingArticle && viewerArticle.id === editingArticle.id) {
+        const r = await adminApi.get(`/support/kb/${viewerArticle.id}`)
+        setViewerArticle(r.data)
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Failed to save article')
+    }
+  }
+
+  const handleDelete = async (id: string) => {
+    try {
+      await adminApi.delete(`/support/kb/${id}`)
+      message.success('Article deleted successfully')
+      setViewerArticle(null)
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Failed to delete article')
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+        <Space size="middle" style={{ flex: 1, minWidth: 280 }}>
+          <Input.Search
+            placeholder="Search articles by title or content..."
+            allowClear
+            enterButton={<BookOutlined />}
+            onSearch={setSearch}
+            style={{ maxWidth: 350 }}
+          />
+          <Select
+            placeholder="Filter by Category"
+            allowClear
+            style={{ width: 200 }}
+            value={categoryFilter}
+            onChange={setCategoryFilter}
+            options={Object.entries(KB_CATEGORIES).map(([k, v]) => ({ value: k, label: v.label }))}
+          />
+        </Space>
+        {canWrite && (
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              setEditingArticle(null)
+              form.resetFields()
+              setEditorOpen(true)
+            }}
+          >
+            Create Article
+          </Button>
+        )}
+      </div>
+
+      <Table
+        dataSource={articles}
+        loading={loading}
+        rowKey="id"
+        size="small"
+        pagination={{ pageSize: 10 }}
+        columns={[
+          {
+            title: 'Category',
+            dataIndex: 'category',
+            width: 180,
+            render: (c) => {
+              const cat = KB_CATEGORIES[c] || { label: c, color: 'default' }
+              return <Tag color={cat.color}>{cat.label}</Tag>
+            }
+          },
+          {
+            title: 'Title',
+            dataIndex: 'title',
+            render: (t, r) => (
+              <Button type="link" onClick={() => setViewerArticle(r)} style={{ padding: 0, fontWeight: 600 }}>
+                {t}
+              </Button>
+            )
+          },
+          {
+            title: 'Updated By',
+            dataIndex: 'updated_by_username',
+            width: 150,
+            render: (u, r) => u || r.created_by_username || 'System'
+          },
+          {
+            title: 'Last Updated',
+            dataIndex: 'updated_at',
+            width: 180,
+            render: (d) => new Date(d).toLocaleString()
+          },
+          {
+            title: 'Actions',
+            width: 180,
+            render: (_, r) => (
+              <Space>
+                <Button size="small" onClick={() => setViewerArticle(r)}>Read</Button>
+                {canWrite && (
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setEditingArticle(r)
+                      form.setFieldsValue(r)
+                      setEditorOpen(true)
+                    }}
+                  >
+                    Edit
+                  </Button>
+                )}
+              </Space>
+            )
+          }
+        ]}
+      />
+
+      <Drawer
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 16 }}>{viewerArticle?.title}</span>
+            {viewerArticle && (
+              <Tag color={KB_CATEGORIES[viewerArticle.category]?.color || 'default'}>
+                {KB_CATEGORIES[viewerArticle.category]?.label || viewerArticle.category}
+              </Tag>
+            )}
+          </div>
+        }
+        width={640}
+        open={!!viewerArticle}
+        onClose={() => setViewerArticle(null)}
+        extra={
+          <Space>
+            {canWrite && viewerArticle && (
+              <Button
+                onClick={() => {
+                  setEditingArticle(viewerArticle)
+                  form.setFieldsValue(viewerArticle)
+                  setEditorOpen(true)
+                }}
+              >
+                Edit
+              </Button>
+            )}
+            {isSuper && viewerArticle && (
+              <Popconfirm
+                title="Are you sure you want to delete this article?"
+                onConfirm={() => handleDelete(viewerArticle.id)}
+                okText="Yes"
+                cancelText="No"
+              >
+                <Button danger>Delete</Button>
+              </Popconfirm>
+            )}
+          </Space>
+        }
+      >
+        {viewerArticle && (
+          <div>
+            <div style={{ padding: '16px 20px', background: '#fff', borderRadius: 8, border: '1px solid #f0f0f0', marginBottom: 20 }}>
+              {renderMarkdown(viewerArticle.content_md)}
+            </div>
+            <Divider style={{ margin: '12px 0' }} />
+            <div style={{ fontSize: 12, color: '#8c8c8c' }}>
+              <p style={{ margin: '4px 0' }}>Created by: <strong>{viewerArticle.created_by_username || 'System'}</strong> on {new Date(viewerArticle.created_at).toLocaleString()}</p>
+              <p style={{ margin: '4px 0' }}>Last updated: <strong>{viewerArticle.updated_by_username || viewerArticle.created_by_username || 'System'}</strong> on {new Date(viewerArticle.updated_at).toLocaleString()}</p>
+            </div>
+          </div>
+        )}
+      </Drawer>
+
+      <Modal
+        title={editingArticle ? 'Edit Article' : 'Create Article'}
+        open={editorOpen}
+        onCancel={() => {
+          setEditorOpen(false)
+          setEditingArticle(null)
+          form.resetFields()
+        }}
+        onOk={() => form.submit()}
+        width={720}
+        okText="Save"
+      >
+        <Form form={form} layout="vertical" onFinish={handleSave}>
+          <Form.Item name="title" label="Article Title" rules={[{ required: true, message: 'Please enter title' }]}>
+            <Input placeholder="e.g. UPI Manual Deposit Guide" />
+          </Form.Item>
+          <Form.Item name="category" label="Category" rules={[{ required: true, message: 'Please select category' }]}>
+            <Select placeholder="Select a category">
+              {Object.entries(KB_CATEGORIES).map(([k, v]) => (
+                <Select.Option key={k} value={k}>{v.label}</Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Form.Item
+            name="content_md"
+            label="Article Content (Markdown)"
+            rules={[{ required: true, message: 'Please enter markdown content' }]}
+            extra="You can use markdown syntax (# Header, **bold**, *italic*, * bullets, 1. numbered lists)"
+          >
+            <Input.TextArea rows={12} placeholder="Write your guide in markdown..." />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </div>
+  )
+}
+
 export default function Support() {
   return (
     <Card title="Support & CMS">
@@ -486,6 +786,7 @@ export default function Support() {
         { key: 'tickets', label: <><MessageOutlined /> Tickets</>, children: <TicketsTab /> },
         { key: 'pages', label: <><FileTextOutlined /> CMS Pages</>, children: <PagesTab /> },
         { key: 'banners', label: <><NotificationOutlined /> Banners</>, children: <BannersTab /> },
+        { key: 'kb', label: <><BookOutlined /> Knowledge Base</>, children: <KnowledgeBaseTab /> },
       ]} />
     </Card>
   )
