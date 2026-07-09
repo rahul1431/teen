@@ -15,8 +15,16 @@ const { Sider, Header, Content } = Layout
 
 const menuItems = [
   { key: '/admin', icon: <DashboardOutlined />, label: 'Dashboard' },
-  { key: '/admin/users', icon: <UserOutlined />, label: 'Users' },
-  { key: '/admin/bots', icon: <RobotOutlined />, label: 'Bot Management' },
+  {
+    key: 'user_management_group',
+    icon: <TeamOutlined />,
+    label: 'User Management',
+    children: [
+      { key: '/admin/users', label: '👥 Players' },
+      { key: '/admin/admin-users', label: '🛡️ Admin Users' },
+      { key: '/admin/bots', label: '🤖 Bot Profiles' },
+    ]
+  },
   {
     key: 'games',
     icon: <PlayCircleOutlined />,
@@ -46,7 +54,6 @@ const menuItems = [
   { key: '/admin/app-update', icon: <MobileOutlined />, label: 'App Update' },
   { key: '/admin/finance', icon: <DollarOutlined />, label: 'Finance' },
   { key: '/admin/notifications', icon: <BellOutlined />, label: 'Notifications' },
-  { key: '/admin/admin-users', icon: <TeamOutlined />, label: 'Admin Users' },
   { key: '/admin/risk-center', icon: <WarningOutlined />, label: 'Risk Center' },
   { key: '/admin/ai-control', icon: <FundOutlined />, label: 'AI Control Center' },
   { key: '/admin/support', icon: <CustomerServiceOutlined />, label: 'Support Center' },
