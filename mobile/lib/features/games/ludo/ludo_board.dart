@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../../../core/audio/sound_service.dart';
 import '../../../shared/theme/app_theme.dart';
@@ -169,7 +170,11 @@ class _LudoBoardState extends State<LudoBoard>
   }
 
   List<Widget> _buildTokens(double size) {
-    final widgets = <Widget>[];
+    // Two z-layers: normal tokens first, movable (tappable) tokens LAST so they
+    // always sit on top of any token sharing the same cell — otherwise an
+    // opponent's opaque token could cover your movable one and swallow the tap.
+    final base = <Widget>[];
+    final onTop = <Widget>[];
     final s = size / 15.0;
     final tokenSize = s * 1.05;
 
@@ -192,7 +197,7 @@ class _LudoBoardState extends State<LudoBoard>
         final progress = player.tokens[ti];
         final movable = canMoveNow && widget.state.movableTokens.contains(ti);
 
-        widgets.add(_TokenSprite(
+        final sprite = _TokenSprite(
           // Stable identity so the sprite's own animation state survives the
           // frequent parent rebuilds (turn changes, breathing, etc.).
           key: ValueKey('tok_${pi}_$ti'),
@@ -206,10 +211,11 @@ class _LudoBoardState extends State<LudoBoard>
           highlighted: movable,
           bouncing: isActiveTurnPlayer,
           onTap: movable ? () => widget.onTokenTap?.call(pi, ti) : null,
-        ));
+        );
+        (movable ? onTop : base).add(sprite);
       }
     }
-    return widgets;
+    return [...base, ...onTop];
   }
 }
 
@@ -372,44 +378,51 @@ class _TokenSpriteState extends State<_TokenSprite>
     final moving = _move.isAnimating;
     final hop = moving ? math.sin(frac * math.pi) * widget.tokenSize * 0.32 : 0.0;
 
-    return Positioned.fill(
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Positioned(
-            left: pos.dx - widget.tokenSize / 2,
-            top: pos.dy - widget.tokenSize / 2 - hop,
-            width: widget.tokenSize,
-            height: widget.tokenSize,
-            child: GestureDetector(
-              onTap: widget.onTap,
-              child: AnimatedBuilder(
-                animation: _fx,
-                builder: (context, child) {
-                  if (!_fx.isAnimating && _fx.value == 0) return child!;
-                  final t = _fx.value;
-                  // Home flourish: overshoot bounce. Capture pop: quick punch-in.
-                  final scale = _homeFlourish
-                      ? 1.0 + 0.35 * math.sin(t * math.pi)
-                      : (1.0 + 0.6 * (1 - t) * (t < 0.2 ? t / 0.2 : 1));
-                  return Transform.scale(scale: scale, child: child);
-                },
-                child: _Token(
-                  color: widget.color,
-                  number: widget.number,
-                  highlighted: widget.highlighted,
-                  bouncing: widget.bouncing && !moving,
-                ),
-              ),
-            ),
+    // A tight, token-sized Positioned (NOT a full-board overlay) so each token
+    // only claims its own hit-box — full-board layers were swallowing taps for
+    // tokens sharing a cell. This sprite is a direct child of the board Stack,
+    // so returning a Positioned here is valid.
+    return Positioned(
+      left: pos.dx - widget.tokenSize / 2,
+      top: pos.dy - widget.tokenSize / 2 - hop,
+      width: widget.tokenSize,
+      height: widget.tokenSize,
+      child: GestureDetector(
+        // Opaque so the whole box is tappable even where the pawn art is
+        // transparent (the pawn's silhouette doesn't fill the square).
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedBuilder(
+          animation: _fx,
+          builder: (context, child) {
+            if (!_fx.isAnimating && _fx.value == 0) return child!;
+            final t = _fx.value;
+            // Home flourish: overshoot bounce. Capture pop: quick punch-in.
+            final scale = _homeFlourish
+                ? 1.0 + 0.35 * math.sin(t * math.pi)
+                : (1.0 + 0.6 * (1 - t) * (t < 0.2 ? t / 0.2 : 1));
+            return Transform.scale(scale: scale, child: child);
+          },
+          child: _Token(
+            color: widget.color,
+            number: widget.number,
+            highlighted: widget.highlighted,
+            bouncing: widget.bouncing && !moving,
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
-// ── Token widget — flat circular piece (Ludo King style) ─────────────────────
+// ── Token widget — glossy 3D pawn marker ─────────────────────────────────────
+
+// Head (the ball the number sits in) is centered at this fraction of the
+// token's height — shared between the painter, the highlight glow, and the
+// number badge so they all line up on the same spot. The whole pawn
+// (head + neck + base + drop shadow) must fit inside a single sz×sz box.
+const double _pawnHeadCenterY = 0.24;
+const double _pawnHeadRadius = 0.26; // fraction of width
 
 class _Token extends StatelessWidget {
   final Color color;
@@ -427,54 +440,65 @@ class _Token extends StatelessWidget {
   Widget build(BuildContext context) {
     Widget pin = LayoutBuilder(builder: (context, c) {
       final sz = c.maxWidth;
-      // Flat round piece centered in the cell; a white ring lifts it off the
-      // same-coloured start/lane cells, and the number keeps tokens legible.
-      final disc = Container(
-        width: sz * 0.86,
-        height: sz * 0.86,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: color,
-          border: Border.all(color: Colors.white, width: sz * 0.07),
-          boxShadow: [
-            if (highlighted)
-              BoxShadow(
-                color: color.withOpacity(0.85),
-                blurRadius: 12,
-                spreadRadius: 1,
-              ),
-            BoxShadow(
-              color: Colors.black.withOpacity(0.30),
-              blurRadius: 2.5,
-              offset: const Offset(0, 1.5),
-            ),
-          ],
-        ),
-        alignment: Alignment.center,
-        child: Container(
-          width: sz * 0.40,
-          height: sz * 0.40,
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.white,
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            '$number',
-            style: TextStyle(
-              color: color,
-              fontSize: sz * 0.24,
-              fontWeight: FontWeight.w900,
-              height: 1,
-            ),
-          ),
-        ),
-      );
+      final headCenter = Offset(sz * 0.5, sz * _pawnHeadCenterY);
+      final headR = sz * _pawnHeadRadius;
 
       return SizedBox(
         width: sz,
         height: sz,
-        child: Center(child: disc),
+        child: Stack(
+          alignment: Alignment.topCenter,
+          clipBehavior: Clip.none,
+          children: [
+            if (highlighted)
+              Positioned(
+                left: headCenter.dx - headR * 1.05,
+                top: headCenter.dy - headR * 1.05,
+                child: Container(
+                  width: headR * 2.1,
+                  height: headR * 2.1,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: color.withOpacity(0.85),
+                        blurRadius: 14,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            CustomPaint(
+              size: Size(sz, sz),
+              painter: _PawnPainter(color: color),
+            ),
+            // White head disc with the token number, centered on the pawn head.
+            Positioned(
+              left: headCenter.dx - sz * 0.23,
+              top: headCenter.dy - sz * 0.23,
+              child: Container(
+                width: sz * 0.46,
+                height: sz * 0.46,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white,
+                  border: Border.all(color: color.withOpacity(0.55), width: 1),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  '$number',
+                  style: TextStyle(
+                    color: color,
+                    fontSize: sz * 0.24,
+                    fontWeight: FontWeight.w900,
+                    height: 1,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       );
     });
 
@@ -485,6 +509,87 @@ class _Token extends StatelessWidget {
     if (bouncing) return _BouncingToken(intensity: 0.45, child: pin);
     return pin;
   }
+}
+
+// Paints a glossy 3D bowling-pin/pawn silhouette (round head, tapered neck,
+// rounded base) with a radial highlight and an elliptical drop shadow.
+class _PawnPainter extends CustomPainter {
+  final Color color;
+  const _PawnPainter({required this.color});
+
+  Path _pinPath(double w, double h) {
+    final headC = Offset(w * 0.5, h * _pawnHeadCenterY);
+    final headR = w * _pawnHeadRadius;
+    final head = Path()..addOval(Rect.fromCircle(center: headC, radius: headR));
+
+    final baseRect = Rect.fromCenter(
+        center: Offset(w * 0.5, h * 0.66), width: w * 0.60, height: h * 0.20);
+    final base = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+          baseRect, Radius.circular(baseRect.height / 2)));
+
+    final neck = Path()
+      ..moveTo(w * 0.32, h * 0.32)
+      ..lineTo(w * 0.68, h * 0.32)
+      ..lineTo(w * 0.63, h * 0.58)
+      ..lineTo(w * 0.37, h * 0.58)
+      ..close();
+
+    return Path.combine(
+      PathOperation.union,
+      Path.combine(PathOperation.union, head, neck),
+      base,
+    );
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final path = _pinPath(w, h);
+
+    // Elliptical drop shadow beneath the base.
+    final shadowRect = Rect.fromCenter(
+        center: Offset(w * 0.5, h * 0.80), width: w * 0.62, height: h * 0.08);
+    canvas.drawOval(
+      shadowRect,
+      Paint()
+        ..color = Colors.black.withOpacity(0.35)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.0),
+    );
+
+    // Glossy radial-gradient body — light source top-left.
+    final bounds = path.getBounds();
+    final gloss = Paint()
+      ..shader = ui.Gradient.radial(
+        Offset(bounds.left + bounds.width * 0.35,
+            bounds.top + bounds.height * 0.28),
+        bounds.longestSide * 0.9,
+        [
+          Color.lerp(color, Colors.white, 0.55)!,
+          color,
+          Color.lerp(color, Colors.black, 0.30)!,
+        ],
+        const [0.0, 0.55, 1.0],
+      );
+    canvas.drawPath(path, gloss);
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2
+        ..color = Colors.black.withOpacity(0.25),
+    );
+
+    // Small highlight streak for extra gloss.
+    final highlightC = Offset(w * 0.40, h * 0.20);
+    canvas.drawOval(
+      Rect.fromCenter(center: highlightC, width: w * 0.18, height: h * 0.10),
+      Paint()..color = Colors.white.withOpacity(0.55),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _PawnPainter old) => old.color != color;
 }
 
 class _BouncingToken extends StatefulWidget {
