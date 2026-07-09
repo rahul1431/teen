@@ -44,7 +44,7 @@ ON CONFLICT (id) DO NOTHING;
 -- 3. Seed Mock Upcoming Match (India vs Australia)
 INSERT INTO cricket_matches (id, series, format, team_a, team_b, team_a_short, team_b_short, start_time, status, team_a_flag, team_b_flag) VALUES
   ('55c8c7db-115f-4d37-88f5-46ff85aa0001', 'ICC T20 World Cup', 't20', 'India', 'Australia', 'IND', 'AUS', NOW() + INTERVAL '1 day', 'upcoming', 'https://flagcdn.com/w80/in.png', 'https://flagcdn.com/w80/au.png')
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET status = 'upcoming', start_time = NOW() + INTERVAL '1 day';
 
 -- 4. Map Mock Players to the Match Squad
 INSERT INTO cricket_match_players (match_id, player_id, fantasy_points)
@@ -58,4 +58,4 @@ INSERT INTO cricket_fantasy_leagues (id, match_id, name, entry_fee, prize_pool, 
   ('66c8c7db-115f-4d37-88f5-46ff85aa0001', '55c8c7db-115f-4d37-88f5-46ff85aa0001', 'Mega Contest 🏆', 49.00, 10000.00, 250, 0, 'open', '[{"rank_start":1,"rank_end":1,"payout":5000},{"rank_start":2,"rank_end":2,"payout":2000},{"rank_start":3,"rank_end":5,"payout":1000}]'::jsonb),
   ('66c8c7db-115f-4d37-88f5-46ff85aa0002', '55c8c7db-115f-4d37-88f5-46ff85aa0001', 'Head-to-Head 🤝', 250.00, 450.00, 2, 0, 'open', '[{"rank_start":1,"rank_end":1,"payout":450}]'::jsonb),
   ('66c8c7db-115f-4d37-88f5-46ff85aa0003', '55c8c7db-115f-4d37-88f5-46ff85aa0001', 'Practice Contest 🆓', 0.00, 0.00, 100, 0, 'open', '[]'::jsonb)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET status = 'open';
