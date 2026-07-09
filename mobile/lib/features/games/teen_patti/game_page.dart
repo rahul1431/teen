@@ -49,6 +49,14 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   final _api = ApiClient();
   PracticeEngine? _practice;
 
+  // Friends "Same Table" rematch flips us to a brand-new game page via
+  // pushReplacement. The new page's initState re-locks landscape, but the OLD
+  // page's dispose fires after the transition and would reset orientation to
+  // portrait — clobbering the landscape lock and leaving the 2nd+ hand in
+  // portrait. This static flag is raised just before the rematch navigation so
+  // the disposing page knows to skip its portrait reset (and lowers it again).
+  static bool _rematchInFlight = false;
+
   // ── Responsive layout ────────────────────────────────────────────────────
   // All visual dimensions derive from _ls (layout scale), computed each build
   // from the landscape screen height so the game looks good on every device.
@@ -166,11 +174,18 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       _gsNotifier, _myTurnNotifier, _timerNotifier, _resultNotifier,
       _myCardsNotifier, _reactionsNotifier, _betNotifier,
     ]) { n.dispose(); }
-    // Restore portrait when leaving the game
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp, DeviceOrientation.portraitDown,
-    ]);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    // Restore portrait when leaving the game — but NOT when a friends-table
+    // rematch is swapping us onto a fresh game page (which stays landscape).
+    // Otherwise this dispose would run after the new page's initState and
+    // clobber its landscape lock, flipping continue-hands to portrait.
+    if (_rematchInFlight) {
+      _rematchInFlight = false;
+    } else {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp, DeviceOrientation.portraitDown,
+      ]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
     super.dispose();
   }
 
@@ -376,6 +391,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         final newRoom = data['room_id']?.toString();
         if (newRoom == null || newRoom == widget.roomId) return;
         _rematchTimer?.cancel();
+        // Keep landscape across the rematch — tell the disposing page not to
+        // restore portrait (see _rematchInFlight).
+        _rematchInFlight = true;
         context.pushReplacement('/games/teen-patti/play/$newRoom',
             extra: Map<String, dynamic>.from(data));
       });
