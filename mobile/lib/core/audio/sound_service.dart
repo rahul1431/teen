@@ -6,16 +6,15 @@ import 'package:hive/hive.dart';
 /// filename under `assets/sounds/`.
 enum Sfx {
   buttonTap('button_tap.mp3'),
-  // Ludo — dedicated tones (capture/home/win are Ludo-specific so they don't
-  // touch the shared win.mp3 used by the locked Teen Patti/Aviator/lottery).
-  diceRoll('dice_roll.mp3'),
-  tokenMove('token_move.mp3'),
-  tokenCapture('ludo_capture.mp3'),
-  tokenHome('ludo_home.mp3'),
-  ludoWin('ludo_win.mp3'),
-  ludoStart('ludo_start.mp3'),
-  ludoSafe('ludo_safe.mp3'),
-  ludoTap('ludo_tap.mp3'),
+  // Ludo — licensed original sounds
+  diceRoll('Ludo King Orginal Sound With licensed/diceroll.mp3'),
+  tokenMove('Ludo King Orginal Sound With licensed/step.mp3'),
+  tokenCapture('Ludo King Orginal Sound With licensed/death.mp3'),
+  tokenHome('Ludo King Orginal Sound With licensed/panta.mp3'),
+  ludoWin('Ludo King Orginal Sound With licensed/congratulations.mp3'),
+  ludoStart('Ludo King Orginal Sound With licensed/gamestartsound.mp3'),
+  ludoSafe('Ludo King Orginal Sound With licensed/safe.mp3'),
+  ludoTap('Ludo King Orginal Sound With licensed/click.mp3'),
   // Teen Patti
   cardDeal('card_deal.mp3'),
   chipBet('chip_bet.mp3'),

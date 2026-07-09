@@ -158,6 +158,7 @@ class _LudoBoardState extends State<LudoBoard>
                   painter: _BoardPainter(
                     activeSeatIndex: activeSeat,
                     breathing: _breathingCtrl.value,
+                    mySeatIndex: widget.mySeatIndex,
                   ),
                 );
               },
@@ -210,6 +211,7 @@ class _LudoBoardState extends State<LudoBoard>
           number: ti + 1,
           highlighted: movable,
           bouncing: isActiveTurnPlayer,
+          mySeatIndex: widget.mySeatIndex,
           onTap: movable ? () => widget.onTokenTap?.call(pi, ti) : null,
         );
         (movable ? onTop : base).add(sprite);
@@ -225,17 +227,35 @@ class _LudoBoardState extends State<LudoBoard>
 // line between the two adjacent cells so a token visibly travels the path
 // cell-by-cell. Base (-1) and integer endpoints fall back to the exact
 // tokenPosition() coordinate.
-Offset _tokenPixel(int seat, int tokenIdx, double progress, double size) {
+Offset _tokenPixel(int seat, int tokenIdx, double progress, double size, [int? mySeatIndex]) {
+  Offset raw;
   if (progress <= 0) {
-    return tokenPosition(seat, tokenIdx, progress.round(), size);
+    raw = tokenPosition(seat, tokenIdx, progress.round(), size);
+  } else {
+    final lo = progress.floor();
+    final hi = progress.ceil();
+    if (lo == hi) {
+      raw = tokenPosition(seat, tokenIdx, lo, size);
+    } else {
+      final a = tokenPosition(seat, tokenIdx, lo, size);
+      final b = tokenPosition(seat, tokenIdx, hi, size);
+      final t = progress - lo;
+      raw = Offset(a.dx + (b.dx - a.dx) * t, a.dy + (b.dy - a.dy) * t);
+    }
   }
-  final lo = progress.floor();
-  final hi = progress.ceil();
-  if (lo == hi) return tokenPosition(seat, tokenIdx, lo, size);
-  final a = tokenPosition(seat, tokenIdx, lo, size);
-  final b = tokenPosition(seat, tokenIdx, hi, size);
-  final t = progress - lo;
-  return Offset(a.dx + (b.dx - a.dx) * t, a.dy + (b.dy - a.dy) * t);
+
+  if (mySeatIndex == null) return raw;
+  final rotationAngle = ((4 - mySeatIndex) % 4) * (math.pi / 2);
+  if (rotationAngle == 0) return raw;
+
+  final center = Offset(size / 2, size / 2);
+  final s = math.sin(rotationAngle);
+  final c = math.cos(rotationAngle);
+  final x = raw.dx - center.dx;
+  final y = raw.dy - center.dy;
+  final xNew = x * c - y * s;
+  final yNew = x * s + y * c;
+  return Offset(xNew + center.dx, yNew + center.dy);
 }
 
 // ── Animated token sprite ────────────────────────────────────────────────────
@@ -252,6 +272,7 @@ class _TokenSprite extends StatefulWidget {
   final int number;
   final bool highlighted;
   final bool bouncing;
+  final int? mySeatIndex;
   final VoidCallback? onTap;
 
   const _TokenSprite({
@@ -265,6 +286,7 @@ class _TokenSprite extends StatefulWidget {
     required this.number,
     required this.highlighted,
     required this.bouncing,
+    this.mySeatIndex,
     this.onTap,
   });
 
@@ -371,7 +393,7 @@ class _TokenSpriteState extends State<_TokenSprite>
   @override
   Widget build(BuildContext context) {
     final pos = _tokenPixel(
-        widget.seatIndex, widget.tokenIndex, _display, widget.boardSize);
+        widget.seatIndex, widget.tokenIndex, _display, widget.boardSize, widget.mySeatIndex);
 
     // Hop arc while stepping: lifts the token between cells.
     final frac = _display - _display.floorToDouble();
@@ -639,12 +661,21 @@ class _BouncingTokenState extends State<_BouncingToken>
 class _BoardPainter extends CustomPainter {
   final int activeSeatIndex;
   final double breathing;
+  final int? mySeatIndex;
 
-  _BoardPainter({required this.activeSeatIndex, required this.breathing});
+  _BoardPainter({required this.activeSeatIndex, required this.breathing, this.mySeatIndex});
 
   @override
   void paint(Canvas canvas, Size size) {
     final s = size.width / 15.0;
+
+    final rotationAngle = ((4 - (mySeatIndex ?? 0)) % 4) * (math.pi / 2);
+    if (rotationAngle != 0) {
+      canvas.save();
+      canvas.translate(size.width / 2, size.height / 2);
+      canvas.rotate(rotationAngle);
+      canvas.translate(-size.width / 2, -size.height / 2);
+    }
 
     // 1. White board surface.
     canvas.drawRect(Offset.zero & size, Paint()..color = _boardBg);
@@ -720,6 +751,10 @@ class _BoardPainter extends CustomPainter {
 
     // 5. Centre — four bright triangles meeting at the middle.
     _drawCenter(canvas, s);
+
+    if (rotationAngle != 0) {
+      canvas.restore();
+    }
   }
 
   // ── Corner home ────────────────────────────────────────────────────────────
