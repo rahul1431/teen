@@ -700,8 +700,8 @@ class _DraftTeamScreenState extends State<_DraftTeamScreen>
     if (_selectedIds.length != 11) {
       return 'Pick exactly 11 players (${_selectedIds.length}/11 selected)';
     }
-    if (_totalCredits > 100.0) {
-      return 'Credit limit exceeded! ${_totalCredits.toStringAsFixed(1)}/100 cr';
+    if (_totalCredits > 120.0) {
+      return 'Credit limit exceeded! ${_totalCredits.toStringAsFixed(1)}/120 cr';
     }
     final wk = _countByRole('wicket_keeper');
     final bat = _countByRole('batsman');
@@ -737,7 +737,7 @@ class _DraftTeamScreenState extends State<_DraftTeamScreen>
           return;
         }
         final cost = double.tryParse(p['credits'].toString()) ?? 0;
-        if (_totalCredits + cost > 100.0) {
+        if (_totalCredits + cost > 120.0) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Insufficient credit budget!'),
             backgroundColor: AppColors.red,
@@ -845,7 +845,7 @@ class _DraftTeamScreenState extends State<_DraftTeamScreen>
                 ),
                 const Spacer(),
                 Text(
-                  'Credits Left: ${(100.0 - _totalCredits).toStringAsFixed(1)} Cr',
+                  'Credits Left: ${(120.0 - _totalCredits).toStringAsFixed(1)} Cr',
                   style: const TextStyle(
                       color: AppColors.goldLight,
                       fontSize: 12,

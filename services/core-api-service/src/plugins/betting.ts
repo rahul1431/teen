@@ -241,7 +241,7 @@ export function bettingPlugin(db: Pool) {
         else if (p.role === 'all_rounder') ar++
         else if (p.role === 'bowler') bowl++
       }
-      if (totalCredits > 100.0) return reply.code(400).send({ error: `Roster exceeds budget cap: ${totalCredits.toFixed(1)}/100 credits` })
+      if (totalCredits > 120.0) return reply.code(400).send({ error: `Roster exceeds budget cap: ${totalCredits.toFixed(1)}/120 credits` })
       if (wk < 1 || wk > 4) return reply.code(400).send({ error: 'Roster must contain between 1 and 4 Wicket Keepers' })
       if (bat < 3 || bat > 6) return reply.code(400).send({ error: 'Roster must contain between 3 and 6 Batsmen' })
       if (ar < 1 || ar > 4) return reply.code(400).send({ error: 'Roster must contain between 1 and 4 All-Rounders' })
