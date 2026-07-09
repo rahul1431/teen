@@ -30,10 +30,18 @@ const menuItems = [
       { key: '/admin/games/cricket', label: '🏏 Cricket' },
     ]
   },
-  { key: '/admin/daily-bonus', icon: <GiftOutlined />, label: 'Daily Bonus' },
-  { key: '/admin/banners', icon: <PictureOutlined />, label: 'Home Banners' },
-  { key: '/admin/promo-codes', icon: <TagOutlined />, label: 'Promo Codes' },
-  { key: '/admin/marketing', icon: <GlobalOutlined />, label: 'SEO & Marketing' },
+  {
+    key: 'marketing_group',
+    icon: <GlobalOutlined />,
+    label: 'Marketing & CMS',
+    children: [
+      { key: '/admin/marketing', label: '📣 SEO & Campaigns' },
+      { key: '/admin/promo-codes', label: '🏷️ Promo Codes' },
+      { key: '/admin/banners', label: '🖼️ Home Banners' },
+      { key: '/admin/daily-bonus', label: '🎁 Daily Bonus' },
+      { key: '/admin/marketing/cms', label: '📄 CMS Management' },
+    ]
+  },
   { key: '/admin/kyc', icon: <AuditOutlined />, label: 'KYC Verification' },
   { key: '/admin/app-update', icon: <MobileOutlined />, label: 'App Update' },
   { key: '/admin/finance', icon: <DollarOutlined />, label: 'Finance' },
@@ -41,7 +49,7 @@ const menuItems = [
   { key: '/admin/admin-users', icon: <TeamOutlined />, label: 'Admin Users' },
   { key: '/admin/risk-center', icon: <WarningOutlined />, label: 'Risk Center' },
   { key: '/admin/ai-control', icon: <FundOutlined />, label: 'AI Control Center' },
-  { key: '/admin/support', icon: <CustomerServiceOutlined />, label: 'Support & CMS' },
+  { key: '/admin/support', icon: <CustomerServiceOutlined />, label: 'Support Center' },
   { key: '/admin/leaderboard', icon: <TrophyOutlined />, label: 'Leaderboard' },
   { key: '/admin/security', icon: <SafetyOutlined />, label: 'Security' },
   // App Monitor and Player Tracking live inside the AI Control Center tabs.
