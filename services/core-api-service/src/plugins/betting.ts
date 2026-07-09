@@ -42,8 +42,12 @@ export function bettingPlugin(db: Pool) {
       if (err) return reply.code(400).send({ error: err })
       const draw = await todayDraw(body.market_id)
       if (draw.status === 'settled') return reply.code(409).send({ error: 'Market closed for today' })
-      if (body.session === 'open' && draw.open_panna) return reply.code(409).send({ error: 'Open session already declared' })
-      if (body.session === 'close' && draw.close_panna) return reply.code(409).send({ error: 'Close session already declared' })
+      
+      // Sangam bets always depend on close results
+      const resolvedSession = body.bet_type.includes('sangam') ? 'close' : body.session
+      if (resolvedSession === 'open' && draw.open_panna) return reply.code(409).send({ error: 'Open session already declared' })
+      if (resolvedSession === 'close' && draw.close_panna) return reply.code(409).send({ error: 'Close session already declared' })
+      
       // Enforce the market's posted betting windows (times are IST). Open bets
       // are accepted until the open cutoff, close bets until the close cutoff.
       const mkt = await db.query(
@@ -53,21 +57,60 @@ export function bettingPlugin(db: Pool) {
       )
       if (mkt.rows.length) {
         const { open_time, close_time, now_ist } = mkt.rows[0]
-        if (body.session === 'open' && now_ist > open_time) return reply.code(409).send({ error: 'Open betting has closed for today' })
-        if (body.session === 'close' && now_ist > close_time) return reply.code(409).send({ error: 'Close betting has closed for today' })
+        if (resolvedSession === 'open' && now_ist > open_time) return reply.code(409).send({ error: 'Open betting has closed for today' })
+        if (resolvedSession === 'close' && now_ist > close_time) return reply.code(409).send({ error: 'Close betting has closed for today' })
       }
       const multiplier = MATKA_MULTIPLIERS[body.bet_type]
       const potential = Math.round(body.amount * multiplier * 100) / 100
       const betId = crypto.randomUUID()
       const debit = await debitStake({ userId: uid(req), amount: body.amount, referenceId: betId, idempotencyKey: `matka_stake_${betId}`, description: 'Matka bet' })
       if (!debit.ok) return reply.code(400).send({ error: debit.error })
-      await db.query(`INSERT INTO matka_bets (id, user_id, draw_id, bet_type, session, number, amount, multiplier, potential_payout) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [betId, uid(req), draw.id, body.bet_type, body.session, body.number, body.amount, multiplier, potential])
+      await db.query(`INSERT INTO matka_bets (id, user_id, draw_id, bet_type, session, number, amount, multiplier, potential_payout) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [betId, uid(req), draw.id, body.bet_type, resolvedSession, body.number, body.amount, multiplier, potential])
       return { success: true, bet_id: betId, potential_payout: potential }
     })
 
     app.get('/matka/my-bets', { onRequest: [auth] }, async (req) => {
       const rows = await db.query(`SELECT b.*, m.name AS market_name FROM matka_bets b JOIN matka_draws d ON d.id = b.draw_id JOIN matka_markets m ON m.id = d.market_id WHERE b.user_id = $1 ORDER BY b.created_at DESC LIMIT 100`, [uid(req)])
       return { bets: rows.rows }
+    })
+
+    function getMonday(d: Date) {
+      const date = new Date(d)
+      const day = date.getDay()
+      const diff = date.getDate() - day + (day === 0 ? -6 : 1)
+      return new Date(date.setDate(diff)).toISOString().slice(0, 10)
+    }
+
+    app.get('/matka/markets/:id/chart', { onRequest: [auth] }, async (req) => {
+      const { id } = req.params as { id: string }
+      const draws = await db.query(
+        `SELECT draw_date, open_panna, open_digit, close_panna, close_digit, jodi, status 
+         FROM matka_draws 
+         WHERE market_id = $1 
+         ORDER BY draw_date DESC LIMIT 100`,
+        [id],
+      )
+      const weeks: Record<string, any> = {}
+      for (const row of draws.rows) {
+        const d = new Date(row.draw_date)
+        const mondayStr = getMonday(d)
+        if (!weeks[mondayStr]) {
+          weeks[mondayStr] = {
+            week_start: mondayStr,
+            mon: null, tue: null, wed: null, thu: null, fri: null, sat: null, sun: null
+          }
+        }
+        const days = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+        const dayKey = days[d.getDay()]
+        weeks[mondayStr][dayKey] = {
+          open_panna: row.open_panna ?? '***',
+          close_panna: row.close_panna ?? '***',
+          jodi: row.jodi ?? '**',
+          open_digit: row.open_digit !== null ? String(row.open_digit) : '*',
+          close_digit: row.close_digit !== null ? String(row.close_digit) : '*'
+        }
+      }
+      return { chart: Object.values(weeks).sort((a, b) => b.week_start.localeCompare(a.week_start)) }
     })
 
     // ══ LOTTERY ══
