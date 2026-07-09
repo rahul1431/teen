@@ -18,6 +18,9 @@ class LocaleService {
   static const languages = [
     AppLanguage('en', 'English', 'English', '🇬🇧'),
     AppLanguage('hi', 'Hindi', 'हिन्दी', '🇮🇳'),
+    AppLanguage('te', 'Telugu', 'తెలుగు', '🇮🇳'),
+    AppLanguage('kn', 'Kannada', 'ಕನ್ನಡ', '🇮🇳'),
+    AppLanguage('mr', 'Marathi', 'मराठी', '🇮🇳'),
   ];
 
   AppLanguage _current = languages.first;
@@ -81,6 +84,42 @@ class LocaleService {
       'logout': 'लॉग आउट',
       'choose_language': 'अपनी भाषा चुनें',
       'continue': 'आगे बढ़ें',
+    },
+    'te': {
+      'profile': 'ప్రొఫైల్',
+      'bank_details': 'బ్యాంక్ వివరాలు',
+      'transaction_history': 'లావాదేవీల చరిత్ర',
+      'support': 'మద్దతు',
+      'language': 'భాష',
+      'biometric_login': 'బయోమెట్రిక్ లాగిన్',
+      'enable_biometric': 'వేలిముద్రతో యాప్ తెరవండి',
+      'logout': 'లాగ్ అవుట్',
+      'choose_language': 'మీ భాషను ఎంచుకోండి',
+      'continue': 'కొనసాగించు',
+    },
+    'kn': {
+      'profile': 'ಪ್ರೊಫೈಲ್',
+      'bank_details': 'ಬ್ಯಾಂಕ್ ವಿವರಗಳು',
+      'transaction_history': 'ವಹಿವಾಟು ಇತಿಹಾಸ',
+      'support': 'ಬೆಂಬಲ',
+      'language': 'ಭಾಷೆ',
+      'biometric_login': 'ಬಯೋಮೆಟ್ರಿಕ್ ಲಾಗಿನ್',
+      'enable_biometric': 'ಫಿಂಗರ್‌ಪ್ರಿಂಟ್‌ನೊಂದಿಗೆ ಆ್ಯಪ್ ತೆರೆಯಿರಿ',
+      'logout': 'ಲಾಗ್ ಔಟ್',
+      'choose_language': 'ನಿಮ್ಮ ಭಾಷೆಯನ್ನು ಆರಿಸಿ',
+      'continue': 'ಮುಂದುವರಿಸಿ',
+    },
+    'mr': {
+      'profile': 'प्रोफाइल',
+      'bank_details': 'बँक तपशील',
+      'transaction_history': 'व्यवहार इतिहास',
+      'support': 'सहाय्य',
+      'language': 'भाषा',
+      'biometric_login': 'बायोमेट्रिक लॉगिन',
+      'enable_biometric': 'फिंगरप्रिंटने अ‍ॅप उघडा',
+      'logout': 'लॉग आउट',
+      'choose_language': 'तुमची भाषा निवडा',
+      'continue': 'पुढे चला',
     },
   };
 }
