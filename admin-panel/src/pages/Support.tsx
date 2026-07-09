@@ -329,20 +329,57 @@ function PagesTab() {
         title={creating ? 'New CMS Page' : `Edit: ${editing?.slug}`}
       >
         <Form form={form} layout="vertical">
-          {creating && (
-            <Form.Item name="slug" label="Slug (lowercase, dashes only)" rules={[{ required: true, pattern: /^[a-z0-9-]+$/, message: 'Lowercase letters/numbers/dashes only' }]}>
-              <Input placeholder="e.g. how-to-play" />
-            </Form.Item>
-          )}
-          <Form.Item name="title" label="Title" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="body_md" label="Body (Markdown)" rules={[{ required: true }]}>
-            <Input.TextArea rows={14} style={{ fontFamily: 'monospace' }} />
-          </Form.Item>
-          <Form.Item name="is_published" label="Published" valuePropName="checked" initialValue={true}>
-            <Switch />
-          </Form.Item>
+          <Tabs defaultActiveKey="content" items={[
+            {
+              key: 'content',
+              label: 'Page Content',
+              children: (
+                <div style={{ marginTop: 12 }}>
+                  {creating && (
+                    <Form.Item name="slug" label="Slug (lowercase, dashes only)" rules={[{ required: true, pattern: /^[a-z0-9-]+$/, message: 'Lowercase letters/numbers/dashes only' }]}>
+                      <Input placeholder="e.g. how-to-play" />
+                    </Form.Item>
+                  )}
+                  <Form.Item name="title" label="Title" rules={[{ required: true }]}>
+                    <Input />
+                  </Form.Item>
+                  <Form.Item name="body_md" label="Body (Markdown)" rules={[{ required: true }]}>
+                    <Input.TextArea rows={12} style={{ fontFamily: 'monospace' }} />
+                  </Form.Item>
+                  <Form.Item name="is_published" label="Published" valuePropName="checked" initialValue={true}>
+                    <Switch />
+                  </Form.Item>
+                </div>
+              )
+            },
+            {
+              key: 'seo',
+              label: 'SEO & Social Tags',
+              children: (
+                <div style={{ marginTop: 12 }}>
+                  <Form.Item name="meta_title" label="Search Title (meta title)">
+                    <Input placeholder="Leave empty to fallback to Page Title" />
+                  </Form.Item>
+                  <Form.Item name="meta_description" label="Meta Description">
+                    <Input.TextArea rows={3} placeholder="SEO page description snippet" />
+                  </Form.Item>
+                  <Form.Item name="meta_keywords" label="Meta Keywords">
+                    <Input placeholder="e.g. page, topic, game" />
+                  </Form.Item>
+                  <Divider style={{ margin: '16px 0' }}>Open Graph (Social Sharing)</Divider>
+                  <Form.Item name="og_title" label="Social Title (og:title)">
+                    <Input placeholder="Title displayed on Twitter/WhatsApp" />
+                  </Form.Item>
+                  <Form.Item name="og_description" label="Social Description (og:description)">
+                    <Input.TextArea rows={2} placeholder="Description shown on social platforms" />
+                  </Form.Item>
+                  <Form.Item name="og_image" label="Social Share Image URL (og:image)">
+                    <Input placeholder="https://domain.com/social-banner.jpg" />
+                  </Form.Item>
+                </div>
+              )
+            }
+          ]} />
         </Form>
       </Modal>
     </>

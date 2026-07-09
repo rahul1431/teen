@@ -25,6 +25,10 @@ export function authPlugin(db: Pool, redis: Redis) {
         username: z.string().min(3).max(20).regex(/^[a-zA-Z0-9_]+$/),
         password: z.string().min(6),
         referral_code: z.string().optional(),
+        campaign_id: z.string().uuid().optional(),
+        utm_source: z.string().max(50).optional(),
+        utm_medium: z.string().max(50).optional(),
+        utm_campaign: z.string().max(50).optional(),
       }).parse(req.body)
 
       const otpValid = await verifyOtp(redis, body.phone, body.otp)
@@ -57,6 +61,35 @@ export function authPlugin(db: Pool, redis: Redis) {
             [referredBy, user.id, process.env.REFERRAL_BONUS_AMOUNT || 50],
           )
         }
+
+        // Campaign Attribution
+        if (body.campaign_id) {
+          const campaignRes = await client.query('SELECT utm_source, utm_medium, utm_campaign FROM marketing_campaigns WHERE id = $1 AND is_active = true', [body.campaign_id])
+          if (campaignRes.rows.length > 0) {
+            const camp = campaignRes.rows[0]
+            await client.query(
+              `INSERT INTO user_campaign_attribution (user_id, campaign_id, utm_source, utm_medium, utm_campaign)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [user.id, body.campaign_id, camp.utm_source, camp.utm_medium, camp.utm_campaign]
+            )
+          }
+        } else if (body.utm_source) {
+          const campaignRes = await client.query(
+            `SELECT id FROM marketing_campaigns
+             WHERE utm_source = $1
+               AND COALESCE(utm_medium, '') = COALESCE($2, '')
+               AND COALESCE(utm_campaign, '') = COALESCE($3, '')
+               AND is_active = true`,
+            [body.utm_source, body.utm_medium || null, body.utm_campaign || null]
+          )
+          const campId = campaignRes.rows.length > 0 ? campaignRes.rows[0].id : null
+          await client.query(
+            `INSERT INTO user_campaign_attribution (user_id, campaign_id, utm_source, utm_medium, utm_campaign)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [user.id, campId, body.utm_source, body.utm_medium || null, body.utm_campaign || null]
+          )
+        }
+
         await client.query('COMMIT')
 
         const accessToken = app.jwt.sign({ sub: user.id, username: user.username }, { expiresIn: process.env.JWT_EXPIRES_IN || '15m' })

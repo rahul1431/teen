@@ -1347,11 +1347,22 @@ async function start() {
       title: z.string().min(1).max(200),
       body_md: z.string().max(100000),
       is_published: z.boolean().optional(),
+      meta_title: z.string().max(255).optional().nullable(),
+      meta_description: z.string().optional().nullable(),
+      meta_keywords: z.string().optional().nullable(),
+      og_title: z.string().max(255).optional().nullable(),
+      og_description: z.string().optional().nullable(),
+      og_image: z.string().optional().nullable(),
     }).parse(req.body)
     try {
       await db.query(
-        `INSERT INTO cms_pages (slug, title, body_md, is_published, updated_by) VALUES ($1, $2, $3, $4, $5)`,
-        [body.slug, body.title, body.body_md, body.is_published ?? true, me.sub]
+        `INSERT INTO cms_pages (slug, title, body_md, is_published, updated_by, meta_title, meta_description, meta_keywords, og_title, og_description, og_image)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          body.slug, body.title, body.body_md, body.is_published ?? true, me.sub,
+          body.meta_title || null, body.meta_description || null, body.meta_keywords || null,
+          body.og_title || null, body.og_description || null, body.og_image || null
+        ]
       )
       return reply.send({ success: true })
     } catch (e: any) {
@@ -1367,6 +1378,12 @@ async function start() {
       title: z.string().min(1).max(200).optional(),
       body_md: z.string().max(100000).optional(),
       is_published: z.boolean().optional(),
+      meta_title: z.string().max(255).optional().nullable(),
+      meta_description: z.string().optional().nullable(),
+      meta_keywords: z.string().optional().nullable(),
+      og_title: z.string().max(255).optional().nullable(),
+      og_description: z.string().optional().nullable(),
+      og_image: z.string().optional().nullable(),
     }).parse(req.body)
     const updates: string[] = []
     const params: any[] = []
@@ -1374,6 +1391,12 @@ async function start() {
     if (body.title !== undefined) { updates.push(`title = $${idx}`); params.push(body.title); idx++ }
     if (body.body_md !== undefined) { updates.push(`body_md = $${idx}`); params.push(body.body_md); idx++ }
     if (body.is_published !== undefined) { updates.push(`is_published = $${idx}`); params.push(body.is_published); idx++ }
+    if (body.meta_title !== undefined) { updates.push(`meta_title = $${idx}`); params.push(body.meta_title); idx++ }
+    if (body.meta_description !== undefined) { updates.push(`meta_description = $${idx}`); params.push(body.meta_description); idx++ }
+    if (body.meta_keywords !== undefined) { updates.push(`meta_keywords = $${idx}`); params.push(body.meta_keywords); idx++ }
+    if (body.og_title !== undefined) { updates.push(`og_title = $${idx}`); params.push(body.og_title); idx++ }
+    if (body.og_description !== undefined) { updates.push(`og_description = $${idx}`); params.push(body.og_description); idx++ }
+    if (body.og_image !== undefined) { updates.push(`og_image = $${idx}`); params.push(body.og_image); idx++ }
     if (!updates.length) return reply.code(400).send({ error: 'Nothing to update' })
     updates.push(`updated_by = $${idx}`); params.push(me.sub); idx++
     updates.push(`updated_at = NOW()`)

@@ -6,7 +6,7 @@ import {
   TeamOutlined, ProfileOutlined, WarningOutlined, CustomerServiceOutlined,
   FundOutlined, RobotOutlined, HistoryOutlined, GiftOutlined,
   PictureOutlined, TagOutlined, AuditOutlined, MobileOutlined,
-  MenuOutlined,
+  MenuOutlined, GlobalOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
@@ -33,6 +33,7 @@ const menuItems = [
   { key: '/admin/daily-bonus', icon: <GiftOutlined />, label: 'Daily Bonus' },
   { key: '/admin/banners', icon: <PictureOutlined />, label: 'Home Banners' },
   { key: '/admin/promo-codes', icon: <TagOutlined />, label: 'Promo Codes' },
+  { key: '/admin/marketing', icon: <GlobalOutlined />, label: 'SEO & Marketing' },
   { key: '/admin/kyc', icon: <AuditOutlined />, label: 'KYC Verification' },
   { key: '/admin/app-update', icon: <MobileOutlined />, label: 'App Update' },
   { key: '/admin/finance', icon: <DollarOutlined />, label: 'Finance' },
