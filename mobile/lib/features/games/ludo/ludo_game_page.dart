@@ -203,7 +203,16 @@ class _LudoGamePageState extends State<LudoGamePage>
       _rolling = false;
       _banner = canMove ? 'Tap a token to move' : 'No valid move — passing';
     });
-    if (!canMove) _maybeDriveBots();
+    if (!canMove) {
+      _maybeDriveBots();
+      return;
+    }
+    // Auto-move when the roll leaves exactly one legal move (Ludo-King feel):
+    // no reason to make the player tap the only option.
+    if (s.movableTokens.length == 1) {
+      await Future.delayed(const Duration(milliseconds: 320));
+      if (mounted) _offlineMove(s.movableTokens.first);
+    }
   }
 
   Future<void> _offlineMove(int tokenIndex) async {
@@ -214,6 +223,12 @@ class _LudoGamePageState extends State<LudoGamePage>
     _playMoveSounds(res);
     setState(() {});
     if (res['win'] == true) return _finish(s.winnerId);
+    // Extra turn (6 / capture / home): the engine keeps the turn on me and
+    // resets to 'roll'. Surface it clearly instead of a generic prompt.
+    if (s.currentTurn == _mySeatIndex && s.awaiting == 'roll') {
+      setState(() => _banner = 'Roll again! 🎲');
+      return;
+    }
     _maybeDriveBots();
   }
 
@@ -302,6 +317,24 @@ class _LudoGamePageState extends State<LudoGamePage>
       if (la != null && la['dice'] != null) {
         _diceCtrl.forward(from: 0);
         _showRoll(actorName!, (la['dice'] as num).toInt());
+      }
+      // Gameplay-feel: on my turn, show a "Roll again!" cue after an extra-turn
+      // move (6 / capture / home) and auto-play the roll when only one legal
+      // move exists — mirrors the offline behaviour.
+      if (_isMyTurn) {
+        final iJustMoved = la != null &&
+            la['user_id'] == _myUserId &&
+            la['action'] == 'move_token';
+        if (newState.awaiting == 'roll' && iJustMoved) {
+          setState(() => _banner = 'Roll again! 🎲');
+        } else if (newState.awaiting == 'move' &&
+            newState.movableTokens.length == 1) {
+          Future.delayed(const Duration(milliseconds: 340), () {
+            if (mounted && _isMyTurn && _state?.awaiting == 'move') {
+              _onlineMove(newState.movableTokens.first);
+            }
+          });
+        }
       }
       // Plain-move sound only for the local player's own move_token action —
       // the gateway includes a 'dice' field on every broadcast (roll AND
@@ -1102,6 +1135,22 @@ class _LudoGamePageState extends State<LudoGamePage>
                 Stack(
                   alignment: Alignment.center,
                   children: [
+                    // Turn ring: my turn shows a shrinking countdown; an
+                    // opponent/bot's turn shows a spinning "thinking" ring.
+                    if (active)
+                      SizedBox(
+                        width: 44,
+                        height: 44,
+                        child: CircularProgressIndicator(
+                          value: (i == s.currentTurn && _isMyTurn)
+                              ? (_turnSecondsLeft / _turnTimerSeconds)
+                                  .clamp(0.0, 1.0)
+                              : null,
+                          strokeWidth: 3,
+                          backgroundColor: color.withOpacity(0.18),
+                          valueColor: AlwaysStoppedAnimation<Color>(color),
+                        ),
+                      ),
                     Container(
                       width: 34,
                       height: 34,
