@@ -219,6 +219,32 @@ export function bettingPlugin(db: Pool) {
       return { leagues: res.rows }
     })
 
+    app.get('/cricket/fantasy/leagues/:id/leaderboard', { onRequest: [auth] }, async (req) => {
+      const { id } = req.params as { id: string }
+      const res = await db.query(`
+        SELECT e.id, e.points, e.final_rank, e.payout_received, e.status,
+               u.username,
+               t.id AS team_id,
+               (SELECT name FROM cricket_fantasy_players WHERE id = t.captain_id) AS captain_name,
+               (SELECT name FROM cricket_fantasy_players WHERE id = t.vice_captain_id) AS vice_captain_name
+        FROM cricket_fantasy_entries e
+        JOIN users u ON u.id = e.user_id
+        JOIN user_fantasy_teams t ON t.id = e.team_id
+        WHERE e.league_id = $1
+        ORDER BY e.points DESC, e.created_at ASC
+      `, [id])
+      return { leaderboard: res.rows }
+    })
+
+    app.get('/cricket/fantasy/team/:id', { onRequest: [auth] }, async (req, reply) => {
+      const { id } = req.params as { id: string }
+      const teamRes = await db.query('SELECT * FROM user_fantasy_teams WHERE id = $1', [id])
+      if (!teamRes.rows.length) return reply.code(404).send({ error: 'Team not found' })
+      const team = teamRes.rows[0]
+      const playersRes = await db.query('SELECT * FROM cricket_fantasy_players WHERE id = ANY($1)', [team.player_ids])
+      return { team, players: playersRes.rows }
+    })
+
     app.post('/cricket/fantasy/join', { onRequest: [auth] }, async (req, reply) => {
       const body = z.object({ league_id: z.string().uuid(), team_id: z.string().uuid() }).parse(req.body)
       const leagueRes = await db.query('SELECT * FROM cricket_fantasy_leagues WHERE id = $1', [body.league_id])
@@ -446,8 +472,14 @@ export function bettingPlugin(db: Pool) {
             const role = p.role?.toLowerCase().replace(/[^a-z]/g, '').includes('keeper') ? 'wicket_keeper' : p.role?.toLowerCase().includes('bowl') ? 'bowler' : p.role?.toLowerCase().includes('allrounder') ? 'all_rounder' : 'batsman'
             const ep = await db.query('SELECT id FROM cricket_fantasy_players WHERE external_id = $1', [p.id])
             let pId: string
-            if (ep.rows.length) { pId = ep.rows[0].id; await db.query('UPDATE cricket_fantasy_players SET name=$1, role=$2, team_name=$3 WHERE id=$4', [p.name, role, team.teamName, pId]) }
-            else { const ins = await db.query(`INSERT INTO cricket_fantasy_players (name, role, credits, team_name, external_id) VALUES ($1,$2,9.0,$3,$4) RETURNING id`, [p.name, role, team.teamName, p.id]); pId = ins.rows[0].id }
+            const fallbackAvatar = `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.name)}`;
+            if (ep.rows.length) {
+              pId = ep.rows[0].id;
+              await db.query('UPDATE cricket_fantasy_players SET name=$1, role=$2, team_name=$3, avatar_url=COALESCE(avatar_url, $5) WHERE id=$4', [p.name, role, team.teamName, pId, fallbackAvatar])
+            } else {
+              const ins = await db.query(`INSERT INTO cricket_fantasy_players (name, role, credits, team_name, external_id, avatar_url) VALUES ($1,$2,9.0,$3,$4,$5) RETURNING id`, [p.name, role, team.teamName, p.id, fallbackAvatar]);
+              pId = ins.rows[0].id
+            }
             await db.query(`INSERT INTO cricket_match_players (match_id, player_id, runs_scored, balls_faced, fours, sixes, wickets, runs_conceded, overs_bowled, catches, stumpings, run_outs, fantasy_points) VALUES ($1,$2,0,0,0,0,0,0,0.0,0,0,0,0.0) ON CONFLICT (match_id, player_id) DO NOTHING`, [match_id, pId])
             playersSeeded++
           }
