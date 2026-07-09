@@ -7,13 +7,13 @@ SERVICES=(core-api-service auth-service user-service wallet-service game-gateway
 
 echo "==> Installing dependencies and building Node.js services..."
 for svc in "${SERVICES[@]}"; do
-  if [ -d "$BASE/services/$svc" ]; then
+  if [ -f "$BASE/services/$svc/package.json" ]; then
     echo "  -> Building $svc..."
     cd "$BASE/services/$svc"
     npm install --production=false
     npm run build
   else
-    echo "  -> Skipping $svc (directory does not exist)"
+    echo "  -> Skipping $svc (package.json does not exist)"
   fi
 done
 
