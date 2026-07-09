@@ -63,6 +63,21 @@ async function tryTriggerReferralReward(userId: string, db: Pool, walletSvc: any
         idempotencyKey: ikey,
         description: 'Referral bonus — friend made first deposit',
       })
+      const coreApiUrl = process.env.CORE_API_SERVICE_URL || 'http://127.0.0.1:3001'
+      const key = process.env.INTERNAL_SERVICE_KEY || ''
+      fetch(`${coreApiUrl}/internal/notifications/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-internal-key': key,
+        },
+        body: JSON.stringify({
+          user_id: referral.referrer_id,
+          title: 'Referral Reward Earned 🎁',
+          body: `Your friend made their first deposit! You have been credited a referral bonus of ₹${parseFloat(referral.reward_amount).toFixed(2)}.`,
+          type: 'referral_reward',
+        }),
+      }).catch(err => console.error('[referral-reward] notification trigger failed:', err?.message))
     }
   } catch (err) {
     // Non-fatal: log and continue so the deposit itself doesn't fail

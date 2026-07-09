@@ -40,7 +40,19 @@ export async function settleCricketMarket(
   }
 
   for (const c of credits) {
-    await creditPrize({ userId: c.userId, amount: c.amount, referenceId: c.betId, idempotencyKey: c.ikey })
+    const isRefund = c.ikey.startsWith('cricket_refund_')
+    await creditPrize({
+      userId: c.userId,
+      amount: c.amount,
+      referenceId: c.betId,
+      idempotencyKey: c.ikey,
+      notification: {
+        title: isRefund ? 'Cricket Bet Refunded 🏏' : 'Cricket Bet Win! 🏏',
+        body: isRefund
+          ? `Your cricket bet has been voided and ₹${c.amount.toFixed(2)} refunded to your wallet.`
+          : `Congratulations! Your cricket bet won. ₹${c.amount.toFixed(2)} has been credited.`,
+      },
+    })
   }
   return { settled, winners, paid }
 }
@@ -108,7 +120,16 @@ export async function settleFantasyLeague(
         )
         if (payout > 0) {
           totalPaid += payout
-          await creditPrize({ userId: entry.user_id, amount: payout, referenceId: entry.id, idempotencyKey: `cricket_fantasy_payout_${entry.id}` })
+          await creditPrize({
+            userId: entry.user_id,
+            amount: payout,
+            referenceId: entry.id,
+            idempotencyKey: `cricket_fantasy_payout_${entry.id}`,
+            notification: {
+              title: 'Fantasy Cricket Win! 🏆',
+              body: `Congratulations! You won ₹${payout.toFixed(2)} in the fantasy league.`,
+            },
+          })
         }
       }
       await client.query(`UPDATE cricket_fantasy_leagues SET status = 'settled' WHERE id = $1`, [league.id])
@@ -168,7 +189,19 @@ export async function settleCricketSession(
   }
 
   for (const c of credits) {
-    await creditPrize({ userId: c.userId, amount: c.amount, referenceId: c.betId, idempotencyKey: c.ikey })
+    const isRefund = c.ikey.startsWith('cricket_session_refund_')
+    await creditPrize({
+      userId: c.userId,
+      amount: c.amount,
+      referenceId: c.betId,
+      idempotencyKey: c.ikey,
+      notification: {
+        title: isRefund ? 'Cricket Session Refunded 🏏' : 'Cricket Session Win! 🏏',
+        body: isRefund
+          ? `Your session bet was voided and ₹${c.amount.toFixed(2)} refunded.`
+          : `Congratulations! Your session bet won. ₹${c.amount.toFixed(2)} has been credited.`,
+      },
+    })
   }
   return { settled, winners, paid }
 }

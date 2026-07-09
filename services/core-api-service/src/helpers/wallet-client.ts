@@ -21,7 +21,7 @@ export async function debitStake(opts: {
 }
 
 export async function creditPrize(opts: {
-  userId: string; amount: number; referenceId: string; idempotencyKey: string
+  userId: string; amount: number; referenceId: string; idempotencyKey: string; notification?: { title: string; body: string }
 }): Promise<boolean> {
   if (opts.amount <= 0) return true
   try {
@@ -30,6 +30,18 @@ export async function creditPrize(opts: {
       headers: { 'Content-Type': 'application/json', 'x-internal-key': KEY },
       body: JSON.stringify({ user_id: opts.userId, amount: opts.amount, type: 'game_credit', reference_id: opts.referenceId, idempotency_key: opts.idempotencyKey }),
     })
+    if (res.ok && opts.notification) {
+      fetch('http://127.0.0.1:3001/internal/notifications/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': KEY },
+        body: JSON.stringify({
+          user_id: opts.userId,
+          title: opts.notification.title,
+          body: opts.notification.body,
+          type: 'game_win',
+        }),
+      }).catch(err => console.error('[creditPrize] notification trigger failed:', err?.message))
+    }
     return res.ok
   } catch {
     return false

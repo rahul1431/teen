@@ -64,7 +64,16 @@ export async function settleLottery(
 
   // Process payouts
   await Promise.all(winnerPayouts.map(w =>
-    creditPrize({ userId: w.userId, amount: w.prize, referenceId: w.ticketId, idempotencyKey: `lottery_payout_${w.ticketId}` }),
+    creditPrize({
+      userId: w.userId,
+      amount: w.prize,
+      referenceId: w.ticketId,
+      idempotencyKey: `lottery_payout_${w.ticketId}`,
+      notification: {
+        title: 'Lottery Win! 🎰',
+        body: `Congratulations! Your ticket won a prize of ₹${w.prize.toFixed(2)} in the draw.`,
+      },
+    }),
   ))
 
   return { tickets, winners, paid }

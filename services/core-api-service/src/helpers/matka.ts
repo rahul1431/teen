@@ -102,7 +102,16 @@ export async function settleMatkaSession(
   }
 
   await Promise.all(winnerPayouts.map(w =>
-    creditPrize({ userId: w.userId, amount: w.amount, referenceId: w.betId, idempotencyKey: `matka_payout_${w.betId}` }),
+    creditPrize({
+      userId: w.userId,
+      amount: w.amount,
+      referenceId: w.betId,
+      idempotencyKey: `matka_payout_${w.betId}`,
+      notification: {
+        title: 'Matka Win! 🎯',
+        body: `Congratulations! You won ₹${w.amount.toFixed(2)} in Satta Matka.`,
+      },
+    }),
   ))
 
   return { settled, winners }
