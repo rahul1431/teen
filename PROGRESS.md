@@ -1,10 +1,34 @@
 # Progress & Resume Checkpoint
 
-> Living status doc. Read this first when resuming. Last updated: 2026-06-22 (session 6 — mobile UI/UX redesign, Teen Patti modes, Aviator rebuild, server economics).
-> Branch: `claude/confident-archimedes-e2dd1k` · PR: #1 (draft) · Base: `main`
-> Latest APK commit: `8a18b69` (coreLibraryDesugaring fix) · Latest backend commit: `dc9f9a2` (Aviator economics) · Admin preview: https://rahul1431.github.io/teen/
+> Living status doc. Read this first when resuming. Last updated: 2026-07-10 (session 11 — Lottery UI Redesign, VPS deploy, testing APK build).
+> Branch: `feature/admin-responsive`
+> Latest APK commit: `749429d` (Lottery UI redesign & release build) · Latest backend commit: `749429d` · Admin preview: https://rahul1431.github.io/teen/
+
+## 🆕 Session 11 — Lottery UI Redesign & VPS Deployment (2026-07-10) ✅
+
+### Lottery UI Redesign — Admin Panel & Mobile ✅
+Complete visual and aesthetic overhaul of the Lottery game:
+- **Admin Panel (`Lottery.tsx`):**
+  - Integrated real-time stats dashboard from `/api/admin/betting/lottery/stats` showing Total Scheduled Draws, Tickets Purchased, Revenue, and Prizes Disbursed in glowing KPI cards.
+  - Modernized configuration card with a dark gradient, custom styled inputs, and cleaner switches.
+  - Redesigned Draws Table with status-colored tags (success/default), monospace winning numbers, and interactive action buttons.
+  - Modernized "Create Draw" and "Declare Winners" modals with clean spacing and warning alerts.
+- **Mobile App (`lottery_page.dart`):**
+  - Created a custom `TicketClipper` (semicircular notches) and `DashedLinePainter` (dashed tear-off separator line) to render draws, purchased tickets, and results as physical **Ticket Stubs**.
+  - Redesigned top hero header with a deep teal-to-black gradient, glowing circles, and a smooth animated jackpot value counter.
+  - Overhauled bottom sheet ticket picker with an intense dark design, gold border highlights, clear display of sold/reserved numbers, and centered large input fonts.
+
+### VPS Deployment ✅
+- Pushed changes to `feature/admin-responsive` branch.
+- Successfully executed `vps_run_deploy_v2.py` which pulled the updates, built all backend services, ran database migrations, rebuilt the admin panel bundle, copied it to the web root, and restarted PM2.
+
+### Testing APKs Built ✅
+- Built and verified release and debug APKs:
+  - Debug testing APK: `app-debug.apk` in workspace root (312 MB).
+  - Release testing APK: `app-release.apk` in workspace root (158 MB).
 
 ## 🆕 Session 6 — Mobile UI/UX redesign + Teen Patti modes + Aviator rebuild
+
 
 ### Mobile UI/UX — full redesign ✅
 All 14 screens audited and fixed. Key changes across the app:

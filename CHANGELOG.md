@@ -687,24 +687,24 @@ Admin Panel ← ← ← ← ← ← ← ← ←
 | Leaderboard Service | 3003 | ✅ Live | June 26 |
 | Game Gateway | 3004 | ✅ Live | June 26 |
 | Monitoring Service | 3005 | ✅ Live | June 27 |
-| Risk Service (Fraud) | 3006 | ⏳ Pending | - |
+| Risk Service (Fraud) | 3006 | ✅ Live | July 10 |
 | Notification Service | 3007 | ✅ Live | June 26 |
 | Admin Service | 3008 | ✅ Live | June 28 |
 | Betting Service | - | ✅ Live | June 26 |
-| Churn Service | 3013 | ⏳ Pending | - |
-| Bot Learning Service | 3014 | ⏳ Pending | - |
+| Churn Service | 3013 | ✅ Live | July 10 |
+| Bot Learning Service | 3014 | ✅ Live | July 10 |
 
 ---
 
 ## Recent Commits
 
 ```
+749429d - feat: Redesign Lottery UI on mobile and admin panel, integrate KPI stats dashboard
 e2613cb - feat: Implement Fraud Detection Rules Engine (Phase 1)
 8bbb3be - feat: Add AI Control Center to Admin Panel with ML configuration UI
 8604dbb - Phase 1: Add Monitoring Service (WebSocket → Redis Streams → PostgreSQL)
 6dbcaa5 - fix(teen-patti): eliminate all setState calls causing full-tree rebuilds
 da9ca3c - fix(teen-patti): stop duplicate game push and full-tree rebuilds
-cb44cf9 - Update pubspec.lock and GeneratedPluginRegistrant after flutter pub get
 ```
 
 ---
@@ -729,6 +729,6 @@ For issues or deployment help, refer to:
 
 ---
 
-**Last Updated**: June 28, 2026  
-**Version**: Phase 1 (Development)  
-**Next Review**: July 1, 2026
+**Last Updated**: July 10, 2026  
+**Version**: Phase 3 (Development)  
+**Next Review**: July 15, 2026

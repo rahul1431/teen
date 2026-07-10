@@ -108,7 +108,7 @@ settle" games, settled by admin/internal endpoints.
 | Game | Backend | Mobile | Settlement |
 |------|---------|--------|------------|
 | **Matka** | ✅ markets, daily draws, single/jodi/panna, std multipliers | ✅ market list + bet sheet | open/close session declare |
-| **Lottery** | ✅ scheduled draws, ticket buy | ✅ draw list + buy sheet (lucky dip) | exact-match payout |
+| **Lottery** | ✅ scheduled draws, ticket buy (w/ Admin stats dashboard) | ✅ physical Ticket Stub design (cut notches, dashed divider, glowing header) | exact-match payout |
 | **Cricket** (IPL/T20/ICC) | ✅ matches → markets (winner/top-bat/…) w/ odds | ✅ match cards + odds + bet sheet | per-market settle / void+refund |
 
 - Idempotent stake debit + prize credit via wallet-service (added
