@@ -55,6 +55,12 @@ async function start() {
   if (redis.status === 'wait') await redis.connect()
   fs.mkdirSync(QR_UPLOAD_DIR, { recursive: true })
 
+  try {
+    await db.query('ALTER TABLE game_emojis ALTER COLUMN emoji TYPE VARCHAR(256)');
+  } catch (err) {
+    app.log.error(err, 'Failed to alter game_emojis.emoji column length');
+  }
+
   const authenticate = async (req: any, reply: any) => {
     try { await req.jwtVerify() } catch { reply.code(401).send({ error: 'Unauthorized' }) }
   }
@@ -872,6 +878,18 @@ async function start() {
     const fname = `qr_${crypto.randomUUID()}${ext}`
     await pipeline(file.file, fs.createWriteStream(path.join(QR_UPLOAD_DIR, fname)))
     return reply.send({ url: `/uploads/qr/${fname}` })
+  })
+
+  // POST /api/admin/uploads/emoji — upload an emoji/sticker, returns its public URL
+  app.post('/api/admin/uploads/emoji', { onRequest: [authenticate] }, async (req, reply) => {
+    const file = await (req as any).file()
+    if (!file) return reply.code(400).send({ error: 'No file uploaded' })
+    const ext = path.extname(file.filename || '').toLowerCase().slice(0, 8) || '.gif'
+    const fname = `emoji_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`
+    const EMOJI_UPLOAD_DIR = process.env.EMOJI_UPLOAD_DIR || '/opt/teen/uploads/emojis'
+    fs.mkdirSync(EMOJI_UPLOAD_DIR, { recursive: true })
+    await pipeline(file.file, fs.createWriteStream(path.join(EMOJI_UPLOAD_DIR, fname)))
+    return reply.send({ url: `/uploads/emojis/${fname}` })
   })
 
   // GET /api/admin/payment-methods â€” list all (active + inactive)

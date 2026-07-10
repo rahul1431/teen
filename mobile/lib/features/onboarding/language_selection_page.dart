@@ -41,8 +41,15 @@ class _LanguageSelectionPageState extends State<LanguageSelectionPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (widget.isOnboarding) ...[
-                const SizedBox(height: 40),
+              // Header + language list scroll on short screens; the Continue
+              // button stays pinned below.
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (widget.isOnboarding) ...[
+                        const SizedBox(height: 40),
                 const Text('🃏', textAlign: TextAlign.center, style: TextStyle(fontSize: 56)),
                 const SizedBox(height: 12),
                 const Text('MyOnlineJoker',
@@ -90,7 +97,11 @@ class _LanguageSelectionPageState extends State<LanguageSelectionPage> {
                   ),
                 );
               }),
-              const Spacer(),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
               SizedBox(
                 height: 52,
                 child: ElevatedButton(

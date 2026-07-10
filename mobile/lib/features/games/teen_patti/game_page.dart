@@ -13,6 +13,9 @@ import '../../../core/monitor/monitor_service.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'practice_engine.dart';
 import 'coin_rain.dart';
+import '../../../core/constants/app_config.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:lottie/lottie.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Teen Patti Game Page — portrait layout, layered Stack architecture.
@@ -69,11 +72,11 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   // Side seats kept at fx≥0.16 / fx≤0.84 so they stay clear of oval corners
   // at all screen sizes.
   static const _tableSeats = {
-    1: [(0.50, 0.18)],
-    2: [(0.24, 0.12), (0.76, 0.12)],
-    3: [(0.18, 0.46), (0.50, 0.11), (0.82, 0.46)],
-    4: [(0.18, 0.44), (0.36, 0.11), (0.64, 0.11), (0.82, 0.44)],
-    5: [(0.18, 0.44), (0.30, 0.11), (0.50, 0.09), (0.70, 0.11), (0.82, 0.44)],
+    1: [(0.15, 0.20)], // top-left
+    2: [(0.15, 0.20), (0.85, 0.20)], // top-left, top-right
+    3: [(0.08, 0.65), (0.15, 0.20), (0.85, 0.20)], // bottom-left, top-left, top-right
+    4: [(0.08, 0.65), (0.15, 0.20), (0.85, 0.20), (0.92, 0.65)], // bottom-left, top-left, top-right, bottom-right
+    5: [(0.08, 0.68), (0.08, 0.30), (0.28, 0.20), (0.72, 0.20), (0.92, 0.30)], // bottom-left, mid-left, top-left, top-right, mid-right
   };
 
   // Derived seat dimensions (updated via _ls in build)
@@ -122,11 +125,26 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   Timer? _sideshowPromptTimer;
   bool _ready         = false;
   bool _showEmojiTray = false;
+  bool _showTipMenu   = false;
   int  _reactionId    = 0;
 
-  List<String> _quickEmojis = ['😀', '😂', '😎', '😮', '😭', '🔥', '👏', '🤔'];
+  // Quick emojis with blowing kiss 😘
+  List<String> _quickEmojis = ['😀', '😂', '😎', '😘', '😭', '🔥', '👏', '🤔'];
   // Dealer-tip presets; must match the gateway's TIP_AMOUNTS whitelist.
   static const List<int> _tipAmounts = [5, 10, 20, 50];
+
+  final _tipTriggerNotifier = ValueNotifier<int>(0);
+  bool _isDealingCards = false;
+  List<_FlyingCard> _flyingCards = [];
+  String? _currentHandId;
+
+  // Fixed seat positions for opponents (x, y) relative to table oval
+  static const List<(double, double)> _fixedOpponentSeats = [
+    (0.15, 0.20), // top-left
+    (0.85, 0.20), // top-right
+    (0.08, 0.65), // bottom-left
+    (0.92, 0.65), // bottom-right
+  ];
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   @override
@@ -146,6 +164,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     super.didChangeDependencies();
     precacheImage(const AssetImage('assets/images/card_back.png'), context);
     precacheImage(const AssetImage('assets/images/dealer_avatar.png'), context);
+    precacheImage(const AssetImage('assets/images/avatar_steven.png'), context);
+    precacheImage(const AssetImage('assets/images/avatar_nairobi.png'), context);
+    precacheImage(const AssetImage('assets/images/avatar_smith.png'), context);
+    precacheImage(const AssetImage('assets/images/avatar_user.png'), context);
   }
 
   @override
@@ -164,6 +186,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _rematchSecsNotifier.dispose();
     _tipBannerTimer?.cancel();
     _tipBannerNotifier.dispose();
+    _tipTriggerNotifier.dispose();
     _sideshowPromptSub?.cancel();
     _sideshowRevealSub?.cancel();
     _sideshowResultSub?.cancel();
@@ -196,9 +219,23 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _practice = PracticeEngine(
       onChanged: () {
         if (!mounted) return;
-        _gsNotifier.value     = _practice!.state;
+        final gs = _practice!.state;
+        _gsNotifier.value     = gs;
         _myTurnNotifier.value = _practice!.isMyTurn;
-        if (!_practice!.handOver) _resultNotifier.value = null;
+        
+        final players = gs['players'] as List? ?? [];
+        final me = players.firstWhere(
+            (p) => (p['userId'] ?? p['user_id']) == _myUserId,
+            orElse: () => null);
+        if (me != null && me['cards'] != null) {
+          _myCardsNotifier.value = List<Map<String, dynamic>>.from(me['cards']);
+        }
+
+        if (!_practice!.handOver) {
+          _resultNotifier.value = null;
+          // Trigger card dealing animation in demo mode
+          _triggerCardDealingAnimation(gs);
+        }
         _practice!.isMyTurn ? _startTurnTimer() : _turnTimer?.cancel();
       },
       onResult: (msg, won) {
@@ -232,19 +269,32 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         return m;
       }).toList();
 
+  String? get _effectivePrivateCode {
+    final gs = _gsNotifier.value;
+    return gs?['private_code']?.toString() ?? widget.initialData?['private_code']?.toString();
+  }
+
+  void _inviteFriend() {
+    final code = _effectivePrivateCode ?? widget.roomId;
+    Clipboard.setData(ClipboardData(text: code));
+    Share.share('Join my Teen Patti table! Room Code: $code');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Invite code/Room ID $code copied to clipboard!')),
+    );
+  }
+
   void _applyRoomJoinedData(Map<String, dynamic> data) {
-    if (!mounted) return;
     _myCardsNotifier.value =
         (data['my_cards'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-    final rawState = data['state'] as Map<String, dynamic>? ?? data;
-    final players  = _mapPlayers(
-        rawState['players'] as List? ?? data['players'] as List? ?? []);
+    final rawState = data['state'] as Map? ?? data;
+    final players  = _mapPlayers(rawState['players'] as List? ?? []);
     final me = players.firstWhere(
         (p) => (p['userId'] ?? p['user_id']) == _myUserId,
         orElse: () => <String, dynamic>{});
     _isSeen = me['is_seen'] ?? me['isSeen'] ?? false;
-    final gs = {
-      ...rawState,
+
+    final Map<String, dynamic> gs = {
+      ...Map<String, dynamic>.from(rawState),
       'pot':          data['pot']          ?? rawState['pot']          ?? 0,
       'min_bet':      data['min_bet']      ?? rawState['min_bet']      ?? 0,
       'current_turn': data['current_turn'] ?? rawState['current_turn'] ?? 0,
@@ -258,7 +308,13 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final isMe = (cur?['userId'] ?? cur?['user_id']) == _myUserId;
     _myTurnNotifier.value = isMe;
     if (isMe && (_turnTimer == null || !_turnTimer!.isActive)) _startTurnTimer();
-    SoundService.instance.play(Sfx.cardDeal);
+    
+    // Trigger card dealing animation
+    if (gs['status'] == 'active' || gs['status'] == 'playing') {
+      _triggerCardDealingAnimation(gs);
+    } else {
+      SoundService.instance.play(Sfx.cardDeal);
+    }
   }
 
   Future<void> _loadConfig() async {
@@ -301,7 +357,14 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       if (!mounted) return;
       final inner   = data['state'] as Map<String, dynamic>? ?? data;
       final players = _mapPlayers(inner['players'] as List? ?? []);
-      _gsNotifier.value = {...inner, 'players': players};
+      final Map<String, dynamic> gs = {...Map<String, dynamic>.from(inner), 'players': players};
+      _gsNotifier.value = gs;
+      
+      // Trigger card dealing animation
+      if (gs['status'] == 'active' || gs['status'] == 'playing') {
+        _triggerCardDealingAnimation(gs);
+      }
+      
       final idx      = ((inner['current_turn'] ?? inner['CurrentTurn'] ?? 0) as num).toInt();
       final cur      = idx < players.length ? players[idx] : null;
       final isMe     = (cur?['userId'] ?? cur?['user_id']) == _myUserId;
@@ -313,8 +376,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       } else if (!isMe) {
         _turnTimer?.cancel();
       }
-
-      // last_action available for future overlay if needed
     });
 
     // Server rejected an action (e.g. wallet lock failed on a low balance).
@@ -414,6 +475,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       final name   = data['username']?.toString() ?? 'Player';
       final amount = (data['amount'] as num?)?.toInt() ?? 0;
       _spawnReaction(userId, '💰 ₹$amount', isTip: true);
+      
+      // Increment tip trigger for hostess animation
+      _tipTriggerNotifier.value++;
+      
       final who = userId == _myUserId ? 'You' : name;
       _tipBannerNotifier.value = '💰 $who tipped the dealer ₹$amount';
       _tipBannerTimer?.cancel();
@@ -824,26 +889,133 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                   _ls = (h / 400.0).clamp(0.72, 1.5);
                   final topBarH = (40 * _ls).clamp(36.0, 52.0);
                   const rightPanelW = _rightPanelW;
-                  final tw = w - rightPanelW - 2;   // table fills left area
-                  final th = h - topBarH - 2;        // fills full height below top bar
-                  const tl = 0.0;
-                  final tt = topBarH;
+                  
+                  final horizPadding = (56 * _ls).clamp(32.0, 80.0);
+                  final vertPadding = (24 * _ls).clamp(16.0, 48.0);
+                  
+                  final tw = w - rightPanelW - horizPadding;
+                  final th = h - topBarH - vertPadding;
+                  final tl = (w - rightPanelW - tw) / 2;
+                  final tt = topBarH + vertPadding / 2;
 
                   return Stack(children: [
                     // ① Ambient background
                     _buildBackground(w, h),
 
-                    // ② Poker table oval — explicit coords, no helpers needed
+                    // ② Poker table oval — wood border & red felt
                     _buildTableOval(tl, tt, tw, th),
 
-                    // ③ Opponent seats
+                    // ②b Dealer Hostess (Beautiful woman with tipping animations)
+                    Positioned(
+                      top: tt - 36,
+                      left: (w - _rightPanelW) / 2 - 40,
+                      child: _HostessWidget(
+                        tipTrigger: _tipTriggerNotifier,
+                        onTipTap: () => setState(() => _showTipMenu = !_showTipMenu),
+                        onInviteTap: _inviteFriend,
+                        isDealing: _isDealingCards,
+                      ),
+                    ),
+
+                    // ②c Tips Selection Menu (rendered horizontally under the Dealer)
+                    if (_showTipMenu)
+                      Positioned(
+                        top: tt + 60,
+                        left: (w - _rightPanelW) / 2 - 62,
+                        child: Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF070B14).withOpacity(0.95),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: const Color(0xFFD4AF37), width: 1.0),
+                              boxShadow: const [
+                                BoxShadow(color: Colors.black87, blurRadius: 8, offset: Offset(0, 3))
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [5, 10, 20, 50].map((amount) {
+                                Color chipColor;
+                                switch (amount) {
+                                  case 5: chipColor = const Color(0xFF1976D2); break;
+                                  case 10: chipColor = const Color(0xFF388E3C); break;
+                                  case 20: chipColor = const Color(0xFFD32F2F); break;
+                                  default: chipColor = const Color(0xFFFBC02D);
+                                }
+                                return GestureDetector(
+                                  onTap: () {
+                                    _sendTip(amount);
+                                    setState(() {
+                                      _showTipMenu = false;
+                                    });
+                                  },
+                                  child: Container(
+                                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                                    width: 24,
+                                    height: 24,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      gradient: RadialGradient(
+                                        colors: [
+                                          chipColor.withOpacity(0.8),
+                                          chipColor,
+                                          Color.lerp(chipColor, Colors.black, 0.3)!,
+                                        ],
+                                        stops: const [0.3, 0.8, 1.0],
+                                      ),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.white, width: 1.0),
+                                      boxShadow: [
+                                        BoxShadow(color: chipColor.withOpacity(0.4), blurRadius: 2, offset: const Offset(0, 0.5))
+                                      ],
+                                    ),
+                                    child: Container(
+                                      width: 17,
+                                      height: 17,
+                                      alignment: Alignment.center,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: Colors.white.withOpacity(0.4),
+                                          width: 0.6,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        '₹$amount',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 7.0,
+                                          fontWeight: FontWeight.w900,
+                                          shadows: [
+                                            Shadow(color: Colors.black54, blurRadius: 1, offset: Offset(0, 0.5))
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        ).animate().scale(duration: 200.ms, curve: Curves.easeOutBack),
+                      ),
+
+                    // ③ Opponent seats & Invite seats
                     ValueListenableBuilder<Map<String, dynamic>?>(
                       valueListenable: _gsNotifier,
                       builder: (_, gs, __) =>
                           _buildOpponentSeats(gs, w, h, tl, tt, tw, th),
                     ),
 
-                    // ⑤ User cards + See Cards btn — centred on lower table
+                    // ③b User seat (Bottom-center, green glowing outline)
+                    ValueListenableBuilder<Map<String, dynamic>?>(
+                      valueListenable: _gsNotifier,
+                      builder: (_, gs, __) =>
+                          _buildUserSeat(gs, w, h, tl, tt, tw, th),
+                    ),
+
+                    // ⑤ User cards + See Cards btn — fanned out overlapping avatar
                     ValueListenableBuilder<List<Map<String, dynamic>>>(
                       valueListenable: _myCardsNotifier,
                       builder: (_, cards, __) =>
@@ -854,7 +1026,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                           ),
                     ),
 
-                    // ⑥ Pot chip — upper-centre of table
+                    // ⑥ Pot chip — upper-centre of table (black & gold capsule)
                     ValueListenableBuilder<Map<String, dynamic>?>(
                       valueListenable: _gsNotifier,
                       builder: (_, gs, __) => _buildPotChip(gs, w, tt, tw, th),
@@ -878,11 +1050,11 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     // ⑨ Right emoji panel
                     _buildRightPanel(w, h, tt),
 
-                    // ⑩ Floating reactions
+                    // ⑩ Floating reactions (Floating directly from the seat that sent them!)
                     ValueListenableBuilder<List<_Reaction>>(
                       valueListenable: _reactionsNotifier,
                       builder: (_, reactions, __) =>
-                          _buildReactions(reactions, w, h),
+                          _buildReactions(reactions, w, h, tl, tt, tw, th),
                     ),
 
                     // ⑩b Table-wide tip banner (everyone at the table sees it)
@@ -955,6 +1127,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     // ⑬ Emoji tray
                     if (_showEmojiTray) _buildEmojiTray(w, h),
 
+                    // ⑭ Flying cards overlay
+                    if (_isDealingCards)
+                      ..._buildFlyingCards(w, h),
 
                     // ⑮ Result overlay
                     Positioned.fill(
@@ -986,22 +1161,47 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   // ① Background
   Widget _buildBackground(double w, double h) => Positioned.fill(
         child: RepaintBoundary(
-          child: Container(
-            decoration: const BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment(0, -0.3),
-                radius: 1.2,
-                colors: [Color(0xFF0D1833), Color(0xFF060A1A)],
+          child: Stack(
+            children: [
+              Container(
+                decoration: const BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment(0.0, -0.3),
+                    radius: 1.3,
+                    colors: [
+                      Color(0xFF16223F), // Luminous navy-blue
+                      Color(0xFF0C1324), // Rich space blue
+                      Color(0xFF05080F), // Deep black-blue
+                    ],
+                    stops: [0.0, 0.5, 1.0],
+                  ),
+                ),
               ),
-            ),
+              // Soft gold/purple ambient glow from top/center
+              Positioned(
+                top: -h * 0.2,
+                left: w * 0.15,
+                right: w * 0.15,
+                height: h * 0.45,
+                child: Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        const Color(0xFFD4AF37).withOpacity(0.08), // soft gold aura
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       );
 
   // ② Oval poker table — uses th*0.44 radius so side-seat area stays wide
   Widget _buildTableOval(double tl, double tt, double tw, double th) {
-    // Clamp radius to look like a real poker table on all screen sizes.
-    // th*0.44 ≈ fully-rounded short ends, th*0.2 ≈ mild rounding on tall table.
     final r = math.min(th * 0.44, tw * 0.22);
     final radius = BorderRadius.circular(r);
     return Positioned(
@@ -1010,37 +1210,61 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         child: Container(
           decoration: BoxDecoration(
             borderRadius: radius,
-            gradient: const RadialGradient(
-              center: Alignment(0, -0.1),
-              radius: 1.1,
-              colors: [Color(0xFF2E9B55), Color(0xFF1B7A3E), Color(0xFF0F5428)],
-              stops: [0.0, 0.55, 1.0],
+            gradient: const LinearGradient(
+              colors: [
+                Color(0xFF4A2525), // Polished mahogany
+                Color(0xFF261010), // Shadowed wood
+                Color(0xFF120505), // Deep grain shadow
+                Color(0xFF261010),
+                Color(0xFF4A2525),
+              ],
+              begin: Alignment.topLeft, end: Alignment.bottomRight,
             ),
-            border: Border.all(color: const Color(0xFFD4AF37), width: 3.5),
+            border: Border.all(color: const Color(0xFFD4AF37), width: 2.5),
             boxShadow: [
               BoxShadow(
-                  color: Colors.black.withOpacity(0.65),
-                  blurRadius: 28, spreadRadius: 4, offset: const Offset(0, 8)),
-              BoxShadow(
-                  color: const Color(0xFFD4AF37).withOpacity(0.18),
-                  blurRadius: 12, spreadRadius: 1),
+                  color: Colors.black.withOpacity(0.8),
+                  blurRadius: 36, spreadRadius: 8, offset: const Offset(0, 12)),
             ],
           ),
           child: Container(
-            margin: const EdgeInsets.all(5),
+            margin: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              borderRadius: radius,
-              border: Border.all(
-                  color: const Color(0xFFD4AF37).withOpacity(0.30), width: 1.5),
+              borderRadius: radius - BorderRadius.circular(8),
+              image: const DecorationImage(
+                image: AssetImage('assets/images/table_felt_green.png'),
+                fit: BoxFit.cover,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.6),
+                  blurRadius: 14,
+                  spreadRadius: 3,
+                  offset: const Offset(0, 2),
+                )
+              ],
             ),
-            child: Center(
-              child: Text(
-                'TEEN PATTI',
-                style: TextStyle(
-                  color: const Color(0xFF2E9B55).withOpacity(0.14),
-                  fontSize: tw * 0.08,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 6,
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: radius - BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFFFD700).withOpacity(0.4), width: 1.5),
+              ),
+              child: Center(
+                child: Text(
+                  'TEEN PATTI',
+                  style: TextStyle(
+                    color: const Color(0xFF7E1825).withOpacity(0.35),
+                    fontSize: tw * 0.08,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 8,
+                    shadows: [
+                      Shadow(
+                        color: Colors.black.withOpacity(0.3),
+                        offset: const Offset(1, 2),
+                        blurRadius: 2,
+                      )
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1062,15 +1286,81 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final opponents = allPlayers
         .where((p) => (p['user_id'] ?? p['userId']) != _myUserId)
         .toList();
-    if (opponents.isEmpty) return const SizedBox.shrink();
 
-    final n       = opponents.length.clamp(1, 5);
-    final posList = _tableSeats[n] ?? _tableSeats[1]!;
+    // Use fixed 4-seat coordinates layout so players stay at consistent positions and empty slots show invite buttons
+    final posList = _tableSeats[4]!;
 
     return Stack(children: [
+      // Active opponents
       for (var i = 0; i < opponents.length && i < posList.length; i++)
         _positionedSeat(opponents[i], gs, posList[i], w, h, tl, tt, tw, th),
+
+      // Empty slots rendered as invite buttons
+      for (var i = opponents.length; i < posList.length; i++)
+        _positionedInviteSeat(posList[i], w, h, tl, tt, tw, th),
     ]);
+  }
+
+  Widget _positionedInviteSeat(
+    (double, double) frac, double w, double h,
+    double tl, double tt, double tw, double th,
+  ) {
+    final cx = tl + tw * frac.$1;
+    final cy = tt + th * frac.$2;
+    final sw = _seatW * 1.35;
+    final sh = _seatCH;
+    final sl = (cx - sw / 2).clamp(4.0, w - _rightPanelW - sw - 4.0);
+    final st = (cy - sh / 2).clamp(tt - 16.0, h - sh - 4.0);
+
+    return Positioned(
+      left: sl, top: st, width: sw,
+      child: GestureDetector(
+        onTap: _inviteFriend,
+        child: SizedBox(
+          height: sh,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.black.withOpacity(0.25),
+                  border: Border.all(
+                    color: const Color(0xFFFFD43F).withOpacity(0.6),
+                    width: 1.5,
+                  ),
+                ),
+                child: const Icon(
+                  Icons.add_rounded,
+                  color: Color(0xFFFFD43F),
+                  size: 24,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFD43F).withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFFFD43F).withOpacity(0.4), width: 0.8),
+                ),
+                child: const Text(
+                  'INVITE',
+                  style: TextStyle(
+                    color: Color(0xFFFFD43F),
+                    fontSize: 8,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _positionedSeat(
@@ -1080,25 +1370,33 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     double w, double h,
     double tl, double tt, double tw, double th,
   ) {
-    final sw = _seatW;
-    final sh = _totalSH; // total height: card-backs + gap + container
+    final sw = _seatW * 1.35;
+    final sh = _seatCH; // Opponent height is just the seat height
     // Centre of seat widget in screen pixels, table-relative
     final cx = tl + tw * frac.$1;
     final cy = tt + th * frac.$2;
-    // Keep seats well inside the oval — use 8% of table width as minimum inner gap
-    // so seats clear the curved corners at all aspect ratios.
-    final innerMarginH = math.max(12.0, tw * 0.08);
-    final sl = (cx - sw / 2).clamp(tl + innerMarginH, tl + tw - sw - innerMarginH);
-    final st = (cy - sh / 2).clamp(tt - 8.0, h - sh - 4.0);
+    // Allow seats to overlap the wood border (like the reference design)
+    // and clamp only to prevent clipping off the screen.
+    final sl = (cx - sw / 2).clamp(4.0, w - _rightPanelW - sw - 4.0);
+    final st = (cy - sh / 2).clamp(tt - 16.0, h - sh - 4.0);
 
     return Positioned(
       key: ValueKey('seat_${p['user_id'] ?? p['userId']}'),
       left: sl, top: st, width: sw,
-      child: RepaintBoundary(child: _buildSeatWidget(p, gs, sw)),
+      child: RepaintBoundary(child: _buildSeatWidget(p, gs, sw, fracX: frac.$1)),
     );
   }
 
-  Widget _buildSeatWidget(Map<String, dynamic> p, Map<String, dynamic>? gs, double sw) {
+  String? _getAvatarAsset(String username, bool isMe) {
+    if (isMe) return 'assets/images/avatar_user.png';
+    final name = username.toLowerCase();
+    if (name.contains('steven')) return 'assets/images/avatar_steven.png';
+    if (name.contains('nairobi')) return 'assets/images/avatar_nairobi.png';
+    if (name.contains('smith')) return 'assets/images/avatar_smith.png';
+    return null;
+  }
+
+  Widget _buildSeatWidget(Map<String, dynamic> p, Map<String, dynamic>? gs, double sw, {bool isMe = false, double fracX = 0.5}) {
     final uid      = (p['user_id'] ?? p['userId'])?.toString() ?? '';
     final isFolded = p['status'] == 'folded';
     final isBot    = p['is_bot'] == true;
@@ -1113,147 +1411,327 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final (statusLabel, statusColor) = _statusOf(p);
     final chips    = _chipsOf(p);
 
-    // Scale-aware dimensions
-    final avatarD  = (44 * _ls).clamp(32.0, 54.0);
+    final avatarD  = (52 * _ls).clamp(42.0, 68.0);
     final avatarR  = avatarD * 0.5;
     final badgeD   = (16 * _ls).clamp(12.0, 20.0);
-    final fUsername = (12 * _ls).clamp(9.5, 15.0);
-    final fChips    = (9.5 * _ls).clamp(8.0, 13.0);
-    final padH     = (7 * _ls).clamp(5.0, 10.0);
-    final padV     = (5 * _ls).clamp(4.0, 8.0);
-    final brCorner = (12 * _ls).clamp(8.0, 16.0);
+    final fUsername = (11 * _ls).clamp(9.0, 14.0);
+    final fChips    = (9.0 * _ls).clamp(8.0, 12.0);
 
-    return Opacity(
-      opacity: isFolded ? 0.45 : 1.0,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // Mini card-backs fan above seat container
-          if (!isFolded) _opponentCardBacks(),
-          SizedBox(height: (4 * _ls).clamp(2, 6)),
-          // Dark seat container
-          Container(
-            width: sw,
-            padding: EdgeInsets.symmetric(horizontal: padH, vertical: padV),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0D2E18).withOpacity(0.88),
-              borderRadius: BorderRadius.circular(brCorner),
-              border: Border.all(
-                  color: isTurn ? const Color(0xFF2ECC71) : Colors.white12,
-                  width: isTurn ? 2.0 : 1.0),
-              boxShadow: isTurn
-                  ? [BoxShadow(
-                      color: const Color(0xFF2ECC71).withOpacity(0.55),
-                      blurRadius: 12, spreadRadius: 1)]
+    final avatarAsset = _getAvatarAsset(p['username']?.toString() ?? '', isMe);
+
+    final avatarColumn = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // Avatar Stack
+        Stack(
+          alignment: Alignment.center,
+          clipBehavior: Clip.none,
+          children: [
+            // Glow outline
+            Container(
+              width: avatarD + 6,
+              height: avatarD + 6,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: isMe 
+                      ? const Color(0xFF2ECC71) 
+                      : (isTurn ? const Color(0xFF2ECC71) : const Color(0xFFD4AF37).withOpacity(0.45)),
+                  width: (isMe || isTurn) ? 2.5 : 1.5,
+                ),
+                boxShadow: (isMe || isTurn) ? [
+                  BoxShadow(
+                    color: const Color(0xFF2ECC71).withOpacity(0.45),
+                    blurRadius: 12,
+                    spreadRadius: 2,
+                  )
+                ] : [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.3),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  )
+                ],
+              ),
+              child: isTurn
+                  ? ValueListenableBuilder<int>(
+                      valueListenable: _timerNotifier,
+                      builder: (_, secs, __) => CircularProgressIndicator(
+                        value: (secs / 30).clamp(0.0, 1.0),
+                        strokeWidth: 3.0,
+                        backgroundColor: Colors.transparent,
+                        valueColor: AlwaysStoppedAnimation(
+                            secs <= 5 ? const Color(0xFFE53935) : const Color(0xFF2ECC71)),
+                      ),
+                    )
                   : null,
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Avatar with timer ring
-                SizedBox(
-                  width: avatarD, height: avatarD,
-                  child: Stack(alignment: Alignment.center, children: [
-                    if (isTurn)
-                      ValueListenableBuilder<int>(
-                        valueListenable: _timerNotifier,
-                        builder: (_, secs, __) => SizedBox(
-                          width: avatarD - 2, height: avatarD - 2,
-                          child: CircularProgressIndicator(
-                            value: (secs / 30).clamp(0.0, 1.0),
-                            strokeWidth: 2.0,
-                            backgroundColor: Colors.black26,
-                            valueColor: AlwaysStoppedAnimation(
-                                secs <= 5 ? Colors.red : const Color(0xFF2ECC71)),
-                          ),
-                        ),
-                      )
-                    else
-                      SizedBox(
-                        width: avatarD - 2, height: avatarD - 2,
-                        child: CircularProgressIndicator(
-                          value: 1.0,
-                          strokeWidth: 2.0,
-                          backgroundColor: Colors.black26,
-                          valueColor: AlwaysStoppedAnimation(
-                              const Color(0xFFD4AF37).withOpacity(0.4)),
-                        ),
-                      ),
-                    CircleAvatar(
-                      radius: avatarR * 0.72,
-                      backgroundColor: isFolded ? Colors.grey.shade800 : Colors.white24,
-                      child: Text(
+            
+            // Avatar Image / Circle
+            ValueListenableBuilder<List<_Reaction>>(
+              valueListenable: _reactionsNotifier,
+              builder: (_, reactions, child) {
+                final myRx = reactions.where((r) => r.userId == uid).firstOrNull;
+                if (myRx == null) return child!;
+                
+                // Apply animation effect based on emoji
+                final emoji = myRx.emoji;
+                if (emoji == '👏' || emoji.contains('💰')) {
+                  return child!.animate(onPlay: (c) => c.repeat(max: 3))
+                      .scale(begin: const Offset(1.0, 1.0), end: const Offset(1.2, 1.2), duration: 250.ms, curve: Curves.easeOut)
+                      .then()
+                      .scale(begin: const Offset(1.2, 1.2), end: const Offset(1.0, 1.0), duration: 200.ms, curve: Curves.easeIn);
+                } else if (emoji == '😂' || emoji == '🔥' || emoji == '😎') {
+                  return child!.animate(onPlay: (c) => c.repeat(max: 2))
+                      .moveY(begin: 0, end: -8, duration: 200.ms, curve: Curves.easeOut)
+                      .then()
+                      .moveY(begin: -8, end: 0, duration: 150.ms, curve: Curves.easeIn);
+                } else if (emoji == '😘' || emoji == '😮' || emoji == '😭') {
+                  return child!.animate()
+                      .shake(hz: 4, curve: Curves.easeInOut, duration: 600.ms);
+                }
+                return child!;
+              },
+              child: CircleAvatar(
+                radius: avatarR,
+                backgroundColor: const Color(0xFF1E2638),
+                backgroundImage: avatarAsset != null ? AssetImage(avatarAsset) : null,
+                child: avatarAsset == null
+                    ? Text(
                         (p['username']?.toString() ?? '?')[0].toUpperCase(),
                         style: TextStyle(
-                            color: Colors.white, fontWeight: FontWeight.bold,
-                            fontSize: (15 * _ls).clamp(11, 20)),
-                      ),
-                    ),
-                    // Dealer chip — small "D" at bottom-right of avatar, not overlapping
-                    if (isDealer)
-                      Positioned(
-                        right: 0, bottom: 0,
-                        child: Container(
-                          width: badgeD, height: badgeD, alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                              color: AppColors.gold, shape: BoxShape.circle,
-                              border: Border.all(color: Colors.black45, width: 1.0)),
-                          child: Text('D',
-                              style: TextStyle(color: Colors.black,
-                                  fontSize: (8 * _ls).clamp(6, 11),
-                                  fontWeight: FontWeight.bold)),
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: (18 * _ls).clamp(14, 24),
                         ),
-                      ),
-                    if (isBot && isTurn)
-                      Positioned(
-                        top: -32,
-                        child: Container(
-                          key: ValueKey('thinking_$uid'),
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: Colors.black87,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                                color: const Color(0xFFD4AF37).withOpacity(0.5)),
-                          ),
-                          child: const _ThinkingDots(),
-                        ),
-                      ),
-                  ]),
-                ),
-                SizedBox(height: (3 * _ls).clamp(2, 5)),
-                Text(
-                  p['username']?.toString() ?? 'Bot',
-                  style: TextStyle(color: Colors.white, fontSize: fUsername,
-                      fontWeight: FontWeight.w600),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-                SizedBox(height: (2 * _ls).clamp(1, 4)),
-                _statusPill(statusLabel, statusColor, scale: _ls),
-                if (chips != null) ...[
-                  SizedBox(height: (2 * _ls).clamp(1, 4)),
-                  Container(
-                    padding: EdgeInsets.symmetric(
-                        horizontal: (5 * _ls).clamp(3, 8),
-                        vertical: (1 * _ls).clamp(1, 2)),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                          colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
-                          begin: Alignment.topCenter, end: Alignment.bottomCenter),
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                    child: Text('💰 $chips',
-                        style: TextStyle(color: Colors.black, fontSize: fChips,
-                            fontWeight: FontWeight.bold)),
+                      )
+                    : null,
+              ),
+            ),
+            
+            // Nairobi B has "Pack" written in large white text on a semi-transparent black overlay
+            if (isFolded)
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.72),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFE53935).withOpacity(0.8), width: 1.5),
                   ),
-                ],
+                  alignment: Alignment.center,
+                  child: Text(
+                    'PACK',
+                    style: TextStyle(
+                      color: const Color(0xFFFF5252),
+                      fontWeight: FontWeight.w900,
+                      fontSize: (10 * _ls).clamp(8.0, 13.0),
+                      letterSpacing: 1.0,
+                      shadows: [
+                        Shadow(color: const Color(0xFFD32F2F).withOpacity(0.6), blurRadius: 4)
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              
+            // Status Pill overlaid at the bottom-center of the avatar (like the yellow "Chaal" or "Blind" badge)
+            if (!isFolded && !isMe)
+              Positioned(
+                bottom: -4,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: statusLabel.toLowerCase() == 'chaal'
+                          ? [const Color(0xFF2ECC71), const Color(0xFF1E8449)]
+                          : [const Color(0xFFF39C12), const Color(0xFFD35400)],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFFD700), width: 1.0),
+                    boxShadow: const [
+                      BoxShadow(color: Colors.black45, blurRadius: 3, offset: Offset(0, 2))
+                    ],
+                  ),
+                  child: Text(
+                    statusLabel.toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 8.0,
+                      letterSpacing: 0.6,
+                      shadows: [
+                        Shadow(color: Colors.black38, blurRadius: 1, offset: Offset(0, 0.5))
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              
+            // Dealer chip (red circle with white "D") positioned next to the avatar
+            if (isDealer)
+              Positioned(
+                right: -4,
+                bottom: -4,
+                child: Container(
+                  width: badgeD + 2,
+                  height: badgeD + 2,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFE53935), Color(0xFFB71C1C)],
+                      begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                    ),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFFFD700), width: 1.2),
+                    boxShadow: const [
+                      BoxShadow(color: Colors.black45, blurRadius: 3, offset: Offset(0, 2))
+                    ],
+                  ),
+                  child: Text(
+                    'D',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: (9.5 * _ls).clamp(7.5, 12.5),
+                      fontWeight: FontWeight.w900,
+                      shadows: const [
+                        Shadow(color: Colors.black54, blurRadius: 1, offset: Offset(0, 1))
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              
+            // Bot thinking dots
+            if (isBot && isTurn)
+              Positioned(
+                top: -24,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.black87,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFD4AF37).withOpacity(0.5)),
+                  ),
+                  child: const _ThinkingDots(),
+                ),
+              ),
+              
+            // Gift Box icon (if user/opponent)
+            if (isMe)
+              Positioned(
+                right: -4,
+                top: -4,
+                child: Container(
+                  width: badgeD + 2,
+                  height: badgeD + 2,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFF9800), Color(0xFFE65100)],
+                      begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                    ),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFFFD700), width: 1.0),
+                    boxShadow: const [
+                      BoxShadow(color: Colors.black38, blurRadius: 2, offset: Offset(0, 1))
+                    ],
+                  ),
+                  child: Icon(Icons.card_giftcard, size: badgeD * 0.65, color: Colors.white),
+                ),
+              ),
+          ],
+        ),
+        
+        SizedBox(height: (6 * _ls).clamp(4, 10)),
+        
+        // Username under avatar
+        if (!isMe)
+          Text(
+            p['username']?.toString() ?? 'Player',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: fUsername,
+              fontWeight: FontWeight.bold,
+              shadows: const [Shadow(color: Colors.black87, blurRadius: 4)],
+            ),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+          
+        if (chips != null) ...[
+          SizedBox(height: (3 * _ls).clamp(2, 5)),
+          // Balance Pill under username
+          Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: (8 * _ls).clamp(6, 12),
+              vertical: (2.5 * _ls).clamp(2.0, 4.0),
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F1626).withOpacity(0.85),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0xFFD4AF37).withOpacity(0.65),
+                width: 1.0,
+              ),
+              boxShadow: const [
+                BoxShadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 2))
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '🪙',
+                  style: TextStyle(fontSize: fChips * 1.1),
+                ),
+                const SizedBox(width: 3),
+                Text(
+                  '₹$chips',
+                  style: TextStyle(
+                    color: const Color(0xFFFFD700), // Brilliant gold
+                    fontSize: fChips,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
               ],
             ),
           ),
         ],
-      ),
+      ],
+    );
+
+    if (isMe) {
+      return Opacity(
+        opacity: isFolded ? 0.55 : 1.0,
+        child: avatarColumn,
+      );
+    }
+
+    final cards = _opponentCardBacks(isFolded: isFolded, isSeen: p['is_seen'] ?? p['isSeen'] ?? false);
+
+    return Opacity(
+      opacity: isFolded ? 0.55 : 1.0,
+      child: fracX < 0.5
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                avatarColumn,
+                SizedBox(width: (6 * _ls).clamp(4.0, 10.0)),
+                cards,
+              ],
+            )
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                cards,
+                SizedBox(width: (6 * _ls).clamp(4.0, 10.0)),
+                avatarColumn,
+              ],
+            ),
     );
   }
 
@@ -1262,14 +1740,12 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       List<Map<String, dynamic>> cards, bool isMyTurn,
       double w, double tl, double tt, double tw, double th) {
     if (cards.isEmpty) return const SizedBox.shrink();
+    if (_isDealingCards) return const SizedBox.shrink(); // Hide cards during dealing
 
-    // Action bar height estimate (scales with _ls, consistent with _buildActionBar)
     final actionBarH = (60 * _ls).clamp(50.0, 80.0);
-    // 12dp breathing room above the action bar
-    final cardsBottom = tt + th - actionBarH - 12;
+    final cardsBottom = tt + th - actionBarH + 4; // moved down as player avatar is hidden
     final cardsTop    = cardsBottom - _cardHt;
 
-    // Row of 3 cards — slight fan overlap
     final cardStep = _cardW * 0.88;
     final rowWidth = cards.length * cardStep + (_cardW * 0.12);
     final rowLeft  = (w - _rightPanelW) / 2 - rowWidth / 2;
@@ -1280,7 +1756,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            // Card row
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1327,6 +1802,37 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     ]);
   }
 
+  // Coordinate helper: maps user ids to physical (X, Y) layout coordinates on the screen.
+  Offset _getSeatCoordinates(
+      String userId, double w, double h, double tl, double tt, double tw, double th) {
+    if (userId == _myUserId) {
+      // User is always bottom-center
+      return Offset(tl + tw * 0.5, tt + th * 0.88);
+    }
+    final gs = _gsNotifier.value;
+    final players = (gs?['players'] as List? ?? []);
+    final activeOpponents = players.where((p) => (p['userId'] ?? p['user_id']) != _myUserId).toList();
+    
+    int seatIndex = activeOpponents.indexWhere((p) => (p['userId'] ?? p['user_id']) == userId);
+    if (seatIndex == -1) {
+      // Fallback
+      return Offset(tl + tw * 0.5, tt + th * 0.4);
+    }
+    
+    final posList = _tableSeats[4]!;
+    if (seatIndex >= posList.length) {
+      seatIndex = posList.length - 1;
+    }
+    final pos = posList[seatIndex];
+    return Offset(tl + tw * pos.$1, tt + th * pos.$2);
+  }
+
+  // User bottom-center seat widget
+  Widget _buildUserSeat(
+      Map<String, dynamic>? gs, double w, double h, double tl, double tt, double tw, double th) {
+    return const SizedBox.shrink();
+  }
+
   Widget _buildAnimatedCard(Map<String, dynamic> card, int index, int total) {
     final dropDist = (_cardHt * 0.7).clamp(30.0, 60.0);
     final fanAngle = (index - (total - 1) / 2) * 0.10;
@@ -1350,46 +1856,52 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑥ Pot chip — upper centre, guaranteed above the player cards zone
+  // ⑥ Pot chip — Black & Gold capsule in the middle
   Widget _buildPotChip(Map<String, dynamic>? gs, double w, double tt, double tw, double th) {
-    final chipW  = (100 * _ls).clamp(68.0, 120.0);
-    final chipH  = (30  * _ls).clamp(24.0, 40.0);
+    final chipW  = (118 * _ls).clamp(84.0, 138.0);
+    final chipH  = (36  * _ls).clamp(30.0, 48.0);
     final actionBarH = (60 * _ls).clamp(50.0, 80.0);
-    // Player cards zone top = th - actionBarH - 12 - _cardHt (from tt)
     final cardsZoneTop = th - actionBarH - 12 - _cardHt;
-    // Pot chip sits at 36% of table height, but never within 20dp of cards
-    final potY = math.min(th * 0.36, cardsZoneTop - chipH - 20);
+    final potY = th * 0.45 - chipH / 2; // positioned centered vertically
     return Positioned(
-      left: w / 2 - chipW / 2, top: tt + potY,
+      left: (w - _rightPanelW) / 2 - chipW / 2, top: tt + potY,
       child: Container(
         width: chipW,
         padding: EdgeInsets.symmetric(
-            horizontal: (10 * _ls).clamp(7, 14),
-            vertical: (5 * _ls).clamp(3, 8)),
+            horizontal: (10 * _ls).clamp(8, 14),
+            vertical: (6 * _ls).clamp(4, 10)),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
-              colors: [Color(0xFFFFE082), Color(0xFFD4AF37), Color(0xFF8A6D1E)],
-              begin: Alignment.topCenter, end: Alignment.bottomCenter),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white24),
+            colors: [Color(0xFF0F1B35), Color(0xFF070D1A)],
+            begin: Alignment.topCenter, end: Alignment.bottomCenter,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFD4AF37), width: 1.5),
           boxShadow: [
             BoxShadow(
-                color: AppColors.gold.withOpacity(0.4),
-                blurRadius: 10, spreadRadius: 1),
+                color: const Color(0xFFD4AF37).withOpacity(0.35),
+                blurRadius: 16, spreadRadius: 1),
+            BoxShadow(
+                color: Colors.black.withOpacity(0.4),
+                blurRadius: 4, offset: const Offset(0, 4)),
           ],
         ),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Text('🪙 ', style: TextStyle(fontSize: (16 * _ls).clamp(13, 22))),
+            Text('🪙', style: TextStyle(fontSize: (13 * _ls).clamp(11, 16))),
+            const SizedBox(width: 4),
             Text('₹${gs?['pot'] ?? 0}',
-                style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold,
-                    fontSize: (17 * _ls).clamp(14, 22))),
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900,
+                    fontSize: (13 * _ls).clamp(11, 16),
+                    shadows: const [Shadow(color: Colors.black54, blurRadius: 2)])),
           ]),
-          if (_potLimitOf(gs) > 0)
+          if (_potLimitOf(gs) > 0) ...[
+            const SizedBox(height: 2),
             Text('Limit ₹${_fmtAmount(_potLimitOf(gs))}',
-                style: TextStyle(color: Colors.black87,
-                    fontSize: (10 * _ls).clamp(8.5, 13),
-                    fontWeight: FontWeight.w600)),
+                style: TextStyle(color: const Color(0xFFFFD54F),
+                    fontSize: (8.0 * _ls).clamp(7.0, 10.0),
+                    fontWeight: FontWeight.w800)),
+          ]
         ]),
       ),
     );
@@ -1422,18 +1934,22 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       child: Center(
         child: Container(
           padding: EdgeInsets.symmetric(
-              horizontal: (10 * _ls).clamp(8, 14),
-              vertical: (4 * _ls).clamp(3, 6)),
+              horizontal: (12 * _ls).clamp(10, 16),
+              vertical: (4.5 * _ls).clamp(3.5, 7.0)),
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.55),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AppColors.gold.withOpacity(0.5)),
+            color: const Color(0xFF0F1626).withOpacity(0.85),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFFFB300).withOpacity(0.5), width: 1.2),
+            boxShadow: const [
+              BoxShadow(color: Colors.black38, blurRadius: 6, offset: Offset(0, 3))
+            ],
           ),
           child: Text(label,
               style: TextStyle(
-                  color: AppColors.gold,
-                  fontWeight: FontWeight.w700,
-                  fontSize: (10 * _ls).clamp(8.5, 13))),
+                  color: const Color(0xFFFFC107),
+                  fontWeight: FontWeight.w900,
+                  fontSize: (9.5 * _ls).clamp(8.0, 12.0),
+                  letterSpacing: 0.5)),
         ),
       ),
     );
@@ -1444,49 +1960,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
   String _fmtAmount(double v) =>
       v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2);
-
-  // ⑦ My chips strip — anchored to bottom-left in landscape
-  Widget _buildMyChips(Map<String, dynamic>? gs) {
-    final me = (gs?['players'] as List?)
-        ?.where((p) => (p['user_id'] ?? p['userId']) == _myUserId)
-        .firstOrNull;
-    if (me == null) return const SizedBox.shrink();
-    final chips  = me['chips'] ?? me['balance'] ?? 0;
-    final isSeen = me['is_seen'] ?? me['isSeen'] ?? _isSeen;
-    return Positioned(
-      left: 0, right: _rightPanelW, bottom: 12,
-      child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          decoration: BoxDecoration(
-            color: const Color(0xFF0D2E18).withOpacity(0.85),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-                color: const Color(0xFFD4AF37).withOpacity(0.6), width: 1.5),
-          ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            const Text('💰 ',
-                style: TextStyle(fontSize: 14)),
-            Text('$chips',
-                style: const TextStyle(
-                    color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
-            const Text('  You  ',
-                style: TextStyle(color: Colors.white60, fontSize: 11)),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: isSeen ? const Color(0xFF2ECC71) : Colors.orange.shade700,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(isSeen ? 'SEEN' : 'BLIND',
-                  style: const TextStyle(
-                      color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
 
   // ⑧ Top bar — back · table name · turn timer · sound toggle
   Widget _buildTopBar(double w) {
@@ -1500,12 +1973,15 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           const SizedBox(width: 6),
           // Table label
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
             decoration: BoxDecoration(
-                color: Colors.black54, borderRadius: BorderRadius.circular(20)),
+                color: const Color(0xFF0F1626).withOpacity(0.72),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFD4AF37).withOpacity(0.4), width: 1.0)),
             child: Text(
               'Table ${widget.roomId.substring(0, math.min(4, widget.roomId.length))}',
-              style: TextStyle(color: Colors.white70,
+              style: TextStyle(color: const Color(0xFFFFD54F),
+                  fontWeight: FontWeight.bold,
                   fontSize: (11 * _ls).clamp(9.0, 14.0)),
               overflow: TextOverflow.ellipsis,
             ),
@@ -1520,8 +1996,25 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     builder: (_, secs, __) => Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                       decoration: BoxDecoration(
-                        color: secs <= 5 ? AppColors.red : const Color(0xFF8B0F1E),
+                        gradient: LinearGradient(
+                          colors: secs <= 5
+                              ? [const Color(0xFFE53935), const Color(0xFFB71C1C)]
+                              : [const Color(0xFF8B0F1E), const Color(0xFF5A0A14)],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                        ),
                         borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: secs <= 5 ? const Color(0xFFFF8A80) : const Color(0xFFFF8A80).withOpacity(0.4),
+                          width: 1.2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: (secs <= 5 ? const Color(0xFFE53935) : const Color(0xFF8B0F1E)).withOpacity(0.4),
+                            blurRadius: 8,
+                            spreadRadius: 1,
+                          ),
+                        ],
                       ),
                       child: Text('Your turn • ${secs}s',
                           style: TextStyle(color: Colors.white,
@@ -1551,7 +2044,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF0D2E18),
+        backgroundColor: const Color(0xFF0E1830),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Table Info',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
@@ -1585,7 +2078,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     ]),
   );
 
-  // ⑨ Right panel — emoji button (opens tray) + scrollable tip list
+  // ⑨ Right panel — scrollable emoji panel
   Widget _buildRightPanel(double w, double h, double tt) {
     return Positioned(
       right: 0, top: 0, bottom: 0, width: _rightPanelW,
@@ -1597,53 +2090,42 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           ),
           child: Column(
             children: [
-              // Emoji button — fixed at top, opens the emoji tray
               const SizedBox(height: 8),
-              GestureDetector(
-                onTap: () => setState(() { _showEmojiTray = !_showEmojiTray; }),
-                child: Container(
-                  width: 38, height: 38,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
-                      begin: Alignment.topLeft, end: Alignment.bottomRight,
-                    ),
-                    boxShadow: [BoxShadow(color: AppColors.gold.withOpacity(0.4),
-                        blurRadius: 8, spreadRadius: 1)],
+              Container(
+                width: 38, height: 38,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
+                    begin: Alignment.topLeft, end: Alignment.bottomRight,
                   ),
-                  child: const Icon(Icons.emoji_emotions, color: Colors.black, size: 20),
+                  boxShadow: [BoxShadow(color: AppColors.gold.withOpacity(0.4),
+                      blurRadius: 8, spreadRadius: 1)],
                 ),
+                child: const Icon(Icons.emoji_emotions, color: Colors.black, size: 20),
               ),
               const SizedBox(height: 6),
               Container(height: 1, color: Colors.white10,
                   margin: const EdgeInsets.symmetric(horizontal: 8)),
-              const SizedBox(height: 4),
-              // Scrollable dealer-tip list — tap an amount to tip
+              const SizedBox(height: 8),
               Expanded(
-                child: ScrollConfiguration(
-                  behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    child: Column(
-                      children: _tipAmounts.map((amount) => GestureDetector(
-                        onTap: () => _sendTip(amount),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 5),
-                          child: Column(children: [
-                            const Text('💰', style: TextStyle(fontSize: 20)),
-                            Text('₹$amount',
-                                style: const TextStyle(
-                                    color: AppColors.gold, fontSize: 10,
-                                    fontWeight: FontWeight.bold)),
-                          ]),
-                        ),
-                      )).toList(),
-                    ),
-                  ),
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  itemCount: _quickEmojis.length,
+                  physics: const BouncingScrollPhysics(),
+                  itemBuilder: (context, idx) {
+                    final e = _quickEmojis[idx];
+                    return GestureDetector(
+                      onTap: () => _sendEmoji(e),
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 8),
+                        alignment: Alignment.center,
+                        child: _buildEmojiOrImage(e, size: 28),
+                      ),
+                    );
+                  },
                 ),
               ),
-              const SizedBox(height: 8),
             ],
           ),
         ),
@@ -1651,15 +2133,15 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑩ Floating reactions (centered in table area, not right panel)
-  Widget _buildReactions(List<_Reaction> reactions, double w, double h) {
+  // ⑩ Floating reactions (Floating directly from the seat that sent them!)
+  Widget _buildReactions(List<_Reaction> reactions, double w, double h, double tl, double tt, double tw, double th) {
     if (reactions.isEmpty) return const SizedBox.shrink();
-    final tableW = w - _rightPanelW;
     return Stack(children: reactions.map((r) {
+      final pos = _getSeatCoordinates(r.userId, w, h, tl, tt, tw, th);
       return Positioned(
         key: ValueKey('rx_${r.id}'),
-        left: tableW * 0.5 - 20 + (r.id % 5 - 2) * 18.0,
-        top: h * 0.45,
+        left: pos.dx - 20, // center bubble horizontally
+        top: pos.dy - 65,  // place above avatar
         child: _ReactionBubble(emoji: r.emoji, isTip: r.isTip),
       );
     }).toList());
@@ -1716,8 +2198,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑫ Bottom action bar: Pack | − | Chaal | +
-  //    Pinned to bottom; SafeArea handles system nav bar.
+  // ⑫ Bottom action bar: Pack | Side Show | Balance Capsule | − | Chaal | +
   Widget _buildActionBar(Map<String, dynamic>? gs, double w, double h) {
     final stake  = (gs?['min_bet'] as num?)?.toDouble() ?? 10;
     final minBet = _isSeen ? stake * 2 : stake;
@@ -1752,27 +2233,66 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
               return Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
+                  // 1. Pack Button (red)
                   _actionBtn('Pack', AppColors.red, () => _sendAction('fold'), width: btnPack),
                   SizedBox(width: gap),
-                  // Sideshow — seen player can challenge the previous seen player
+                  
+                  // 2. Sideshow / Show Button (red)
                   if (_isSeen && activeCount > 2) ...[
-                    _actionBtn('Sideshow', Colors.indigo, () => _guardedAction('sideshow'), width: btnSecond),
+                    _actionBtn('Side Show', AppColors.red, () => _guardedAction('sideshow'), width: btnSecond),
+                    SizedBox(width: gap),
+                  ] else if (activeCount == 2) ...[
+                    _actionBtn('Show', AppColors.red, () => _guardedAction('show'), width: btnSecond),
                     SizedBox(width: gap),
                   ],
-                  // Show — final showdown when only 2 players remain
-                  if (activeCount == 2) ...[
-                    _actionBtn('Show', Colors.deepPurple, () => _guardedAction('show'), width: btnSecond),
-                    SizedBox(width: gap),
-                  ],
+                  
+                  // 3. Center Balance/Bet Capsule
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF070B14).withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFD4AF37).withOpacity(0.65), width: 1.2),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFD4AF37).withOpacity(0.12),
+                          blurRadius: 8,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('🪙', style: TextStyle(fontSize: (13 * _ls).clamp(11.0, 15.0))),
+                        const SizedBox(width: 4),
+                        Text(
+                          '₹${_myBalance.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            color: const Color(0xFFFFD700),
+                            fontWeight: FontWeight.w900,
+                            fontSize: (12 * _ls).clamp(10.0, 15.0),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: gap),
+                  
+                  // 4. Stepper Minus (blue square)
                   _stepperBtn('−', () {
                     _betNotifier.value = (bet - stake).clamp(minBet, maxBet);
                     HapticFeedback.selectionClick();
                   }),
                   SizedBox(width: gap),
-                  _actionBtn(label, AppColors.green,
+                  
+                  // 5. Chal / Raise Button (red with coin text)
+                  _actionBtn(label, AppColors.red,
                       () => _guardedAction(bet > minBet ? 'raise' : 'call', amount: bet),
                       width: btnMain),
                   SizedBox(width: gap),
+                  
+                  // 6. Stepper Plus (blue square)
                   _stepperBtn('+', () {
                     _betNotifier.value = (bet + stake).clamp(minBet, maxBet);
                     HapticFeedback.selectionClick();
@@ -1795,24 +2315,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // Wallet balance — loaded from API
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.72),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.gold.withOpacity(0.6)),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Text('💰', style: TextStyle(fontSize: 13)),
-              const SizedBox(width: 5),
-              Text('₹${_myBalance.toInt()}',
-                  style: TextStyle(
-                      color: AppColors.gold,
-                      fontWeight: FontWeight.bold,
-                      fontSize: (12 * _ls).clamp(10.0, 15.0))),
-            ]),
-          ),
+          // Blank placeholder / spacer to keep Blind/Seen pill on the right
+          const SizedBox.shrink(),
+          
           // Blind / Seen badge
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -1879,7 +2384,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                           _sendEmoji(e);
                           setState(() => _showEmojiTray = false);
                         },
-                        child: Text(e, style: const TextStyle(fontSize: 26)),
+                        child: _buildEmojiOrImage(e, size: 26),
                       );
                     }).toList(),
                   ),
@@ -1898,7 +2403,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     final won = message.contains('Won');
     return Container(
       key: const ValueKey('result'),
-      color: Colors.black.withOpacity(0.78),
+      color: Colors.black.withOpacity(0.82),
       child: Stack(children: [
         if (won)
           Positioned.fill(
@@ -1911,35 +2416,36 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
               gradient: LinearGradient(
                 begin: Alignment.topCenter, end: Alignment.bottomCenter,
                 colors: won
-                    ? [const Color(0xFF1A2A3A), const Color(0xFF0D1B2A)]
-                    : [const Color(0xFF2A0A0A), const Color(0xFF1A0505)],
+                    ? [const Color(0xFF1B2C4E), const Color(0xFF0B1220)]
+                    : [const Color(0xFF3F1318), const Color(0xFF1F070A)],
               ),
               borderRadius: BorderRadius.circular(24),
               border: Border.all(
-                  color: won ? AppColors.gold : AppColors.red, width: 2.5),
+                  color: won ? const Color(0xFFFFD700) : const Color(0xFFFF4D4D), width: 2.5),
               boxShadow: [
                 BoxShadow(
-                    color: (won ? AppColors.gold : AppColors.red).withOpacity(0.4),
-                    blurRadius: 32, spreadRadius: 4),
+                    color: (won ? const Color(0xFFFFD700) : const Color(0xFFFF4D4D)).withOpacity(0.35),
+                    blurRadius: 36, spreadRadius: 4),
               ],
             ),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               Text(
                 won ? '🏆 VICTORY 🏆' : '💀 GAME OVER 💀',
                 style: TextStyle(
-                  fontSize: 26, fontWeight: FontWeight.bold,
-                  color: won ? AppColors.gold : AppColors.red,
+                  fontSize: 26, fontWeight: FontWeight.w900,
+                  color: won ? const Color(0xFFFFD700) : const Color(0xFFFF4D4D),
+                  letterSpacing: 1.0,
                   shadows: [Shadow(
-                      color: (won ? AppColors.gold : AppColors.red).withOpacity(0.5),
+                      color: (won ? const Color(0xFFFFD700) : const Color(0xFFFF4D4D)).withOpacity(0.5),
                       blurRadius: 12)],
                 ),
               ).animate().scale(
                   begin: const Offset(0.6, 0.6), curve: Curves.elasticOut).fadeIn(),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               Text(message,
-                  style: const TextStyle(fontSize: 16, color: Colors.white),
+                  style: const TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center),
-              const SizedBox(height: 24),
+              const SizedBox(height: 28),
               Row(mainAxisSize: MainAxisSize.min, children: [
                 if (_privateCode != null) ...[
                   // Friends table: next hand auto-starts server-side.
@@ -1947,8 +2453,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     valueListenable: _rematchSecsNotifier,
                     builder: (_, secs, __) => ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1E6B1E),
+                        backgroundColor: const Color(0xFF2ECC71),
                         foregroundColor: Colors.white,
+                        shadowColor: const Color(0xFF2ECC71).withOpacity(0.4),
+                        elevation: 8,
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(20)),
                         padding: const EdgeInsets.symmetric(
@@ -1963,15 +2471,17 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                                   strokeWidth: 2, color: Colors.white)),
                       label: Text(
                           secs > 0 ? 'Same Table (${secs}s)' : 'Starting next hand…',
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                          style: const TextStyle(fontWeight: FontWeight.w900)),
                     ),
                   ),
                   const SizedBox(width: 12),
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white24,
+                      backgroundColor: Colors.white.withOpacity(0.12),
                       foregroundColor: Colors.white,
+                      shadowColor: Colors.transparent,
                       shape: RoundedRectangleBorder(
+                          side: BorderSide(color: Colors.white.withOpacity(0.3), width: 1.0),
                           borderRadius: BorderRadius.circular(20)),
                       padding: const EdgeInsets.symmetric(
                           horizontal: 20, vertical: 12),
@@ -1979,14 +2489,17 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     onPressed: _exitPrivateTable,
                     icon: const Icon(Icons.home),
                     label: const Text('Exit Lobby',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
+                        style: TextStyle(fontWeight: FontWeight.w900)),
                   ),
                 ] else
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: won ? AppColors.gold : Colors.white24,
+                    backgroundColor: won ? const Color(0xFFFFD700) : Colors.white.withOpacity(0.12),
                     foregroundColor: won ? Colors.black : Colors.white,
+                    shadowColor: won ? const Color(0xFFFFD700).withOpacity(0.4) : Colors.transparent,
+                    elevation: won ? 8 : 0,
                     shape: RoundedRectangleBorder(
+                        side: won ? BorderSide.none : BorderSide(color: Colors.white.withOpacity(0.3), width: 1.0),
                         borderRadius: BorderRadius.circular(20)),
                     padding: const EdgeInsets.symmetric(
                         horizontal: 20, vertical: 12),
@@ -1994,14 +2507,16 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                   onPressed: _doExit,
                   icon: const Icon(Icons.home),
                   label: const Text('Back to Lobby',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                      style: TextStyle(fontWeight: FontWeight.w900)),
                 ),
                 if (widget.demo) ...[
                   const SizedBox(width: 12),
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1E6B1E),
+                      backgroundColor: const Color(0xFF2ECC71),
                       foregroundColor: Colors.white,
+                      shadowColor: const Color(0xFF2ECC71).withOpacity(0.4),
+                      elevation: 8,
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(20)),
                       padding: const EdgeInsets.symmetric(
@@ -2013,7 +2528,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     },
                     icon: const Icon(Icons.replay),
                     label: const Text('Play Again',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
+                        style: TextStyle(fontWeight: FontWeight.w900)),
                   ),
                 ],
               ]),
@@ -2073,29 +2588,51 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         ),
       );
 
-  // Mini fan of 3 card backs shown above opponent seat containers
-  Widget _opponentCardBacks() {
+  // Mini fan of 3 card backs shown above opponent seats with Blind/Seen badge
+  Widget _opponentCardBacks({bool isFolded = false, bool isSeen = false}) {
+    if (_isDealingCards) return SizedBox(height: (24 * _ls).clamp(18.0, 32.0) + 4);
     final cw = (17 * _ls).clamp(13.0, 22.0);
     final ch = (24 * _ls).clamp(18.0, 32.0);
     final fanW = (48 * _ls).clamp(36.0, 60.0);
     return SizedBox(
       width: fanW, height: ch + 4,
-      child: Stack(alignment: Alignment.center,
-        children: List.generate(3, (i) => Transform.translate(
-          offset: Offset((i - 1) * (fanW / 7), 0),
-          child: Transform.rotate(
-            angle: (i - 1) * 0.20,
-            child: Container(
-              width: cw, height: ch,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular((3 * _ls).clamp(2, 5)),
-                image: const DecorationImage(
-                    image: AssetImage('assets/images/card_back.png'), fit: BoxFit.cover),
-                boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 2, offset: Offset(0, 1))],
+      child: Opacity(
+        opacity: isFolded ? 0.4 : 1.0,
+        child: Stack(alignment: Alignment.center,
+          children: [
+            ...List.generate(3, (i) => Transform.translate(
+              offset: Offset((i - 1) * (fanW / 7), 0),
+              child: Transform.rotate(
+                angle: (i - 1) * 0.20,
+                child: Container(
+                  width: cw, height: ch,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular((3 * _ls).clamp(2, 5)),
+                    image: const DecorationImage(
+                        image: AssetImage('assets/images/card_back.png'), fit: BoxFit.cover),
+                    boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 2, offset: Offset(0, 1))],
+                  ),
+                ),
               ),
-            ),
-          ),
-        )),
+            )),
+            // Blind / Seen eye indicator in the center of the cards
+            if (!isFolded)
+              Positioned(
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: const BoxDecoration(
+                    color: Colors.black87,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    isSeen ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+                    color: isSeen ? const Color(0xFFFFC107) : Colors.white70,
+                    size: (10 * _ls).clamp(8.0, 14.0),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -2106,19 +2643,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     return ('Chaal', AppColors.green);
   }
 
-  Widget _statusPill(String label, Color color, {double scale = 1.0}) {
-    final s = scale;
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: (7 * s).clamp(5, 10), vertical: (2 * s).clamp(1, 3)),
-      decoration: BoxDecoration(
-        color: color, borderRadius: BorderRadius.circular(9),
-        border: Border.all(color: Colors.white24),
-      ),
-      child: Text(label,
-          style: TextStyle(color: Colors.white, fontSize: (10.5 * s).clamp(9, 14),
-              fontWeight: FontWeight.bold, letterSpacing: 0.4)),
-    );
-  }
 
   Widget _iconBtn(IconData icon, VoidCallback onTap, {double size = 36}) =>
       GestureDetector(
@@ -2126,53 +2650,104 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         child: Container(
           width: size, height: size,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topCenter, end: Alignment.bottomCenter,
-              colors: [Color(0xFFFFE082), Color(0xFFD4AF37), Color(0xFF8A6D1E)],
-            ),
+            color: const Color(0xFF0F1626).withOpacity(0.72),
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white38, width: 1),
+            border: Border.all(color: const Color(0xFFD4AF37).withOpacity(0.85), width: 1.2),
             boxShadow: [
               BoxShadow(
-                  color: AppColors.gold.withOpacity(0.4), blurRadius: 8,
+                  color: const Color(0xFFD4AF37).withOpacity(0.18), blurRadius: 8,
                   spreadRadius: 1),
-              const BoxShadow(color: Colors.black54, blurRadius: 4,
-                  offset: Offset(0, 2)),
+              const BoxShadow(color: Colors.black45, blurRadius: 4,
+                  offset: Offset(0, 3)),
             ],
           ),
-          child: Icon(icon, color: Colors.white, size: size * 0.50),
+          child: Icon(icon, color: const Color(0xFFFFD54F), size: size * 0.48),
         ),
       );
 
   Widget _actionBtn(String label, Color color, VoidCallback onTap,
-          {double width = 100}) =>
-      GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: width, height: (44 * _ls).clamp(36.0, 54.0),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter, end: Alignment.bottomCenter,
-              colors: [
-                Color.lerp(color, Colors.white, 0.22)!,
-                color,
-                Color.lerp(color, Colors.black, 0.22)!,
-              ],
-            ),
-            borderRadius: BorderRadius.circular((13 * _ls).clamp(10, 18)),
-            border: Border.all(color: Colors.white24),
-            boxShadow: [
-              BoxShadow(color: color.withOpacity(0.5), blurRadius: 12, spreadRadius: 1),
-              const BoxShadow(color: Colors.black38, blurRadius: 4, offset: Offset(0, 2)),
-            ],
+          {double width = 100}) {
+    final hasCoin = label.contains('Chaal') || label.contains('Raise');
+    String cleanLabel = label;
+    String? amountText;
+    if (hasCoin) {
+      final parts = label.split(' ');
+      if (parts.length >= 2) {
+        cleanLabel = parts[0];
+        amountText = parts.sublist(1).join(' ');
+      }
+    }
+    
+    // Premium color gradients
+    final List<Color> btnColors;
+    if (color == AppColors.red) {
+      btnColors = [
+        const Color(0xFFFF4D4D), // brighter red
+        const Color(0xFFD32F2F), // mid red
+        const Color(0xFF7B0000), // deep ruby shadow
+      ];
+    } else {
+      btnColors = [
+        Color.lerp(color, Colors.white, 0.2)!,
+        color,
+        Color.lerp(color, Colors.black, 0.3)!,
+      ];
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: width, height: (44 * _ls).clamp(36.0, 54.0),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter, end: Alignment.bottomCenter,
+            colors: btnColors,
           ),
-          child: Text(label,
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold,
-                  fontSize: (12.5 * _ls).clamp(10.0, 16.0),
-                  shadows: const [Shadow(color: Colors.black38, blurRadius: 2)])),
+          borderRadius: BorderRadius.circular((12 * _ls).clamp(9, 16)),
+          border: Border.all(color: const Color(0xFFFFD54F), width: 1.5),
+          boxShadow: [
+            BoxShadow(color: btnColors[1].withOpacity(0.45), blurRadius: 10, spreadRadius: 1),
+            const BoxShadow(color: Colors.black45, blurRadius: 4, offset: Offset(0, 3)),
+          ],
         ),
-      );
+        child: amountText != null
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(cleanLabel,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: (11.5 * _ls).clamp(9.5, 13.5),
+                        shadows: const [Shadow(color: Colors.black54, blurRadius: 2, offset: Offset(0, 1))]
+                      )),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('🪙', style: TextStyle(fontSize: (10.5 * _ls).clamp(8.5, 12.5))),
+                      const SizedBox(width: 2),
+                      Text(amountText,
+                          style: TextStyle(
+                            color: const Color(0xFFFFD700),
+                            fontWeight: FontWeight.w900,
+                            fontSize: (11.5 * _ls).clamp(9.5, 13.5),
+                            shadows: const [Shadow(color: Colors.black54, blurRadius: 2, offset: Offset(0, 1))]
+                          )),
+                    ],
+                  )
+                ],
+              )
+            : Text(label,
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: (12.5 * _ls).clamp(10.0, 16.0),
+                    letterSpacing: 0.5,
+                    shadows: const [Shadow(color: Colors.black54, blurRadius: 3, offset: Offset(0, 1.5))])),
+      ),
+    );
+  }
 
   Widget _stepperBtn(String label, VoidCallback onTap) {
     final d = (40 * _ls).clamp(32.0, 50.0);
@@ -2183,18 +2758,111 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         decoration: BoxDecoration(
           gradient: const LinearGradient(
             begin: Alignment.topCenter, end: Alignment.bottomCenter,
-            colors: [Color(0xFF5B6470), Color(0xFF323844)],
+            colors: [Color(0xFF00E5FF), Color(0xFF00838F)], // Sleek cyan gradient
           ),
-          border: Border.all(color: AppColors.gold.withOpacity(0.6), width: 1.5),
-          shape: BoxShape.circle,
-          boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 2))],
+          border: Border.all(color: const Color(0xFFE0F7FA), width: 1.5),
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF00E5FF).withOpacity(0.35),
+              blurRadius: 8,
+              spreadRadius: 1,
+            ),
+            const BoxShadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 2)),
+          ],
         ),
         child: Text(label,
             style: TextStyle(color: Colors.white,
                 fontSize: (21 * _ls).clamp(16.0, 26.0),
-                fontWeight: FontWeight.bold, height: 1.1)),
+                fontWeight: FontWeight.w900, height: 1.1)),
       ),
     );
+  }
+
+  // ── Card distribution trigger animation ────────────────────────────────────
+  void _triggerCardDealingAnimation(Map<String, dynamic> gs) {
+    if (_isDealingCards) return; // already dealing
+    
+    // Only deal if we have active players
+    final players = (gs['players'] as List? ?? []);
+    final activePlayers = players.where((p) => p['status'] == 'active' || p['status'] == 'playing').toList();
+    if (activePlayers.isEmpty) return;
+    
+    final handId = gs['hand_id']?.toString() ?? gs['current_hand_id']?.toString();
+    if (handId != null && handId == _currentHandId) {
+      // Already dealt cards for this hand
+      return;
+    }
+    _currentHandId = handId;
+
+    final size = MediaQuery.of(context).size;
+    final w = size.width;
+    final h = size.height;
+    final ls = (h / 400.0).clamp(0.72, 1.5);
+    final topBarH = (40 * ls).clamp(36.0, 52.0);
+    final tw = w - _rightPanelW - 2;
+    final th = h - topBarH - 2;
+    final tl = 0.0;
+    final tt = topBarH;
+
+    final dealerPos = Offset((w - _rightPanelW) / 2, tt + 10);
+    
+    final List<_FlyingCard> list = [];
+    int cardIndex = 0;
+    
+    // 3 rounds of dealing (one card to each player per round)
+    for (int round = 0; round < 3; round++) {
+      for (int pIdx = 0; pIdx < activePlayers.length; pIdx++) {
+        final p = activePlayers[pIdx];
+        final uid = (p['userId'] ?? p['user_id'])?.toString();
+        if (uid == null) continue;
+        
+        final dest = _getSeatCoordinates(uid, w, h, tl, tt, tw, th);
+        
+        list.add(_FlyingCard(
+          start: dealerPos,
+          end: dest,
+          delayMs: cardIndex * 150,
+          index: round,
+        ));
+        cardIndex++;
+      }
+    }
+    
+    setState(() {
+      _flyingCards = list;
+      _isDealingCards = true;
+    });
+    
+    // Sound effects matching delays
+    for (int i = 0; i < cardIndex; i++) {
+      Future.delayed(Duration(milliseconds: i * 150), () {
+        if (mounted && _isDealingCards) {
+          SoundService.instance.play(Sfx.cardDeal);
+        }
+      });
+    }
+    
+    // Stop dealing animation after all cards have flown
+    final totalDuration = cardIndex * 150 + 400; // delay + flight duration
+    Future.delayed(Duration(milliseconds: totalDuration), () {
+      if (mounted) {
+        setState(() {
+          _isDealingCards = false;
+          _flyingCards = [];
+        });
+      }
+    });
+  }
+
+  List<Widget> _buildFlyingCards(double w, double h) {
+    return _flyingCards.map((fc) {
+      return _FlyingCardWidget(
+        flyingCard: fc,
+        cardW: _cardW,
+        cardHt: _cardHt,
+      );
+    }).toList();
   }
 }
 
@@ -2241,7 +2909,7 @@ class _ReactionBubbleState extends State<_ReactionBubble>
           opacity: (1 - t).clamp(0.0, 1.0),
           child: Transform.scale(
             scale: widget.isTip ? 1.0 + t * 0.5 : 1.0,
-            child: Text(widget.emoji, style: const TextStyle(fontSize: 28)),
+            child: _buildEmojiOrImage(widget.emoji, size: 28),
           ),
         ),
       );
@@ -2283,70 +2951,456 @@ class _ThinkingDotsState extends State<_ThinkingDots>
 
 // ── Dealer hostess ────────────────────────────────────────────────────────────
 class _HostessWidget extends StatefulWidget {
-  const _HostessWidget();
+  final ValueNotifier<int> tipTrigger;
+  final VoidCallback onTipTap;
+  final VoidCallback onInviteTap;
+  final bool isDealing;
+  const _HostessWidget({required this.tipTrigger, required this.onTipTap, required this.onInviteTap, required this.isDealing});
   @override
   State<_HostessWidget> createState() => _HostessWidgetState();
 }
 
 class _HostessWidgetState extends State<_HostessWidget>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
+    with TickerProviderStateMixin {
+  late final AnimationController _idleController =
       AnimationController(vsync: this, duration: 1400.ms)..repeat(reverse: true);
+      
+  late final AnimationController _tipController =
+      AnimationController(vsync: this, duration: 1500.ms);
+      
+  late final AnimationController _dealController =
+      AnimationController(vsync: this, duration: 250.ms);
+      
+  final List<_TipParticle> _particles = [];
+  final math.Random _random = math.Random();
+
   @override
-  void dispose() { _c.dispose(); super.dispose(); }
+  void initState() {
+    super.initState();
+    widget.tipTrigger.addListener(_onTipReceived);
+    if (widget.isDealing) {
+      _dealController.repeat(reverse: true);
+    }
+  }
+
   @override
-  Widget build(BuildContext context) => SizedBox(
-        width: 80,
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Container(
-            width: 68, height: 68,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                    color: AppColors.gold.withOpacity(0.38),
-                    blurRadius: 22, spreadRadius: 6),
-              ],
-            ),
-            child: Stack(alignment: Alignment.center, children: [
+  void didUpdateWidget(covariant _HostessWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isDealing && !oldWidget.isDealing) {
+      _dealController.repeat(reverse: true);
+    } else if (!widget.isDealing && oldWidget.isDealing) {
+      _dealController.stop();
+      _dealController.reset();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.tipTrigger.removeListener(_onTipReceived);
+    _idleController.dispose();
+    _tipController.dispose();
+    _dealController.dispose();
+    super.dispose();
+  }
+
+  void _onTipReceived() {
+    if (!mounted) return;
+    _tipController.forward(from: 0.0);
+    
+    // Spawn 8 hearts/coins particles
+    _particles.clear();
+    final icons = ['❤️', '🪙', '❤️', '🪙', '✨', '❤️', '🪙', '❤️'];
+    for (int i = 0; i < 8; i++) {
+      _particles.add(_TipParticle(
+        dx: _random.nextDouble() * 60 - 30, // random offset -30 to 30
+        dy: _random.nextDouble() * 80 + 40, // random height 40 to 120
+        icon: icons[i % icons.length],
+        scale: _random.nextDouble() * 0.5 + 0.8,
+        delay: _random.nextDouble() * 400,
+      ));
+    }
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget hostessColumn = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Avatar circle with double rings
+        GestureDetector(
+          onTap: widget.onTipTap,
+          child: Stack(
+            alignment: Alignment.center,
+            clipBehavior: Clip.none,
+            children: [
+              // Outer gold aura ring
               Container(
-                width: 64, height: 64,
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFFD4AF37).withOpacity(0.5),
+                    width: 1.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFD4AF37).withOpacity(0.3),
+                      blurRadius: 18,
+                      spreadRadius: 4,
+                    ),
+                  ],
+                ),
+              ),
+              // Inner gold gradient ring
+              Container(
+                width: 64,
+                height: 64,
                 decoration: const BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                    colors: [Color(0xFFFFE082), Color(0xFFD4AF37), Color(0xFF8A6D1E)],
+                  gradient: SweepGradient(
+                    colors: [
+                      Color(0xFFFFD700),
+                      Color(0xFFB8860B),
+                      Color(0xFFFFD700),
+                    ],
                   ),
                 ),
               ),
+              // Image container
               Container(
-                width: 56, height: 56,
+                width: 56,
+                height: 56,
                 decoration: const BoxDecoration(
-                    shape: BoxShape.circle, color: Color(0xFF0E1830)),
+                  shape: BoxShape.circle,
+                  color: Color(0xFF0E1830),
+                ),
                 clipBehavior: Clip.antiAlias,
-                child: Image.asset('assets/images/dealer_avatar.png',
-                    fit: BoxFit.cover),
+                child: Image.asset(
+                  'assets/images/dealer_avatar.png',
+                  fit: BoxFit.cover,
+                ),
+              )
+                  .animate(controller: _tipController, autoPlay: false)
+                  .scale(begin: const Offset(1.0, 1.0), end: const Offset(1.2, 1.2), duration: 200.ms, curve: Curves.easeOut)
+                  .then()
+                  .scale(begin: const Offset(1.2, 1.2), end: const Offset(1.0, 1.0), duration: 150.ms, curve: Curves.easeIn),
+                  
+              // Invite badge next to dealer avatar
+              Positioned(
+                left: -12,
+                bottom: -6,
+                child: GestureDetector(
+                  onTap: widget.onInviteTap,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFFD43F), Color(0xFFB8860B)],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                      ),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1.5),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFFFD43F).withOpacity(0.4),
+                          blurRadius: 8,
+                          spreadRadius: 1,
+                          offset: const Offset(0, 2),
+                        )
+                      ],
+                    ),
+                    child: const Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.person_add_alt_1_rounded, color: Colors.black87, size: 11),
+                        Text(
+                          'INVITE',
+                          style: TextStyle(color: Colors.black87, fontSize: 6.5, fontWeight: FontWeight.w900, letterSpacing: 0.2),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-            ]),
+
+              // Heart TIPS badge next to dealer avatar
+              Positioned(
+                right: -12,
+                bottom: -6,
+                child: GestureDetector(
+                  onTap: widget.onTipTap,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFF2A6D), Color(0xFF910038)],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                      ),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: const Color(0xFFFFD700), width: 1.5),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFFF2A6D).withOpacity(0.4),
+                          blurRadius: 8,
+                          spreadRadius: 1,
+                          offset: const Offset(0, 2),
+                        )
+                      ],
+                    ),
+                    child: const Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.favorite_rounded, color: Colors.white, size: 11),
+                        Text(
+                          'TIPS',
+                          style: TextStyle(color: Colors.white, fontSize: 7, fontWeight: FontWeight.w900, letterSpacing: 0.5),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                  colors: [Color(0xFFB11226), Color(0xFF7A0C1A)]),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                  color: AppColors.gold.withOpacity(0.8), width: 1),
+        ),
+        const SizedBox(height: 5),
+        // Dealer name badge
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF8C0E1C), Color(0xFF3F0006)],
+              begin: Alignment.topCenter, end: Alignment.bottomCenter,
             ),
-            child: const Text('🎁 DEALER',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 9,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1)),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFD4AF37), width: 1.2),
+            boxShadow: const [
+              BoxShadow(color: Colors.black45, blurRadius: 4, offset: Offset(0, 2))
+            ],
           ),
-        ]),
-      ).animate(controller: _c)
-       .moveY(begin: 0, end: -6, duration: 1400.ms, curve: Curves.easeInOut);
+          child: const Text(
+            'DEALER',
+            style: TextStyle(
+              color: Color(0xFFFFF6D6),
+              fontSize: 8,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.2,
+            ),
+          ),
+        ),
+      ],
+    );
+
+    // Apply animations cleanly depending on dealing state
+    if (widget.isDealing) {
+      hostessColumn = hostessColumn
+          .animate(controller: _dealController)
+          .scale(begin: const Offset(1.0, 1.0), end: const Offset(1.08, 1.08), duration: 125.ms, curve: Curves.easeInOut)
+          .rotate(begin: -0.04, end: 0.04, duration: 125.ms, curve: Curves.easeInOut);
+    } else {
+      hostessColumn = hostessColumn
+          .animate(controller: _idleController)
+          .moveY(begin: 0, end: -6, duration: 1400.ms, curve: Curves.easeInOut)
+          .scale(begin: const Offset(0.97, 0.97), end: const Offset(1.03, 1.03), duration: 1400.ms, curve: Curves.easeInOut)
+          .rotate(begin: -0.02, end: 0.02, duration: 1400.ms, curve: Curves.easeInOut);
+    }
+
+    return SizedBox(
+      width: 80,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.topCenter,
+        children: [
+          hostessColumn,
+              
+          // Floating particles overlay (Spawns coins and hearts)
+          if (_particles.isNotEmpty)
+            ..._particles.map((p) {
+              return AnimatedBuilder(
+                animation: _tipController,
+                builder: (context, child) {
+                  final progress = ((_tipController.value * 1500 - p.delay) / 1000.0).clamp(0.0, 1.0);
+                  if (progress <= 0.0) return const SizedBox.shrink();
+                  
+                  final double x = p.dx + math.sin(progress * math.pi * 2) * 10;
+                  final double y = -20 - (p.dy * progress);
+                  final double opacity = 1.0 - progress;
+                  
+                  return Positioned(
+                    left: 40 + x,
+                    top: y,
+                    child: Opacity(
+                      opacity: opacity,
+                      child: Transform.scale(
+                        scale: p.scale,
+                        child: Text(p.icon, style: const TextStyle(fontSize: 20)),
+                      ),
+                    ),
+                  );
+                },
+              );
+            }),
+        ],
+      ),
+    );
+  }
+}
+
+class _TipParticle {
+  final double dx;
+  final double dy;
+  final String icon;
+  final double scale;
+  final double delay; // delay in ms
+  _TipParticle({required this.dx, required this.dy, required this.icon, required this.scale, required this.delay});
+}
+
+// ── Card distribution flight coordinates ──────────────────────────────────────
+class _FlyingCard {
+  final Offset start;
+  final Offset end;
+  final int delayMs;
+  final int index;
+  _FlyingCard({required this.start, required this.end, required this.delayMs, required this.index});
+}
+
+// ── Flying card animation widget ──────────────────────────────────────────────
+class _FlyingCardWidget extends StatefulWidget {
+  final _FlyingCard flyingCard;
+  final double cardW;
+  final double cardHt;
+  const _FlyingCardWidget({
+    required this.flyingCard,
+    required this.cardW,
+    required this.cardHt,
+  });
+
+  @override
+  State<_FlyingCardWidget> createState() => _FlyingCardWidgetState();
+}
+
+class _FlyingCardWidgetState extends State<_FlyingCardWidget>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<Offset> _positionAnimation;
+  late final Animation<double> _rotationAnimation;
+  late final Animation<double> _scaleAnimation;
+  bool _started = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 380),
+    );
+    
+    _positionAnimation = Tween<Offset>(
+      begin: widget.flyingCard.start,
+      end: widget.flyingCard.end,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
+    
+    _rotationAnimation = Tween<double>(
+      begin: 0.0,
+      end: widget.flyingCard.index * 0.10 - 0.05, // minor fan angle rotation at target
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+
+    _scaleAnimation = Tween<double>(
+      begin: 0.2, // starts small at dealer's hand
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
+
+    // Trigger flight after delay
+    Future.delayed(Duration(milliseconds: widget.flyingCard.delayMs), () {
+      if (mounted) {
+        setState(() => _started = true);
+        _controller.forward();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_started) return const SizedBox.shrink();
+    
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final pos = _positionAnimation.value;
+        final rot = _rotationAnimation.value;
+        final scale = _scaleAnimation.value;
+        
+        return Positioned(
+          left: pos.dx - (widget.cardW * scale) / 2,
+          top: pos.dy - (widget.cardHt * scale) / 2,
+          width: widget.cardW * scale,
+          height: widget.cardHt * scale,
+          child: Transform.rotate(
+            angle: rot,
+            child: child,
+          ),
+        );
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: Colors.white, width: 1.0),
+          boxShadow: const [
+            BoxShadow(color: Colors.black38, blurRadius: 4, offset: Offset(0, 2))
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: Image.asset(
+            'assets/images/card_back.png',
+            fit: BoxFit.cover,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _resolveUrl(String? p) {
+  if (p == null || p.isEmpty) return '';
+  if (p.startsWith('http')) return p;
+  return '${AppConfig.apiBaseUrl}$p';
+}
+
+Widget _buildEmojiOrImage(String emoji, {double size = 28}) {
+  if (emoji.startsWith('/uploads/') || emoji.startsWith('http')) {
+    final url = _resolveUrl(emoji);
+    if (url.toLowerCase().endsWith('.json')) {
+      return Lottie.network(
+        url,
+        width: size + 8,
+        height: size + 8,
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) =>
+            Icon(Icons.broken_image_rounded, color: Colors.white60, size: size),
+      );
+    }
+    return Image.network(
+      url,
+      width: size + 8,
+      height: size + 8,
+      fit: BoxFit.contain,
+      errorBuilder: (context, error, stackTrace) =>
+          Icon(Icons.broken_image_rounded, color: Colors.white60, size: size),
+    );
+  }
+  return Text(
+    emoji,
+    style: TextStyle(fontSize: size),
+  );
 }

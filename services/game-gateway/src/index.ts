@@ -202,6 +202,7 @@ async function start() {
             }
           }
 
+          const gameType = rawState.gameType ?? rawState.game_type
           // Send room:joined event to sync this connection
           hub.send(conn, 'room:joined', {
             room_id,
@@ -212,12 +213,13 @@ async function start() {
             })),
             my_cards: myCards,
             your_seat: rawState.players?.findIndex((p: any) => (p.userId ?? p.user_id) === conn.userId) + 1,
-            game_type: rawState.gameType ?? rawState.game_type,
+            game_type: gameType,
             stake: rawState.stake,
             pot: rawState.pot,
             current_turn: rawState.currentTurn ?? rawState.current_turn ?? 0,
             dealer_id: rawState.dealer_id ?? rawState.DealerID,
             min_bet: rawState.minBet ?? rawState.min_bet ?? rawState.stake,
+            state: gameType === 'ludo' ? rawState : undefined,
           })
 
           // Bot recovery: if it's currently a bot's turn, trigger/drive the bot

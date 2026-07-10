@@ -16,6 +16,39 @@ export interface MatchmakingEntry {
   preferredSeat?: number
 }
 
+// Teen Patti seat floor: low-stake tables top up with bots to this many seats.
+export const TEEN_PATTI_BOT_FLOOR = 4
+
+export interface TeenPattiSeatPlan {
+  start: boolean    // true → seat these players and start the hand
+  reals: number     // real players to seat
+  bots: number      // bots to seat
+  requeue: boolean  // true → too few players; put reals back and keep waiting
+}
+
+// Pure seat planner for a Teen Patti table once the gather window closes.
+//   Low stakes  (< ₹100): fill with bots up to a 4-seat floor, but allow up to
+//                         `maxPlayers` real players — 5RP / 6RP tables get no
+//                         bots. Yields 1RP+3B, 2RP+2B, 3RP+1B, 4RP, 5RP, 6RP.
+//   High stakes (≥ ₹100): real players only, never bots. Needs ≥2 reals to
+//                         start; a lone real player keeps waiting for a human.
+export function planTeenPattiSeats(
+  realCount: number,
+  stake: number,
+  maxPlayers = 6,
+): TeenPattiSeatPlan {
+  const allowBots = stake < 100
+  const reals = Math.min(Math.max(0, realCount), maxPlayers)
+  if (allowBots) {
+    if (reals < 1) return { start: false, reals: 0, bots: 0, requeue: false }
+    const bots = Math.max(0, TEEN_PATTI_BOT_FLOOR - reals)
+    return { start: true, reals, bots, requeue: false }
+  }
+  // High stakes — humans only.
+  if (reals >= 2) return { start: true, reals, bots: 0, requeue: false }
+  return { start: false, reals, bots: 0, requeue: true }
+}
+
 export class MatchmakingService {
   private timers = new Map<string, NodeJS.Timeout>()
   private botTimers = new Map<string, { timer: NodeJS.Timeout; turnIdx: number }>()
@@ -57,23 +90,19 @@ export class MatchmakingService {
     )
     const config = configRes.rows[0] || { min_players: 2, max_players: 6, bot_fill_enabled: true, bot_fill_delay_seconds: 5, max_bot_ratio: 0.6, bot_fill_table_size: null }
 
-    // Real-players-only high-stakes tables. For Teen Patti, the ₹100 / ₹500 /
-    // ₹1000 stakes are reserved for real players — no bot is ever seated. To
-    // avoid stranding 2-3 real players who could otherwise play each other,
-    // these tables also start as soon as min_players real players are queued
-    // (see tryCreateRoom): disabling bot-fill here drops the no-bot threshold
-    // to min_players and suppresses the bot-fill timer below. (Fixes: "more
-    // than 1 RP cannot join the match" + "100/500/1000 no bots".)
-    const realPlayersOnly = gameType === 'teen_patti' && stake >= 100
-    if (realPlayersOnly) {
-      config.bot_fill_enabled = false
-    }
-
-    // Teen Patti must always fill to a 4-seat table (1RP+3B / 2RP+2B / 3RP+1B,
-    // 4+ real players → no bots). Guard against the DB value being wiped to
-    // NULL (e.g. by an admin GameConfig save with the field left blank).
-    if (gameType === 'teen_patti' && config.bot_fill_enabled && !config.bot_fill_table_size) {
-      config.bot_fill_table_size = 4
+    // Teen Patti table composition is decided by planTeenPattiSeats() when the
+    // gather window closes, NOT by an instant start at the minimum. Both stake
+    // tiers therefore need the gather timer armed:
+    //   • Low stakes  (< ₹100): fill with bots up to a 4-seat floor, but let up
+    //     to max_players real players accumulate first → 1RP+3B … 4RP/5RP/6RP.
+    //   • High stakes (≥ ₹100): real players only, never bots (2RP … 6RP); a
+    //     lone player keeps waiting for a second human.
+    // The window itself is `bot_fill_delay_seconds` (10s in prod). Keeping
+    // bot_fill_enabled=true for every teen_patti stake ensures the timer arms;
+    // the no-bots rule for high stakes is enforced inside planTeenPattiSeats.
+    if (gameType === 'teen_patti') {
+      config.bot_fill_enabled = true
+      config.bot_fill_table_size = config.bot_fill_table_size || TEEN_PATTI_BOT_FLOOR
     }
 
     await this.tryCreateRoom(gameType, stake, config, variation)
@@ -114,9 +143,16 @@ export class MatchmakingService {
     // With bot-fill disabled there is no timer to top the table up, so waiting
     // for bot_fill_table_size would strand 2-3 real players in the queue —
     // fall back to min_players and start as soon as enough real players exist.
-    const noBotThreshold = config.bot_fill_enabled
-      ? (config.bot_fill_table_size || config.min_players)
-      : (config.min_players || 2)
+    // Teen Patti gathers real players for the whole window (see joinQueue), so
+    // it only instant-starts when a FULL human table is ready — anything short
+    // of max_players waits for the timer, which then seats the accumulated
+    // reals (+ bots for low stakes) via planTeenPattiSeats. Other games keep
+    // the legacy threshold.
+    const noBotThreshold = gameType === 'teen_patti'
+      ? (config.max_players || 6)
+      : config.bot_fill_enabled
+        ? (config.bot_fill_table_size || config.min_players)
+        : (config.min_players || 2)
 
     // Atomically check if enough players are ready, and if so pop them
     const members = await this.redis.eval(
@@ -169,6 +205,47 @@ export class MatchmakingService {
 
     const realPlayers: MatchmakingEntry[] = members.map(m => JSON.parse(m))
     console.log(`[matchmaking] botFillRoom: ${realPlayers.length} real players for ${gameType}:${stake} — filling with bots`)
+
+    // Teen Patti: seat composition follows the explicit per-tier spec via
+    // planTeenPattiSeats (low stakes bot-fill to 4-seat floor, up to 6 reals;
+    // high stakes humans-only, ≥2 to start). This replaces the generic bot math
+    // below for teen_patti only.
+    if (gameType === 'teen_patti') {
+      const maxPlayers = config.max_players || 6
+      const requeue = async (players: MatchmakingEntry[], notify: boolean) => {
+        for (const p of players) {
+          await this.redis.zadd(key, Date.now(), JSON.stringify(p))
+          if (notify) this.hub.sendToUser(p.userId, 'error', { message: 'Waiting for more players…' })
+        }
+        const timer = setTimeout(async () => {
+          this.timers.delete(`${gameType}:${variation}:${stake}`)
+          await this.botFillRoom(gameType, stake, config, variation)
+        }, (config.bot_fill_delay_seconds || 10) * 1000)
+        this.timers.set(`${gameType}:${variation}:${stake}`, timer)
+      }
+
+      // More than a full table queued at once → seat the first 6, re-queue rest.
+      const seated = realPlayers.slice(0, maxPlayers)
+      const overflow = realPlayers.slice(maxPlayers)
+
+      const plan = planTeenPattiSeats(seated.length, stake, maxPlayers)
+      if (!plan.start) {
+        // Too few players (lone high-stakes player) — keep everyone waiting.
+        await requeue([...seated, ...overflow], plan.requeue)
+        return
+      }
+
+      const bots = plan.bots > 0 ? await this.getBots(gameType, plan.bots, stake) : []
+      // Bots may be scarce; still start if the table is playable (≥2 total),
+      // otherwise wait for more (a lone real with no bots available).
+      if (seated.length + bots.length < 2) {
+        await requeue([...seated, ...overflow], true)
+        return
+      }
+      if (overflow.length) await requeue(overflow, false)
+      await this.startGame(gameType, stake, seated, bots, variation)
+      return
+    }
 
     let botsNeeded: number
     if (config.bot_fill_table_size) {

@@ -86,6 +86,8 @@ class _LudoGamePageState extends State<LudoGamePage>
 
   LudoState? _state;
   int _mySeatIndex = 0;
+  Map<String, dynamic>? _lastAction;
+  bool _onlineActionPending = false;
   bool _rolling = false;
   bool _botBusy = false;
   String? _banner;
@@ -289,6 +291,24 @@ class _LudoGamePageState extends State<LudoGamePage>
 
   // ── Online ────────────────────────────────────────────────────────────────
   void _initOnline() {
+    _socket.emit(SocketEvents.joinRoom, {'room_id': widget.roomId});
+    _subs.add(_socket.on('reconnect').listen((_) =>
+        _socket.emit(SocketEvents.joinRoom, {'room_id': widget.roomId})));
+
+    _subs.add(_socket.on(SocketEvents.roomJoined).listen((data) {
+      if (!mounted || data == null || data['state'] == null) return;
+      final newState = LudoState.fromJson(Map<String, dynamic>.from(data['state']));
+      final yourSeat = data['your_seat'];
+      setState(() {
+        _state = newState;
+        if (yourSeat is int) {
+          _mySeatIndex = _state!.players.indexWhere((p) => p.seat == yourSeat);
+          if (_mySeatIndex < 0) _mySeatIndex = 0;
+        }
+        _banner = _isMyTurn ? 'Your turn — roll the dice' : 'Waiting…';
+      });
+    }));
+
     final data = widget.initialData;
     if (data != null && data['state'] != null) {
       _state = LudoState.fromJson(Map<String, dynamic>.from(data['state']));
@@ -308,13 +328,15 @@ class _LudoGamePageState extends State<LudoGamePage>
       // Infer capture/home for SFX by diffing token state since last update.
       final captured = _detectCapture(prevPlayers, newState.players);
       final homed = _detectHome(prevPlayers, newState.players);
+      final la = d['last_action'];
       setState(() {
         _state = newState;
+        _onlineActionPending = false;
+        _lastAction = la != null ? Map<String, dynamic>.from(la) : null;
         _banner = _isMyTurn
             ? (newState.awaiting == 'move' ? 'Tap a token' : 'Your turn — roll')
             : '${newState.players[newState.currentTurn].username} is playing…';
       });
-      final la = d['last_action'];
       // last_action.user_id is the authoritative actor (it's the request's own
       // conn.userId server-side, or the acting bot's user_id) — look up their
       // username directly instead of guessing from turn-index math, which
@@ -388,7 +410,10 @@ class _LudoGamePageState extends State<LudoGamePage>
     _subs.add(_socket.on(SocketEvents.errorEvent).listen((d) {
       if (!mounted) return;
       final msg = (d is Map ? d['message'] : d)?.toString() ?? 'Action failed';
-      setState(() => _banner = msg);
+      setState(() {
+        _onlineActionPending = false;
+        _banner = msg;
+      });
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(content: Text(msg)));
@@ -464,14 +489,16 @@ class _LudoGamePageState extends State<LudoGamePage>
   }
 
   void _onlineRoll() {
-    if (!_isMyTurn || _state?.awaiting != 'roll') return;
+    if (!_isMyTurn || _state?.awaiting != 'roll' || _onlineActionPending) return;
+    setState(() => _onlineActionPending = true);
     SoundService.instance.play(Sfx.diceRoll);
     _socket.emit(SocketEvents.gameAction,
         {'room_id': widget.roomId, 'action': 'roll_dice'});
   }
 
   void _onlineMove(int tokenIndex) {
-    if (!_isMyTurn || _state?.awaiting != 'move') return;
+    if (!_isMyTurn || _state?.awaiting != 'move' || _onlineActionPending) return;
+    setState(() => _onlineActionPending = true);
     _socket.emit(SocketEvents.gameAction, {
       'room_id': widget.roomId,
       'action': 'move_token',
@@ -1069,8 +1096,20 @@ class _LudoGamePageState extends State<LudoGamePage>
     final isMe = playerIndex == (widget.offline ? 0 : _mySeatIndex);
     final canRoll = isMe && s.awaiting == 'roll' && !_rolling && !_botBusy;
 
+    final justRolled = !widget.offline &&
+        _showRollNotif &&
+        _lastAction != null &&
+        _lastAction!['user_id'] == p.userId &&
+        _lastAction!['dice'] != null;
+
     Widget? diceWidget;
-    if (active) {
+    if (active || justRolled) {
+      final isRoller = widget.offline
+          ? active
+          : (_lastAction != null &&
+              _lastAction!['user_id'] == p.userId &&
+              _lastAction!['dice'] != null);
+
       diceWidget = GestureDetector(
         onTap: canRoll ? _onRoll : null,
         child: MouseRegion(
@@ -1079,7 +1118,12 @@ class _LudoGamePageState extends State<LudoGamePage>
             alignment: Alignment.center,
             clipBehavior: Clip.none,
             children: [
-              _DiceWidget(value: s.dice ?? _lastDice, controller: _diceCtrl),
+              _DiceWidget(
+                value: justRolled
+                    ? (_lastAction!['dice'] as num).toInt()
+                    : (s.dice ?? _lastDice),
+                controller: isRoller ? _diceCtrl : null,
+              ),
               if (canRoll)
                 Positioned(
                   bottom: -6,
@@ -1316,20 +1360,24 @@ class _LudoGamePageState extends State<LudoGamePage>
 /// settles showing [value] pips.
 class _DiceWidget extends StatelessWidget {
   final int value;
-  final AnimationController controller;
-  const _DiceWidget({required this.value, required this.controller});
+  final AnimationController? controller;
+  const _DiceWidget({required this.value, this.controller});
 
   @override
   Widget build(BuildContext context) {
+    final ctrl = controller;
+    if (ctrl == null) {
+      return _face(value);
+    }
     return AnimatedBuilder(
-      animation: controller,
+      animation: ctrl,
       builder: (context, _) {
-        final t = controller.value;
+        final t = ctrl.value;
         final angle = t * 4 * 3.14159; // two full spins
         final scale = 1 + 0.25 * (t < 0.5 ? t * 2 : (1 - t) * 2);
         // While tumbling, flip through faces so it reads as a real roll, then
         // lock onto the settled value in the last stretch of the animation.
-        final rolling = controller.isAnimating && t < 0.82;
+        final rolling = ctrl.isAnimating && t < 0.82;
         final shown = rolling ? (1 + ((t * 46).floor() % 6)) : value;
         return Transform.scale(
           scale: scale,
