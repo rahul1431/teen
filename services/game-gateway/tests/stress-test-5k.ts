@@ -17,7 +17,7 @@ const CONFIG = {
   GATEWAY_BASE_URL: 'http://127.0.0.1:80',
   WEBSOCKET_BASE_URL: 'ws://127.0.0.1:80',
   TEST_DURATION_SECONDS: 120, // 2 minutes
-  JWT_SECRET: 'cluster_jwt_secret_min_32_characters_long',
+  JWT_SECRET: process.env.JWT_SECRET || 'test-secret-min-32-characters-long-test',
   HEARTBEAT_INTERVAL_MS: 30000, // Keep-alive ping
   ACTION_INTERVAL_MS: 2000, // Simulate action every 2 seconds
 }

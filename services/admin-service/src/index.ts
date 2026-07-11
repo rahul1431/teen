@@ -20,6 +20,7 @@ import { registerBotLearningRoutes } from './bot-learning-routes'
 import { registerMonitorRoutes } from './monitor-routes'
 import { registerMetricsRoutes } from './metrics-routes'
 import { registerPlayerAnomaliesRoutes } from './player-anomalies-routes'
+import { createRateLimiter } from './middleware/rate-limiter'
 
 // QR images for payment methods are stored here, served by nginx at /uploads/qr/.
 const QR_UPLOAD_DIR = process.env.QR_UPLOAD_DIR || '/opt/teen/uploads/qr'
@@ -76,6 +77,20 @@ async function start() {
   app.decorate('authenticate', authenticate)
   app.decorate('requireRole', requireRole)
 
+  // Initialize rate limiter
+  const rateLimiter = createRateLimiter(redis)
+
+  // Apply HTTP rate limiting to all routes (skip for certain endpoints)
+  app.addHook('onRequest', (req, reply, done) => {
+    // Skip rate limiting for health checks and public endpoints
+    if (req.url === '/health' || req.url === '/api/admin/auth/login') {
+      return done()
+    }
+    rateLimiter.httpLimiter(req, reply)
+      .then(() => done())
+      .catch(done)
+  })
+
   // Register ML routes
   await registerMLRoutes(app, redis, db, authenticate)
 
@@ -98,7 +113,7 @@ async function start() {
   // If the admin has 2FA enabled, the call must include `totp_code`. If it's
   // missing on a 2FA-enabled account, we respond with 401 + a `require_2fa`
   // flag so the UI knows to prompt for the code.
-  app.post('/api/admin/auth/login', async (req, reply) => {
+  app.post('/api/admin/auth/login', { onRequest: [rateLimiter.loginLimiter.bind(rateLimiter)] }, async (req, reply) => {
     const { username, password, totp_code } = z.object({
       username: z.string(),
       password: z.string(),

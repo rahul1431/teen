@@ -22,11 +22,14 @@ const GATEWAY_URLS = [
 ]
 
 const LOAD_BALANCER_URL = 'http://127.0.0.1:80'
-const REDIS_URL = 'redis://:teen_redis_2024@127.0.0.1:6379'
-const DATABASE_URL = 'postgresql://teen:teen_secret_2024@localhost:5432/teen_db'
+const REDIS_URL = process.env.REDIS_URL || 'redis://:test-default@127.0.0.1:6379'
+const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://test:test@localhost:5432/test_db'
 
 // JWT Secret for tests (must match gateway instances)
-const JWT_SECRET = 'cluster_jwt_secret_min_32_characters_long'
+const JWT_SECRET = process.env.JWT_SECRET || 'test-secret-min-32-characters-long-test'
+
+// Internal cluster key for testing
+const INTERNAL_KEY = process.env.INTERNAL_KEY || 'test-internal-key'
 
 let redis: Redis
 let db: Pool
@@ -144,7 +147,7 @@ describe('Load Balancing', () => {
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${token}`,
-              'x-internal-key': 'cluster_internal_key_2024',
+              'x-internal-key': INTERNAL_KEY,
             },
             body: JSON.stringify({ player_id: playerId }),
           })
@@ -187,7 +190,7 @@ describe('Load Balancing', () => {
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${token}`,
-              'x-internal-key': 'cluster_internal_key_2024',
+              'x-internal-key': INTERNAL_KEY,
             },
             body: JSON.stringify({ player_id: playerId }),
           })
@@ -312,7 +315,7 @@ describe('Load Balancing', () => {
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${token}`,
-              'x-internal-key': 'cluster_internal_key_2024',
+              'x-internal-key': INTERNAL_KEY,
             },
             body: JSON.stringify({ player_id: playerId }),
           })

@@ -12,6 +12,7 @@ import { GameWatchdog } from './watchdog'
 import { RealtimeHub, Conn } from './realtime'
 import { monitorEmitter } from './monitor-emitter'
 import { SessionManager } from './session-manager'
+import { createRateLimiter } from './middleware/rate-limiter'
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
@@ -38,6 +39,20 @@ async function start() {
 
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: jwtSecret })
+
+  // Initialize rate limiter
+  const rateLimiter = createRateLimiter(redis)
+
+  // Apply HTTP rate limiting to all routes
+  app.addHook('onRequest', (req, reply, done) => {
+    // Skip rate limiting for health checks
+    if (req.url === '/health') {
+      return done()
+    }
+    rateLimiter.httpLimiter(req, reply)
+      .then(() => done())
+      .catch(done)
+  })
 
   const httpServer = app.server
   const hub = new RealtimeHub()
@@ -70,7 +85,16 @@ async function start() {
   // ?token= query param or the Authorization header.
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' })
 
-  wss.on('connection', (ws: WebSocket, req) => {
+  wss.on('connection', async (ws: WebSocket, req) => {
+    // --- Rate limit WebSocket connections per IP ---
+    const clientIP = req.socket.remoteAddress || 'unknown'
+    const { allowed, resetTime } = await rateLimiter.wsLimiter(clientIP)
+    if (!allowed) {
+      console.warn(`[ws] rate limit exceeded for IP ${clientIP}`)
+      ws.close(4029, `WebSocket connection rate limit exceeded. Retry after ${Math.ceil((resetTime - Date.now()) / 1000)}s`)
+      return
+    }
+
     // --- Authenticate the handshake ---
     let userId: string, username: string
     try {
