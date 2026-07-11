@@ -1,5 +1,5 @@
 import { Table, Tag, Button, Space, Popconfirm, Badge, Typography, Tooltip } from 'antd'
-import { LinkOutlined, CheckOutlined, PauseOutlined, EyeOutlined, SafeOutlined } from '@ant-design/icons'
+import { LinkOutlined, CheckOutlined, PauseOutlined, EyeOutlined, SafetyOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 
 const { Text } = Typography
@@ -192,7 +192,7 @@ export function AnomaliesTable({
               okText="Whitelist"
               onConfirm={() => handleWhitelist(record.player_id)}
             >
-              <Button size="small" icon={<SafeOutlined />}>
+              <Button size="small" icon={<SafetyOutlined />}>
                 Whitelist
               </Button>
             </Popconfirm>
