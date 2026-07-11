@@ -39,6 +39,8 @@ export interface BotLearningConfig {
   hard_percentile_min: number
 }
 
+const MIN_SAMPLE_SIZE = 50
+
 const GAME_TYPES = ['teen_patti', 'ludo', 'aviator'] as const
 const DIFFICULTIES = ['easy', 'medium', 'hard'] as const
 const PROFILE_CACHE_TTL = 3600 // 1 hour
@@ -66,7 +68,7 @@ export class ProfileBuilder {
       rebuild_hour:          parseInt(raw.rebuild_hour          ?? '2'),
       stream_lookback_days:  parseInt(raw.stream_lookback_days  ?? '7'),
       history_lookback_days: parseInt(raw.history_lookback_days ?? '30'),
-      min_sample_size:       parseInt(raw.min_sample_size       ?? '50'),
+      min_sample_size:       parseInt(raw.min_sample_size       ?? String(MIN_SAMPLE_SIZE)),
       easy_percentile_max:   parseInt(raw.easy_percentile_max   ?? '25'),
       medium_percentile_min: parseInt(raw.medium_percentile_min ?? '40'),
       medium_percentile_max: parseInt(raw.medium_percentile_max ?? '60'),
@@ -131,7 +133,7 @@ export class ProfileBuilder {
 
     for (const gameType of GAME_TYPES) {
       try {
-        await this.rebuildForGame(gameType, cfg)
+        await this.buildProfiles(gameType, cfg)
       } catch (err) {
         this.logger.error({ err, gameType }, 'Rebuild failed for game type')
       }
@@ -153,7 +155,7 @@ export class ProfileBuilder {
     return this.runRebuild()
   }
 
-  private async rebuildForGame(gameType: string, cfg: BotLearningConfig): Promise<void> {
+  private async buildProfiles(gameType: string, cfg: BotLearningConfig): Promise<void> {
     // Step 1: Get real player stats from game_results + game_participants (last N days)
     const playersRes = await this.pool.query(
       `SELECT
