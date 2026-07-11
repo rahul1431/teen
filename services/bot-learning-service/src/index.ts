@@ -10,8 +10,9 @@ import { DriftDetector } from './drift-detector'
 import { SlackNotifier } from './slack-notifier'
 import { MetricsAggregator } from './metrics-aggregator'
 import { AdaptiveThresholds } from './adaptive-thresholds'
+import { AnomalyResponseHandler } from './anomaly-response-handler'
 
-export { ProfileBuilder, AuditLogger, DriftDetector, SlackNotifier, MetricsAggregator, AdaptiveThresholds }
+export { ProfileBuilder, AuditLogger, DriftDetector, SlackNotifier, MetricsAggregator, AdaptiveThresholds, AnomalyResponseHandler }
 
 const logger = pino()
 
@@ -28,6 +29,7 @@ async function start() {
   const driftDetector = new DriftDetector(pool, redis, logger, slackNotifier)
   const metricsAggregator = new MetricsAggregator(pool, logger)
   const adaptiveThresholds = new AdaptiveThresholds(pool, redis, logger)
+  const anomalyResponseHandler = new AnomalyResponseHandler(pool, logger)
 
   // Schedule nightly rebuild at 2 AM (or configured hour)
   const cfg = await builder.getConfig().catch(() => ({ rebuild_hour: 2 }))
@@ -75,6 +77,18 @@ async function start() {
     driftDetector.run().catch(err => logger.error({ err }, 'Drift detection failed'))
   })
   logger.info('Drift detection cron scheduled (hourly at :05)')
+
+  // Schedule anomaly response handler every 5 minutes (Task 22)
+  cron.schedule('*/5 * * * *', () => {
+    anomalyResponseHandler.processAnomalies().catch(err => logger.error({ err }, 'Anomaly response processing failed'))
+  })
+  logger.info('Anomaly response handler cron scheduled (every 5 minutes)')
+
+  // Schedule daily anomaly report at 08:00 UTC
+  cron.schedule('0 8 * * *', () => {
+    anomalyResponseHandler.generateDailyReport().catch(err => logger.error({ err }, 'Failed to generate daily anomaly report'))
+  })
+  logger.info('Daily anomaly report cron scheduled (08:00 UTC)')
 
   // Health
   app.get('/health', async (_req, reply) => {
@@ -171,6 +185,37 @@ async function start() {
     } catch (err) {
       logger.error({ err }, 'Metrics aggregation endpoint failed')
       return reply.code(500).send({ success: false, error: 'Metrics aggregation failed' })
+    }
+  })
+
+  // POST /internal/anomalies/process (called by cron or admin to manually trigger anomaly response processing)
+  app.post('/internal/anomalies/process', async (_req, reply) => {
+    try {
+      const stats = await anomalyResponseHandler.processAnomalies()
+      return reply.send({
+        success: true,
+        data: {
+          status: 'completed',
+          ...stats,
+        },
+      })
+    } catch (err) {
+      logger.error({ err }, 'Anomaly response processing endpoint failed')
+      return reply.code(500).send({ success: false, error: 'Anomaly processing failed' })
+    }
+  })
+
+  // GET /internal/anomalies/report (get daily anomaly report)
+  app.get('/internal/anomalies/report', async (_req, reply) => {
+    try {
+      const report = await anomalyResponseHandler.generateDailyReport()
+      return reply.send({
+        success: true,
+        data: report,
+      })
+    } catch (err) {
+      logger.error({ err }, 'Daily anomaly report endpoint failed')
+      return reply.code(500).send({ success: false, error: 'Failed to generate report' })
     }
   })
 

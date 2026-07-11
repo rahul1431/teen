@@ -2325,6 +2325,182 @@ async function start() {
     }
   })
 
+  // ── Anomaly Response Handler endpoints ──────────────────────────────────────────────────────────────
+
+  // POST /api/admin/override-anomaly-pause/:playerId - Admin override for anomaly pause
+  app.post('/api/admin/override-anomaly-pause/:playerId', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    try {
+      const { playerId } = req.params as any
+      const { reason, anomalyId } = z.object({
+        reason: z.string().min(5).max(255),
+        anomalyId: z.string().uuid().optional(),
+      }).parse(req.body)
+      const admin = req.user as any
+
+      // Start transaction
+      const client = await db.connect()
+      try {
+        await client.query('BEGIN')
+
+        // Update player status back to active
+        const playerResult = await client.query(
+          'UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING id, status',
+          ['active', playerId]
+        )
+
+        if (!playerResult.rows.length) {
+          await client.query('ROLLBACK')
+          return reply.code(404).send({ success: false, error: 'Player not found' })
+        }
+
+        // If anomalyId provided, update anomaly status to overridden
+        if (anomalyId) {
+          const anomalyResult = await client.query(
+            `UPDATE player_anomalies
+             SET status = $1, admin_override_at = NOW(), override_by = $2, override_reason = $3, updated_at = NOW()
+             WHERE id = $4
+             RETURNING id, player_id, anomaly_type, confidence`,
+            ['overridden', admin.sub, reason, anomalyId]
+          )
+
+          if (anomalyResult.rows.length) {
+            // Create admin override audit record
+            await client.query(
+              `INSERT INTO admin_anomaly_overrides (anomaly_id, player_id, override_reason, overridden_by, created_at)
+               VALUES ($1, $2, $3, $4, NOW())`,
+              [anomalyId, playerId, reason, admin.sub]
+            )
+
+            // Log the override action to audit log
+            await client.query(
+              `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details, created_at)
+               VALUES ($1, $2, $3, $4, $5, NOW())`,
+              [
+                admin.sub,
+                'anomaly_override',
+                'player_anomaly',
+                anomalyId,
+                JSON.stringify({ reason, player_id: playerId })
+              ]
+            )
+          }
+        }
+
+        await client.query('COMMIT')
+
+        return reply.send({
+          success: true,
+          data: {
+            playerId,
+            status: 'active',
+            message: 'Player pause overridden successfully',
+            reason,
+          },
+        })
+      } catch (err: any) {
+        await client.query('ROLLBACK').catch(() => {})
+        throw err
+      } finally {
+        client.release()
+      }
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to override anomaly pause' })
+    }
+  })
+
+  // GET /api/admin/anomalies - List detected anomalies
+  app.get('/api/admin/anomalies', { onRequest: [authenticate] }, async (req, reply) => {
+    try {
+      const { status, limit = 50, offset = 0 } = req.query as any
+
+      let query = `
+        SELECT
+          pa.id,
+          pa.player_id,
+          u.username,
+          pa.anomaly_type,
+          pa.confidence,
+          pa.anomaly_score,
+          pa.feature_zscore,
+          pa.status,
+          pa.created_at,
+          pa.player_paused_at,
+          pa.support_ticket_id,
+          st.subject as ticket_subject
+        FROM player_anomalies pa
+        LEFT JOIN users u ON pa.player_id = u.id
+        LEFT JOIN support_tickets st ON pa.support_ticket_id = st.id
+      `
+
+      const params: any[] = []
+
+      if (status) {
+        query += ` WHERE pa.status = $${params.length + 1}`
+        params.push(status)
+      }
+
+      query += ` ORDER BY pa.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
+      params.push(limit, offset)
+
+      const result = await db.query(query, params)
+
+      return reply.send({
+        success: true,
+        data: result.rows,
+        total: result.rows.length,
+      })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to fetch anomalies' })
+    }
+  })
+
+  // PATCH /api/admin/anomalies/:anomalyId/dismiss - Dismiss an anomaly
+  app.patch('/api/admin/anomalies/:anomalyId/dismiss', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    try {
+      const { anomalyId } = req.params as any
+      const { reason } = z.object({
+        reason: z.string().min(5).max(255),
+      }).parse(req.body)
+      const admin = req.user as any
+
+      const result = await db.query(
+        `UPDATE player_anomalies
+         SET status = $1, dismissed_at = NOW(), dismissed_by = $2, dismissal_reason = $3, updated_at = NOW()
+         WHERE id = $4
+         RETURNING id, player_id, anomaly_type`,
+        ['dismissed', admin.sub, reason, anomalyId]
+      )
+
+      if (!result.rows.length) {
+        return reply.code(404).send({ success: false, error: 'Anomaly not found' })
+      }
+
+      // Log to audit
+      await db.query(
+        `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details, created_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())`,
+        [
+          admin.sub,
+          'anomaly_dismissed',
+          'player_anomaly',
+          anomalyId,
+          JSON.stringify({ reason })
+        ]
+      )
+
+      return reply.send({
+        success: true,
+        data: {
+          anomalyId,
+          status: 'dismissed',
+          message: 'Anomaly dismissed',
+        },
+      })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to dismiss anomaly' })
+    }
+  })
+
   // â”€â”€ Emoji management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   // GET /api/admin/emojis — list all emojis
