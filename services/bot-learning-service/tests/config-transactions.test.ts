@@ -133,7 +133,7 @@ describe('Config Transactions', () => {
       expect(lastCall.toUpperCase()).toContain('COMMIT')
 
       // Verify auditLogger was called with the updates
-      expect(auditLogger.logProfileChange).toHaveBeenCalledWith('config_updated', updates)
+      expect(auditLogger.logProfileChange).toHaveBeenCalledWith('system', 'config', updates, null, 'Config updated via API')
     })
 
     it('should validate numeric keys before transaction', async () => {

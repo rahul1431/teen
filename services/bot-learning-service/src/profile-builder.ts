@@ -1,15 +1,28 @@
 import { Pool } from 'pg'
 import Redis from 'ioredis'
 import { Logger } from 'pino'
+import { AuditLogger } from './audit-logger'
 
-export interface AuditLogger {
-  logProfileChange(action: string, details: Record<string, any>): Promise<void>
-}
+export type { AuditLogger }
 
 // No-op audit logger for when one is not provided
-class NoOpAuditLogger implements AuditLogger {
-  async logProfileChange(_action: string, _details: Record<string, any>): Promise<void> {
+class NoOpAuditLogger {
+  async logProfileChange(
+    _gameType: string,
+    _difficulty: string,
+    _changes: Record<string, any>,
+    _adminUserId: string | null,
+    _reason: string
+  ): Promise<void> {
     // No-op
+  }
+
+  async getAuditLog(): Promise<any[]> {
+    return []
+  }
+
+  async getRecentChanges(): Promise<any[]> {
+    return []
   }
 }
 
@@ -47,7 +60,7 @@ const PROFILE_CACHE_TTL = 3600 // 1 hour
 
 export class ProfileBuilder {
   private configOverrides: Partial<BotLearningConfig>
-  private auditLogger: AuditLogger
+  private auditLogger: AuditLogger | NoOpAuditLogger
 
   constructor(
     private pool: Pool,
@@ -114,7 +127,7 @@ export class ProfileBuilder {
       await this.pool.query('COMMIT')
 
       // Log the change after successful commit
-      await this.auditLogger.logProfileChange('config_updated', updates)
+      await this.auditLogger.logProfileChange('system', 'config', updates, null, 'Config updated via API')
     } catch (error) {
       // Rollback transaction on any error
       try {
@@ -228,6 +241,39 @@ export class ProfileBuilder {
       // raiseProb is computed but used only as intermediate — final value is normalizedRaise
       void raiseProb
 
+      // Fetch current profile to capture old values for audit log
+      const oldProfile = await this.pool.query(
+        `SELECT win_rate_target, fold_probability, call_probability, raise_probability,
+                avg_decision_delay_ms, avg_stake_preference, aggression_score, sample_size
+         FROM bot_profiles WHERE game_type = $1 AND difficulty = $2`,
+        [gameType, difficulty]
+      )
+
+      const currentValues = oldProfile.rows.length > 0 ? oldProfile.rows[0] : null
+      const changes: Record<string, any> = {}
+
+      // Track what changed
+      const newValues = {
+        win_rate_target: Math.round(avgWinRate * 10) / 10,
+        fold_probability: Math.round(normalizedFold  * 10000) / 10000,
+        call_probability: Math.round(normalizedCall  * 10000) / 10000,
+        raise_probability: Math.round(normalizedRaise * 10000) / 10000,
+        avg_decision_delay_ms: Math.round(delayMs),
+        avg_stake_preference: Math.round(avgStake),
+        aggression_score: Math.round(aggression * 10) / 10,
+        sample_size: tierPlayers.length,
+      }
+
+      // Only log changes if profile existed before
+      if (currentValues) {
+        for (const [key, newVal] of Object.entries(newValues)) {
+          const oldVal = (currentValues as any)[key]
+          if (oldVal !== newVal) {
+            changes[key] = { old: oldVal, new: newVal }
+          }
+        }
+      }
+
       await this.pool.query(
         `INSERT INTO bot_profiles
            (game_type, difficulty, win_rate_target, fold_probability, call_probability,
@@ -246,16 +292,27 @@ export class ProfileBuilder {
            last_rebuilt_at       = NOW()`,
         [
           gameType, difficulty,
-          Math.round(avgWinRate * 10) / 10,
-          Math.round(normalizedFold  * 10000) / 10000,
-          Math.round(normalizedCall  * 10000) / 10000,
-          Math.round(normalizedRaise * 10000) / 10000,
-          Math.round(delayMs),
-          Math.round(avgStake),
-          Math.round(aggression * 10) / 10,
-          tierPlayers.length,
+          newValues.win_rate_target,
+          newValues.fold_probability,
+          newValues.call_probability,
+          newValues.raise_probability,
+          newValues.avg_decision_delay_ms,
+          newValues.avg_stake_preference,
+          newValues.aggression_score,
+          newValues.sample_size,
         ]
       )
+
+      // Log profile change if there were updates
+      if (Object.keys(changes).length > 0) {
+        await this.auditLogger.logProfileChange(
+          gameType,
+          difficulty,
+          changes,
+          null,
+          `Automatic rebuild from ${tierPlayers.length} players`
+        )
+      }
 
       this.logger.info({ gameType, difficulty, sampleSize: tierPlayers.length, winRate: avgWinRate.toFixed(1) }, 'Profile upserted')
     }
@@ -304,22 +361,46 @@ export class ProfileBuilder {
     return profile
   }
 
-  async overrideProfile(gameType: string, difficulty: string, fields: Partial<BotProfile>): Promise<void> {
+  async overrideProfile(gameType: string, difficulty: string, fields: Partial<BotProfile>, adminUserId?: string | null): Promise<void> {
     const allowed = ['win_rate_target', 'fold_probability', 'call_probability', 'raise_probability',
                      'avg_decision_delay_ms', 'avg_stake_preference', 'aggression_score']
+
+    // Fetch current profile to capture old values for audit log
+    const currentProfile = await this.getProfile(gameType, difficulty)
+    const changes: Record<string, any> = {}
+
     const sets: string[] = []
     const params: any[] = [gameType, difficulty]
     for (const [k, v] of Object.entries(fields)) {
       if (allowed.includes(k)) {
+        // Track the change for audit logging
+        const oldValue = (currentProfile as any)?.[k]
+        if (oldValue !== v) {
+          changes[k] = { old: oldValue, new: v }
+        }
+
         sets.push(`${k} = $${params.length + 1}`)
         params.push(v)
       }
     }
     if (!sets.length) return
+
     await this.pool.query(
       `UPDATE bot_profiles SET ${sets.join(', ')} WHERE game_type = $1 AND difficulty = $2`,
       params
     )
+
+    // Log the profile change to audit log
+    if (Object.keys(changes).length > 0) {
+      await this.auditLogger.logProfileChange(
+        gameType,
+        difficulty,
+        changes,
+        adminUserId ?? null,
+        'Manual profile override'
+      )
+    }
+
     await this.redis.del(`bot:profile:${gameType}:${difficulty}`)
   }
 

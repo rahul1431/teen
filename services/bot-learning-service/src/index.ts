@@ -5,6 +5,9 @@ import { Pool } from 'pg'
 import pino from 'pino'
 import cron from 'node-cron'
 import { ProfileBuilder } from './profile-builder'
+import { AuditLogger } from './audit-logger'
+
+export { ProfileBuilder, AuditLogger }
 
 const logger = pino()
 
@@ -15,7 +18,8 @@ async function start() {
   const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
   if (redis.status === 'wait') await redis.connect()
 
-  const builder = new ProfileBuilder(pool, redis, logger)
+  const auditLogger = new AuditLogger(pool, logger)
+  const builder = new ProfileBuilder(pool, redis, logger, undefined, auditLogger)
 
   // Schedule nightly rebuild at 2 AM (or configured hour)
   const cfg = await builder.getConfig().catch(() => ({ rebuild_hour: 2 }))
