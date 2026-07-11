@@ -2,6 +2,17 @@ import { Pool } from 'pg'
 import Redis from 'ioredis'
 import { Logger } from 'pino'
 
+export interface AuditLogger {
+  logProfileChange(action: string, details: Record<string, any>): Promise<void>
+}
+
+// No-op audit logger for when one is not provided
+class NoOpAuditLogger implements AuditLogger {
+  async logProfileChange(_action: string, _details: Record<string, any>): Promise<void> {
+    // No-op
+  }
+}
+
 export interface BotProfile {
   id?: string
   game_type: string
@@ -34,14 +45,17 @@ const PROFILE_CACHE_TTL = 3600 // 1 hour
 
 export class ProfileBuilder {
   private configOverrides: Partial<BotLearningConfig>
+  private auditLogger: AuditLogger
 
   constructor(
     private pool: Pool,
     private redis: Redis,
     private logger: Logger,
-    config?: Partial<BotLearningConfig>
+    config?: Partial<BotLearningConfig>,
+    auditLogger?: AuditLogger
   ) {
     this.configOverrides = config ?? {}
+    this.auditLogger = auditLogger ?? new NoOpAuditLogger()
   }
 
   async getConfig(): Promise<BotLearningConfig> {
@@ -52,7 +66,7 @@ export class ProfileBuilder {
       rebuild_hour:          parseInt(raw.rebuild_hour          ?? '2'),
       stream_lookback_days:  parseInt(raw.stream_lookback_days  ?? '7'),
       history_lookback_days: parseInt(raw.history_lookback_days ?? '30'),
-      min_sample_size:       parseInt(raw.min_sample_size       ?? '10'),
+      min_sample_size:       parseInt(raw.min_sample_size       ?? '50'),
       easy_percentile_max:   parseInt(raw.easy_percentile_max   ?? '25'),
       medium_percentile_min: parseInt(raw.medium_percentile_min ?? '40'),
       medium_percentile_max: parseInt(raw.medium_percentile_max ?? '60'),
@@ -66,17 +80,48 @@ export class ProfileBuilder {
       'rebuild_hour', 'stream_lookback_days', 'history_lookback_days', 'min_sample_size',
       'easy_percentile_max', 'medium_percentile_min', 'medium_percentile_max', 'hard_percentile_min',
     ]
+
+    // Validate all keys first (before transaction)
     for (const [key, value] of Object.entries(updates)) {
       if (numericKeys.includes(key)) {
         const parsed = parseInt(value, 10)
         if (isNaN(parsed)) throw new Error(`Invalid numeric value for config key '${key}': ${value}`)
       }
-      await this.pool.query(
-        `INSERT INTO bot_learning_config (key, value, updated_at)
-         VALUES ($1, $2, NOW())
-         ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-        [key, value]
-      )
+    }
+
+    // Return early if no updates to process
+    if (Object.keys(updates).length === 0) {
+      return
+    }
+
+    // Begin transaction
+    try {
+      await this.pool.query('BEGIN')
+
+      // Execute all updates within transaction
+      for (const [key, value] of Object.entries(updates)) {
+        await this.pool.query(
+          `INSERT INTO bot_learning_config (key, value, updated_at)
+           VALUES ($1, $2, NOW())
+           ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+          [key, value]
+        )
+      }
+
+      // Commit transaction
+      await this.pool.query('COMMIT')
+
+      // Log the change after successful commit
+      await this.auditLogger.logProfileChange('config_updated', updates)
+    } catch (error) {
+      // Rollback transaction on any error
+      try {
+        await this.pool.query('ROLLBACK')
+      } catch (rollbackError) {
+        this.logger.error({ rollbackError }, 'Failed to rollback transaction')
+      }
+      // Re-throw the original error
+      throw error
     }
   }
 
