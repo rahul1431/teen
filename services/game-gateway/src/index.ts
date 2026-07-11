@@ -30,8 +30,14 @@ const INSTANCE_ID = `gateway-${crypto.randomUUID().substring(0, 8)}`
 const TIP_AMOUNTS = [5, 10, 20, 50]
 
 async function start() {
+  // Validate environment variables early
+  const jwtSecret = process.env.JWT_SECRET
+  if (!jwtSecret) {
+    throw new Error('JWT_SECRET environment variable is not set. Configure it in .env or via PM2 ecosystem config.')
+  }
+
   await app.register(cors, { origin: true })
-  await app.register(jwt, { secret: process.env.JWT_SECRET! })
+  await app.register(jwt, { secret: jwtSecret })
 
   const httpServer = app.server
   const hub = new RealtimeHub()
@@ -783,13 +789,67 @@ async function start() {
     dispatchSideshowEvents(room_id, data, newState)
   }
 
+  // --- Authentication Middleware ---
+
+  /**
+   * Middleware: Verify internal service key via x-internal-key header
+   * Auth Method: Internal-Only Header (x-internal-key)
+   * Returns: 401 Unauthorized if key missing or invalid
+   * Returns: 403 Forbidden if service not allowed (future use)
+   */
+  async function verifyInternalOnly(req: any, reply: any): Promise<boolean> {
+    const expectedKey = process.env.INTERNAL_SERVICE_KEY
+    if (!expectedKey) {
+      console.warn('[auth] INTERNAL_SERVICE_KEY not configured')
+      return reply.code(500).send({ error: 'Internal auth not configured' }), false
+    }
+
+    const providedKey = req.headers['x-internal-key']
+    if (!providedKey || providedKey !== expectedKey) {
+      console.warn('[auth] Invalid or missing x-internal-key header from', req.ip)
+      return reply.code(401).send({ error: 'Unauthorized', code: 'INVALID_SERVICE_KEY' }), false
+    }
+
+    return true
+  }
+
+  /**
+   * Middleware: Verify JWT token from Authorization header
+   * Auth Method: Bearer Token (JWT)
+   * Returns: 401 Unauthorized if token missing or invalid
+   * Returns: 403 Forbidden if token expired
+   */
+  async function verifyJWT(req: any, reply: any): Promise<any> {
+    try {
+      const token = req.headers.authorization?.split(' ')[1]
+      if (!token) {
+        console.warn('[auth] Missing Bearer token from', req.ip)
+        return reply.code(401).send({ error: 'Unauthorized', code: 'MISSING_TOKEN' }), null
+      }
+
+      const payload = app.jwt.verify(token) as any
+      return payload
+    } catch (err) {
+      const msg = (err as Error).message
+      console.warn('[auth] Invalid JWT token:', msg, 'from', req.ip)
+      if (msg.includes('expired')) {
+        return reply.code(403).send({ error: 'Forbidden', code: 'TOKEN_EXPIRED' }), null
+      }
+      return reply.code(401).send({ error: 'Unauthorized', code: 'INVALID_TOKEN' }), null
+    }
+  }
+
   // --- Internal Admin API Endpoints ---
 
+  /**
+   * POST /internal/game-rooms/:roomId/force-action
+   * Force a game action for a player (admin control)
+   * Auth: Internal-Only Header (x-internal-key)
+   * Risk: HIGH - allows direct game manipulation
+   */
   app.post('/internal/game-rooms/:roomId/force-action', async (req, reply) => {
-    const key = process.env.INTERNAL_SERVICE_KEY
-    if (!key || req.headers['x-internal-key'] !== key) {
-      return reply.code(401).send({ error: 'Unauthorized' })
-    }
+    const isAuth = await verifyInternalOnly(req, reply)
+    if (!isAuth) return
     const { roomId } = req.params as any
     const { user_id, action, amount, token_index } = req.body as any
 
@@ -812,11 +872,15 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  /**
+   * POST /internal/game-rooms/:roomId/kick
+   * Force remove a player from an active game (marks as bot)
+   * Auth: Internal-Only Header (x-internal-key)
+   * Risk: CRITICAL - allows ejecting players mid-game
+   */
   app.post('/internal/game-rooms/:roomId/kick', async (req, reply) => {
-    const key = process.env.INTERNAL_SERVICE_KEY
-    if (!key || req.headers['x-internal-key'] !== key) {
-      return reply.code(401).send({ error: 'Unauthorized' })
-    }
+    const isAuth = await verifyInternalOnly(req, reply)
+    if (!isAuth) return
     const { roomId } = req.params as any
     const { user_id } = req.body as any
 
@@ -905,11 +969,15 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  /**
+   * POST /internal/game-rooms/:roomId/terminate
+   * Terminate a game session and refund all stakes
+   * Auth: Internal-Only Header (x-internal-key)
+   * Risk: CRITICAL - cancels active games and triggers refunds
+   */
   app.post('/internal/game-rooms/:roomId/terminate', async (req, reply) => {
-    const key = process.env.INTERNAL_SERVICE_KEY
-    if (!key || req.headers['x-internal-key'] !== key) {
-      return reply.code(401).send({ error: 'Unauthorized' })
-    }
+    const isAuth = await verifyInternalOnly(req, reply)
+    if (!isAuth) return
     const { roomId } = req.params as any
 
     // 1. Fetch participants to refund stakes
@@ -964,11 +1032,15 @@ async function start() {
   }))
 
   // ── Internal Test Endpoint (for load balancing tests) ──
+  /**
+   * POST /internal/test-session
+   * Create or update a test session (load balancer verification)
+   * Auth: Internal-Only Header (x-internal-key)
+   * Risk: MEDIUM - allows session creation without user consent
+   */
   app.post('/internal/test-session', async (req, reply) => {
-    const key = process.env.INTERNAL_SERVICE_KEY
-    if (!key || req.headers['x-internal-key'] !== key) {
-      return reply.code(401).send({ error: 'Unauthorized' })
-    }
+    const isAuth = await verifyInternalOnly(req, reply)
+    if (!isAuth) return
 
     const { player_id } = req.body as any
     if (!player_id) {
@@ -996,11 +1068,15 @@ async function start() {
   })
 
   // ── Get Session Endpoint (for debugging) ──
+  /**
+   * GET /internal/session/:playerId
+   * Retrieve a player's session state (debugging/monitoring)
+   * Auth: Internal-Only Header (x-internal-key)
+   * Risk: MEDIUM - exposes user session state and gateway routing
+   */
   app.get('/internal/session/:playerId', async (req, reply) => {
-    const key = process.env.INTERNAL_SERVICE_KEY
-    if (!key || req.headers['x-internal-key'] !== key) {
-      return reply.code(401).send({ error: 'Unauthorized' })
-    }
+    const isAuth = await verifyInternalOnly(req, reply)
+    if (!isAuth) return
 
     const { playerId } = req.params as any
     try {

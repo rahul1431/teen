@@ -63,7 +63,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '300M',
-      env: { ...NODE_OPTS, PORT: 3004 },
+      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3004 },
     },
     {
       name: 'teen-gateway-2',
@@ -74,7 +74,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '300M',
-      env: { ...NODE_OPTS, PORT: 3021 },
+      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3021 },
     },
     {
       name: 'teen-gateway-3',
@@ -85,7 +85,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '300M',
-      env: { ...NODE_OPTS, PORT: 3022 },
+      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3022 },
     },
 
     // ── Game Engines ──
