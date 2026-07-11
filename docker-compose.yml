@@ -88,11 +88,6 @@ services:
       KAFKA_LOG_SEGMENT_BYTES: 1073741824
     ports:
       - "9092:9092"
-    healthcheck:
-      test: ["CMD", "bash", "-c", "echo DUMP_TOPICS | nc -w 1 localhost 9092 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   kafka-broker-2:
     image: confluentinc/cp-kafka:7.5.0
@@ -112,11 +107,6 @@ services:
       KAFKA_LOG_SEGMENT_BYTES: 1073741824
     ports:
       - "9093:9093"
-    healthcheck:
-      test: ["CMD", "bash", "-c", "echo DUMP_TOPICS | nc -w 1 localhost 9093 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   kafka-broker-3:
     image: confluentinc/cp-kafka:7.5.0
@@ -136,11 +126,6 @@ services:
       KAFKA_LOG_SEGMENT_BYTES: 1073741824
     ports:
       - "9094:9094"
-    healthcheck:
-      test: ["CMD", "bash", "-c", "echo DUMP_TOPICS | nc -w 1 localhost 9094 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
 volumes:
   postgres_data:
