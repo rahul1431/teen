@@ -10,6 +10,7 @@ import psycopg2
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
 from dotenv import load_dotenv
+from synthetic_data import generate_synthetic_training_data, validate_synthetic_data
 
 load_dotenv()
 
