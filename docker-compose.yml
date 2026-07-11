@@ -89,7 +89,7 @@ services:
     ports:
       - "9092:9092"
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      test: ["CMD", "bash", "-c", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server=localhost:9092 | grep -q ApiVersion"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -113,7 +113,7 @@ services:
     ports:
       - "9093:9093"
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9093"]
+      test: ["CMD", "bash", "-c", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server=localhost:9093 | grep -q ApiVersion"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -137,7 +137,7 @@ services:
     ports:
       - "9094:9094"
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9094"]
+      test: ["CMD", "bash", "-c", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server=localhost:9094 | grep -q ApiVersion"]
       interval: 10s
       timeout: 5s
       retries: 5
