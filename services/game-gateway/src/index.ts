@@ -11,6 +11,7 @@ import { MatchmakingService } from './matchmaking'
 import { GameWatchdog } from './watchdog'
 import { RealtimeHub, Conn } from './realtime'
 import { monitorEmitter } from './monitor-emitter'
+import { SessionManager } from './session-manager'
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
@@ -20,6 +21,10 @@ const redisOpts = {
 }
 const redis = new Redis(process.env.REDIS_URL!, redisOpts)
 redis.on('error', (err) => console.error('[redis] pub error', err.message))
+
+// Session Manager for stateless load balancing
+const sessionManager = new SessionManager(redis)
+const INSTANCE_ID = `gateway-${crypto.randomUUID().substring(0, 8)}`
 
 // Dealer-tip presets; must match the mobile tip tray.
 const TIP_AMOUNTS = [5, 10, 20, 50]
@@ -949,7 +954,66 @@ async function start() {
     return reply.send({ success: true })
   })
 
-  app.get('/health', async () => ({ status: 'ok', service: 'game-gateway' }))
+  // ── Health Check Endpoint (for load balancer) ──
+  app.get('/health', async () => ({
+    status: 'ok',
+    service: 'game-gateway',
+    instance: INSTANCE_ID,
+    timestamp: Date.now(),
+    uptime: process.uptime(),
+  }))
+
+  // ── Internal Test Endpoint (for load balancing tests) ──
+  app.post('/internal/test-session', async (req, reply) => {
+    const key = process.env.INTERNAL_SERVICE_KEY
+    if (!key || req.headers['x-internal-key'] !== key) {
+      return reply.code(401).send({ error: 'Unauthorized' })
+    }
+
+    const { player_id } = req.body as any
+    if (!player_id) {
+      return reply.code(400).send({ error: 'player_id required' })
+    }
+
+    try {
+      // Create or update session
+      await sessionManager.setSession(player_id, {
+        game_type: 'test',
+        gateway_instance: INSTANCE_ID,
+      })
+
+      // Verify session was created
+      const session = await sessionManager.getSession(player_id)
+      return reply.send({
+        success: true,
+        instance: INSTANCE_ID,
+        session,
+      })
+    } catch (err) {
+      console.error('[test-session] Error:', err)
+      return reply.code(500).send({ error: 'Failed to create session' })
+    }
+  })
+
+  // ── Get Session Endpoint (for debugging) ──
+  app.get('/internal/session/:playerId', async (req, reply) => {
+    const key = process.env.INTERNAL_SERVICE_KEY
+    if (!key || req.headers['x-internal-key'] !== key) {
+      return reply.code(401).send({ error: 'Unauthorized' })
+    }
+
+    const { playerId } = req.params as any
+    try {
+      const session = await sessionManager.getSession(playerId)
+      return reply.send({
+        session: session || null,
+        instance: INSTANCE_ID,
+      })
+    } catch (err) {
+      console.error('[get-session] Error:', err)
+      return reply.code(500).send({ error: 'Failed to retrieve session' })
+    }
+  })
 
   const port = parseInt(process.env.PORT || '3004')
   await app.ready()
