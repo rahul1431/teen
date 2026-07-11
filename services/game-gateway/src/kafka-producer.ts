@@ -1,5 +1,5 @@
 import { Kafka, Producer, logLevel } from 'kafkajs'
-import { EventRecord, validateEvent } from '../../../services/bot-learning-service/src/event-schema'
+import { EventRecord, validateEvent } from './event-schema'
 import pino from 'pino'
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' })
