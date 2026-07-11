@@ -13,7 +13,7 @@ interface PlayerAnomaly {
   id: string
   player_id: string
   username?: string
-  anomaly_type: string
+  anomaly_type: 'win_rate_spike' | 'session_change' | 'bet_aggression' | 'churn_risk' | 'game_frequency'
   confidence: number
   timestamp: string
   status: 'new' | 'responded' | 'overridden'
@@ -266,7 +266,7 @@ export default function PlayerAnomaliesPage() {
               min={50}
               max={100}
               value={confidenceRange}
-              onChange={setConfidenceRange}
+              onChange={(value) => setConfidenceRange(value as [number, number])}
               marks={{ 50: '50%', 100: '100%' }}
             />
             <Text type="secondary" style={{ fontSize: 11 }}>
