@@ -2,18 +2,30 @@ import os
 import pickle
 import logging
 from typing import Dict, Any
+from dataclasses import dataclass
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import pandas as pd
 import psycopg2
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score
 from dotenv import load_dotenv
+from synthetic_data import generate_synthetic_training_data
 
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("churn-ml-service")
+
+@dataclass
+class ModelResult:
+    """Result of model training with train/test split and cross-validation metrics."""
+    model: Any
+    train_accuracy: float
+    test_accuracy: float
+    cv_scores: Any  # numpy array of cross-validation scores
+    cv_mean: float
+    cv_std: float
 
 app = FastAPI(title="Teen Patti Churn ML Service")
 
@@ -64,42 +76,98 @@ def get_user_features(user_id: str = None) -> pd.DataFrame:
     finally:
         conn.close()
 
+def train_churn_model(X, y) -> ModelResult:
+    """
+    Train churn model with train/test split and cross-validation.
+
+    Args:
+        X: Feature matrix
+        y: Target labels
+
+    Returns:
+        ModelResult containing model, train_accuracy, test_accuracy, cv_scores, cv_mean, cv_std
+
+    Raises:
+        ValueError: If test_accuracy < 0.65 (quality gate check)
+    """
+    # Split data: 80% train, 20% test with stratification
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+
+    # Train Random Forest Classifier
+    model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42)
+    model.fit(X_train, y_train)
+
+    # Compute train and test accuracy
+    train_accuracy = float(model.score(X_train, y_train))
+    test_accuracy = float(model.score(X_test, y_test))
+
+    # Perform cross-validation with 5 folds
+    cv_scores = cross_val_score(model, X, y, cv=5)
+    cv_mean = float(cv_scores.mean())
+    cv_std = float(cv_scores.std())
+
+    # Quality gate: reject if test_accuracy < 0.65
+    if test_accuracy < 0.65:
+        raise ValueError(
+            f"Model quality gate failed: test_accuracy ({test_accuracy:.4f}) < 0.65 threshold"
+        )
+
+    # Log metrics
+    logger.info(
+        f"Model training completed - Train Acc: {train_accuracy:.4f}, Test Acc: {test_accuracy:.4f}, "
+        f"CV Mean: {cv_mean:.4f}, CV Std: {cv_std:.4f}"
+    )
+
+    return ModelResult(
+        model=model,
+        train_accuracy=train_accuracy,
+        test_accuracy=test_accuracy,
+        cv_scores=cv_scores,
+        cv_mean=cv_mean,
+        cv_std=cv_std
+    )
+
+
 @app.post("/train")
 def train_model() -> Dict[str, Any]:
     try:
         logger.info("Starting model training cycle...")
         df = get_user_features()
-        
+
         if len(df) < 5:
-            # Insufficient data, fallback to training a dummy model to avoid failing
-            logger.warning(f"Insufficient real data for training (found {len(df)} records). Training a fallback model.")
-            # Create synthetic training set so we have at least some data
-            data = {
-                'days_since_deposit': [1.0, 2.0, 15.0, 20.0, 3.0, 18.0],
-                'total_deposits': [5.0, 3.0, 1.0, 0.0, 10.0, 1.0],
-                'deposits_last_14': [2.0, 1.0, 0.0, 0.0, 4.0, 0.0],
-                'deposits_prior_14': [2.0, 1.0, 1.0, 0.0, 3.0, 1.0],
-                'total_games': [20.0, 15.0, 2.0, 0.0, 50.0, 1.0],
-                'net_profit': [150.0, -50.0, -10.0, 0.0, 500.0, -20.0],
-                'churned': [0, 0, 1, 1, 0, 1]
-            }
-            df = pd.DataFrame(data)
+            # Insufficient data, fallback to training with synthetic data to avoid failing
+            logger.warning(f"Insufficient real data for training (found {len(df)} records). Generating synthetic training data.")
+            # Generate realistic synthetic training data based on empirical distributions
+            df = generate_synthetic_training_data(n_samples=100)
 
         X = df[['days_since_deposit', 'total_deposits', 'deposits_last_14', 'deposits_prior_14', 'total_games', 'net_profit']]
         y = df['churned']
 
-        # Train a Random Forest Classifier
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
-        model.fit(X, y)
+        # Train model with train/test split and cross-validation
+        result = train_churn_model(X, y)
 
-        # Evaluate training score
-        score = float(model.score(X, y))
-
+        # Save model to disk
         with open(MODEL_PATH, "wb") as f:
-            pickle.dump(model, f)
-            
-        logger.info(f"Model trained successfully. Accuracy: {score:.4f}, samples: {len(df)}")
-        return {"success": True, "accuracy": score, "samples": len(df)}
+            pickle.dump(result.model, f)
+
+        logger.info(
+            f"Model trained successfully. Train Acc: {result.train_accuracy:.4f}, "
+            f"Test Acc: {result.test_accuracy:.4f}, CV Mean: {result.cv_mean:.4f}, "
+            f"CV Std: {result.cv_std:.4f}, samples: {len(df)}"
+        )
+        return {
+            "success": True,
+            "train_accuracy": round(result.train_accuracy, 4),
+            "test_accuracy": round(result.test_accuracy, 4),
+            "cv_mean": round(result.cv_mean, 4),
+            "cv_std": round(result.cv_std, 4),
+            "samples": len(df)
+        }
+    except ValueError as e:
+        logger.error(f"Training failed (quality gate): {e}")
+        raise HTTPException(status_code=400, detail=f"Training failed: {str(e)}")
     except Exception as e:
         logger.error(f"Training failed: {e}")
         raise HTTPException(status_code=500, detail=f"Training failed: {str(e)}")
