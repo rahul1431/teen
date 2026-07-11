@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Row, Col, Card, Statistic, Table, Tag, Typography, Select, Button, Space, DatePicker, Tabs } from 'antd'
-import { BarChartOutlined, AlertOutlined, ExperimentOutlined, LineChartOutlined } from '@ant-design/icons'
+import { BarChartOutlined, AlertOutlined, ExperimentOutlined, LineChartOutlined, BgColorsOutlined } from '@ant-design/icons'
 import dayjs, { Dayjs } from 'dayjs'
 import { adminApi } from '../api/client'
 import { MetricsCharts } from '../components/MetricsCharts'
+import { CohortMetricsChart } from '../components/CohortMetricsChart'
 
 interface MetricTrend {
   game_type: string
@@ -280,6 +281,15 @@ export default function MetricsDashboard() {
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24}>
           <MetricsCharts data={displayMetrics} timeRange={timeRange} title="Win-Rate Trends" />
+        </Col>
+      </Row>
+
+      {/* Cohort Analytics Section */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24}>
+          <Card title={<><BgColorsOutlined /> Cohort Analytics & Anomaly Trends</>} style={{ borderRadius: 12 }}>
+            <CohortMetricsChart />
+          </Card>
         </Col>
       </Row>
 
