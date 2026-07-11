@@ -19,6 +19,7 @@ import { registerChurnRoutes } from './churn-routes'
 import { registerBotLearningRoutes } from './bot-learning-routes'
 import { registerMonitorRoutes } from './monitor-routes'
 import { registerMetricsRoutes } from './metrics-routes'
+import { registerPlayerAnomaliesRoutes } from './player-anomalies-routes'
 
 // QR images for payment methods are stored here, served by nginx at /uploads/qr/.
 const QR_UPLOAD_DIR = process.env.QR_UPLOAD_DIR || '/opt/teen/uploads/qr'
@@ -89,6 +90,9 @@ async function start() {
 
   // Register Metrics routes
   await registerMetricsRoutes(app, db, authenticate)
+
+  // Register Player Anomalies Dashboard routes
+  await registerPlayerAnomaliesRoutes(app, db, authenticate, requireRole)
 
   // POST /api/admin/auth/login
   // If the admin has 2FA enabled, the call must include `totp_code`. If it's
@@ -330,7 +334,7 @@ async function start() {
   app.patch('/api/admin/users/:id/status', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
-    const { status } = z.object({ status: z.enum(['active', 'suspended', 'banned']) }).parse(req.body)
+    const { status } = z.object({ status: z.enum(['active', 'suspended', 'banned', 'paused_anomaly']) }).parse(req.body)
     await db.query('UPDATE users SET status = $1 WHERE id = $2', [status, id])
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'user', $3, $4)`,
       [admin.sub, `set_status_${status}`, id, JSON.stringify({ status })])
@@ -2332,9 +2336,9 @@ async function start() {
     try {
       const { playerId } = req.params as any
       const { reason, anomalyId } = z.object({
-        reason: z.string().min(5).max(255),
+        reason: z.string().min(5).max(255).default('Auto-paused via admin quick action'),
         anomalyId: z.string().uuid().optional(),
-      }).parse(req.body)
+      }).parse(req.body ?? {})
       const admin = req.user as any
 
       // Start transaction

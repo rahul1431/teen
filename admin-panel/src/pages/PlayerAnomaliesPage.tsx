@@ -151,7 +151,7 @@ export default function PlayerAnomaliesPage() {
   // Quick actions
   const handlePause = async (playerId: string) => {
     try {
-      await adminApi.post(`/override-anomaly-pause/${playerId}`)
+      await adminApi.patch(`/users/${playerId}/status`, { status: 'paused_anomaly' })
       message.success('Player paused successfully')
       fetchAnomalies(page)
     } catch (err: any) {
