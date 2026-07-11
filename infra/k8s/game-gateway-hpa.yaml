@@ -1,0 +1,214 @@
+---
+# Horizontal Pod Autoscaler for Game Gateway
+# Scales game-gateway service based on CPU utilization
+# Min: 2 replicas, Max: 10 replicas
+# Metric: CPU utilization target 70%
+# Scaling behavior:
+#   - Scale-up: add 1 replica per 70% CPU (no wait/grace period)
+#   - Scale-down: remove 1 replica after 5 min at <30% CPU
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: game-gateway-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: game-gateway
+
+  minReplicas: 2
+  maxReplicas: 10
+
+  # Primary metric: CPU utilization
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+
+  # Optional: Memory utilization as secondary metric
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+  # Scaling behavior: more conservative on scale-down
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 5 minutes before scaling down
+      policies:
+      - type: Percent
+        value: 10  # Scale down by max 10% of current replicas
+        periodSeconds: 60
+      - type: Pods
+        value: 1   # Or remove max 1 pod per minute
+        periodSeconds: 60
+      selectPolicy: Min  # Choose the policy that scales down least
+
+    scaleUp:
+      stabilizationWindowSeconds: 0  # No wait before scaling up
+      policies:
+      - type: Percent
+        value: 100  # Scale up by max 100% (double replicas)
+        periodSeconds: 15
+      - type: Pods
+        value: 1    # Add max 1 pod per 15 seconds
+        periodSeconds: 15
+      selectPolicy: Max  # Choose the policy that scales up most
+
+---
+# Deployment for Game Gateway
+# CPU & memory requests/limits for scheduler to make informed scaling decisions
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-gateway
+  namespace: default
+spec:
+  replicas: 2  # HPA will manage this
+  selector:
+    matchLabels:
+      app: game-gateway
+
+  template:
+    metadata:
+      labels:
+        app: game-gateway
+    spec:
+      containers:
+      - name: game-gateway
+        image: teen-game-gateway:latest
+        imagePullPolicy: IfNotPresent
+
+        ports:
+        - name: http
+          containerPort: 3004
+          protocol: TCP
+        - name: ws
+          containerPort: 3004
+          protocol: TCP
+
+        # Resource requests for HPA to make scaling decisions
+        resources:
+          requests:
+            cpu: 250m           # Request 250 millicores
+            memory: 256Mi       # Request 256MB RAM
+          limits:
+            cpu: 1000m          # Hard limit 1 core
+            memory: 512Mi       # Hard limit 512MB RAM
+
+        # Liveness probe: restart if unhealthy
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3004
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        # Readiness probe: remove from load balancer if not ready
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3004
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3004"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: teen-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: teen-secrets
+              key: redis-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: teen-secrets
+              key: jwt-secret
+
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+
+      volumes:
+      - name: tmp
+        emptyDir: {}
+
+      # Graceful termination
+      terminationGracePeriodSeconds: 30
+
+      # Pod disruption budget for safe terminations during scale-down
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - game-gateway
+              topologyKey: kubernetes.io/hostname
+
+---
+# Pod Disruption Budget: maintain min 1 pod during disruptions
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: game-gateway-pdb
+  namespace: default
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: game-gateway
+
+---
+# Service for game-gateway
+apiVersion: v1
+kind: Service
+metadata:
+  name: game-gateway
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: game-gateway
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3004
+    protocol: TCP
+  - name: ws
+    port: 443
+    targetPort: 3004
+    protocol: TCP
+  sessionAffinity: ClientIP  # Session affinity for WebSocket connections

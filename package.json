@@ -1,0 +1,19 @@
+{
+  "name": "teen-platform-root",
+  "version": "1.0.0",
+  "description": "Teen Gaming Platform - Root Package",
+  "private": true,
+  "scripts": {
+    "test": "vitest",
+    "test:capacity": "vitest tests/capacity-planning.test.ts",
+    "test:watch": "vitest --watch",
+    "test:coverage": "vitest --coverage",
+    "capacity-forecast": "ts-node infra/capacity-planning.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.3",
+    "vitest": "^2.0.0"
+  }
+}
