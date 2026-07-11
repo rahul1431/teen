@@ -9,8 +9,9 @@ import { AuditLogger } from './audit-logger'
 import { DriftDetector } from './drift-detector'
 import { SlackNotifier } from './slack-notifier'
 import { MetricsAggregator } from './metrics-aggregator'
+import { AdaptiveThresholds } from './adaptive-thresholds'
 
-export { ProfileBuilder, AuditLogger, DriftDetector, SlackNotifier, MetricsAggregator }
+export { ProfileBuilder, AuditLogger, DriftDetector, SlackNotifier, MetricsAggregator, AdaptiveThresholds }
 
 const logger = pino()
 
@@ -26,6 +27,7 @@ async function start() {
   const slackNotifier = new SlackNotifier(logger)
   const driftDetector = new DriftDetector(pool, redis, logger, slackNotifier)
   const metricsAggregator = new MetricsAggregator(pool, logger)
+  const adaptiveThresholds = new AdaptiveThresholds(pool, redis, logger)
 
   // Schedule nightly rebuild at 2 AM (or configured hour)
   const cfg = await builder.getConfig().catch(() => ({ rebuild_hour: 2 }))
@@ -33,6 +35,12 @@ async function start() {
     builder.runRebuild().catch(err => logger.error({ err }, 'Nightly rebuild failed'))
   })
   logger.info({ hour: cfg.rebuild_hour }, 'Bot profile rebuild cron scheduled')
+
+  // Schedule cohort target recalculation at 02:15 UTC (15 mins after nightly rebuild at 02:00)
+  cron.schedule('15 2 * * *', () => {
+    adaptiveThresholds.recalculateCohortTargetsDaily().catch(err => logger.error({ err }, 'Cohort target recalculation failed'))
+  })
+  logger.info('Cohort target recalculation cron scheduled (daily at 02:15 UTC)')
 
   // Schedule 6-hourly incremental rebuild at 00:00, 06:00, 12:00, 18:00 UTC
   cron.schedule('0 0,6,12,18 * * *', () => {

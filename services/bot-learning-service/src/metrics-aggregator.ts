@@ -62,9 +62,9 @@ export class MetricsAggregator {
   private async executeAggregation(): Promise<AggregationResult[]> {
     const results: AggregationResult[] = []
 
-    // Step 1: Get all bot profiles
+    // Step 1: Get all bot profiles with cohort targets
     const profilesRes = await this.pool.query(
-      `SELECT id, game_type, difficulty, win_rate_target
+      `SELECT id, game_type, difficulty, win_rate_target, cohort_target_win_rate
        FROM bot_profiles
        ORDER BY game_type, difficulty`
     )
@@ -104,7 +104,9 @@ export class MetricsAggregator {
    * Calculate metrics for a single bot profile
    */
   private async calculateProfileMetrics(profile: any): Promise<AggregationResult | null> {
-    const { id: profileId, game_type: gameType, difficulty, win_rate_target: targetWinRate } = profile
+    const { id: profileId, game_type: gameType, difficulty, win_rate_target: targetWinRate, cohort_target_win_rate: cohortTargetWinRate } = profile
+    // Use cohort target if available, otherwise fall back to global target
+    const effectiveTarget = cohortTargetWinRate || targetWinRate
 
     // Fetch game participants for this profile in the last 1 hour
     const participantsRes = await this.pool.query(
@@ -158,8 +160,8 @@ export class MetricsAggregator {
     // In a real system, this would be calculated across all profiles
     const percentileRank = Math.min(100, Math.max(0, Math.round((sampleSize / 100) * 100)))
 
-    // Drift from target
-    const driftFromTarget = targetWinRate ? avgWinRate - targetWinRate : null
+    // Drift from target (uses cohort target if available, otherwise falls back to global target)
+    const driftFromTarget = effectiveTarget ? avgWinRate - effectiveTarget : null
 
     const hour = new Date(Math.floor(Date.now() / 3600000) * 3600000).toISOString()
 
