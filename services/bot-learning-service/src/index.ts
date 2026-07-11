@@ -11,8 +11,10 @@ import { SlackNotifier } from './slack-notifier'
 import { MetricsAggregator } from './metrics-aggregator'
 import { AdaptiveThresholds } from './adaptive-thresholds'
 import { AnomalyResponseHandler } from './anomaly-response-handler'
+import { ProfileCache } from './profile-cache'
+import { StreamingEvaluator } from './streaming-evaluator'
 
-export { ProfileBuilder, AuditLogger, DriftDetector, SlackNotifier, MetricsAggregator, AdaptiveThresholds, AnomalyResponseHandler }
+export { ProfileBuilder, AuditLogger, DriftDetector, SlackNotifier, MetricsAggregator, AdaptiveThresholds, AnomalyResponseHandler, ProfileCache, StreamingEvaluator }
 
 const logger = pino()
 
@@ -30,6 +32,7 @@ async function start() {
   const metricsAggregator = new MetricsAggregator(pool, logger)
   const adaptiveThresholds = new AdaptiveThresholds(pool, redis, logger)
   const anomalyResponseHandler = new AnomalyResponseHandler(pool, logger)
+  const streamingEvaluator = new StreamingEvaluator(pool, redis, logger)
 
   // Schedule nightly rebuild at 2 AM (or configured hour)
   const cfg = await builder.getConfig().catch(() => ({ rebuild_hour: 2 }))
@@ -89,6 +92,10 @@ async function start() {
     anomalyResponseHandler.generateDailyReport().catch(err => logger.error({ err }, 'Failed to generate daily anomaly report'))
   })
   logger.info('Daily anomaly report cron scheduled (08:00 UTC)')
+
+  // Initialize event-driven streaming profile evaluator (Task 27)
+  await streamingEvaluator.initialize()
+  logger.info('Event-driven streaming profile evaluator initialized')
 
   // Health
   app.get('/health', async (_req, reply) => {
@@ -219,6 +226,23 @@ async function start() {
     }
   })
 
+  // GET /internal/streaming-evaluator/metrics (get streaming evaluator metrics)
+  app.get('/internal/streaming-evaluator/metrics', async (_req, reply) => {
+    try {
+      const metrics = streamingEvaluator.getMetrics()
+      return reply.send({
+        success: true,
+        data: {
+          ...metrics,
+          isConnected: streamingEvaluator.isConnected(),
+        },
+      })
+    } catch (err) {
+      logger.error({ err }, 'Failed to fetch streaming evaluator metrics')
+      return reply.code(500).send({ success: false, error: 'Failed to fetch metrics' })
+    }
+  })
+
   const port = parseInt(process.env.PORT ?? '3014')
   await app.listen({ port, host: '0.0.0.0' })
   logger.info(`Bot learning service started on :${port}`)
@@ -227,6 +251,8 @@ async function start() {
   builder.runRebuild().catch(err => logger.error({ err }, 'Initial rebuild failed'))
 
   const shutdown = async () => {
+    logger.info('Shutting down bot learning service')
+    await streamingEvaluator.shutdown()
     await app.close()
     await redis.quit()
     await pool.end()
