@@ -35,6 +35,7 @@ const KYCPage = React.lazy(() => import('./pages/KYC'))
 const AppUpdate = React.lazy(() => import('./pages/AppUpdate'))
 const Marketing = React.lazy(() => import('./pages/Marketing'))
 const CMSManagement = React.lazy(() => import('./pages/CMSManagement'))
+const MetricsDashboard = React.lazy(() => import('./pages/MetricsDashboard'))
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token } = useAuthStore()
@@ -77,6 +78,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="marketing/cms" element={<CMSManagement />} />
             <Route path="kyc" element={<KYCPage />} />
             <Route path="app-update" element={<AppUpdate />} />
+            <Route path="metrics-dashboard" element={<MetricsDashboard />} />
           </Route>
           <Route path="*" element={<Navigate to="/admin" replace />} />
         </Routes>
