@@ -8,8 +8,9 @@ import { ProfileBuilder } from './profile-builder'
 import { AuditLogger } from './audit-logger'
 import { DriftDetector } from './drift-detector'
 import { SlackNotifier } from './slack-notifier'
+import { MetricsAggregator } from './metrics-aggregator'
 
-export { ProfileBuilder, AuditLogger, DriftDetector, SlackNotifier }
+export { ProfileBuilder, AuditLogger, DriftDetector, SlackNotifier, MetricsAggregator }
 
 const logger = pino()
 
@@ -24,6 +25,7 @@ async function start() {
   const builder = new ProfileBuilder(pool, redis, logger, undefined, auditLogger)
   const slackNotifier = new SlackNotifier(logger)
   const driftDetector = new DriftDetector(pool, redis, logger, slackNotifier)
+  const metricsAggregator = new MetricsAggregator(pool, logger)
 
   // Schedule nightly rebuild at 2 AM (or configured hour)
   const cfg = await builder.getConfig().catch(() => ({ rebuild_hour: 2 }))
@@ -31,6 +33,12 @@ async function start() {
     builder.runRebuild().catch(err => logger.error({ err }, 'Nightly rebuild failed'))
   })
   logger.info({ hour: cfg.rebuild_hour }, 'Bot profile rebuild cron scheduled')
+
+  // Schedule hourly metrics aggregation at :00
+  cron.schedule('0 * * * *', () => {
+    metricsAggregator.aggregateHourlyMetrics().catch(err => logger.error({ err }, 'Hourly metrics aggregation failed'))
+  })
+  logger.info('Hourly metrics aggregation cron scheduled (every hour at :00)')
 
   // Schedule hourly drift detection at :05 (after Task 10 aggregation completes at :00)
   cron.schedule('5 * * * *', () => {
@@ -115,6 +123,24 @@ async function start() {
     } catch (err) {
       logger.error({ err }, 'Failed to override bot profile')
       return reply.code(500).send({ success: false, error: 'Failed to override profile' })
+    }
+  })
+
+  // POST /internal/metrics/aggregate (called by cron or admin)
+  app.post('/internal/metrics/aggregate', async (_req, reply) => {
+    try {
+      const results = await metricsAggregator.aggregateHourlyMetrics()
+      return reply.send({
+        success: true,
+        data: {
+          status: 'completed',
+          metricsInserted: results.length,
+          timestamp: new Date().toISOString(),
+        },
+      })
+    } catch (err) {
+      logger.error({ err }, 'Metrics aggregation endpoint failed')
+      return reply.code(500).send({ success: false, error: 'Metrics aggregation failed' })
     }
   })
 
