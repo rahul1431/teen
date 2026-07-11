@@ -80,7 +80,7 @@ def reset_global_state():
 
 def test_predict_non_blocking_on_cold_start(mock_user_features):
     """
-    Test 1: Predict returns <500ms on cold-start (no model), with async training queued.
+    Test 1: Predict returns <100ms on cold-start (no model), with async training queued.
 
     This test verifies:
     - Predict endpoint returns quickly even when model is missing
@@ -105,7 +105,7 @@ def test_predict_non_blocking_on_cold_start(mock_user_features):
         elapsed_ms = (time.time() - start_time) * 1000
 
         # Assertions
-        assert elapsed_ms < 500, f"Prediction should return <500ms on cold-start, took {elapsed_ms:.2f}ms"
+        assert elapsed_ms < 100, f"Prediction should return <100ms on cold-start, took {elapsed_ms:.2f}ms"
         assert response["user_id"] == "test_user_123"
         assert response["prediction_type"] == "fallback", "Should return fallback prediction on cold-start"
         assert 0 <= response["churn_risk"] <= 100, "Churn risk should be between 0 and 100"
