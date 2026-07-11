@@ -6,8 +6,10 @@ import pino from 'pino'
 import cron from 'node-cron'
 import { ProfileBuilder } from './profile-builder'
 import { AuditLogger } from './audit-logger'
+import { DriftDetector } from './drift-detector'
+import { SlackNotifier } from './slack-notifier'
 
-export { ProfileBuilder, AuditLogger }
+export { ProfileBuilder, AuditLogger, DriftDetector, SlackNotifier }
 
 const logger = pino()
 
@@ -20,6 +22,8 @@ async function start() {
 
   const auditLogger = new AuditLogger(pool, logger)
   const builder = new ProfileBuilder(pool, redis, logger, undefined, auditLogger)
+  const slackNotifier = new SlackNotifier(logger)
+  const driftDetector = new DriftDetector(pool, redis, logger, slackNotifier)
 
   // Schedule nightly rebuild at 2 AM (or configured hour)
   const cfg = await builder.getConfig().catch(() => ({ rebuild_hour: 2 }))
@@ -27,6 +31,12 @@ async function start() {
     builder.runRebuild().catch(err => logger.error({ err }, 'Nightly rebuild failed'))
   })
   logger.info({ hour: cfg.rebuild_hour }, 'Bot profile rebuild cron scheduled')
+
+  // Schedule hourly drift detection at :05 (after Task 10 aggregation completes at :00)
+  cron.schedule('5 * * * *', () => {
+    driftDetector.run().catch(err => logger.error({ err }, 'Drift detection failed'))
+  })
+  logger.info('Drift detection cron scheduled (hourly at :05)')
 
   // Health
   app.get('/health', async (_req, reply) => {
