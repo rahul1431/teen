@@ -1,0 +1,21 @@
+{
+  "name": "uptime-bot",
+  "version": "1.0.0",
+  "description": "Uptime monitoring bot for game platform services",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "ioredis": "^5.3.2",
+    "pg": "^8.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.3.1",
+    "@types/pg": "^8.10.7",
+    "typescript": "^5.1.3"
+  }
+}

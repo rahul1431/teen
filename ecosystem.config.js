@@ -173,6 +173,19 @@ module.exports = {
       env: { ...NODE_OPTS, NODE_ENV: 'production', PORT: 3015, GEOLITE2_CITY_PATH: '/opt/teen/geoip/GeoLite2-City.mmdb' },
     },
 
+    // ── Uptime Bot: Monitoring service health + TCP ports, writes to JSON ──
+    {
+      name: 'teen-uptime-bot',
+      cwd: `${BASE}/uptime-bot`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('uptime-bot'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '100M',
+      env: { ...NODE_OPTS, UPTIME_STATUS_FILE: '/opt/teen/uptime-status.json' },
+    },
+
     // ── Bot Learning: nightly bot-profile rebuild from real player data ──
     {
       name: 'teen-bot-learning',

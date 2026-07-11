@@ -75,9 +75,11 @@ app.post<{ Body: Record<string, unknown> }>('/api/monitor/events', async (req, r
   try {
     const payload = req.body as any
     if (!payload.session_id || !payload.device_id || !Array.isArray(payload.events)) {
+      logger.warn('Invalid ingest payload', { session_id: !!payload.session_id, device_id: !!payload.device_id, events: !!Array.isArray(payload.events) })
       return reply.code(400).send({ success: false, error: 'Missing required fields: session_id, device_id, events' })
     }
     if (payload.events.length > 100) {
+      logger.warn('Batch too large', { event_count: payload.events.length })
       return reply.code(400).send({ success: false, error: 'Batch too large: max 100 events' })
     }
     // Validate shared secret (skip check when env var not configured — dev only)
@@ -85,15 +87,21 @@ app.post<{ Body: Record<string, unknown> }>('/api/monitor/events', async (req, r
     if (expectedKey) {
       const providedKey = req.headers['x-monitor-key']
       if (providedKey !== expectedKey) {
+        logger.warn('Invalid auth key', { provided: !!providedKey, expected: !!expectedKey })
         return reply.code(401).send({ success: false, error: 'Unauthorized' })
       }
+    } else {
+      logger.debug('Auth key not configured — accepting all requests')
     }
     const ip = parseClientIp(req.headers as any, req.socket?.remoteAddress)
     const geo = geoLookup.lookup(ip)
+    logger.debug('Ingesting batch', { session_id: payload.session_id, device_id: payload.device_id, event_count: payload.events.length, ip, geo })
     await ingestor.ingestBatch(payload, geo, ip)
+    logger.info('Ingest success', { session_id: payload.session_id, event_count: payload.events.length })
     return reply.send({ success: true })
   } catch (err: any) {
     if (err.statusCode === 429) {
+      logger.warn('Rate limit exceeded')
       return reply.code(429).send({ success: false, error: 'Rate limit exceeded' })
     }
     logger.error({ err }, 'Ingest error')
@@ -203,18 +211,23 @@ app.get('/api/monitor/server-health', async (_req, reply) => {
     // PM2 process list
     let processes: object[] = []
     try {
-      const raw = execSync('pm2 jlist 2>/dev/null', { timeout: 5000 }).toString()
-      const list: any[] = JSON.parse(raw)
-      processes = list.map(p => ({
-        name:        p.name,
-        status:      p.pm2_env?.status ?? 'unknown',
-        memory_mb:   Math.round((p.monit?.memory ?? 0) / 1024 / 1024),
-        cpu_pct:     p.monit?.cpu ?? 0,
-        restarts:    p.pm2_env?.restart_time ?? 0,
-        uptime_ms:   p.pm2_env?.pm_uptime ? (Date.now() - p.pm2_env.pm_uptime) : 0,
-        pid:         p.pid ?? null,
-      }))
-    } catch { /* PM2 not available in this env — skip */ }
+      const raw = execSync('pm2 jlist 2>/dev/null', { timeout: 5000, encoding: 'utf-8' }).toString()
+      if (raw && raw.trim()) {
+        const list: any[] = JSON.parse(raw)
+        processes = list.map(p => ({
+          name:        p.name,
+          status:      p.pm2_env?.status ?? 'unknown',
+          memory_mb:   Math.round((p.monit?.memory ?? 0) / 1024 / 1024),
+          cpu_pct:     p.monit?.cpu ?? 0,
+          restarts:    p.pm2_env?.restart_time ?? 0,
+          uptime_ms:   p.pm2_env?.pm_uptime ? (Date.now() - p.pm2_env.pm_uptime) : 0,
+          pid:         p.pid ?? null,
+        }))
+      }
+    } catch (pmErr) {
+      // PM2 not available in this env (Docker, K8s, dev) — log but don't crash
+      logger.warn('PM2 jlist unavailable', pmErr instanceof Error ? pmErr.message : String(pmErr))
+    }
 
     // System memory via OS module
     const totalMem  = Math.round(os.totalmem()  / 1024 / 1024)
