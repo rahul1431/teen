@@ -45,7 +45,6 @@ export class OptimizedPool {
       max: this.config.maxConnections,
       idleTimeoutMillis: this.config.idleTimeoutMs,
       connectionTimeoutMillis: 5000,
-      max_lifetime: this.config.maxLifetimeMs,
     })
 
     this.connectionMetadata = new Map()
