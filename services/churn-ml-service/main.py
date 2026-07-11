@@ -13,6 +13,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
 from dotenv import load_dotenv
 from synthetic_data import generate_synthetic_training_data, validate_synthetic_data
+from model_versioning import save_model_versioned, activate_model, get_active_model_path
 
 load_dotenv()
 
@@ -164,7 +165,19 @@ def async_train_model():
         # Train model with train/test split and cross-validation
         result = train_churn_model(X, y)
 
-        # Save model to disk and update global state
+        # Save model with versioning system
+        version = save_model_versioned(
+            model=result.model,
+            train_acc=result.train_accuracy,
+            test_acc=result.test_accuracy,
+            cv_mean=result.cv_mean,
+            cv_std=result.cv_std
+        )
+
+        # Activate the new model version
+        activate_model(version)
+
+        # Save to legacy MODEL_PATH for backward compatibility
         with open(MODEL_PATH, "wb") as f:
             pickle.dump(result.model, f)
 
@@ -174,7 +187,7 @@ def async_train_model():
         logger.info(
             f"Async training completed successfully. Train Acc: {result.train_accuracy:.4f}, "
             f"Test Acc: {result.test_accuracy:.4f}, CV Mean: {result.cv_mean:.4f}, "
-            f"CV Std: {result.cv_std:.4f}, samples: {len(df)}"
+            f"CV Std: {result.cv_std:.4f}, samples: {len(df)}, version: {version}"
         )
     except ValueError as e:
         logger.error(f"Async training failed (quality gate): {e}")
@@ -216,14 +229,31 @@ def train_model() -> Dict[str, Any]:
         # Train model with train/test split and cross-validation
         result = train_churn_model(X, y)
 
-        # Save model to disk
+        # Save model with versioning system
+        version = save_model_versioned(
+            model=result.model,
+            train_acc=result.train_accuracy,
+            test_acc=result.test_accuracy,
+            cv_mean=result.cv_mean,
+            cv_std=result.cv_std
+        )
+
+        # Activate the new model version
+        activate_model(version)
+
+        # Also save to legacy MODEL_PATH for backward compatibility
         with open(MODEL_PATH, "wb") as f:
             pickle.dump(result.model, f)
+
+        # Update global model state
+        with model_lock:
+            global model
+            model = result.model
 
         logger.info(
             f"Model trained successfully. Train Acc: {result.train_accuracy:.4f}, "
             f"Test Acc: {result.test_accuracy:.4f}, CV Mean: {result.cv_mean:.4f}, "
-            f"CV Std: {result.cv_std:.4f}, samples: {len(df)}"
+            f"CV Std: {result.cv_std:.4f}, samples: {len(df)}, version: {version}"
         )
         return {
             "success": True,
@@ -231,7 +261,8 @@ def train_model() -> Dict[str, Any]:
             "test_accuracy": round(result.test_accuracy, 4),
             "cv_mean": round(result.cv_mean, 4),
             "cv_std": round(result.cv_std, 4),
-            "samples": len(df)
+            "samples": len(df),
+            "version": version
         }
     except ValueError as e:
         logger.error(f"Training failed (quality gate): {e}")
