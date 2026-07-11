@@ -127,9 +127,9 @@ export class KafkaProducer {
   ): Promise<{ success: boolean; error?: string }> {
     // Validate event
     const validation = validateEvent(event)
-    if (!validation.valid) {
-      logger.warn(`Invalid event: ${validation.error}`)
-      return { success: false, error: validation.error }
+    if (!validation) {
+      logger.warn(`Invalid event: missing required fields`)
+      return { success: false, error: 'Missing required fields' }
     }
 
     if (!this.connected) {
