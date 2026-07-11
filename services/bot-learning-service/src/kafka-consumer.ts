@@ -135,12 +135,12 @@ export class KafkaConsumer {
 
             // Validate against schema
             const validation = validateEvent(eventData)
-            if (!validation.valid) {
-              logger.warn(`Invalid event received: ${validation.error}`)
+            if (!validation) {
+              logger.warn(`Invalid event received: missing required fields`)
               return
             }
 
-            const event = eventData as EventRecord
+            const event = validation as EventRecord
 
             // Call handler
             const handler = this.handlers.get(topic)

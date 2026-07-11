@@ -1,9 +1,9 @@
 import { Pool } from 'pg'
 import Redis from 'ioredis'
 import { Logger } from 'pino'
+import { Kafka, Producer } from 'kafkajs'
 import { KafkaConsumer } from './kafka-consumer'
 import { EventRecord } from './event-schema'
-import { KafkaProducer } from '../../game-gateway/src/kafka-producer'
 
 export interface ProfileUpdateEvent {
   event_type: 'profile-update'
@@ -43,7 +43,8 @@ export interface StreamingEvaluatorMetrics {
  */
 export class StreamingEvaluator {
   private consumer: KafkaConsumer | null = null
-  private producer: KafkaProducer | null = null
+  private producer: Producer | null = null
+  private kafka: Kafka | null = null
   private eventBatch: EventRecord[] = []
   private batchTimer: NodeJS.Timeout | null = null
   private readonly BATCH_SIZE = 100
@@ -74,7 +75,14 @@ export class StreamingEvaluator {
     brokers: string[] = ['localhost:9092']
   ) {
     this.consumer = new KafkaConsumer(brokers, 'bot-learning-evaluator')
-    this.producer = new KafkaProducer(brokers)
+    this.kafka = new Kafka({
+      clientId: 'bot-learning-producer',
+      brokers,
+    })
+    this.producer = this.kafka.producer({
+      idempotent: true,
+      maxInFlightRequests: 5,
+    })
   }
 
   /**
