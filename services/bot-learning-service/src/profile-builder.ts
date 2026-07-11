@@ -616,4 +616,131 @@ export class ProfileBuilder {
       throw err
     }
   }
+
+  async rebuildProfilesIncremental(gameType: string, difficulty: string): Promise<void> {
+    try {
+      this.logger.info({ gameType, difficulty }, 'Starting incremental 6-hourly profile rebuild')
+      const cfg = await this.getConfig()
+
+      // Query last 6 hours of game participants
+      const playersRes = await this.pool.query(
+        `SELECT
+           gp.user_id,
+           COUNT(gp.id)::int            AS games_played,
+           SUM(gp.prize_won - COALESCE(gp.entry_fee_deducted, gr.entry_fee))          AS total_profit,
+           AVG(gp.prize_won - COALESCE(gp.entry_fee_deducted, gr.entry_fee))          AS avg_profit,
+           COUNT(CASE WHEN gp.prize_won > COALESCE(gp.entry_fee_deducted, gr.entry_fee) THEN 1 END)::int AS wins,
+           AVG(gr.entry_fee)            AS avg_stake
+         FROM game_participants gp
+         JOIN game_rooms gr ON gr.id = gp.room_id
+         JOIN users u ON u.id = gp.user_id
+         WHERE gr.game_type = $1
+           AND u.is_bot = false
+           AND u.status = 'active'
+           AND gp.joined_at > DATE_TRUNC('hour', NOW()) - INTERVAL '6 hours'
+         GROUP BY gp.user_id
+         HAVING COUNT(gp.id) >= 1
+         ORDER BY total_profit ASC`,
+        [gameType]
+      )
+
+      const players = playersRes.rows
+      if (players.length < cfg.min_sample_size) {
+        this.logger.warn(
+          { gameType, difficulty, found: players.length, need: cfg.min_sample_size },
+          'Insufficient 6-hour data — skipping incremental rebuild'
+        )
+        return
+      }
+
+      this.logger.info({ gameType, difficulty, playerCount: players.length }, 'Building incremental profile from 6-hour data')
+
+      // Fetch current profile
+      const currentRes = await this.pool.query(
+        `SELECT * FROM bot_profiles WHERE game_type = $1 AND difficulty = $2`,
+        [gameType, difficulty]
+      )
+
+      if (currentRes.rows.length === 0) {
+        this.logger.warn({ gameType, difficulty }, 'Profile not found — skipping incremental rebuild')
+        return
+      }
+
+      const currentProfile = currentRes.rows[0]
+
+      // Calculate metrics from 6-hour window
+      const avgStake = players.reduce((s: number, p: any) => s + parseFloat(p.avg_stake ?? '10'), 0) / players.length
+      const avgWinRate = players.reduce((s: number, p: any) => s + (p.wins / p.games_played) * 100, 0) / players.length
+
+      // Calculate win_rate_std (standard deviation of win rates)
+      const winRates = players.map((p: any) => (p.wins / p.games_played) * 100)
+      const meanWinRate = avgWinRate
+      const variance = winRates.reduce((sum: number, wr: number) => sum + Math.pow(wr - meanWinRate, 2), 0) / winRates.length
+      const winRateStd = Math.sqrt(variance)
+
+      // Calculate percentile_rank for this difficulty
+      const difficultyPlayers = players
+      const rank = difficultyPlayers.length
+      const percentileRank = Math.round((rank / Math.max(rank, 1)) * 100)
+
+      // Derive behavioral parameters from win rate (same logic as buildProfiles)
+      const foldProb = this.deriveFromWinRate(avgWinRate, 'fold')
+      const callProb = this.deriveFromWinRate(avgWinRate, 'call')
+      const raiseProb = 1 - foldProb - callProb
+      const delayMs = this.deriveDelayFromDifficulty(difficulty)
+
+      const normalizedFold = Math.max(0.05, Math.min(0.70, foldProb))
+      const normalizedCall = Math.max(0.15, Math.min(0.75, callProb))
+      const normalizedRaise = Math.max(0, 1 - normalizedFold - normalizedCall)
+      const aggression = normalizedRaise / (normalizedCall + normalizedFold) * 10
+
+      // Merge: smooth update towards new values (weighted average: 70% old, 30% new for stability)
+      const smoothingFactor = 0.3
+      const mergedWinRate = currentProfile.win_rate_target * (1 - smoothingFactor) + Math.round(avgWinRate * 10) / 10 * smoothingFactor
+      const mergedFold = currentProfile.fold_probability * (1 - smoothingFactor) + Math.round(normalizedFold * 10000) / 10000 * smoothingFactor
+      const mergedCall = currentProfile.call_probability * (1 - smoothingFactor) + Math.round(normalizedCall * 10000) / 10000 * smoothingFactor
+      const mergedRaise = currentProfile.raise_probability * (1 - smoothingFactor) + Math.round(normalizedRaise * 10000) / 10000 * smoothingFactor
+      const mergedDelay = Math.round(currentProfile.avg_decision_delay_ms * (1 - smoothingFactor) + delayMs * smoothingFactor)
+      const mergedStake = Math.round(currentProfile.avg_stake_preference * (1 - smoothingFactor) + avgStake * smoothingFactor)
+      const mergedAggression = currentProfile.aggression_score * (1 - smoothingFactor) + Math.round(aggression * 10) / 10 * smoothingFactor
+
+      // Update profile in bot_profiles table
+      await this.pool.query(
+        `UPDATE bot_profiles
+         SET win_rate_target = $1,
+             fold_probability = $2,
+             call_probability = $3,
+             raise_probability = $4,
+             avg_decision_delay_ms = $5,
+             avg_stake_preference = $6,
+             aggression_score = $7,
+             sample_size = $8,
+             last_rebuilt_at = NOW()
+         WHERE game_type = $9 AND difficulty = $10`,
+        [
+          mergedWinRate,
+          mergedFold,
+          mergedCall,
+          mergedRaise,
+          mergedDelay,
+          mergedStake,
+          mergedAggression,
+          players.length,
+          gameType,
+          difficulty,
+        ]
+      )
+
+      // Invalidate cache
+      await this.redis.del(`bot:profile:${gameType}:${difficulty}`)
+
+      this.logger.info(
+        { gameType, difficulty, sampleSize: players.length, winRate: avgWinRate.toFixed(1), winRateStd: winRateStd.toFixed(2), percentileRank },
+        'Incremental profile updated'
+      )
+    } catch (err) {
+      this.logger.error({ err, gameType, difficulty }, 'Failed to rebuild profile incrementally')
+      throw err
+    }
+  }
 }

@@ -34,6 +34,28 @@ async function start() {
   })
   logger.info({ hour: cfg.rebuild_hour }, 'Bot profile rebuild cron scheduled')
 
+  // Schedule 6-hourly incremental rebuild at 00:00, 06:00, 12:00, 18:00 UTC
+  cron.schedule('0 0,6,12,18 * * *', () => {
+    (async () => {
+      try {
+        logger.info('Starting 6-hourly incremental profile rebuild')
+        for (const gameType of ['teen_patti', 'ludo', 'aviator']) {
+          for (const difficulty of ['easy', 'medium', 'hard']) {
+            try {
+              await builder.rebuildProfilesIncremental(gameType, difficulty)
+            } catch (err) {
+              logger.error({ err, gameType, difficulty }, 'Incremental rebuild failed for profile')
+            }
+          }
+        }
+        logger.info('6-hourly incremental rebuild batch complete')
+      } catch (err) {
+        logger.error({ err }, '6-hourly incremental rebuild batch failed')
+      }
+    })()
+  })
+  logger.info('6-hourly incremental profile rebuild cron scheduled (at 00:00, 06:00, 12:00, 18:00 UTC)')
+
   // Schedule hourly metrics aggregation at :00
   cron.schedule('0 * * * *', () => {
     metricsAggregator.aggregateHourlyMetrics().catch(err => logger.error({ err }, 'Hourly metrics aggregation failed'))
