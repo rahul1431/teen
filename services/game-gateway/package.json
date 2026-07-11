@@ -6,7 +6,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest",
-    "test:lb": "vitest tests/load-balancing.test.ts"
+    "test:lb": "vitest tests/load-balancing.test.ts",
+    "test:stress-5k": "tsx tests/stress-test-5k.ts"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",
