@@ -1,7 +1,9 @@
 import os
 import pickle
 import logging
-from typing import Dict, Any
+import threading
+import time
+from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -31,6 +33,11 @@ app = FastAPI(title="Teen Patti Churn ML Service")
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "model.pkl")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://teen:password@127.0.0.1:5432/teen_db")
+
+# Global state for async model training
+model: Optional[Any] = None
+training_in_progress: bool = False
+model_lock = threading.Lock()
 
 class PredictRequest(BaseModel):
     user_id: str
@@ -130,6 +137,67 @@ def train_churn_model(X, y) -> ModelResult:
     )
 
 
+def async_train_model():
+    """
+    Run model training in background thread asynchronously.
+    Updates global model state when training completes successfully.
+    """
+    global model, training_in_progress
+
+    try:
+        with model_lock:
+            if training_in_progress:
+                logger.info("Training already in progress, skipping duplicate request")
+                return
+            training_in_progress = True
+
+        logger.info("Starting async background training...")
+        df = get_user_features()
+
+        if len(df) < 5:
+            logger.warning(f"Insufficient real data for training (found {len(df)} records). Generating synthetic training data.")
+            df = generate_synthetic_training_data(n_samples=100)
+
+        X = df[['days_since_deposit', 'total_deposits', 'deposits_last_14', 'deposits_prior_14', 'total_games', 'net_profit']]
+        y = df['churned']
+
+        # Train model with train/test split and cross-validation
+        result = train_churn_model(X, y)
+
+        # Save model to disk and update global state
+        with open(MODEL_PATH, "wb") as f:
+            pickle.dump(result.model, f)
+
+        with model_lock:
+            model = result.model
+
+        logger.info(
+            f"Async training completed successfully. Train Acc: {result.train_accuracy:.4f}, "
+            f"Test Acc: {result.test_accuracy:.4f}, CV Mean: {result.cv_mean:.4f}, "
+            f"CV Std: {result.cv_std:.4f}, samples: {len(df)}"
+        )
+    except ValueError as e:
+        logger.error(f"Async training failed (quality gate): {e}")
+    except Exception as e:
+        logger.error(f"Async training failed: {e}")
+    finally:
+        with model_lock:
+            training_in_progress = False
+
+
+@app.on_event("startup")
+def startup_event():
+    """Load model on startup if it exists."""
+    global model
+    if os.path.exists(MODEL_PATH):
+        try:
+            with open(MODEL_PATH, "rb") as f:
+                model = pickle.load(f)
+            logger.info("Model loaded on startup")
+        except Exception as e:
+            logger.error(f"Failed to load model on startup: {e}")
+
+
 @app.post("/train")
 def train_model() -> Dict[str, Any]:
     try:
@@ -174,32 +242,60 @@ def train_model() -> Dict[str, Any]:
 
 @app.post("/predict")
 def predict_churn(req: PredictRequest) -> Dict[str, Any]:
-    # 1. Load model, train if missing
-    if not os.path.exists(MODEL_PATH):
-        logger.info("Model file not found. Auto-triggering model training...")
-        train_model()
+    global model, training_in_progress
 
+    # 1. Get user features early (before model check) to compute fallback
     try:
-        with open(MODEL_PATH, "rb") as f:
-            model = pickle.load(f)
+        df = get_user_features(req.user_id)
+        if df.empty:
+            raise HTTPException(status_code=404, detail="User not found or is a bot/suspended.")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to load model file: {e}")
-        raise HTTPException(status_code=500, detail="Model file corrupted or missing.")
+        logger.error(f"Failed to get user features: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve user features")
 
-    # 2. Get user features
-    df = get_user_features(req.user_id)
-    if df.empty:
-        raise HTTPException(status_code=404, detail="User not found or is a bot/suspended.")
+    # 2. If model is None (cold-start), queue async training and return fallback immediately (<100ms)
+    if model is None:
+        if not training_in_progress:
+            # Queue async training in background thread (non-blocking)
+            training_thread = threading.Thread(target=async_train_model, daemon=True)
+            training_thread.start()
+            logger.info(f"Queued async training for user {req.user_id}, returning fallback")
 
+        # Return fast fallback based on user inactivity
+        days = float(df['days_since_deposit'].iloc[0])
+        churn_risk = min(days * 7.0, 100.0)
+
+        if churn_risk >= 80:
+            risk_level = "high"
+        elif churn_risk >= 60:
+            risk_level = "medium"
+        elif churn_risk >= 30:
+            risk_level = "low"
+        else:
+            risk_level = "none"
+
+        feature_map = df.iloc[0].to_dict()
+        feature_map.pop('churned', None)
+
+        return {
+            "user_id": req.user_id,
+            "churn_risk": round(churn_risk, 2),
+            "risk_level": risk_level,
+            "features": feature_map,
+            "prediction_type": "fallback"  # Indicate this is a fallback prediction
+        }
+
+    # 3. Model exists (warm), predict normally
     X = df[['days_since_deposit', 'total_deposits', 'deposits_last_14', 'deposits_prior_14', 'total_games', 'net_profit']]
-    
-    # 3. Predict probability
+
     try:
-        prob = model.predict_proba(X)[0][1] # Probability of class 1 (churned)
+        prob = model.predict_proba(X)[0][1]  # Probability of class 1 (churned)
         churn_risk = float(prob * 100)
     except Exception as e:
         logger.error(f"Prediction computation failed: {e}")
-        # Default fallback probability based on inactivity
+        # Fallback probability based on inactivity
         days = float(df['days_since_deposit'].iloc[0])
         churn_risk = min(days * 7.0, 100.0)
 
@@ -214,14 +310,14 @@ def predict_churn(req: PredictRequest) -> Dict[str, Any]:
         risk_level = "none"
 
     feature_map = df.iloc[0].to_dict()
-    # Remove label
     feature_map.pop('churned', None)
 
     return {
         "user_id": req.user_id,
         "churn_risk": round(churn_risk, 2),
         "risk_level": risk_level,
-        "features": feature_map
+        "features": feature_map,
+        "prediction_type": "model"  # Indicate this is a model prediction
     }
 
 @app.get("/health")
