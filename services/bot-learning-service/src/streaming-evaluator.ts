@@ -465,16 +465,13 @@ export class StreamingEvaluator {
         timestamp: new Date().toISOString(),
       }
 
-      const result = await this.producer?.publishEvent('profile-updates', event as any)
-
-      if (!result?.success) {
-        this.logger.error(
-          { error: result?.error },
-          'Failed to publish profile-updates event'
-        )
-        this.metrics.kafkaErrorCount++
-        throw new Error(`Failed to publish profile-updates: ${result?.error}`)
-      }
+      await this.producer?.send({
+        topic: 'profile-updates',
+        messages: updatedProfiles.map((profile) => ({
+          key: `${profile.game_type}-${Date.now()}`,
+          value: JSON.stringify(event),
+        })),
+      })
 
       this.logger.debug(
         { profileCount: updatedProfiles.length },
