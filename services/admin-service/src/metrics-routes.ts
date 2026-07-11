@@ -470,4 +470,83 @@ export async function registerMetricsRoutes(
       }
     }
   )
+
+  // GET /api/admin/metrics/retention — D1/D7/D30 retention for players whose
+  // rooms used personalized vs standard bot difficulty (Task 23). A player
+  // is "retained" at N days if they joined any room on or after
+  // first_room_date + N days. Cohort is decided by the FIRST room each
+  // player appeared in with a real (non-bot) seat, since that's what the
+  // personalization canary actually targeted.
+  app.get(
+    '/api/admin/metrics/retention',
+    { onRequest: [authenticate] },
+    async (_req, reply) => {
+      try {
+        const res = await db.query(`
+          WITH first_room AS (
+            SELECT DISTINCT ON (gp.user_id)
+              gp.user_id,
+              gr.bot_difficulty_source,
+              gr.created_at AS cohort_date
+            FROM game_participants gp
+            JOIN game_rooms gr ON gr.id = gp.room_id
+            WHERE gp.is_bot = false
+            ORDER BY gp.user_id, gr.created_at ASC
+          ),
+          activity AS (
+            SELECT gp.user_id, gr.created_at
+            FROM game_participants gp
+            JOIN game_rooms gr ON gr.id = gp.room_id
+            WHERE gp.is_bot = false
+          )
+          SELECT
+            fr.bot_difficulty_source AS cohort,
+            COUNT(DISTINCT fr.user_id) AS cohort_size,
+            COUNT(DISTINCT fr.user_id) FILTER (
+              WHERE EXISTS (
+                SELECT 1 FROM activity a
+                WHERE a.user_id = fr.user_id
+                  AND a.created_at >= fr.cohort_date + INTERVAL '1 day'
+              )
+            ) AS retained_d1,
+            COUNT(DISTINCT fr.user_id) FILTER (
+              WHERE EXISTS (
+                SELECT 1 FROM activity a
+                WHERE a.user_id = fr.user_id
+                  AND a.created_at >= fr.cohort_date + INTERVAL '7 days'
+              )
+            ) AS retained_d7,
+            COUNT(DISTINCT fr.user_id) FILTER (
+              WHERE EXISTS (
+                SELECT 1 FROM activity a
+                WHERE a.user_id = fr.user_id
+                  AND a.created_at >= fr.cohort_date + INTERVAL '30 days'
+              )
+            ) AS retained_d30
+          FROM first_room fr
+          WHERE fr.cohort_date <= NOW() - INTERVAL '1 day'
+          GROUP BY fr.bot_difficulty_source
+        `)
+
+        const byCohort: Record<string, any> = {}
+        for (const row of res.rows) {
+          const size = parseInt(row.cohort_size, 10) || 0
+          byCohort[row.cohort] = {
+            cohort_size: size,
+            d1_retention_pct: size > 0 ? Math.round((parseInt(row.retained_d1, 10) / size) * 1000) / 10 : null,
+            d7_retention_pct: size > 0 ? Math.round((parseInt(row.retained_d7, 10) / size) * 1000) / 10 : null,
+            d30_retention_pct: size > 0 ? Math.round((parseInt(row.retained_d30, 10) / size) * 1000) / 10 : null,
+          }
+        }
+
+        return reply.send({
+          personalized: byCohort['personalized'] || { cohort_size: 0, d1_retention_pct: null, d7_retention_pct: null, d30_retention_pct: null },
+          standard: byCohort['standard'] || { cohort_size: 0, d1_retention_pct: null, d7_retention_pct: null, d30_retention_pct: null },
+        })
+      } catch (err: any) {
+        app.log.error(err, '[metrics-routes] GET /metrics/retention error')
+        return reply.code(500).send({ error: err.message })
+      }
+    }
+  )
 }

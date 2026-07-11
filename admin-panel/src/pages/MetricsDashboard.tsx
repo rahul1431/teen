@@ -5,6 +5,7 @@ import dayjs, { Dayjs } from 'dayjs'
 import { adminApi } from '../api/client'
 import { MetricsCharts } from '../components/MetricsCharts'
 import { CohortMetricsChart } from '../components/CohortMetricsChart'
+import { RetentionComparisonCard } from '../components/RetentionComparisonCard'
 
 interface MetricTrend {
   game_type: string
@@ -289,6 +290,15 @@ export default function MetricsDashboard() {
         <Col xs={24}>
           <Card title={<><BgColorsOutlined /> Cohort Analytics & Anomaly Trends</>} style={{ borderRadius: 12 }}>
             <CohortMetricsChart />
+          </Card>
+        </Col>
+      </Row>
+
+      {/* Personalized Difficulty Retention Comparison */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24}>
+          <Card title="Personalized Difficulty: Retention Comparison" style={{ borderRadius: 12 }}>
+            <RetentionComparisonCard />
           </Card>
         </Col>
       </Row>

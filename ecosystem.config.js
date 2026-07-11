@@ -45,7 +45,15 @@ module.exports = {
       env: NODE_OPTS,
     },
 
-    // ── Game Gateway: WebSocket hub — 1 instance (was cluster max=3) ──
+    // ── Game Gateway: WebSocket hub ──
+    // 3 fork-mode instances on distinct ports (3004/3021/3022), NOT PM2
+    // cluster mode — cluster mode shares one port via SO_REUSEPORT with
+    // plain round-robin, which breaks the Nginx consistent-hash session
+    // affinity these need for WebSocket reconnects (this is likely why an
+    // earlier cluster-mode attempt was reverted to instances:1, per the
+    // prior comment here). Session state is shared via Redis
+    // (session-manager.ts) so any instance can serve any player on
+    // reconnect regardless of which one they land on.
     {
       name: 'teen-gateway',
       cwd: `${BASE}/game-gateway`,
@@ -55,7 +63,29 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '300M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, PORT: 3004 },
+    },
+    {
+      name: 'teen-gateway-2',
+      cwd: `${BASE}/game-gateway`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('game-gateway'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '300M',
+      env: { ...NODE_OPTS, PORT: 3021 },
+    },
+    {
+      name: 'teen-gateway-3',
+      cwd: `${BASE}/game-gateway`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('game-gateway'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '300M',
+      env: { ...NODE_OPTS, PORT: 3022 },
     },
 
     // ── Game Engines ──

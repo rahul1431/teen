@@ -6,6 +6,7 @@ import { RealtimeHub } from './realtime'
 import { GameWatchdog } from './watchdog'
 import { getBotProfile, pickBotAction, pickBotDelay } from './bot-profile'
 import { monitorEmitter } from './monitor-emitter'
+import { isInPersonalizationCanary, getPersonalizedDifficulty } from './personalized-difficulty-client'
 
 export interface MatchmakingEntry {
   userId: string
@@ -398,15 +399,27 @@ export class MatchmakingService {
       console.error('[matchmaking] Failed to query bot_difficulty from game_configs', configErr)
     }
 
+    // Personalized-difficulty canary (Task 18/19): the engines take one
+    // difficulty per room, so this only applies cleanly to the common
+    // "one real player + bot fill" case — not multi-real-player rooms.
+    let botDifficultySource: 'standard' | 'personalized' = 'standard'
+    if (realPlayers.length === 1 && isInPersonalizationCanary(realPlayers[0].userId)) {
+      const prediction = await getPersonalizedDifficulty(realPlayers[0].userId, gameType)
+      if (prediction) {
+        botDifficulty = prediction.recommended_difficulty
+        botDifficultySource = 'personalized'
+      }
+    }
+
     const client = await this.db.connect()
     const lockedUserIds: string[] = []
     try {
       await client.query('BEGIN')
 
       await client.query(
-        `INSERT INTO game_rooms (id, game_type, status, min_players, max_players, entry_fee, platform_fee_pct)
-         VALUES ($1, $2, 'waiting', $3, $4, $5, 5)`,
-        [roomId, gameType, 2, allPlayers.length, stake]
+        `INSERT INTO game_rooms (id, game_type, status, min_players, max_players, entry_fee, platform_fee_pct, bot_difficulty_source)
+         VALUES ($1, $2, 'waiting', $3, $4, $5, 5, $6)`,
+        [roomId, gameType, 2, allPlayers.length, stake, botDifficultySource]
       )
 
       for (let i = 0; i < allPlayers.length; i++) {

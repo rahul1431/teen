@@ -14,6 +14,7 @@ from sklearn.model_selection import train_test_split, cross_val_score
 from dotenv import load_dotenv
 from synthetic_data import generate_synthetic_training_data, validate_synthetic_data
 from model_versioning import save_model_versioned, activate_model, get_active_model_path
+from src.difficulty_predictor import get_predictor as get_difficulty_predictor
 
 load_dotenv()
 
@@ -42,6 +43,10 @@ model_lock = threading.Lock()
 
 class PredictRequest(BaseModel):
     user_id: str
+
+class DifficultyPredictRequest(BaseModel):
+    player_id: str
+    game_type: str
 
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
@@ -210,6 +215,11 @@ def startup_event():
         except Exception as e:
             logger.error(f"Failed to load model on startup: {e}")
 
+    # Load (or leave unloaded — predict() falls back gracefully) the
+    # personalized-difficulty model so the first /predict-difficulty call
+    # doesn't pay disk I/O.
+    get_difficulty_predictor()
+
 
 @app.post("/train")
 def train_model() -> Dict[str, Any]:
@@ -351,7 +361,44 @@ def predict_churn(req: PredictRequest) -> Dict[str, Any]:
         "prediction_type": "model"  # Indicate this is a model prediction
     }
 
+@app.post("/predict-difficulty")
+def predict_difficulty(req: DifficultyPredictRequest) -> Dict[str, Any]:
+    """Personalized bot-difficulty recommendation for one player/game_type.
+    Called by game-gateway's matchmaking under the PERSONALIZATION_CANARY_PCT
+    flag; always returns within ~100ms (falls back to the player's current
+    difficulty, or 'medium', rather than blocking matchmaking)."""
+    predictor = get_difficulty_predictor()
+    result = predictor.predict(req.player_id, req.game_type)
+    predictor.store_prediction(result)
+    return {
+        "player_id": result.player_id,
+        "game_type": result.game_type,
+        "recommended_difficulty": result.recommended_difficulty,
+        "confidence_score": round(result.confidence_score, 4),
+        "prediction_type": result.prediction_type,
+    }
+
+@app.post("/train-difficulty")
+def train_difficulty_model() -> Dict[str, Any]:
+    try:
+        predictor = get_difficulty_predictor()
+        result = predictor.train()
+        return result
+    except ValueError as e:
+        logger.error(f"Difficulty model training failed (quality gate): {e}")
+        raise HTTPException(status_code=400, detail=f"Training failed: {str(e)}")
+    except Exception as e:
+        logger.error(f"Difficulty model training failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Training failed: {str(e)}")
+
 @app.get("/health")
 def health():
     model_loaded = os.path.exists(MODEL_PATH)
-    return {"status": "healthy", "model_trained": model_loaded}
+    difficulty_model_loaded = os.path.exists(
+        os.path.join(os.path.dirname(__file__), "src", "difficulty_model.pkl")
+    )
+    return {
+        "status": "healthy",
+        "model_trained": model_loaded,
+        "difficulty_model_trained": difficulty_model_loaded,
+    }
