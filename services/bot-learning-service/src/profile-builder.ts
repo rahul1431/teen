@@ -50,6 +50,13 @@ export interface BotLearningConfig {
   medium_percentile_min: number
   medium_percentile_max: number
   hard_percentile_min: number
+  active_profile_version?: number
+}
+
+export interface ProfileVersion {
+  version: number
+  created_at: string
+  is_active: boolean
 }
 
 const MIN_SAMPLE_SIZE = 50
@@ -86,7 +93,13 @@ export class ProfileBuilder {
       medium_percentile_min: parseInt(raw.medium_percentile_min ?? '40'),
       medium_percentile_max: parseInt(raw.medium_percentile_max ?? '60'),
       hard_percentile_min:   parseInt(raw.hard_percentile_min   ?? '75'),
+      active_profile_version: parseInt(raw.active_profile_version ?? '0'),
     }
+  }
+
+  private async getNextProfileVersion(): Promise<number> {
+    const cfg = await this.getConfig()
+    return (cfg.active_profile_version ?? 0) + 1
   }
 
   async updateConfig(updates: Record<string, string>): Promise<void> {
@@ -143,14 +156,24 @@ export class ProfileBuilder {
   async runRebuild(): Promise<void> {
     this.logger.info('Bot profile rebuild started')
     const cfg = await this.getConfig()
+    const nextVersion = await this.getNextProfileVersion()
+
+    // Step 1: Create new versioned table
+    await this.createProfileVersionTable(nextVersion)
 
     for (const gameType of GAME_TYPES) {
       try {
-        await this.buildProfiles(gameType, cfg)
+        await this.buildProfiles(gameType, cfg, nextVersion)
       } catch (err) {
         this.logger.error({ err, gameType }, 'Rebuild failed for game type')
       }
     }
+
+    // Step 2: Update active version in config
+    await this.updateConfig({ active_profile_version: String(nextVersion) })
+
+    // Step 3: Cleanup old versions (keep last 5)
+    await this.cleanupOldVersions()
 
     // Invalidate Redis cache so game-gateway fetches fresh profiles
     for (const gameType of GAME_TYPES) {
@@ -159,8 +182,8 @@ export class ProfileBuilder {
       }
     }
 
-    await this.redis.publish('bot:profiles:rebuilt', JSON.stringify({ timestamp: new Date().toISOString() }))
-    this.logger.info('Bot profile rebuild complete')
+    await this.redis.publish('bot:profiles:rebuilt', JSON.stringify({ timestamp: new Date().toISOString(), version: nextVersion }))
+    this.logger.info({ version: nextVersion }, 'Bot profile rebuild complete')
   }
 
   // Alias for compatibility with callers expecting rebuildAllProfiles
@@ -168,7 +191,35 @@ export class ProfileBuilder {
     return this.runRebuild()
   }
 
-  private async buildProfiles(gameType: string, cfg: BotLearningConfig): Promise<void> {
+  private async createProfileVersionTable(version: number): Promise<void> {
+    const tableName = `bot_profiles_v${version}`
+    try {
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS ${tableName} (
+          id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          game_type             VARCHAR(30) NOT NULL,
+          difficulty            VARCHAR(10) NOT NULL CHECK (difficulty IN ('easy','medium','hard')),
+          win_rate_target       NUMERIC(5,2),
+          fold_probability      NUMERIC(5,4),
+          call_probability      NUMERIC(5,4),
+          raise_probability     NUMERIC(5,4),
+          avg_decision_delay_ms INTEGER,
+          avg_stake_preference  NUMERIC(10,2),
+          aggression_score      NUMERIC(4,2),
+          sample_size           INTEGER DEFAULT 0,
+          last_rebuilt_at       TIMESTAMPTZ,
+          created_at            TIMESTAMPTZ DEFAULT NOW(),
+          CONSTRAINT uq_${tableName}_game_difficulty UNIQUE (game_type, difficulty)
+        )
+      `)
+      this.logger.info({ version }, 'Created version table')
+    } catch (err) {
+      this.logger.error({ err, version }, 'Failed to create version table')
+      throw err
+    }
+  }
+
+  private async buildProfiles(gameType: string, cfg: BotLearningConfig, version?: number): Promise<void> {
     // Step 1: Get real player stats from game_results + game_participants (last N days)
     const playersRes = await this.pool.query(
       `SELECT
@@ -274,8 +325,9 @@ export class ProfileBuilder {
         }
       }
 
+      const tableName = version ? `bot_profiles_v${version}` : 'bot_profiles'
       await this.pool.query(
-        `INSERT INTO bot_profiles
+        `INSERT INTO ${tableName}
            (game_type, difficulty, win_rate_target, fold_probability, call_probability,
             raise_probability, avg_decision_delay_ms, avg_stake_preference, aggression_score,
             sample_size, last_rebuilt_at)
@@ -334,8 +386,12 @@ export class ProfileBuilder {
   }
 
   async getProfiles(): Promise<BotProfile[]> {
+    const cfg = await this.getConfig()
+    const version = cfg.active_profile_version ?? 0
+    const tableName = version > 0 ? `bot_profiles_v${version}` : 'bot_profiles'
+
     const res = await this.pool.query(
-      `SELECT * FROM bot_profiles ORDER BY game_type, difficulty`
+      `SELECT * FROM ${tableName} ORDER BY game_type, difficulty`
     )
     return res.rows
   }
@@ -350,8 +406,12 @@ export class ProfileBuilder {
     const cached = await this.redis.get(cacheKey)
     if (cached) return JSON.parse(cached)
 
+    const cfg = await this.getConfig()
+    const version = cfg.active_profile_version ?? 0
+    const tableName = version > 0 ? `bot_profiles_v${version}` : 'bot_profiles'
+
     const res = await this.pool.query(
-      `SELECT * FROM bot_profiles WHERE game_type = $1 AND difficulty = $2`,
+      `SELECT * FROM ${tableName} WHERE game_type = $1 AND difficulty = $2`,
       [gameType, difficulty]
     )
     if (!res.rows.length) return null
@@ -405,6 +465,10 @@ export class ProfileBuilder {
   }
 
   async getStats(): Promise<object> {
+    const cfg = await this.getConfig()
+    const version = cfg.active_profile_version ?? 0
+    const tableName = version > 0 ? `bot_profiles_v${version}` : 'bot_profiles'
+
     const res = await this.pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE difficulty = 'easy')   AS easy_count,
@@ -413,8 +477,143 @@ export class ProfileBuilder {
         MAX(last_rebuilt_at)                          AS last_rebuilt_at,
         MIN(sample_size)                              AS min_sample_size,
         MAX(sample_size)                              AS max_sample_size
-      FROM bot_profiles
+      FROM ${tableName}
     `)
     return res.rows[0]
+  }
+
+  async rollbackProfile(targetVersion: string): Promise<void> {
+    const cfg = await this.getConfig()
+    const currentVersion = cfg.active_profile_version ?? 0
+    const targetVer = parseInt(targetVersion, 10)
+
+    if (isNaN(targetVer)) {
+      this.logger.error({ targetVersion }, 'Invalid version number')
+      throw new Error(`Invalid version number: ${targetVersion}`)
+    }
+
+    if (targetVer === currentVersion) {
+      this.logger.warn({ targetVer }, 'Target version is same as current version')
+      return
+    }
+
+    // Verify target version table exists
+    try {
+      const result = await this.pool.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables
+          WHERE table_name = $1
+        )
+      `, [`bot_profiles_v${targetVer}`])
+
+      if (!result.rows[0].exists && targetVer > 0) {
+        this.logger.error({ targetVer }, 'Target version table does not exist')
+        throw new Error(`Version ${targetVer} does not exist`)
+      }
+
+      // Update active version
+      await this.updateConfig({ active_profile_version: String(targetVer) })
+
+      // Invalidate cache
+      for (const gameType of GAME_TYPES) {
+        for (const difficulty of DIFFICULTIES) {
+          await this.redis.del(`bot:profile:${gameType}:${difficulty}`)
+        }
+      }
+
+      this.logger.info({ from: currentVersion, to: targetVer }, 'Rolled back to version')
+    } catch (err) {
+      this.logger.error({ err, targetVer }, 'Failed to rollback to version')
+      throw err
+    }
+  }
+
+  async getProfileVersionHistory(): Promise<ProfileVersion[]> {
+    try {
+      const result = await this.pool.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables
+          WHERE table_name = 'profile_versions'
+        )
+      `)
+
+      if (!result.rows[0].exists) {
+        // Return versions based on existing tables
+        const tablesResult = await this.pool.query(`
+          SELECT table_name
+          FROM information_schema.tables
+          WHERE table_name LIKE 'bot_profiles_v%'
+          ORDER BY table_name
+        `)
+
+        const cfg = await this.getConfig()
+        const activeVersion = cfg.active_profile_version ?? 0
+
+        return tablesResult.rows.map((row: any) => {
+          const match = row.table_name.match(/bot_profiles_v(\d+)/)
+          const version = match ? parseInt(match[1], 10) : 0
+          return {
+            version,
+            created_at: new Date().toISOString(),
+            is_active: version === activeVersion,
+          }
+        })
+      }
+
+      const result2 = await this.pool.query(`
+        SELECT version, created_at, is_active
+        FROM profile_versions
+        ORDER BY version DESC
+      `)
+
+      return result2.rows
+    } catch (err) {
+      this.logger.error({ err }, 'Failed to get profile version history')
+      throw err
+    }
+  }
+
+  async cleanupOldVersions(): Promise<void> {
+    try {
+      const cfg = await this.getConfig()
+      const activeVersion = cfg.active_profile_version ?? 0
+
+      // Get all version tables
+      const tablesResult = await this.pool.query(`
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_name LIKE 'bot_profiles_v%'
+        ORDER BY table_name
+      `)
+
+      const versions = tablesResult.rows
+        .map((row: any) => {
+          const match = row.table_name.match(/bot_profiles_v(\d+)/)
+          return match ? parseInt(match[1], 10) : null
+        })
+        .filter((v: number | null) => v !== null)
+        .sort((a: number, b: number) => b - a) // Sort descending
+
+      // Keep last 5 versions
+      const RETENTION_COUNT = 5
+      const toDelete = versions.slice(RETENTION_COUNT)
+
+      for (const version of toDelete) {
+        if (version === activeVersion) {
+          this.logger.warn({ version }, 'Skipping deletion of active version')
+          continue
+        }
+
+        try {
+          await this.pool.query(`DROP TABLE IF EXISTS bot_profiles_v${version}`)
+          this.logger.info({ version }, 'Deleted old version table')
+        } catch (err) {
+          this.logger.error({ err, version }, 'Failed to delete version table')
+        }
+      }
+    } catch (err) {
+      this.logger.error({ err }, 'Failed to cleanup old versions')
+      throw err
+    }
   }
 }
