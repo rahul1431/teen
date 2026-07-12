@@ -25,7 +25,7 @@ import { registerTaskRoutes } from './task-routes'
 import { createRateLimiter } from './middleware/rate-limiter'
 
 // QR images for payment methods are stored here, served by nginx at /uploads/qr/.
-const QR_UPLOAD_DIR = process.env.QR_UPLOAD_DIR || '/opt/teen/uploads/qr'
+const QR_UPLOAD_DIR = process.env.QR_UPLOAD_DIR || '/opt/teen-prod/uploads/qr'
 
 // Thin wrapper to keep the call sites readable (matches the old `authenticator` API)
 const totp = {
@@ -965,7 +965,7 @@ async function start() {
     if (!file) return reply.code(400).send({ error: 'No file uploaded' })
     const ext = path.extname(file.filename || '').toLowerCase().slice(0, 8) || '.gif'
     const fname = `emoji_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`
-    const EMOJI_UPLOAD_DIR = process.env.EMOJI_UPLOAD_DIR || '/opt/teen/uploads/emojis'
+    const EMOJI_UPLOAD_DIR = process.env.EMOJI_UPLOAD_DIR || '/opt/teen-prod/uploads/emojis'
     fs.mkdirSync(EMOJI_UPLOAD_DIR, { recursive: true })
     await pipeline(file.file, fs.createWriteStream(path.join(EMOJI_UPLOAD_DIR, fname)))
     return reply.send({ url: `/uploads/emojis/${fname}` })
@@ -2750,7 +2750,7 @@ async function start() {
   })
 
   // ── Home Banners ──────────────────────────────────────────────────────────────
-  const BANNER_UPLOAD_DIR = process.env.BANNER_UPLOAD_DIR || '/opt/teen/uploads/banners'
+  const BANNER_UPLOAD_DIR = process.env.BANNER_UPLOAD_DIR || '/opt/teen-prod/uploads/banners'
   fs.mkdirSync(BANNER_UPLOAD_DIR, { recursive: true })
 
   app.get('/api/admin/banners', { onRequest: [app.authenticate] }, async (_req, reply) => {
