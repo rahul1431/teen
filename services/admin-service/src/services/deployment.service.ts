@@ -620,35 +620,44 @@ export class DeploymentService {
   }
 
   /**
-   * Check if database migrations are in progress (prod only)
+   * Report how many infra/db/migrations/*.sql files are pending for this
+   * environment's actual database. Informational only (status is never
+   * 'failed') — real enforcement happens in apply-migrations.sh during the
+   * deploy itself, which halts the deploy if a migration errors. Queries
+   * over SSH against the target environment's own DB rather than `this.db`,
+   * since `this.db` is whichever DB *this* admin-service instance connects
+   * to (dev when the push is initiated from the dev admin panel), not
+   * necessarily the environment being deployed to.
    */
   private async checkDatabaseMigrations(environment: 'dev' | 'prod'): Promise<SafetyCheckResult | null> {
-    if (environment !== 'prod') return null
-
     try {
-      const migrationResult = await this.db.query(
-        `SELECT COUNT(*) as count FROM migrations WHERE status = 'in_progress'`
-      ).catch(() => ({ rows: [{ count: 0 }] }))
+      const envConfig = this.getEnvConfig(environment)
+      const projectPath = this.getProjectPath(environment)
 
-      const inProgress = migrationResult.rows[0]?.count || 0
-      if (inProgress > 0) {
-        return {
-          name: 'Database Migrations',
-          status: 'failed',
-          message: `${inProgress} migration(s) in progress. Wait for completion.`,
-        }
-      }
+      const pendingOutput = await this.runSSHCommand(
+        `docker exec -i teen_postgres psql -U teen -d ${envConfig.database.name} -tAc ` +
+          `"CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()); ` +
+          `SELECT COUNT(*) FROM schema_migrations" ` +
+          `&& ls ${projectPath}/infra/db/migrations/*.sql | wc -l`,
+        10000
+      )
+      const [appliedStr, totalStr] = pendingOutput.trim().split('\n').map((s) => s.trim())
+      const applied = parseInt(appliedStr, 10) || 0
+      const total = parseInt(totalStr, 10) || 0
+      const pending = Math.max(0, total - applied)
 
       return {
         name: 'Database Migrations',
         status: 'passed',
-        message: 'No migrations in progress',
+        message: pending > 0
+          ? `${pending} pending migration(s) will be applied during this deploy`
+          : 'No pending migrations',
       }
     } catch (err: any) {
       return {
         name: 'Database Migrations',
         status: 'warning',
-        message: 'Could not check migration status',
+        message: `Could not check migration status: ${err.message?.substring(0, 80)}`,
       }
     }
   }
@@ -856,6 +865,19 @@ export class DeploymentService {
         throw new Error(`Commit mismatch: expected ${commitHash}, got ${currentCommit}`)
       }
       await this.logDeployment(jobId, `${envConfig.tag} Verified commit hash: ${commitHash}`, 'info')
+
+      // Step 2.5: Apply any pending database migrations. Must run before
+      // npm install/restart — new code that expects a new column/table
+      // should never come up against an un-migrated schema. A migration
+      // failure throws here, which the outer catch turns into an automatic
+      // code rollback (see autoRollback below); the migration itself is
+      // simply left unrecorded in schema_migrations and retried next deploy.
+      await this.logDeployment(jobId, `${envConfig.tag} Applying database migrations...`, 'info')
+      const migrationOutput = await this.runSSHCommand(
+        `bash ${projectPath}/infra/db/apply-migrations.sh ${envConfig.database.name}`,
+        2 * 60 * 1000 // 2 minute timeout
+      )
+      await this.logDeployment(jobId, `${envConfig.tag} ${migrationOutput}`, 'info')
 
       // Step 3-5: npm install for root and services
       const services = ['', 'services/game-gateway', 'services/admin-service']
