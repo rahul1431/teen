@@ -637,24 +637,31 @@ export class DeploymentService {
     try {
       const envConfig = this.getEnvConfig(environment)
       const projectPath = this.getProjectPath(environment)
+      const migrationsDir = `${projectPath}/infra/db/migrations`
 
-      const pendingOutput = await this.runSSHCommand(
-        `docker exec -i teen_postgres psql -U teen -d ${envConfig.database.name} -tAc ` +
-          `"CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()); ` +
-          `SELECT COUNT(*) FROM schema_migrations" ` +
-          `&& ls ${projectPath}/infra/db/migrations/*.sql | wc -l`,
+      // Ensure the tracking table exists (quietly — `-q` suppresses the
+      // CREATE TABLE tag so it can't pollute the count below), then diff
+      // on-disk filenames against tracked ones directly. Comparing raw
+      // COUNT(*) instead would be wrong the moment history has any drift
+      // (a renamed/removed migration leaves a stale tracked row that
+      // inflates the count and can mask a real pending migration).
+      await this.runSSHCommand(
+        `docker exec -i teen_postgres psql -U teen -d ${envConfig.database.name} -q -c ` +
+          `"CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"`,
         10000
       )
-      const [appliedStr, totalStr] = pendingOutput.trim().split('\n').map((s) => s.trim())
-      const applied = parseInt(appliedStr, 10) || 0
-      const total = parseInt(totalStr, 10) || 0
-      const pending = Math.max(0, total - applied)
+      const pendingOutput = await this.runSSHCommand(
+        `comm -23 <(ls ${migrationsDir}/*.sql | xargs -n1 basename | sort) ` +
+          `<(docker exec -i teen_postgres psql -U teen -d ${envConfig.database.name} -tAc "SELECT filename FROM schema_migrations" | sort)`,
+        10000
+      )
+      const pendingFiles = pendingOutput.trim().split('\n').filter(Boolean)
 
       return {
         name: 'Database Migrations',
         status: 'passed',
-        message: pending > 0
-          ? `${pending} pending migration(s) will be applied during this deploy`
+        message: pendingFiles.length > 0
+          ? `${pendingFiles.length} pending migration(s) will be applied during this deploy: ${pendingFiles.join(', ')}`
           : 'No pending migrations',
       }
     } catch (err: any) {
