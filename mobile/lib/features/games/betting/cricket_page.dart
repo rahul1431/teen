@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import '../../../core/audio/sound_service.dart';
 import '../../../core/network/api_client.dart';
@@ -779,14 +780,19 @@ class _DraftTeamScreenState extends State<_DraftTeamScreen>
         backgroundColor: AppColors.green,
       ));
       Navigator.pop(context); // Go back to fixtures
+    } on DioException catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      final err = e.response?.data?['error'] ?? 'Failed to join contest';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(err),
+        backgroundColor: AppColors.red,
+      ));
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
-      final err = e.toString().contains('already joined')
-          ? 'You have already joined this contest league'
-          : 'Failed to join contest';
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(err),
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Failed to join contest'),
         backgroundColor: AppColors.red,
       ));
     }
