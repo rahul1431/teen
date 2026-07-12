@@ -195,8 +195,12 @@ const ENV_CONFIGS: Record<'dev' | 'prod', EnvironmentConfig> = {
       appMonitor: 3015,
     },
     database: {
-      url: 'teen_db_prod',
-      name: 'teen_db_prod',
+      // The real prod DB is named plain `teen_db` (predates the dev/prod
+      // split — confirmed via `docker exec teen_postgres psql -U teen -l`
+      // and prod admin-service's own DATABASE_URL). Do not "fix" this to
+      // teen_db_prod without an actual DB rename + every service's .env.
+      url: 'teen_db',
+      name: 'teen_db',
     },
     redis: {
       port: 6379,
