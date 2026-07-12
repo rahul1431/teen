@@ -102,6 +102,12 @@ export default function DevAdminPanel() {
   const [deploymentError, setDeploymentError] = useState<string | null>(null)
   const [deploymentSuccess, setDeploymentSuccess] = useState(false)
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  // Synchronous re-entrancy guard for handlePushProduction — a ref updates
+  // immediately, unlike state (which batches/re-renders), so back-to-back
+  // clicks in the same tick before React re-renders still get blocked. This
+  // is what let a rapid multi-click send 11 duplicate deploy requests.
+  const isDeployingRef = useRef(false)
+  const [isDeploying, setIsDeploying] = useState(false)
 
   const screens = Grid.useBreakpoint()
 
@@ -245,6 +251,8 @@ export default function DevAdminPanel() {
   // Close deployment modal
   const closeDeploymentModal = () => {
     setDeploymentModalOpen(false)
+    isDeployingRef.current = false
+    setIsDeploying(false)
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current)
     }
@@ -320,6 +328,9 @@ export default function DevAdminPanel() {
       message.error('Git status not loaded. Please refresh first.')
       return
     }
+    if (isDeployingRef.current) return
+    isDeployingRef.current = true
+    setIsDeploying(true)
 
     try {
       setDeploymentProgress(0)
@@ -353,6 +364,8 @@ export default function DevAdminPanel() {
       const errMsg = error.response?.data?.error || error.message || 'Failed to initiate deployment'
       setDeploymentError(errMsg)
       setModalStep('result')
+      isDeployingRef.current = false
+      setIsDeploying(false)
     }
   }
 
@@ -934,7 +947,8 @@ export default function DevAdminPanel() {
               type="primary"
               danger
               onClick={handlePushProduction}
-              disabled={confirmText !== 'DEPLOY'}
+              disabled={confirmText !== 'DEPLOY' || isDeploying}
+              loading={isDeploying}
             >
               Confirm Deployment
             </Button>

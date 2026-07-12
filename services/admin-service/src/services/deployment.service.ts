@@ -1,4 +1,4 @@
-import { execSync } from 'child_process'
+import { exec } from 'child_process'
 import { Pool, QueryResult } from 'pg'
 import axios from 'axios'
 import fs from 'fs'
@@ -1156,37 +1156,45 @@ export class DeploymentService {
   /**
    * Execute SSH command on VPS
    * Throws on timeout or SSH error
+   *
+   * Uses async `exec`, NOT `execSync`. execSync blocks the entire Node
+   * event loop for the full duration of the child process — while it's
+   * running, NOTHING else in this process can execute, including the
+   * setTimeout that was supposed to enforce timeoutMs (timers can't fire
+   * while a synchronous call has the thread). That combination is exactly
+   * what wedged the service on 2026-07-12: a user's double/multi-submit
+   * sent 11 near-simultaneous POST /deploy/prod requests, each kicking off
+   * ~11 safety checks, each doing blocking execSync SSH calls — the
+   * requests queued up behind each other with no working timeout to ever
+   * unstick things, and none of them completed even minutes later. Async
+   * exec lets the event loop keep serving other requests, and its
+   * `timeout` option actually kills the child (SIGTERM) when exceeded.
    */
   private async runSSHCommand(command: string, timeoutMs: number = this.deploymentTimeout): Promise<string> {
+    // Use SSH key-based authentication with ssh command. This is always a
+    // loopback connection (the VPS deploying to itself), so
+    // -o StrictHostKeyChecking=no is a deliberate, low-risk trade-off —
+    // without it, a future host-key rotation or known_hosts wipe would
+    // silently break every deploy step with no way to recover short of
+    // SSHing in by hand.
+    const sshCmd = `ssh -o StrictHostKeyChecking=no -i "${this.vpsConfig.keyPath}" -p ${this.vpsConfig.port} ${this.vpsConfig.username}@${this.vpsConfig.host} "${command}"`
+
     return new Promise((resolve, reject) => {
-      try {
-        // Use SSH key-based authentication with ssh command. This is
-        // always a loopback connection (the VPS deploying to itself), so
-        // -o StrictHostKeyChecking=no is a deliberate, low-risk trade-off —
-        // without it, a future host-key rotation or known_hosts wipe would
-        // silently break every deploy step with no way to recover short of
-        // SSHing in by hand.
-        const sshCmd = `ssh -o StrictHostKeyChecking=no -i "${this.vpsConfig.keyPath}" -p ${this.vpsConfig.port} ${this.vpsConfig.username}@${this.vpsConfig.host} "${command}"`
-
-        const timeout = setTimeout(() => {
-          reject(new Error(`SSH command timeout after ${timeoutMs}ms: ${command}`))
-        }, timeoutMs)
-
-        try {
-          const output = execSync(sshCmd, {
-            encoding: 'utf8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-            maxBuffer: 10 * 1024 * 1024, // 10MB buffer
-          })
-          clearTimeout(timeout)
-          resolve(output.trim())
-        } catch (err: any) {
-          clearTimeout(timeout)
-          reject(new Error(`SSH command failed: ${err.message}\nCommand: ${command}`))
+      exec(
+        sshCmd,
+        { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024, timeout: timeoutMs, killSignal: 'SIGKILL' },
+        (err, stdout) => {
+          if (err) {
+            if ((err as any).killed) {
+              reject(new Error(`SSH command timeout after ${timeoutMs}ms: ${command}`))
+            } else {
+              reject(new Error(`SSH command failed: ${err.message}\nCommand: ${command}`))
+            }
+            return
+          }
+          resolve(stdout.trim())
         }
-      } catch (err: any) {
-        reject(err)
-      }
+      )
     })
   }
 
