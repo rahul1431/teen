@@ -230,6 +230,13 @@ export class DeploymentService {
     }
   }
 
+  private getProjectPath(environment?: 'dev' | 'prod'): string {
+    if (environment) {
+      return environment === 'dev' ? '/opt/teen-dev' : '/opt/teen-prod';
+    }
+    return process.cwd().includes('teen-dev') ? '/opt/teen-dev' : '/opt/teen-prod';
+  }
+
   /**
    * Get environment configuration
    */
@@ -273,15 +280,15 @@ export class DeploymentService {
 
     // Run all checks in parallel for efficiency
     const allCheckPromises = [
-      this.checkGitClean(branch),
+      this.checkGitClean(branch, environment),
       this.checkValidBranch(branch),
-      this.checkTestsPassed(),
+      this.checkTestsPassed(environment),
       this.checkDatabaseConnectivity(environment),
       this.checkRedisConnectivity(environment),
       this.checkServicesHealth(environment),
       this.checkDiskSpace(environment),
       this.checkDatabaseBackups(environment),
-      this.checkBranchUpdated(branch),
+      this.checkBranchUpdated(branch, environment),
       this.checkDatabaseMigrations(environment),
       this.checkPreviousDeploymentStatus(environment),
     ]
@@ -325,10 +332,11 @@ export class DeploymentService {
   /**
    * Check if git working tree is clean
    */
-  private async checkGitClean(branch: string): Promise<SafetyCheckResult | null> {
+  private async checkGitClean(branch: string, environment?: 'dev' | 'prod'): Promise<SafetyCheckResult | null> {
     try {
+      const projectPath = this.getProjectPath(environment)
       const gitStatus = await this.runSSHCommand(
-        `cd ${this.vpsConfig.projectPath} && git status --porcelain`,
+        `cd ${projectPath} && git status --porcelain`,
         10000
       )
       if (gitStatus.trim().length > 0) {
@@ -382,10 +390,11 @@ export class DeploymentService {
   /**
    * Check if tests pass
    */
-  private async checkTestsPassed(): Promise<SafetyCheckResult | null> {
+  private async checkTestsPassed(environment?: 'dev' | 'prod'): Promise<SafetyCheckResult | null> {
     try {
+      const projectPath = this.getProjectPath(environment)
       await this.runSSHCommand(
-        `cd ${this.vpsConfig.projectPath} && npm test -- --passWithNoTests --maxWorkers=2 2>&1`,
+        `cd ${projectPath} && npm test -- --passWithNoTests --maxWorkers=2 2>&1`,
         2 * 60 * 1000 // 2 minute timeout
       )
       return {
@@ -500,8 +509,9 @@ export class DeploymentService {
   private async checkDiskSpace(environment: 'dev' | 'prod'): Promise<SafetyCheckResult | null> {
     try {
       const minSpace = environment === 'prod' ? 10 : 5 // GB
+      const projectPath = this.getProjectPath(environment)
       const diskOutput = await this.runSSHCommand(
-        `df /opt/teen | tail -1 | awk '{print $4}'`,
+        `df ${projectPath} | tail -1 | awk '{print $4}'`,
         10000
       )
       const freeKB = parseInt(diskOutput.trim()) || 0
@@ -579,10 +589,11 @@ export class DeploymentService {
   /**
    * Check if branch is up to date with main
    */
-  private async checkBranchUpdated(branch: string): Promise<SafetyCheckResult | null> {
+  private async checkBranchUpdated(branch: string, environment?: 'dev' | 'prod'): Promise<SafetyCheckResult | null> {
     try {
+      const projectPath = this.getProjectPath(environment)
       const behindMain = await this.runSSHCommand(
-        `cd ${this.vpsConfig.projectPath} && git rev-list --left-only --count main...${branch} 2>/dev/null || echo 0`,
+        `cd ${projectPath} && git rev-list --left-only --count main...${branch} 2>/dev/null || echo 0`,
         10000
       )
       const commitsBehind = parseInt(behindMain.trim()) || 0
@@ -821,14 +832,15 @@ export class DeploymentService {
         'info'
       )
 
+      const projectPath = this.getProjectPath(environment)
       // Get the previous commit hash for rollback
-      previousCommit = await this.getPreviousCommit()
+      previousCommit = await this.getPreviousCommit(environment)
       await this.logDeployment(jobId, `${envConfig.tag} Previous commit saved: ${previousCommit}`, 'info')
 
       // Step 1: Git pull
       await this.logDeployment(jobId, `${envConfig.tag} Running: git pull origin ${branch}`, 'info')
       const gitOutput = await this.runSSHCommand(
-        `cd ${this.vpsConfig.projectPath} && git pull origin ${branch}`
+        `cd ${projectPath} && git pull origin ${branch}`
       )
       await this.logDeployment(
         jobId,
@@ -838,7 +850,7 @@ export class DeploymentService {
 
       // Step 2: Verify commit hash
       const currentCommit = await this.runSSHCommand(
-        `cd ${this.vpsConfig.projectPath} && git rev-parse HEAD`
+        `cd ${projectPath} && git rev-parse HEAD`
       )
       if (!currentCommit.includes(commitHash)) {
         throw new Error(`Commit mismatch: expected ${commitHash}, got ${currentCommit}`)
@@ -848,7 +860,7 @@ export class DeploymentService {
       // Step 3-5: npm install for root and services
       const services = ['', 'services/game-gateway', 'services/admin-service']
       for (const svc of services) {
-        const svcPath = svc ? `${this.vpsConfig.projectPath}/${svc}` : this.vpsConfig.projectPath
+        const svcPath = svc ? `${projectPath}/${svc}` : projectPath
         const svcName = svc || 'root'
         await this.logDeployment(
           jobId,
@@ -863,15 +875,15 @@ export class DeploymentService {
         )
       }
 
-      // Step 6: Kill and restart PM2 with environment-specific config
+      // Step 6: Restart PM2 with environment-specific config
       await this.logDeployment(
         jobId,
         `${envConfig.tag} Restarting services with PM2 (${envConfig.ecosystemConfig})...`,
         'info'
       )
-      await this.runSSHCommand(`pm2 kill`)
+      await this.runSSHCommand(`pm2 delete ${envConfig.ecosystemConfig} || true`)
       const pm2Output = await this.runSSHCommand(
-        `cd ${this.vpsConfig.projectPath} && pm2 start ${envConfig.ecosystemConfig} && pm2 save`
+        `cd ${projectPath} && pm2 start ${envConfig.ecosystemConfig} && pm2 save`
       )
       await this.logDeployment(jobId, `${envConfig.tag} PM2 started`, 'info')
 
@@ -1046,9 +1058,10 @@ export class DeploymentService {
   /**
    * Get the previous commit hash for rollback
    */
-  private async getPreviousCommit(): Promise<string> {
+  private async getPreviousCommit(environment?: 'dev' | 'prod'): Promise<string> {
+    const projectPath = this.getProjectPath(environment)
     const commit = await this.runSSHCommand(
-      `cd ${this.vpsConfig.projectPath} && git rev-parse HEAD`
+      `cd ${projectPath} && git rev-parse HEAD`
     )
     return commit.trim()
   }
@@ -1248,32 +1261,33 @@ export class DeploymentService {
 
       previousCommitHash = prevDeployment.commit_hash.trim()
 
+      const projectPath = this.getProjectPath('prod')
       // Get the current commit hash to use for the rollback reference
       const currentCommitResult = await this.runSSHCommand(
-        `cd ${this.vpsConfig.projectPath} && git rev-parse HEAD`
+        `cd ${projectPath} && git rev-parse HEAD`
       )
       currentCommitHash = currentCommitResult.trim()
 
       // Step 2: Checkout previous commit
       await this.runSSHCommand(
-        `cd ${this.vpsConfig.projectPath} && git checkout ${previousCommitHash}`
+        `cd ${projectPath} && git checkout ${previousCommitHash}`
       )
 
       await this.runSSHCommand(
-        `cd ${this.vpsConfig.projectPath} && git reset --hard ${previousCommitHash}`
+        `cd ${projectPath} && git reset --hard ${previousCommitHash}`
       )
 
       // Step 3: Reinstall dependencies
       const services = ['', 'services/game-gateway', 'services/admin-service']
       for (const svc of services) {
-        const svcPath = svc ? `${this.vpsConfig.projectPath}/${svc}` : this.vpsConfig.projectPath
+        const svcPath = svc ? `${projectPath}/${svc}` : projectPath
         await this.runSSHCommand(`cd ${svcPath} && npm install --production=false 2>&1`)
       }
 
       // Step 4: Restart services
-      await this.runSSHCommand(`pm2 kill`)
+      await this.runSSHCommand(`pm2 delete ecosystem.config.js || true`)
       await this.runSSHCommand(
-        `cd ${this.vpsConfig.projectPath} && pm2 start ecosystem.config.js && pm2 save`
+        `cd ${projectPath} && pm2 start ecosystem.config.js && pm2 save`
       )
 
       // Step 5: Wait for services to start
@@ -1286,11 +1300,11 @@ export class DeploymentService {
       if (!allHealthy) {
         // Auto-rollback the rollback if services fail
         await this.runSSHCommand(
-          `cd ${this.vpsConfig.projectPath} && git reset --hard ${currentCommitHash}`
+          `cd ${projectPath} && git reset --hard ${currentCommitHash}`
         )
-        await this.runSSHCommand(`pm2 kill`)
+        await this.runSSHCommand(`pm2 delete ecosystem.config.js || true`)
         await this.runSSHCommand(
-          `cd ${this.vpsConfig.projectPath} && pm2 start ecosystem.config.js && pm2 save`
+          `cd ${projectPath} && pm2 start ecosystem.config.js && pm2 save`
         )
         await this.sleep(5000)
 
@@ -1392,7 +1406,8 @@ export class DeploymentService {
       // STEP 2: Get deployment info and backup current state
       await this.updateRollbackStep(rollbackId, 2, 'Backup Current State', 'in_progress')
       const prevDeployment = await this.getDeploymentInfo(previousDeploymentId)
-      const currentCommit = await this.runSSHCommand(`cd ${this.vpsConfig.projectPath} && git rev-parse HEAD`)
+      const projectPath = this.getProjectPath(environment)
+      const currentCommit = await this.runSSHCommand(`cd ${projectPath} && git rev-parse HEAD`)
       const currentCommitTrimmed = currentCommit.trim()
 
       await this.db.query(
@@ -1667,7 +1682,8 @@ export class DeploymentService {
 
     // Check 3: Disk space available
     try {
-      const diskOutput = await this.runSSHCommand(`df ${this.vpsConfig.projectPath} | tail -1 | awk '{print $4}'`)
+      const projectPath = this.getProjectPath(environment)
+      const diskOutput = await this.runSSHCommand(`df ${projectPath} | tail -1 | awk '{print $4}'`)
       const availableKb = parseInt(diskOutput.trim())
       const availableGb = availableKb / 1024 / 1024
 
@@ -1779,14 +1795,14 @@ export class DeploymentService {
     )
 
     try {
-      await this.runSSHCommand(`pm2 stop all`, timeoutMs)
+      await this.runSSHCommand(`pm2 stop ${envConfig.ecosystemConfig}`, timeoutMs)
       await this.sleep(2000)
     } catch (err) {
-      await this.logDeploymentRollback('temp', `${envConfig.tag} Warning: graceful stop timed out, forcing kill`, 'warn')
+      await this.logDeploymentRollback('temp', `${envConfig.tag} Warning: graceful stop timed out, forcing delete`, 'warn')
       try {
-        await this.runSSHCommand(`pm2 kill`, 10000)
+        await this.runSSHCommand(`pm2 delete ${envConfig.ecosystemConfig}`, 10000)
       } catch (killErr) {
-        await this.logDeploymentRollback('temp', `${envConfig.tag} Warning: could not kill PM2`, 'warn')
+        await this.logDeploymentRollback('temp', `${envConfig.tag} Warning: could not delete PM2 processes`, 'warn')
       }
     }
   }
@@ -1796,13 +1812,14 @@ export class DeploymentService {
    */
   private async restorePreviousCode(environment: 'dev' | 'prod', commitHash: string, rollbackId?: string): Promise<void> {
     const envConfig = this.getEnvConfig(environment)
+    const projectPath = this.getProjectPath(environment)
 
     await this.runSSHCommand(
-      `cd ${this.vpsConfig.projectPath} && git fetch origin && git checkout ${commitHash}`
+      `cd ${projectPath} && git fetch origin && git checkout ${commitHash}`
     )
 
     await this.runSSHCommand(
-      `cd ${this.vpsConfig.projectPath} && git reset --hard ${commitHash}`
+      `cd ${projectPath} && git reset --hard ${commitHash}`
     )
 
     await this.logDeploymentRollback(rollbackId || 'temp', `${envConfig.tag} Restored code to commit ${commitHash}`, 'info')
@@ -1813,10 +1830,11 @@ export class DeploymentService {
    */
   private async restoreDependencies(environment: 'dev' | 'prod', rollbackId?: string): Promise<void> {
     const envConfig = this.getEnvConfig(environment)
+    const projectPath = this.getProjectPath(environment)
     const services = ['', 'services/game-gateway', 'services/admin-service']
 
     for (const svc of services) {
-      const svcPath = svc ? `${this.vpsConfig.projectPath}/${svc}` : this.vpsConfig.projectPath
+      const svcPath = svc ? `${projectPath}/${svc}` : projectPath
       const svcName = svc || 'root'
 
       await this.runSSHCommand(`cd ${svcPath} && npm install --production=false 2>&1`)
@@ -1830,10 +1848,11 @@ export class DeploymentService {
    */
   private async startServicesForEnvironment(environment: 'dev' | 'prod', rollbackId?: string): Promise<void> {
     const envConfig = this.getEnvConfig(environment)
+    const projectPath = this.getProjectPath(environment)
 
-    await this.runSSHCommand(`pm2 kill`)
+    await this.runSSHCommand(`pm2 delete ${envConfig.ecosystemConfig} || true`)
     await this.runSSHCommand(
-      `cd ${this.vpsConfig.projectPath} && pm2 start ${envConfig.ecosystemConfig} && pm2 save`
+      `cd ${projectPath} && pm2 start ${envConfig.ecosystemConfig} && pm2 save`
     )
 
     await this.logDeploymentRollback(rollbackId || 'temp', `${envConfig.tag} Services started with ${envConfig.ecosystemConfig}`, 'info')

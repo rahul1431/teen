@@ -1,27 +1,31 @@
 const fs = require('fs')
 
-const BASE = '/opt/teen-prod/services'
-const ENV_FILE = (svc) => `${BASE}/${svc}/.env`
+const BASE = '/opt/teen-dev/services'
+const ENV_FILE = (svc) => `${BASE}/${svc}/.env.dev`
 
-// Go binaries can't load dotenv themselves, so parse the service .env here
-// and inject it via pm2's env object.
+// Load .env.dev files for services — returns all key/value pairs
 const LOAD_ENV = (svc) => {
   const out = {}
   try {
-    for (const line of fs.readFileSync(ENV_FILE(svc), 'utf8').split('\n')) {
-      const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/)
-      if (m && !m[1].startsWith('#')) out[m[1]] = m[2]
+    const envPath = `${BASE}/${svc}/.env.dev`
+    if (fs.existsSync(envPath)) {
+      for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+        const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/)
+        if (m && !m[1].startsWith('#')) out[m[1]] = m[2]
+      }
     }
-  } catch (_) { /* no .env — fall back to defaults baked into the binary */ }
+  } catch (_) { /* no .env.dev — fall back to defaults baked into the binary */ }
   return out
 }
-const NODE_OPTS = { NODE_OPTIONS: '--max-old-space-size=120' }
+
+const NODE_OPTS = { NODE_OPTIONS: '--max-old-space-size=120', NODE_ENV: 'development' }
 
 module.exports = {
   apps: [
-    // ── Core API: auth + users + leaderboard + notifications + betting (5 → 1) ──
+    // ── Core API: auth + users + leaderboard + notifications + betting ──
+    // DEV PORT: 3201 (vs PROD: 3001)
     {
-      name: 'teen-core-api',
+      name: 'teen-core-api-dev',
       cwd: `${BASE}/core-api-service`,
       script: 'dist/index.js',
       env_file: ENV_FILE('core-api-service'),
@@ -29,12 +33,13 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '350M',
-      env: { ...NODE_OPTS, PORT: 3001 },
+      env: { ...NODE_OPTS, ...LOAD_ENV('core-api-service'), PORT: 3201 },
     },
 
     // ── Wallet: critical financial service, keep isolated ──
+    // DEV PORT: 3203 (vs PROD: 3003)
     {
-      name: 'teen-wallet',
+      name: 'teen-wallet-dev',
       cwd: `${BASE}/wallet-service`,
       script: 'dist/index.js',
       env_file: ENV_FILE('wallet-service'),
@@ -42,20 +47,13 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '200M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...LOAD_ENV('wallet-service'), PORT: 3203 },
     },
 
     // ── Game Gateway: WebSocket hub ──
-    // 3 fork-mode instances on distinct ports (3004/3021/3022), NOT PM2
-    // cluster mode — cluster mode shares one port via SO_REUSEPORT with
-    // plain round-robin, which breaks the Nginx consistent-hash session
-    // affinity these need for WebSocket reconnects (this is likely why an
-    // earlier cluster-mode attempt was reverted to instances:1, per the
-    // prior comment here). Session state is shared via Redis
-    // (session-manager.ts) so any instance can serve any player on
-    // reconnect regardless of which one they land on.
+    // DEV PORTS: 3204/3221/3222 (vs PROD: 3004/3021/3022)
     {
-      name: 'teen-gateway',
+      name: 'teen-gateway-dev',
       cwd: `${BASE}/game-gateway`,
       script: 'dist/index.js',
       env_file: ENV_FILE('game-gateway'),
@@ -63,10 +61,10 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '300M',
-      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3004 },
+      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3204 },
     },
     {
-      name: 'teen-gateway-2',
+      name: 'teen-gateway-2-dev',
       cwd: `${BASE}/game-gateway`,
       script: 'dist/index.js',
       env_file: ENV_FILE('game-gateway'),
@@ -74,10 +72,10 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '300M',
-      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3021 },
+      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3221 },
     },
     {
-      name: 'teen-gateway-3',
+      name: 'teen-gateway-3-dev',
       cwd: `${BASE}/game-gateway`,
       script: 'dist/index.js',
       env_file: ENV_FILE('game-gateway'),
@@ -85,12 +83,12 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '300M',
-      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3022 },
+      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3222 },
     },
 
     // ── Game Engines ──
     {
-      name: 'teen-aviator',
+      name: 'teen-aviator-dev',
       cwd: `${BASE}/game-engines/aviator`,
       script: 'dist/index.js',
       env_file: ENV_FILE('game-engines/aviator'),
@@ -98,10 +96,10 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '200M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...LOAD_ENV('game-engines/aviator'), PORT: 3205 },
     },
     {
-      name: 'teen-ludo',
+      name: 'teen-ludo-dev',
       cwd: `${BASE}/game-engines/ludo`,
       script: 'dist/index.js',
       env_file: ENV_FILE('game-engines/ludo'),
@@ -109,10 +107,10 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '200M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...LOAD_ENV('game-engines/ludo'), PORT: 3211 },
     },
     {
-      name: 'teen-tp-engine',
+      name: 'teen-tp-engine-dev',
       cwd: `${BASE}/game-engines/teen-patti`,
       script: './teen-patti-engine',
       interpreter: 'none',
@@ -120,12 +118,13 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '200M',
-      env: { PORT: '3010', ...LOAD_ENV('game-engines/teen-patti') },
+      env: { PORT: '3210', ...LOAD_ENV('game-engines/teen-patti') },
     },
 
     // ── Admin: keep separate — 2300+ lines with multipart KYC upload ──
+    // DEV PORT: 3208 (vs PROD: 3008)
     {
-      name: 'teen-admin-svc',
+      name: 'teen-admin-svc-dev',
       cwd: `${BASE}/admin-service`,
       script: 'dist/index.js',
       env_file: ENV_FILE('admin-service'),
@@ -133,12 +132,13 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '250M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...LOAD_ENV('admin-service'), PORT: 3208 },
     },
 
     // ── Monitoring: WebSocket receiver from game-gateway + metrics ──
+    // DEV PORT: 3217 (vs PROD: 3017)
     {
-      name: 'teen-monitoring',
+      name: 'teen-monitoring-dev',
       cwd: `${BASE}/monitoring-service`,
       script: 'dist/index.js',
       env_file: ENV_FILE('monitoring-service'),
@@ -146,12 +146,13 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '150M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...LOAD_ENV('monitoring-service'), PORT: 3217 },
     },
 
     // ── Risk: fraud detection API ──
+    // DEV PORT: 3206 (vs PROD: 3006)
     {
-      name: 'teen-risk',
+      name: 'teen-risk-dev',
       cwd: `${BASE}/risk-service`,
       script: 'dist/index.js',
       env_file: ENV_FILE('risk-service'),
@@ -159,12 +160,13 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '150M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...LOAD_ENV('risk-service'), PORT: 3206 },
     },
 
     // ── Churn: background cron + admin HTTP ──
+    // DEV PORT: 3213 (vs PROD: 3013)
     {
-      name: 'teen-churn',
+      name: 'teen-churn-dev',
       cwd: `${BASE}/churn-service`,
       script: 'dist/index.js',
       env_file: ENV_FILE('churn-service'),
@@ -172,27 +174,30 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '150M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...LOAD_ENV('churn-service'), PORT: 3213 },
     },
 
     // ── Churn ML: Local Python FastAPI Server ──
+    // DEV PORT: 3220 (vs PROD: 3020)
     {
-      name: 'teen-churn-ml',
+      name: 'teen-churn-ml-dev',
       cwd: `${BASE}/churn-ml-service`,
       script: 'venv/bin/uvicorn',
-      args: 'main:app --host 127.0.0.1 --port 3020',
+      args: 'main:app --host 127.0.0.1 --port 3220',
       instances: 1,
       exec_mode: 'fork',
       watch: false,
       interpreter: 'none',
       env: {
-        DATABASE_URL: process.env.DATABASE_URL
+        NODE_ENV: 'development',
+        ...LOAD_ENV('churn-ml-service'),
       }
     },
 
     // ── App Monitor: Flutter SDK event ingest ──
+    // DEV PORT: 3215 (vs PROD: 3015)
     {
-      name: 'teen-app-monitor',
+      name: 'teen-app-monitor-dev',
       cwd: `${BASE}/app-monitor-service`,
       script: 'dist/index.js',
       env_file: ENV_FILE('app-monitor-service'),
@@ -200,12 +205,12 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '150M',
-      env: { ...NODE_OPTS, NODE_ENV: 'production', PORT: 3015, GEOLITE2_CITY_PATH: '/opt/teen/geoip/GeoLite2-City.mmdb' },
+      env: { ...NODE_OPTS, ...LOAD_ENV('app-monitor-service'), NODE_ENV: 'development', PORT: 3215, GEOLITE2_CITY_PATH: '/opt/teen-dev/geoip/GeoLite2-City.mmdb' },
     },
 
     // ── Uptime Bot: Monitoring service health + TCP ports, writes to JSON ──
     {
-      name: 'teen-uptime-bot',
+      name: 'teen-uptime-bot-dev',
       cwd: `${BASE}/uptime-bot`,
       script: 'dist/index.js',
       env_file: ENV_FILE('uptime-bot'),
@@ -213,12 +218,12 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '100M',
-      env: { ...NODE_OPTS, UPTIME_STATUS_FILE: '/opt/teen/uptime-status.json' },
+      env: { ...NODE_OPTS, ...LOAD_ENV('uptime-bot'), UPTIME_STATUS_FILE: '/opt/teen-dev/uptime-status-dev.json' },
     },
 
     // ── Bot Learning: nightly bot-profile rebuild from real player data ──
     {
-      name: 'teen-bot-learning',
+      name: 'teen-bot-learning-dev',
       cwd: `${BASE}/bot-learning-service`,
       script: 'dist/index.js',
       env_file: ENV_FILE('bot-learning-service'),
@@ -226,7 +231,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '150M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...LOAD_ENV('bot-learning-service') },
     },
   ],
 }

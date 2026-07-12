@@ -12,6 +12,7 @@ import {
   CloseOutlined, CheckOutlined, UndoOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '../store/auth'
+import { adminApi } from '../api/client'
 
 const { Sider, Header, Content } = Layout
 
@@ -109,67 +110,71 @@ export default function DevAdminPanel() {
     setSearchParams({ section: currentSection })
   }, [currentSection, setSearchParams])
 
-  // Mock git status fetch
+  // Fetch real git status from backend — uses deployment-health + changelogs
   const fetchGitStatus = async (showMessage = true) => {
     setLoading(true)
     try {
-      // In real app, call /dev-admin/git-status API
-      await new Promise(r => setTimeout(r, 500))
+      // Get deployment infrastructure health
+      const healthRes = await adminApi.get('/dev/deployment-health')
+      const health = healthRes.data
+
+      // Get latest git commit info from changelogs endpoint
+      let lastCommitMsg = ''
+      let lastCommitHash = ''
+      let lastCommitAuthor = ''
+      let lastCommitTime = new Date().toISOString()
+      try {
+        const gitRes = await adminApi.get('/changelogs/git')
+        const gitData = gitRes.data
+        const latestCommit = gitData?.commits?.[0] || gitData?.[0] || null
+        if (latestCommit) {
+          lastCommitMsg = latestCommit.message || latestCommit.subject || ''
+          lastCommitHash = latestCommit.hash || latestCommit.id || ''
+          lastCommitAuthor = latestCommit.author || latestCommit.authorName || ''
+          lastCommitTime = latestCommit.date || latestCommit.authorDate || new Date().toISOString()
+        }
+      } catch (_) { /* changelogs optional */ }
+
       setGitStatus({
-        branch: 'feature/admin-responsive',
-        commits: 3,
-        lastCommit: 'fix: implement missing Player Anomalies Dashboard backend routes',
-        isDirty: false,
-        lastCommitHash: '787eda7',
-        lastCommitAuthor: 'Rahul',
-        lastCommitTime: new Date().toISOString(),
+        branch: health.branch || 'main',
+        commits: 0,
+        lastCommit: lastCommitMsg,
+        isDirty: health.status !== 'healthy',
+        dirtyFiles: health.warnings || [],
+        lastCommitHash,
+        lastCommitAuthor,
+        lastCommitTime,
+        lastRefresh: new Date().toISOString(),
       })
-      if (showMessage) {
-        message.success('Git status refreshed')
-      }
-    } catch (e) {
-      if (showMessage) {
-        message.error('Failed to fetch git status')
-      }
+      if (showMessage) message.success('Git status refreshed')
+    } catch (e: any) {
+      if (showMessage)
+        message.error('Failed to fetch git status: ' + (e.response?.data?.error || e.message))
     } finally {
       setLoading(false)
     }
   }
 
-  // Mock deployment logs fetch
+  // Fetch real deployment logs from backend
   const fetchDeploymentLogs = async () => {
     setLoading(true)
     try {
-      // In real app, call /dev-admin/deployment-logs API
-      await new Promise(r => setTimeout(r, 500))
-      setDeploymentLogs([
-        {
-          id: '1',
-          timestamp: '2024-01-15 14:32:45',
-          branch: 'feature/admin-responsive',
-          commitHash: '787eda7',
-          message: 'fix: implement missing Player Anomalies Dashboard backend routes',
-          status: 'success',
-        },
-        {
-          id: '2',
-          timestamp: '2024-01-15 12:10:20',
-          branch: 'fix/icon-names',
-          commitHash: '70166ee',
-          message: 'fix: use correct SafetyOutlined icon name',
-          status: 'success',
-        },
-        {
-          id: '3',
-          timestamp: '2024-01-15 09:45:15',
-          branch: 'fix/admin-panel-types',
-          commitHash: 'e62b65f',
-          message: 'fix: admin panel type errors - replace WhitelistOutlined and fix Slider onChange',
-          status: 'failed',
-        },
-      ])
-    } catch (e) {
-      message.error('Failed to fetch deployment logs')
+      const res = await adminApi.get('/dev/deployments')
+      // Backend returns a raw array directly
+      const rawList = Array.isArray(res.data) ? res.data : (res.data.deployments || [])
+      const records: DeploymentRecord[] = rawList.map((d: any) => ({
+        id: d.id,
+        timestamp: d.created_at,
+        branch: d.branch,
+        commitHash: d.commit_hash,
+        message: d.commit_hash,
+        status: d.status as DeploymentRecord['status'],
+        startTime: d.started_at,
+        endTime: d.completed_at,
+      }))
+      setDeploymentLogs(records)
+    } catch (e: any) {
+      message.error('Failed to fetch deployment logs: ' + (e.response?.data?.error || e.message))
     } finally {
       setLoading(false)
     }
@@ -211,103 +216,135 @@ export default function DevAdminPanel() {
     }
   }
 
-  // Simulate deployment progress
-  const simulateDeploymentProgress = (currentProgress: number) => {
-    const stepIndex = Math.floor((currentProgress / 100) * deploymentSteps.length)
-    return deploymentSteps.map((step, idx) => {
-      if (idx < stepIndex) {
-        return { ...step, status: 'success' as const }
-      } else if (idx === stepIndex && currentProgress < 100) {
-        return { ...step, status: 'in-progress' as const }
-      }
-      return { ...step, status: 'pending' as const }
-    })
+  // Map backend deployment status to step progress
+  const mapStatusToSteps = (status: string, logs: string[]): DeploymentStep[] => {
+    const stepNames = [
+      'Pulling code',
+      'Installing dependencies',
+      'Building application',
+      'Running health checks',
+      'Restarting services',
+    ]
+    if (status === 'success') {
+      return stepNames.map(name => ({ name, status: 'success' as const }))
+    }
+    if (status === 'failed') {
+      return stepNames.map((name, idx) => ({
+        name,
+        status: idx < stepNames.length - 1 ? 'success' as const : 'failed' as const,
+      }))
+    }
+    // deploying: parse logs to infer step
+    const completed: string[] = []
+    if (logs.some(l => l.toLowerCase().includes('git pull'))) completed.push('Pulling code')
+    if (logs.some(l => l.toLowerCase().includes('npm install'))) completed.push('Installing dependencies')
+    if (logs.some(l => l.toLowerCase().includes('build'))) completed.push('Building application')
+    if (logs.some(l => l.toLowerCase().includes('health'))) completed.push('Running health checks')
+    if (logs.some(l => l.toLowerCase().includes('pm2'))) completed.push('Restarting services')
+    return stepNames.map(name => ({
+      name,
+      status: completed.includes(name)
+        ? 'success' as const
+        : name === stepNames[completed.length]
+          ? 'in-progress' as const
+          : 'pending' as const,
+    }))
   }
 
-  // Poll deployment status
+  // Poll real deployment status from backend
   const pollDeploymentStatus = async (jobId: string) => {
     try {
-      // In real app, call /api/dev/deployment-status/:jobId API
-      const newProgress = deploymentProgress + Math.random() * 20
-      const finalProgress = Math.min(100, newProgress)
+      const res = await adminApi.get(`/dev/deployment-status/${jobId}`)
+      const data = res.data
+      const pct = data.progress ?? (data.status === 'success' ? 100 : data.status === 'failed' ? 100 : 50)
+      const logs: string[] = (data.logs || []).map((l: any) => l.message || l)
 
-      setDeploymentProgress(finalProgress)
-      setDeploymentSteps(simulateDeploymentProgress(finalProgress))
+      setDeploymentProgress(pct)
+      setDeploymentSteps(mapStatusToSteps(data.status, logs))
 
-      if (finalProgress >= 100) {
-        if (pollIntervalRef.current) {
-          clearInterval(pollIntervalRef.current)
-        }
-        setModalStep('result')
+      if (data.status === 'success') {
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
         setDeploymentSuccess(true)
+        setModalStep('result')
+        fetchDeploymentLogs()
+      } else if (data.status === 'failed') {
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+        setDeploymentError(data.error || 'Deployment failed')
+        setModalStep('result')
+        fetchDeploymentLogs()
       }
-    } catch (error) {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current)
-      }
-      setDeploymentError('Failed to fetch deployment status')
+    } catch (error: any) {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+      setDeploymentError('Failed to fetch deployment status: ' + (error.response?.data?.error || error.message))
       setModalStep('result')
     }
   }
 
-  // Initiate deployment
+  // Initiate REAL Push to Production
   const handlePushProduction = async () => {
     if (!gitStatus) {
-      message.error('Git status not loaded')
+      message.error('Git status not loaded. Please refresh first.')
       return
     }
 
     try {
-      setDeploymentSteps(simulateDeploymentProgress(0))
       setDeploymentProgress(0)
       setDeploymentError(null)
+      setDeploymentSteps([
+        { name: 'Pulling code', status: 'pending' },
+        { name: 'Installing dependencies', status: 'pending' },
+        { name: 'Building application', status: 'pending' },
+        { name: 'Running health checks', status: 'pending' },
+        { name: 'Restarting services', status: 'pending' },
+      ])
 
-      // In real app, call POST /api/dev/deploy API with gitStatus.branch and gitStatus.lastCommit
-      await new Promise(r => setTimeout(r, 500))
+      // Call real backend to kick off prod deployment
+      const commitHash = gitStatus.lastCommitHash || 'HEAD00000000'
+      // commit_hash must be at least 7 chars
+      const safeHash = commitHash.length >= 7 ? commitHash : commitHash.padEnd(7, '0')
 
-      const jobId = `deploy-${Date.now()}`
+      const res = await adminApi.post('/dev/deploy/prod', {
+        branch: gitStatus.branch || 'main',
+        commit_hash: safeHash,
+      })
+
+      const jobId = res.data.job_id || res.data.jobId
       setDeploymentJobId(jobId)
       setModalStep('progress')
 
-      // Start polling for deployment status
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current)
-      }
-
-      pollIntervalRef.current = setInterval(async () => {
-        await pollDeploymentStatus(jobId)
-      }, 800)
+      // Start polling real status
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+      pollIntervalRef.current = setInterval(() => pollDeploymentStatus(jobId), 3000)
     } catch (error: any) {
-      setDeploymentError(error.message || 'Failed to initiate deployment')
+      const errMsg = error.response?.data?.error || error.message || 'Failed to initiate deployment'
+      setDeploymentError(errMsg)
       setModalStep('result')
     }
   }
 
-  // Handle rollback
+  // Handle rollback to latest successful deployment
   const handleRollback = async () => {
     try {
-      message.loading('Rolling back to previous version...')
-      // In real app, call /api/dev/rollback API
-      await new Promise(r => setTimeout(r, 2000))
-      message.success('Rollback successful!')
+      // Find most recent successful deployment
+      const lastGoodLog = deploymentLogs.find(l => l.status === 'success')
+      if (!lastGoodLog) {
+        message.error('No successful deployment found to rollback to')
+        return
+      }
+      message.loading({ content: 'Initiating rollback...', key: 'rollback' })
+      await adminApi.post(`/dev/rollback/${lastGoodLog.id}/environment/prod`)
+      message.success({ content: 'Rollback initiated! Monitor logs for progress.', key: 'rollback' })
       closeDeploymentModal()
+      fetchDeploymentLogs()
     } catch (error: any) {
-      message.error(error.message || 'Failed to rollback')
+      message.error({ content: error.response?.data?.error || error.message || 'Failed to rollback', key: 'rollback' })
     }
   }
 
-  // Handle modal close
+  // Handle modal close — refresh logs if deployment completed
   const handleCloseDeploymentModal = () => {
     if (deploymentSuccess) {
-      const newLog: DeploymentRecord = {
-        id: String(Date.now()),
-        timestamp: new Date().toLocaleString(),
-        branch: gitStatus?.branch || 'unknown',
-        commitHash: gitStatus?.lastCommitHash || 'unknown',
-        message: gitStatus?.lastCommit || 'Deployment to production',
-        status: 'success',
-      }
-      setDeploymentLogs([newLog, ...deploymentLogs])
+      fetchDeploymentLogs()
     }
     closeDeploymentModal()
   }

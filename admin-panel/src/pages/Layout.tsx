@@ -63,6 +63,7 @@ const menuItems: MenuProps['items'] = [
   { key: '/admin/support', icon: <CustomerServiceOutlined />, label: 'Support Center' },
   { key: '/admin/leaderboard', icon: <TrophyOutlined />, label: 'Leaderboard' },
   { key: '/admin/security', icon: <SafetyOutlined />, label: 'Security' },
+  { key: '/admin/tasks', icon: <ProfileOutlined />, label: '📋 Tasks' },
   // App Monitor and Player Tracking live inside the AI Control Center tabs.
   { key: '/admin/changelog', icon: <HistoryOutlined />, label: 'Changelog' },
   { type: 'divider' },

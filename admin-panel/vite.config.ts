@@ -12,7 +12,17 @@ export default defineConfig({
   server: {
     port: 8080,
     proxy: {
-      '/api': 'http://localhost:3001',
+      // Proxy to the VPS dev environment's nginx, which already fans each
+      // /api/<service> prefix out to the right backend port (see
+      // /home/admin/conf/web/dev.myonlinejoker.com/nginx.ssl.conf_api on
+      // the VPS). Hitting localhost:3001 for every prefix was wrong for
+      // anything but auth/users/leaderboard — e.g. /api/admin/* has no
+      // route on core-api and returned a bare 404 "Not Found".
+      '/api': {
+        target: 'https://dev.myonlinejoker.com',
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
 })

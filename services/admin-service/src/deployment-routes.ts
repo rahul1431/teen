@@ -34,7 +34,7 @@ export async function registerDeploymentRoutes(
    * Defaults to 'prod' if environment not specified (backwards compatible)
    */
   app.post(
-    '/api/dev/deploy',
+    '/api/admin/dev/deploy',
     { onRequest: [authenticate, deploymentAccess] },
     async (req, reply) => {
       try {
@@ -116,7 +116,7 @@ export async function registerDeploymentRoutes(
           job_id: result.jobId,
           environment: result.environment,
           tag: result.tag,
-          message: `${result.tag} Deployment queued. Poll /api/dev/deployment-status/${result.jobId} for progress`,
+          message: `${result.tag} Deployment queued. Poll /api/admin/dev/deployment-status/${result.jobId} for progress`,
           safety_checks: safetyResults,
         })
       } catch (err: any) {
@@ -135,7 +135,7 @@ export async function registerDeploymentRoutes(
    * Body: { branch, environment?: 'dev'|'prod' }
    */
   app.post(
-    '/api/dev/deployment-safety-check',
+    '/api/admin/dev/deployment-safety-check',
     { onRequest: [authenticate, deploymentAccess] },
     async (req, reply) => {
       try {
@@ -170,7 +170,7 @@ export async function registerDeploymentRoutes(
    * Requires: DevAdmin or superadmin role (runs commands against the VPS)
    */
   app.get(
-    '/api/dev/deployment/safety-check/:env',
+    '/api/admin/dev/deployment/safety-check/:env',
     { onRequest: [authenticate, deploymentAccess] },
     async (req, reply) => {
       try {
@@ -201,12 +201,12 @@ export async function registerDeploymentRoutes(
   )
 
   /**
-   * GET /api/dev/deployment-status/:jobId
+   * GET /api/admin/dev/deployment-status/:jobId
    * Poll deployment progress
    * Accessible to any authenticated admin
    */
   app.get(
-    '/api/dev/deployment-status/:jobId',
+    '/api/admin/dev/deployment-status/:jobId',
     { onRequest: [authenticate] },
     async (req, reply) => {
       try {
@@ -234,7 +234,7 @@ export async function registerDeploymentRoutes(
    * Query: limit, offset, environment (optional: 'dev'|'prod')
    */
   app.get(
-    '/api/dev/deployments',
+    '/api/admin/dev/deployments',
     { onRequest: [authenticate] },
     async (req, reply) => {
       try {
@@ -271,7 +271,7 @@ export async function registerDeploymentRoutes(
    * Accessible to any authenticated admin
    */
   app.get(
-    '/api/dev/deployment-logs/:jobId',
+    '/api/admin/dev/deployment-logs/:jobId',
     { onRequest: [authenticate] },
     async (req, reply) => {
       try {
@@ -299,12 +299,12 @@ export async function registerDeploymentRoutes(
   )
 
   /**
-   * POST /api/dev/deployment-status/:jobId/cancel
+   * POST /api/admin/dev/deployment-status/:jobId/cancel
    * Cancel a queued deployment (only if status is 'queued')
    * Requires: DevAdmin or superadmin role
    */
   app.post(
-    '/api/dev/deployment-status/:jobId/cancel',
+    '/api/admin/dev/deployment-status/:jobId/cancel',
     { onRequest: [authenticate, deploymentAccess] },
     async (req, reply) => {
       try {
@@ -356,7 +356,7 @@ export async function registerDeploymentRoutes(
    * Accessible to any authenticated admin
    */
   app.get(
-    '/api/dev/deployment-health',
+    '/api/admin/dev/deployment-health',
     { onRequest: [authenticate] },
     async (_req, reply) => {
       try {
@@ -390,7 +390,7 @@ export async function registerDeploymentRoutes(
    * Requires: DevAdmin or superadmin role (git reset --hard + pm2 restart on the VPS)
    */
   app.post(
-    '/api/dev/rollback/:deploymentId',
+    '/api/admin/dev/rollback/:deploymentId',
     { onRequest: [authenticate, deploymentAccess] },
     async (req, reply) => {
       try {
@@ -460,7 +460,7 @@ export async function registerDeploymentRoutes(
    * Requires: DevAdmin or superadmin role
    */
   app.post(
-    '/api/dev/deploy/dev',
+    '/api/admin/dev/deploy/dev',
     { onRequest: [authenticate, deploymentAccess] },
     async (req, reply) => {
       try {
@@ -524,7 +524,7 @@ export async function registerDeploymentRoutes(
    * Requires: DevAdmin or superadmin role
    */
   app.post(
-    '/api/dev/deploy/prod',
+    '/api/admin/dev/deploy/prod',
     { onRequest: [authenticate, deploymentAccess] },
     async (req, reply) => {
       try {
@@ -587,7 +587,7 @@ export async function registerDeploymentRoutes(
    * Query: limit, offset
    */
   app.get(
-    '/api/dev/deployments/environment/:env',
+    '/api/admin/dev/deployments/environment/:env',
     { onRequest: [authenticate] },
     async (req, reply) => {
       try {
@@ -627,7 +627,7 @@ export async function registerDeploymentRoutes(
    * Returns port information and database config
    */
   app.get(
-    '/api/dev/deployment-config/:env',
+    '/api/admin/dev/deployment-config/:env',
     { onRequest: [authenticate] },
     async (req, reply) => {
       try {
@@ -702,7 +702,7 @@ export async function registerDeploymentRoutes(
    * Supports full progress tracking and safety checks
    */
   app.post(
-    '/api/dev/rollback/:deploymentId/environment/:env',
+    '/api/admin/dev/rollback/:deploymentId/environment/:env',
     { onRequest: [authenticate, deploymentAccess] },
     async (req, reply) => {
       try {
@@ -770,7 +770,7 @@ export async function registerDeploymentRoutes(
    * Accessible to any authenticated admin
    */
   app.get(
-    '/api/dev/rollback/:rollbackId/progress',
+    '/api/admin/dev/rollback/:rollbackId/progress',
     { onRequest: [authenticate] },
     async (req, reply) => {
       try {
@@ -816,7 +816,7 @@ export async function registerDeploymentRoutes(
    * Requires: DevAdmin role
    */
   app.post(
-    '/api/dev/rollback/:rollbackId/cancel',
+    '/api/admin/dev/rollback/:rollbackId/cancel',
     { onRequest: [authenticate, deploymentAccess] },
     async (req, reply) => {
       try {
@@ -855,7 +855,7 @@ export async function registerDeploymentRoutes(
    * Accessible to any authenticated admin
    */
   app.get(
-    '/api/dev/rollback-checks/:rollbackId',
+    '/api/admin/dev/rollback-checks/:rollbackId',
     { onRequest: [authenticate] },
     async (req, reply) => {
       try {
