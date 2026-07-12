@@ -219,6 +219,45 @@ const ENV_CONFIGS: Record<'dev' | 'prod', EnvironmentConfig> = {
   },
 }
 
+// Maps a changed top-level service directory to the PM2 app name(s) that
+// need restarting for it — see ecosystem.config.js for the source of truth.
+// gateway maps to all 3 redundant instances so they can be rolled one at a
+// time instead of all going down together.
+const SERVICE_DIR_TO_PM2_APPS: Record<string, string[]> = {
+  'core-api-service': ['teen-core-api'],
+  'wallet-service': ['teen-wallet'],
+  'game-gateway': ['teen-gateway', 'teen-gateway-2', 'teen-gateway-3'],
+  'game-engines/aviator': ['teen-aviator'],
+  'game-engines/ludo': ['teen-ludo'],
+  'game-engines/teen-patti': ['teen-tp-engine'],
+  'admin-service': ['teen-admin-svc'],
+  'monitoring-service': ['teen-monitoring'],
+  'risk-service': ['teen-risk'],
+  'churn-service': ['teen-churn'],
+  'churn-ml-service': ['teen-churn-ml'],
+  'app-monitor-service': ['teen-app-monitor'],
+  'uptime-bot': ['teen-uptime-bot'],
+  'bot-learning-service': ['teen-bot-learning'],
+}
+
+// Top-level paths that can change without requiring ANY PM2 restart on
+// their own: admin-panel is handled by its own build+rsync step, DB
+// migrations are handled by apply-migrations.sh, and the rest are docs/
+// tooling with no runtime footprint. ecosystem.config*.js is included too —
+// restartScopedApps always does `pm2 start ecosystem.config.js --only
+// <app>` for whichever app it does restart, which re-reads the file fresh,
+// so a config-only change doesn't need every app bounced to take effect.
+const NO_RESTART_NEEDED_PATHS = [
+  'admin-panel/',
+  'infra/db/',
+  'docs/',
+  '.gitignore',
+  '.gitattributes',
+  'docker-compose.yml',
+  'ecosystem.config.js',
+  'ecosystem.config.dev.js',
+]
+
 /**
  * Deployment Service
  * Handles production and development deployments with automatic rollback capabilities
@@ -769,6 +808,102 @@ export class DeploymentService {
     return { currentCommit, lastDeployedCommit, lastDeployedAt, pendingMigrations, deployNeeded, reason }
   }
 
+  /**
+   * Decide which PM2 apps actually need restarting for this deploy, instead
+   * of blindly restarting all 16 production services (every game engine,
+   * the wallet service, everything) on every single deploy regardless of
+   * what changed. Diffs the environment's last successfully-deployed
+   * commit against the commit being deployed now; returns:
+   *   - null           → unknown/unsafe to narrow, restart everything
+   *                       (no prior deployment on record, or the diff
+   *                       touches something not in the recognized map —
+   *                       conservative by design, a new/renamed service
+   *                       directory should default to "restart all" until
+   *                       this map is updated for it)
+   *   - Set<string>     → exactly the PM2 app names to restart (may be
+   *                       empty, e.g. a docs/admin-panel-only change)
+   */
+  private async getScopedRestartApps(environment: 'dev' | 'prod', newCommit: string): Promise<Set<string> | null> {
+    const lastDeployResult = await this.db.query(
+      `SELECT commit_hash FROM deployments
+       WHERE environment = $1 AND status = 'success'
+       ORDER BY completed_at DESC NULLS LAST, created_at DESC LIMIT 1`,
+      [environment]
+    )
+    const lastDeployedCommit: string | null = lastDeployResult.rows[0]?.commit_hash || null
+    if (!lastDeployedCommit) return null
+    if (lastDeployedCommit === newCommit) return new Set()
+
+    const projectPath = this.getProjectPath(environment)
+    const diffOutput = await this.runSSHCommand(
+      `cd ${projectPath} && git diff --name-only ${lastDeployedCommit} ${newCommit}`,
+      15000
+    )
+    const changedPaths = diffOutput.trim().split('\n').filter(Boolean)
+    if (changedPaths.length === 0) return new Set()
+
+    const apps = new Set<string>()
+    for (const changedPath of changedPaths) {
+      if (NO_RESTART_NEEDED_PATHS.some((p) => changedPath.startsWith(p))) continue
+      if (!changedPath.startsWith('services/')) return null // unrecognized top-level path — play it safe
+
+      const rest = changedPath.slice('services/'.length)
+      const matchedDir = Object.keys(SERVICE_DIR_TO_PM2_APPS).find(
+        (dir) => rest === dir || rest.startsWith(`${dir}/`)
+      )
+      if (!matchedDir) return null // service directory not in the map — play it safe
+      SERVICE_DIR_TO_PM2_APPS[matchedDir].forEach((app) => apps.add(app))
+    }
+    return apps
+  }
+
+  /**
+   * Restart exactly the given PM2 apps. The 3 game-gateway instances are
+   * rolled one at a time with a health-check pause in between — since
+   * session state lives in Redis and any instance can serve any player
+   * (that's the whole point of having 3), taking one down at a time means
+   * reconnects just land on a healthy instance, with no visible downtime.
+   * Every other app has no redundancy, so its restart is a real (but now
+   * correctly scoped, single-service) blip.
+   */
+  private async restartScopedApps(
+    jobId: string,
+    environment: 'dev' | 'prod',
+    apps: Set<string>
+  ): Promise<void> {
+    const envConfig = this.getEnvConfig(environment)
+    const projectPath = this.getProjectPath(environment)
+    const gatewayApps = ['teen-gateway', 'teen-gateway-2', 'teen-gateway-3'].filter((a) => apps.has(a))
+    const otherApps = [...apps].filter((a) => !gatewayApps.includes(a))
+
+    for (const app of gatewayApps) {
+      await this.logDeployment(jobId, `${envConfig.tag} Rolling restart: ${app}...`, 'info')
+      await this.runSSHCommand(`pm2 delete ${app} || true`)
+      await this.runSSHCommand(`cd ${projectPath} && pm2 start ${envConfig.ecosystemConfig} --only ${app}`)
+      await this.sleep(3000)
+      const p = envConfig.ports
+      const portByApp: Record<string, number> = {
+        'teen-gateway': p.gateway,
+        'teen-gateway-2': p.gatewayAlt1,
+        'teen-gateway-3': p.gatewayAlt2,
+      }
+      try {
+        await axios.get(`http://127.0.0.1:${portByApp[app]}/health`, { timeout: 5000 })
+        await this.logDeployment(jobId, `${envConfig.tag} ${app} healthy after restart`, 'info')
+      } catch (err: any) {
+        await this.logDeployment(jobId, `${envConfig.tag} Warning: ${app} not healthy after restart: ${err.message}`, 'warn')
+      }
+    }
+
+    for (const app of otherApps) {
+      await this.logDeployment(jobId, `${envConfig.tag} Restarting ${app}...`, 'info')
+      await this.runSSHCommand(`pm2 delete ${app} || true`)
+      await this.runSSHCommand(`cd ${projectPath} && pm2 start ${envConfig.ecosystemConfig} --only ${app}`)
+    }
+
+    await this.runSSHCommand(`pm2 save`)
+  }
+
   private async checkDatabaseMigrations(environment: 'dev' | 'prod'): Promise<SafetyCheckResult | null> {
     try {
       const pendingFiles = await this.getPendingMigrations(environment)
@@ -1063,17 +1198,34 @@ export class DeploymentService {
       }
       await this.logDeployment(jobId, `${envConfig.tag} admin-panel deployed to ${envConfig.frontendDocroot}`, 'info')
 
-      // Step 6: Restart PM2 with environment-specific config
-      await this.logDeployment(
-        jobId,
-        `${envConfig.tag} Restarting services with PM2 (${envConfig.ecosystemConfig})...`,
-        'info'
-      )
-      await this.runSSHCommand(`pm2 delete ${envConfig.ecosystemConfig} || true`)
-      const pm2Output = await this.runSSHCommand(
-        `cd ${projectPath} && pm2 start ${envConfig.ecosystemConfig} && pm2 save`
-      )
-      await this.logDeployment(jobId, `${envConfig.tag} PM2 started`, 'info')
+      // Step 6: Restart PM2 — but ONLY the services this deploy actually
+      // changed. Blindly restarting all 16 production apps (every game
+      // engine, the wallet service, everything) on every deploy — even an
+      // admin-panel-only change — would disconnect every live player for
+      // no reason. Falls back to restarting everything only when the diff
+      // can't be safely narrowed (first deploy on record, or an
+      // unrecognized changed path).
+      const restartApps = await this.getScopedRestartApps(environment, commitHash)
+      if (restartApps === null) {
+        await this.logDeployment(
+          jobId,
+          `${envConfig.tag} Restarting ALL services with PM2 (${envConfig.ecosystemConfig}) — no prior deployment to diff against, or an unrecognized path changed...`,
+          'info'
+        )
+        await this.runSSHCommand(`pm2 delete ${envConfig.ecosystemConfig} || true`)
+        await this.runSSHCommand(`cd ${projectPath} && pm2 start ${envConfig.ecosystemConfig} && pm2 save`)
+        await this.logDeployment(jobId, `${envConfig.tag} PM2 started`, 'info')
+      } else if (restartApps.size === 0) {
+        await this.logDeployment(jobId, `${envConfig.tag} No backend services need restarting for this deploy (frontend/docs/migrations only)`, 'info')
+      } else {
+        await this.logDeployment(
+          jobId,
+          `${envConfig.tag} Restarting only the changed services: ${[...restartApps].join(', ')}`,
+          'info'
+        )
+        await this.restartScopedApps(jobId, environment, restartApps)
+        await this.logDeployment(jobId, `${envConfig.tag} Scoped restart complete`, 'info')
+      }
 
       // Step 7: Wait 5 seconds for services to stabilize
       await this.logDeployment(jobId, `${envConfig.tag} Waiting 5 seconds for services to stabilize...`, 'info')
