@@ -256,6 +256,13 @@ const NO_RESTART_NEEDED_PATHS = [
   'docker-compose.yml',
   'ecosystem.config.js',
   'ecosystem.config.dev.js',
+  // The repo-root lockfile — not admin-panel's or any services/<dir>'s own,
+  // both already covered above/by the services/ prefix match below. Missing
+  // this caused a real incident: a routine npm-install lockfile drift with
+  // this as the only unrecognized changed path triggered the "restart
+  // everything" fallback, restarting all 16 prod services for what should
+  // have been a 3-instance game-gateway-only deploy.
+  'package-lock.json',
 ]
 
 /**
