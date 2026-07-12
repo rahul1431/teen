@@ -55,6 +55,14 @@ export class MatchmakingService {
   private botTimers = new Map<string, { timer: NodeJS.Timeout; turnIdx: number }>()
   private ludoAfkTimers = new Map<string, NodeJS.Timeout>()
   private static readonly LUDO_TURN_TIMEOUT_MS = 30000
+  private teenPattiAfkTimers = new Map<string, NodeJS.Timeout>()
+  // 10s later than the client's own 30s self-fold countdown
+  // (mobile/lib/features/games/teen_patti/game_page.dart _startTurnTimer) — this
+  // is purely a backstop for when the client can't send that fold itself
+  // (dropped connection, backgrounded app, crash). Before this, a stalled human
+  // turn had no server-side path forward; the only safety net was the
+  // whole-room 15-minute GameWatchdog reaper.
+  private static readonly TEEN_PATTI_TURN_TIMEOUT_MS = 40000
 
   constructor(
     private redis: Redis,
@@ -698,7 +706,18 @@ export class MatchmakingService {
     if (!currentPlayer) return
 
     const isBot = bots.some(b => b.userId === (currentPlayer.user_id ?? currentPlayer.userId))
-    if (!isBot) return
+    if (!isBot) {
+      // Connected human's turn — arm the AFK backstop timer (see
+      // scheduleTeenPattiAfkTimer) instead of leaving the table with no
+      // server-side path forward if their client can't self-fold.
+      this.scheduleTeenPattiAfkTimer(roomId)
+      return
+    }
+
+    // A bot's turn is being driven — any AFK timer from a previous human turn
+    // is stale now, clear it.
+    const staleAfkTimer = this.teenPattiAfkTimers.get(roomId)
+    if (staleAfkTimer) { clearTimeout(staleAfkTimer); this.teenPattiAfkTimers.delete(roomId) }
 
     // Bot acts after a profile-driven delay
     const gameType = state.gameType ?? state.game_type ?? 'teen_patti'
@@ -831,6 +850,72 @@ export class MatchmakingService {
     }, botDelay)
 
     this.botTimers.set(roomId, { timer, turnIdx: currentIdx })
+  }
+
+  // Arm a per-turn AFK backstop for a connected-but-idle Teen Patti player.
+  // Re-arms on every call (each new turn/action clears and replaces the
+  // previous room timer) — mirrors scheduleLudoAfkTimer below.
+  private scheduleTeenPattiAfkTimer(roomId: string): void {
+    const existing = this.teenPattiAfkTimers.get(roomId)
+    if (existing) clearTimeout(existing)
+    this.teenPattiAfkTimers.delete(roomId)
+
+    const timer = setTimeout(() => {
+      this.teenPattiAfkTimers.delete(roomId)
+      void this.autoFoldIdleTeenPattiTurn(roomId)
+    }, MatchmakingService.TEEN_PATTI_TURN_TIMEOUT_MS)
+    this.teenPattiAfkTimers.set(roomId, timer)
+  }
+
+  // Fires when a human's Teen Patti turn has sat idle past the timeout.
+  // Re-checks state immediately before acting (the player may have just acted)
+  // and folds on their behalf — fold is always legal and free (no wallet call),
+  // so this can never double-charge or move money without the action the
+  // player would have taken anyway via their own client-side fold timer.
+  private async autoFoldIdleTeenPattiTurn(roomId: string): Promise<void> {
+    const state = await this.getRoomState(roomId)
+    if (!state || state.status === 'completed') return
+    const turnIdx = state.current_turn ?? state.CurrentTurn ?? 0
+    const cur = state.players?.[turnIdx]
+    if (!cur) return
+    if (cur.isBot || cur.is_bot) return // bot turns are driven elsewhere
+    const userId = cur.user_id ?? cur.userId
+
+    const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
+    try {
+      const res = await fetch(`${engineUrl}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: roomId, user_id: userId, action: 'fold', amount: 0, sequence_num: 0 }),
+        signal: AbortSignal.timeout(5000),
+      })
+      if (!res.ok) return
+      const data = await res.json() as any
+      const newState = data.state ?? data
+      const sanitized = { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) }
+      await this.setRoomState(roomId, sanitized)
+
+      this.hub.sendToUser(userId, 'error', {
+        message: 'You took too long — you were folded automatically.',
+      })
+      this.hub.sendToRoom(roomId, 'game:state_update', {
+        room_id: roomId,
+        state: sanitized,
+        last_action: { user_id: userId, action: 'fold' },
+        result: data.result ?? null,
+      })
+
+      const realPlayers = (newState.players ?? []).filter((p: any) => !(p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
+      const bots = (newState.players ?? []).filter((p: any) => (p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
+
+      if (newState.status === 'completed' && data.result) {
+        await this.handleGameEnd(roomId, data.result, realPlayers, newState)
+      } else {
+        void this.scheduleBotTurn(roomId, newState, realPlayers, bots)
+      }
+    } catch (e) {
+      console.error('[gateway] Teen Patti AFK auto-fold failed', e)
+    }
   }
 
   // Drive consecutive bot turns for a Ludo room until it's a human's turn or
@@ -1039,9 +1124,11 @@ export class MatchmakingService {
 
   async handleGameEnd(roomId: string, result: any, realPlayers: MatchmakingEntry[], state: any): Promise<void> {
     if (!result) return
-    // Cancel any pending bot action timer for this room
+    // Cancel any pending bot action / AFK timer for this room
     const bt = this.botTimers.get(roomId)
     if (bt) { clearTimeout(bt.timer); this.botTimers.delete(roomId) }
+    const afk = this.teenPattiAfkTimers.get(roomId)
+    if (afk) { clearTimeout(afk); this.teenPattiAfkTimers.delete(roomId) }
 
     // Settle game via wallet service (consumes locked balance for all players, pays winner)
     try {
