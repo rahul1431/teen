@@ -218,6 +218,26 @@ async function start() {
 
         // Fetch current game state to sync the client
         const rawState = await matchmaking.getRoomState(room_id)
+
+        // A hand's result is pushed via sendToUser — a direct push to
+        // whichever socket is connected at that exact moment, with no
+        // persistence or replay. If the connection drops (or is mid-
+        // reconnect) right as the hand concludes, that push is lost
+        // forever, and this join_room handler previously had nothing that
+        // detected "this room already finished" — a reconnecting player
+        // got a stale generic room:joined (or, if the gateway's cached
+        // state had already expired, literally nothing back at all) and
+        // stayed stuck on their last pre-disconnect view permanently.
+        // Reproduced live: server-side logs/DB confirmed hands completing
+        // and settling correctly while the client sat frozen mid-game.
+        const gameTypeGuess = rawState?.gameType ?? rawState?.game_type
+        const looksCompleted = rawState?.status === 'completed'
+        if ((gameTypeGuess === 'teen_patti' && looksCompleted) || !rawState) {
+          const sent = await sendTeenPattiResultIfCompleted(conn, room_id)
+          if (sent) return
+          if (!rawState) return // truly nothing to sync — room unknown either place
+        }
+
         if (rawState) {
           let myCards: any[] = []
           
@@ -615,6 +635,56 @@ async function start() {
       }
     } catch (e) {
       console.error('Ludo leave failed', e)
+    }
+  }
+
+  // Recovery path for a Teen Patti player rejoining a room whose hand has
+  // already concluded (they missed the original sendToUser('game:result')
+  // push — e.g. a disconnect right as the hand ended). Looks up the actual
+  // outcome from game_participants/game_rooms (populated reliably by
+  // handleGameEnd's settlement, unlike the ephemeral Redis game state) and
+  // re-sends the same 'game:result' shape the live push would have sent.
+  // Returns true if a result was found and sent (caller should stop, not
+  // fall through to a stale room:joined sync).
+  async function sendTeenPattiResultIfCompleted(conn: Conn, roomId: string): Promise<boolean> {
+    try {
+      const roomRes = await db.query(
+        `SELECT id FROM game_rooms WHERE id = $1 AND game_type = 'teen_patti' AND status = 'completed'`,
+        [roomId]
+      )
+      if (roomRes.rows.length === 0) return false
+
+      const meRes = await db.query(
+        `SELECT 1 FROM game_participants WHERE room_id = $1 AND user_id = $2 AND is_bot = false`,
+        [roomId, conn.userId]
+      )
+      if (meRes.rows.length === 0) return false // not a real participant of this room
+
+      const winnerRes = await db.query(
+        `SELECT gp.user_id, gp.prize_won, u.username
+         FROM game_participants gp
+         LEFT JOIN users u ON u.id = gp.user_id
+         WHERE gp.room_id = $1 AND gp.final_rank = 1
+         LIMIT 1`,
+        [roomId]
+      )
+      const winner = winnerRes.rows[0]
+
+      hub.send(conn, 'game:result', {
+        room_id: roomId,
+        winner_id: winner?.user_id ?? null,
+        winner_username: winner?.username ?? 'Unknown',
+        prize: winner ? Number(winner.prize_won) : 0,
+        // hand_rank/all_hands aren't persisted (only the ephemeral engine
+        // response had them) — the client's win/loss display doesn't
+        // require them, only the showdown card reveal would miss detail.
+        hand_rank: undefined,
+        all_hands: [],
+      })
+      return true
+    } catch (e) {
+      console.error('[gateway] sendTeenPattiResultIfCompleted failed', e)
+      return false
     }
   }
 
