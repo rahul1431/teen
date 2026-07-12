@@ -50,6 +50,7 @@ class PracticeEngine {
   int _dealer = 0;
   int _actionsThisHand = 0;
   bool _handOver = false;
+  int _handId = 0; // bumped once per startHand() — see `state['hand_id']` below
 
   // ── Public surface the widget reads ─────────────────────────────────────
   Map<String, dynamic> get state => {
@@ -58,6 +59,19 @@ class PracticeEngine {
         'current_turn_user_id': _players[_turn].id,
         'dealer_id': _players[_dealer].id,
         'players': _players.map((p) => p.toMap()).toList(),
+        // The table widget's card-dealing animation only re-plays when
+        // hand_id changes from the last state it saw (game_page.dart's
+        // _triggerCardDealingAnimation). Without this, every single
+        // onChanged() — which fires on every bot action, roughly every
+        // 0.7-1.6s here — replayed the full ~2.2s 12-card deal animation
+        // from scratch, since it had no hand_id to compare against and
+        // always fell through. Bot turns come far faster than that
+        // animation takes to finish, so it kept restarting mid-flight
+        // before ever settling — looking exactly like the table (and your
+        // own hand) never finishing loading, while bots kept "acting"
+        // underneath via chat/status changes that don't go through this
+        // animation path.
+        'hand_id': _handId,
       };
 
   bool get isMyTurn => !_handOver && _players[_turn].id == _meId;
@@ -67,6 +81,7 @@ class PracticeEngine {
   // ── Lifecycle ───────────────────────────────────────────────────────────
   void startHand() {
     if (_disposed) return;
+    _handId++;
     final keepChips = _players.isNotEmpty
         ? {for (final p in _players) p.id: p.chips}
         : <String, int>{};
