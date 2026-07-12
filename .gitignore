@@ -15,6 +15,28 @@ services/game-engines/teen-patti/teen-patti-engine
 .env
 **/.env
 *.env.local
+.env.dev
+**/.env.dev
+
+# VPS manual-deploy backup artifacts — should never be committed
+*.bak-*
+**/*.bak-*
+*.old
+**/*.old
+admin-panel/dist.bak-*/
+admin-panel/dist.old/
+
+# Python (churn-ml-service)
+__pycache__/
+**/__pycache__/
+*.pyc
+venv/
+**/venv/
+
+# Runtime-generated status files
+uptime-status.json
+uptime-status-dev.json
+
 # Flutter
 mobile/.dart_tool/
 mobile/android/local.properties
