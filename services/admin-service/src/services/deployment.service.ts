@@ -1138,8 +1138,13 @@ export class DeploymentService {
   private async runSSHCommand(command: string, timeoutMs: number = this.deploymentTimeout): Promise<string> {
     return new Promise((resolve, reject) => {
       try {
-        // Use SSH key-based authentication with ssh command
-        const sshCmd = `ssh -i "${this.vpsConfig.keyPath}" -p ${this.vpsConfig.port} ${this.vpsConfig.username}@${this.vpsConfig.host} "${command}"`
+        // Use SSH key-based authentication with ssh command. This is
+        // always a loopback connection (the VPS deploying to itself), so
+        // -o StrictHostKeyChecking=no is a deliberate, low-risk trade-off —
+        // without it, a future host-key rotation or known_hosts wipe would
+        // silently break every deploy step with no way to recover short of
+        // SSHing in by hand.
+        const sshCmd = `ssh -o StrictHostKeyChecking=no -i "${this.vpsConfig.keyPath}" -p ${this.vpsConfig.port} ${this.vpsConfig.username}@${this.vpsConfig.host} "${command}"`
 
         const timeout = setTimeout(() => {
           reject(new Error(`SSH command timeout after ${timeoutMs}ms: ${command}`))
