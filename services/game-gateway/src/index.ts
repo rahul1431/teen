@@ -633,6 +633,17 @@ async function start() {
       return hub.send(conn, 'error', { message: 'Not your turn' })
     }
 
+    // Cancel the pending AFK backstop NOW, before the wallet-lock + engine
+    // round trip below — not after, once scheduleBotTurn re-arms it for the
+    // next turn. Otherwise the timer set for THIS turn keeps running for the
+    // whole duration of that round trip, and can fire concurrently with this
+    // very action if it runs long enough. Only for the actual current-turn
+    // player's own action — outOfTurnOk actions (see/sideshow_accept/reject)
+    // are answered by a DIFFERENT player, and clearing here would cancel the
+    // real current-turn player's protection based on someone else's action.
+    // No-op for non-Teen-Patti rooms (nothing armed in the map for them).
+    if (!outOfTurnOk) matchmaking.clearTeenPattiAfkTimer(room_id)
+
     // In-game bet locking
     let extraBet = 0
     const player = state.players[playerIdx]

@@ -852,6 +852,24 @@ export class MatchmakingService {
     this.botTimers.set(roomId, { timer, turnIdx: currentIdx })
   }
 
+  // Cancel a room's pending AFK backstop without re-arming a new one. Called
+  // the instant a real action is RECEIVED and passes the turn-ownership
+  // check — before the slow wallet-lock + engine round trip that follows.
+  // Without this, the timer set for the player's turn kept running for the
+  // whole duration of that processing chain, only getting cleared and
+  // replaced afterward via scheduleBotTurn. If that chain took long enough
+  // (wallet-lock latency, engine latency) to run past the timer's remaining
+  // budget, the AFK auto-fold could fire WHILE the player's real action was
+  // still in flight — both hitting the engine's /action endpoint for the
+  // same room with no per-room lock on the Go side, a genuine race that
+  // could fold a player who acted in time. Clearing here closes that window;
+  // scheduleBotTurn re-arms a fresh timer for the new turn once it's known.
+  clearTeenPattiAfkTimer(roomId: string): void {
+    const existing = this.teenPattiAfkTimers.get(roomId)
+    if (existing) clearTimeout(existing)
+    this.teenPattiAfkTimers.delete(roomId)
+  }
+
   // Arm a per-turn AFK backstop for a connected-but-idle Teen Patti player.
   // Re-arms on every call (each new turn/action clears and replaces the
   // previous room timer) — mirrors scheduleLudoAfkTimer below.
