@@ -564,7 +564,7 @@ export default function DevAdminPanel() {
               size="large"
               block
               icon={<RocketOutlined />}
-              onClick={handlePushProduction}
+              onClick={openDeploymentModal}
               disabled={!canDeploy}
               loading={loading}
               style={{
