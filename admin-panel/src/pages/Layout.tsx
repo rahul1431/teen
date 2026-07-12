@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Layout, Menu, Typography, Avatar, Dropdown, Button, Grid, Drawer } from 'antd'
+import type { MenuProps } from 'antd'
 import {
   DashboardOutlined, UserOutlined, PlayCircleOutlined, DollarOutlined,
   BellOutlined, LogoutOutlined, TrophyOutlined, SafetyOutlined,
@@ -10,10 +11,13 @@ import {
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
+import { useEnvironmentStore } from '../store/environment'
+import { ENVIRONMENT_CONFIGS } from '../types/environment'
+import EnvironmentSwitcher from '../components/EnvironmentSwitcher'
 
 const { Sider, Header, Content } = Layout
 
-const menuItems = [
+const menuItems: MenuProps['items'] = [
   { key: '/admin', icon: <DashboardOutlined />, label: 'Dashboard' },
   {
     key: 'user_management_group',
@@ -61,12 +65,16 @@ const menuItems = [
   { key: '/admin/security', icon: <SafetyOutlined />, label: 'Security' },
   // App Monitor and Player Tracking live inside the AI Control Center tabs.
   { key: '/admin/changelog', icon: <HistoryOutlined />, label: 'Changelog' },
+  { type: 'divider' },
+  { key: '/admin/dev-admin', icon: <WarningOutlined />, label: '⚠️ Dev Admin Panel', danger: true },
 ]
 
 export default function AdminLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const { admin, logout } = useAuthStore()
+  const { currentEnv } = useEnvironmentStore()
+  const envConfig = ENVIRONMENT_CONFIGS[currentEnv]
   const screens = Grid.useBreakpoint()
   // Below Ant's `lg` (992px) the fixed sidebar is swapped for a slide-in drawer.
   const isMobile = !screens.lg
@@ -126,7 +134,7 @@ export default function AdminLayout() {
       <Layout style={{ marginLeft: isMobile ? 0 : 220 }}>
         <Header
           style={{
-            background: '#fff',
+            background: `linear-gradient(to bottom, #fff 0%, ${envConfig.bgColor} 100%)`,
             padding: isMobile ? '0 12px' : '0 24px',
             display: 'flex',
             alignItems: 'center',
@@ -147,16 +155,19 @@ export default function AdminLayout() {
           ) : (
             <span />
           )}
-          <Dropdown menu={{ items: [
-            { key: 'profile', icon: <ProfileOutlined />, label: 'Profile & 2FA', onClick: () => navigate('/admin/profile') },
-            { type: 'divider' },
-            { key: 'logout', icon: <LogoutOutlined />, label: 'Logout', onClick: handleLogout },
-          ] }}>
-            <Button type="text" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Avatar size="small" icon={<UserOutlined />} style={{ background: '#d4af37' }} />
-              <span>{admin?.username}</span>
-            </Button>
-          </Dropdown>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <EnvironmentSwitcher />
+            <Dropdown menu={{ items: [
+              { key: 'profile', icon: <ProfileOutlined />, label: 'Profile & 2FA', onClick: () => navigate('/admin/profile') },
+              { type: 'divider' },
+              { key: 'logout', icon: <LogoutOutlined />, label: 'Logout', onClick: handleLogout },
+            ] }}>
+              <Button type="text" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Avatar size="small" icon={<UserOutlined />} style={{ background: '#d4af37' }} />
+                <span>{admin?.username}</span>
+              </Button>
+            </Dropdown>
+          </div>
         </Header>
         <Content style={{ margin: isMobile ? 12 : 24, minHeight: 'calc(100vh - 112px)' }}>
           <Outlet />

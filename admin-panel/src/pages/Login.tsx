@@ -81,10 +81,6 @@ export default function Login() {
             </Button>
           </Form.Item>
         </Form>
-
-        <Typography.Paragraph type="secondary" style={{ fontSize: 11, textAlign: 'center', marginBottom: 0 }}>
-          Seed credentials: <code>superadmin</code> / <code>Admin@123456</code> · change after first login
-        </Typography.Paragraph>
       </Card>
     </div>
   )

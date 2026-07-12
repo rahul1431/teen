@@ -93,10 +93,12 @@ export default function DevAdminPanel() {
 
   const screens = Grid.useBreakpoint()
 
-  // Only allow DevAdmin role
-  if (!admin || (admin.role !== 'DevAdmin' && admin.role !== 'SuperAdmin')) {
+  // Allow all admins to view, but restrict deployment actions to DevAdmin
+  if (!admin) {
     return <Navigate to="/admin" replace />
   }
+
+  const canDeploy = admin.role === 'DevAdmin' || admin.role === 'superadmin' || admin.role === 'SuperAdmin'
 
   useEffect(() => {
     setIsMobile(!screens.lg)
@@ -482,24 +484,32 @@ export default function DevAdminPanel() {
         />
 
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
-          <Button
-            type="primary"
-            danger
-            size="large"
-            block
-            icon={<RocketOutlined />}
-            onClick={openDeploymentModal}
-            style={{
-              height: 56,
-              fontSize: 16,
-              fontWeight: 600,
-              backgroundColor: '#ff4d4f',
-              borderColor: '#ff4d4f',
-              animation: 'pulse 2s infinite',
-            }}
+          <Tooltip
+            title={canDeploy ? 'Click to deploy to production' : `Only DevAdmins can deploy. Contact your DevAdmin. (Your role: ${admin.role})`}
           >
-            🚀 PUSH TO PRODUCTION
-          </Button>
+            <Button
+              type="primary"
+              danger
+              size="large"
+              block
+              icon={<RocketOutlined />}
+              onClick={handlePushProduction}
+              disabled={!canDeploy}
+              loading={loading}
+              style={{
+                height: 56,
+                fontSize: 16,
+                fontWeight: 600,
+                backgroundColor: canDeploy ? '#ff4d4f' : '#ccc',
+                borderColor: canDeploy ? '#ff4d4f' : '#ccc',
+                animation: canDeploy ? 'pulse 2s infinite' : 'none',
+                cursor: canDeploy ? 'pointer' : 'not-allowed',
+                opacity: canDeploy ? 1 : 0.6,
+              }}
+            >
+              🚀 PUSH TO PRODUCTION
+            </Button>
+          </Tooltip>
 
           <style>{`
             @keyframes pulse {
@@ -802,7 +812,7 @@ export default function DevAdminPanel() {
               value={confirmText}
               onChange={(e) => setConfirmText(e.target.value)}
               size="large"
-              status={confirmText === 'DEPLOY' ? 'success' : confirmText !== '' ? 'error' : undefined}
+              status={confirmText !== '' && confirmText !== 'DEPLOY' ? 'error' : undefined}
               style={{ marginBottom: 8 }}
             />
             {confirmText !== '' && confirmText !== 'DEPLOY' && (
@@ -1077,6 +1087,19 @@ export default function DevAdminPanel() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <Tooltip title={canDeploy ? 'DevAdmin - Full deployment access' : `Limited access (${admin.role})`}>
+              <Tag
+                color={canDeploy ? 'green' : 'orange'}
+                style={{
+                  padding: '4px 12px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  margin: 0,
+                }}
+              >
+                {canDeploy ? '✓ DevAdmin' : `⚠️ ${admin.role}`}
+              </Tag>
+            </Tooltip>
             <Tooltip title={`Current: ${environment.toUpperCase()}`}>
               <Button
                 type="text"
