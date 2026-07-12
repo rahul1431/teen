@@ -54,6 +54,15 @@ interface CommitRecord {
   date: string
 }
 
+interface DeployReadiness {
+  currentCommit: string
+  lastDeployedCommit: string | null
+  lastDeployedAt: string | null
+  pendingMigrations: string[]
+  deployNeeded: boolean
+  reason: string
+}
+
 interface DeploymentStep {
   name: string
   status: 'pending' | 'in-progress' | 'success' | 'failed'
@@ -72,6 +81,8 @@ export default function DevAdminPanel() {
   )
   const [environment, setEnvironment] = useState<'dev' | 'prod'>('dev')
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
+  const [prodReadiness, setProdReadiness] = useState<DeployReadiness | null>(null)
+  const [readinessLoading, setReadinessLoading] = useState(false)
   const [deploymentLogs, setDeploymentLogs] = useState<DeploymentRecord[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -104,6 +115,12 @@ export default function DevAdminPanel() {
   useEffect(() => {
     setIsMobile(!screens.lg)
   }, [screens.lg])
+
+  useEffect(() => {
+    fetchGitStatus(false)
+    fetchProdReadiness()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Update URL when section changes
   useEffect(() => {
@@ -152,6 +169,23 @@ export default function DevAdminPanel() {
         message.error('Failed to fetch git status: ' + (e.response?.data?.error || e.message))
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Real "is there anything to deploy" signal — compares prod's checked-out
+  // commit + pending-migration count against its own last successful
+  // deployment record. Commit-ahead-of-main isn't reliable once the VPS
+  // tree has been reset to match origin (source caught up says nothing
+  // about what's actually running).
+  const fetchProdReadiness = async () => {
+    setReadinessLoading(true)
+    try {
+      const res = await adminApi.get('/dev/deploy-readiness/prod')
+      setProdReadiness(res.data)
+    } catch (e: any) {
+      message.error('Failed to fetch deploy readiness: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setReadinessLoading(false)
     }
   }
 
@@ -411,10 +445,10 @@ export default function DevAdminPanel() {
         <Col xs={24} sm={12} lg={6}>
           <Card>
             <Statistic
-              title="Pending Commits"
-              value={gitStatus?.commits || 0}
+              title="Prod Deploy Needed"
+              value={prodReadiness?.deployNeeded ? 'Yes' : 'No'}
               prefix={<ExclamationCircleOutlined />}
-              valueStyle={{ fontSize: 24 }}
+              valueStyle={{ fontSize: 24, color: prodReadiness?.deployNeeded ? '#faad14' : '#52c41a' }}
             />
           </Card>
         </Col>
@@ -582,7 +616,11 @@ export default function DevAdminPanel() {
           <Badge status="processing" color="#ff4d4f" />
           DEV Git Status
         </Typography.Title>
-        <Button icon={<ReloadOutlined />} onClick={() => fetchGitStatus()} loading={loading}>
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={() => { fetchGitStatus(); fetchProdReadiness() }}
+          loading={loading || readinessLoading}
+        >
           Refresh
         </Button>
       </div>
@@ -637,18 +675,44 @@ export default function DevAdminPanel() {
             </Typography.Text>
           </Card>
 
-          {gitStatus.commits > 0 && (
-            <Card style={{ backgroundColor: '#fff7e6', borderLeft: '4px solid #faad14' }}>
-              <Typography.Text strong style={{ fontSize: 16 }}>
-                ⚡ {gitStatus.commits} Pending Commit{gitStatus.commits > 1 ? 's' : ''}
-              </Typography.Text>
-              <Divider />
-              <Typography.Paragraph style={{ marginBottom: 0 }}>
-                Your branch has {gitStatus.commits} commit{gitStatus.commits > 1 ? 's' : ''} ahead of main.
-                Ready to be deployed to production.
-              </Typography.Paragraph>
-            </Card>
-          )}
+          <Card
+            style={
+              prodReadiness?.deployNeeded
+                ? { backgroundColor: '#fff7e6', borderLeft: '4px solid #faad14' }
+                : { backgroundColor: '#f6ffed', borderLeft: '4px solid #52c41a' }
+            }
+          >
+            <Typography.Text strong style={{ fontSize: 16 }}>
+              {readinessLoading
+                ? 'Checking production deploy status...'
+                : prodReadiness?.deployNeeded
+                  ? '⚡ Production deploy needed'
+                  : '✅ Production is up to date'}
+            </Typography.Text>
+            <Divider />
+            {prodReadiness && (
+              <>
+                <Typography.Paragraph style={{ marginBottom: 8 }}>
+                  {prodReadiness.reason}
+                </Typography.Paragraph>
+                <Typography.Paragraph style={{ marginBottom: 8, fontSize: 13, color: '#666' }}>
+                  On disk: <Tag color="blue">{prodReadiness.currentCommit.substring(0, 7)}</Tag>
+                  {' '}Last deployed to prod:{' '}
+                  {prodReadiness.lastDeployedCommit
+                    ? <Tag color="default">{prodReadiness.lastDeployedCommit.substring(0, 7)}</Tag>
+                    : <Tag color="red">never</Tag>}
+                  {prodReadiness.lastDeployedAt && ` (${new Date(prodReadiness.lastDeployedAt).toLocaleString()})`}
+                </Typography.Paragraph>
+                {prodReadiness.pendingMigrations.length > 0 && (
+                  <Typography.Paragraph style={{ marginBottom: 0, fontSize: 13 }}>
+                    Pending migrations: {prodReadiness.pendingMigrations.map((f) => (
+                      <Tag key={f} color="gold">{f}</Tag>
+                    ))}
+                  </Typography.Paragraph>
+                )}
+              </>
+            )}
+          </Card>
         </div>
       )}
     </div>
@@ -769,10 +833,10 @@ export default function DevAdminPanel() {
               </Col>
               <Col xs={24} sm={12}>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Commits to Deploy
+                  Pending Migrations
                 </Typography.Text>
                 <Typography.Paragraph style={{ margin: '4px 0', fontSize: 14, fontWeight: 600 }}>
-                  {gitStatus?.commits || 0}
+                  {prodReadiness?.pendingMigrations.length || 0}
                 </Typography.Paragraph>
               </Col>
               <Col xs={24} sm={12}>

@@ -668,29 +668,88 @@ export class DeploymentService {
    * to (dev when the push is initiated from the dev admin panel), not
    * necessarily the environment being deployed to.
    */
+  private async getPendingMigrations(environment: 'dev' | 'prod'): Promise<string[]> {
+    const envConfig = this.getEnvConfig(environment)
+    const projectPath = this.getProjectPath(environment)
+    const migrationsDir = `${projectPath}/infra/db/migrations`
+
+    // Ensure the tracking table exists (quietly — `-q` suppresses the
+    // CREATE TABLE tag so it can't pollute the diff below), then compare
+    // on-disk filenames against tracked ones directly. Comparing raw
+    // COUNT(*) instead would be wrong the moment history has any drift
+    // (a renamed/removed migration leaves a stale tracked row that
+    // inflates the count and can mask a real pending migration).
+    await this.runSSHCommand(
+      `docker exec -i teen_postgres psql -U teen -d ${envConfig.database.name} -q -c ` +
+        `"CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"`,
+      10000
+    )
+    const pendingOutput = await this.runSSHCommand(
+      `comm -23 <(ls ${migrationsDir}/*.sql | xargs -n1 basename | sort) ` +
+        `<(docker exec -i teen_postgres psql -U teen -d ${envConfig.database.name} -tAc "SELECT filename FROM schema_migrations" | sort)`,
+      10000
+    )
+    return pendingOutput.trim().split('\n').filter(Boolean)
+  }
+
+  /**
+   * Real "is there anything to deploy" signal for the admin panel's Git
+   * Status page. Pure commit-ahead-of-main framing is misleading once a
+   * VPS tree has been `git reset --hard` to match origin (source is fully
+   * caught up, but that says nothing about whether it's actually running)
+   * — so this instead compares the environment's checked-out commit and
+   * pending-migration count against its own last successful deployment
+   * record.
+   */
+  async getDeployReadiness(environment: 'dev' | 'prod'): Promise<{
+    currentCommit: string
+    lastDeployedCommit: string | null
+    lastDeployedAt: string | null
+    pendingMigrations: string[]
+    deployNeeded: boolean
+    reason: string
+  }> {
+    const projectPath = this.getProjectPath(environment)
+    const currentCommit = (
+      await this.runSSHCommand(`cd ${projectPath} && git rev-parse HEAD`, 10000)
+    ).trim()
+
+    const lastDeployResult = await this.db.query(
+      `SELECT commit_hash, completed_at FROM deployments
+       WHERE environment = $1 AND status = 'success'
+       ORDER BY completed_at DESC NULLS LAST, created_at DESC LIMIT 1`,
+      [environment]
+    )
+    const lastDeployed = lastDeployResult.rows[0] || null
+    const lastDeployedCommit: string | null = lastDeployed?.commit_hash || null
+    const lastDeployedAt: string | null = lastDeployed?.completed_at || null
+
+    let pendingMigrations: string[] = []
+    try {
+      pendingMigrations = await this.getPendingMigrations(environment)
+    } catch {
+      // If this fails, fall through — commit comparison below still works.
+    }
+
+    let deployNeeded = false
+    let reason = 'Up to date'
+    if (!lastDeployedCommit) {
+      deployNeeded = true
+      reason = 'No successful deployment on record for this environment'
+    } else if (lastDeployedCommit !== currentCommit) {
+      deployNeeded = true
+      reason = `Source is at a newer commit than the last deployment (${lastDeployedCommit.substring(0, 7)} deployed vs ${currentCommit.substring(0, 7)} on disk)`
+    } else if (pendingMigrations.length > 0) {
+      deployNeeded = true
+      reason = `${pendingMigrations.length} database migration(s) pending: ${pendingMigrations.join(', ')}`
+    }
+
+    return { currentCommit, lastDeployedCommit, lastDeployedAt, pendingMigrations, deployNeeded, reason }
+  }
+
   private async checkDatabaseMigrations(environment: 'dev' | 'prod'): Promise<SafetyCheckResult | null> {
     try {
-      const envConfig = this.getEnvConfig(environment)
-      const projectPath = this.getProjectPath(environment)
-      const migrationsDir = `${projectPath}/infra/db/migrations`
-
-      // Ensure the tracking table exists (quietly — `-q` suppresses the
-      // CREATE TABLE tag so it can't pollute the count below), then diff
-      // on-disk filenames against tracked ones directly. Comparing raw
-      // COUNT(*) instead would be wrong the moment history has any drift
-      // (a renamed/removed migration leaves a stale tracked row that
-      // inflates the count and can mask a real pending migration).
-      await this.runSSHCommand(
-        `docker exec -i teen_postgres psql -U teen -d ${envConfig.database.name} -q -c ` +
-          `"CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"`,
-        10000
-      )
-      const pendingOutput = await this.runSSHCommand(
-        `comm -23 <(ls ${migrationsDir}/*.sql | xargs -n1 basename | sort) ` +
-          `<(docker exec -i teen_postgres psql -U teen -d ${envConfig.database.name} -tAc "SELECT filename FROM schema_migrations" | sort)`,
-        10000
-      )
-      const pendingFiles = pendingOutput.trim().split('\n').filter(Boolean)
+      const pendingFiles = await this.getPendingMigrations(environment)
 
       return {
         name: 'Database Migrations',

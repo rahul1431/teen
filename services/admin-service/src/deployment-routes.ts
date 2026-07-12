@@ -385,6 +385,32 @@ export async function registerDeploymentRoutes(
   )
 
   /**
+   * GET /api/admin/dev/deploy-readiness/:env
+   * Real "is there anything to deploy" signal — compares the environment's
+   * checked-out git commit and pending-migration count against its own
+   * last successful deployment record. Commit-ahead-of-main is NOT a
+   * reliable signal once a VPS tree has been reset to match origin
+   * (source fully caught up says nothing about what's actually running).
+   * Accessible to any authenticated admin.
+   */
+  app.get(
+    '/api/admin/dev/deploy-readiness/:env',
+    { onRequest: [authenticate] },
+    async (req, reply) => {
+      try {
+        const { env } = req.params as { env: string }
+        if (env !== 'dev' && env !== 'prod') {
+          return reply.code(400).send({ error: 'env must be dev or prod' })
+        }
+        const readiness = await deploymentService.getDeployReadiness(env)
+        return reply.send(readiness)
+      } catch (err: any) {
+        return reply.code(500).send({ error: err.message || 'Failed to compute deploy readiness' })
+      }
+    }
+  )
+
+  /**
    * POST /api/dev/rollback/:deploymentId
    * Rollback to a previous deployment (supports environment checking)
    * Requires: DevAdmin or superadmin role (git reset --hard + pm2 restart on the VPS)
