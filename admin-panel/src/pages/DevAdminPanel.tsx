@@ -1219,15 +1219,15 @@ export default function DevAdminPanel() {
 
         {/* Content */}
         <Content style={{ margin: isMobile ? 12 : 24, minHeight: 'calc(100vh - 80px)' }}>
-          {currentSection === 'dashboard' && <DashboardSection />}
-          {currentSection === 'deployment' && <DeploymentSection />}
-          {currentSection === 'git' && <GitSection />}
-          {currentSection === 'logs' && <LogsSection />}
+          {currentSection === 'dashboard' && DashboardSection()}
+          {currentSection === 'deployment' && DeploymentSection()}
+          {currentSection === 'git' && GitSection()}
+          {currentSection === 'logs' && LogsSection()}
         </Content>
       </Layout>
 
       {/* Deployment Modal */}
-      <DeploymentModal />
+      {DeploymentModal()}
     </Layout>
   )
 }
