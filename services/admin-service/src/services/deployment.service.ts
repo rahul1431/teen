@@ -1231,9 +1231,15 @@ export class DeploymentService {
       await this.logDeployment(jobId, `${envConfig.tag} Waiting 5 seconds for services to stabilize...`, 'info')
       await this.sleep(5000)
 
-      // Step 8: Health checks for environment-specific ports
+      // Step 8: Health checks — scoped to whatever this deploy actually
+      // restarted. restartApps === null means the restart-everything
+      // fallback ran, so checking everything is correct; an empty Set
+      // means nothing was restarted (frontend/docs-only change), so
+      // there's nothing to health-check at all.
       await this.logDeployment(jobId, `${envConfig.tag} Running health checks...`, 'info')
-      const healthResults = await this.checkServiceHealthForEnvironment(environment)
+      const healthResults = restartApps && restartApps.size === 0
+        ? []
+        : await this.checkServiceHealthForEnvironment(environment, restartApps ?? undefined)
 
       let allHealthy = true
       for (const result of healthResults) {
@@ -1362,12 +1368,13 @@ export class DeploymentService {
    * Uses environment-specific ports and configuration
    */
   private async checkServiceHealthForEnvironment(
-    environment: 'dev' | 'prod'
+    environment: 'dev' | 'prod',
+    onlyServices?: Set<string>
   ): Promise<ServiceHealthResult[]> {
     const envConfig = this.getEnvConfig(environment)
     const p = envConfig.ports // Shorthand for ports
 
-    const services = [
+    const allServices = [
       { name: 'teen-core-api', url: `http://127.0.0.1:${p.coreApi}/health` },
       { name: 'teen-gateway', url: `http://127.0.0.1:${p.gateway}/health` },
       { name: 'teen-gateway-2', url: `http://127.0.0.1:${p.gatewayAlt1}/health` },
@@ -1383,6 +1390,11 @@ export class DeploymentService {
       { name: 'teen-churn-ml', url: `http://127.0.0.1:${p.churnMl}/health` },
       { name: 'teen-app-monitor', url: `http://127.0.0.1:${p.appMonitor}/health` },
     ]
+    // A post-deploy health check should only judge the services THIS
+    // deploy touched — otherwise a pre-existing, unrelated outage (e.g.
+    // teen-churn-ml already being down) fails the whole deployment and
+    // triggers a rollback for something the deploy never caused or fixed.
+    const services = onlyServices ? allServices.filter((s) => onlyServices.has(s.name)) : allServices
 
     const results: ServiceHealthResult[] = []
 
@@ -1435,26 +1447,30 @@ export class DeploymentService {
     }
 
     await this.logDeployment(jobId, `${envConfig.tag} Rolling back to commit ${previousCommit}...`, 'warn')
+    const projectPath = this.getProjectPath(environment)
 
     // Git reset to previous commit
     await this.runSSHCommand(
-      `cd ${this.vpsConfig.projectPath} && git reset --hard ${previousCommit}`
+      `cd ${projectPath} && git reset --hard ${previousCommit}`
     )
     await this.logDeployment(jobId, `${envConfig.tag} Git reset completed`, 'info')
 
     // npm install for previous commit dependencies
     const services = ['', 'services/game-gateway', 'services/admin-service']
     for (const svc of services) {
-      const svcPath = svc ? `${this.vpsConfig.projectPath}/${svc}` : this.vpsConfig.projectPath
+      const svcPath = svc ? `${projectPath}/${svc}` : projectPath
       const svcName = svc || 'root'
       await this.runSSHCommand(`cd ${svcPath} && npm install --production=false 2>&1`)
     }
     await this.logDeployment(jobId, `${envConfig.tag} Dependencies reinstalled`, 'info')
 
-    // Restart services with environment-specific config
-    await this.runSSHCommand('pm2 kill')
+    // Restart services with environment-specific config. NEVER `pm2 kill`
+    // here — that stops the entire PM2 daemon, both dev AND prod, every
+    // process on the box, not just this environment. `pm2 delete
+    // <ecosystemConfig>` scopes it to exactly this environment's apps.
+    await this.runSSHCommand(`pm2 delete ${envConfig.ecosystemConfig} || true`)
     await this.runSSHCommand(
-      `cd ${this.vpsConfig.projectPath} && pm2 start ${envConfig.ecosystemConfig} && pm2 save`
+      `cd ${projectPath} && pm2 start ${envConfig.ecosystemConfig} && pm2 save`
     )
     await this.logDeployment(jobId, `${envConfig.tag} Services restarted`, 'info')
 
@@ -1480,16 +1496,24 @@ export class DeploymentService {
     environment?: 'dev' | 'prod'
   ): Promise<void> {
     try {
-      const updates: string[] = ['status = $1', 'updated_at = NOW()']
-      const params: any[] = [status, jobId]
+      // Build params in the order they're bound, THEN compute each $N from
+      // the array's length at that point — jobId must be pushed last so
+      // `$${params.length}` in the WHERE clause actually points at it.
+      // The previous version pushed jobId early and recomputed the WHERE
+      // index off a stale length, so whenever `environment` was passed
+      // (every call site) the WHERE clause silently bound to the
+      // environment string instead of the job id — the query matched zero
+      // rows, threw nothing, and deployment status stayed 'queued' forever.
+      const setClauses: string[] = ['status = $1', 'updated_at = NOW()']
+      const params: any[] = [status]
 
       if (environment) {
-        updates.push(`environment = $${updates.length + 1}`)
         params.push(environment)
+        setClauses.push(`environment = $${params.length}`)
       }
 
-      const query = `UPDATE deployments SET ${updates.join(', ')} WHERE id = $${params.length}`
       params.push(jobId)
+      const query = `UPDATE deployments SET ${setClauses.join(', ')} WHERE id = $${params.length}`
 
       await this.db.query(query, params)
     } catch (err: any) {
