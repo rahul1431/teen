@@ -346,15 +346,19 @@ export class DeploymentService {
   private async checkGitClean(branch: string, environment?: 'dev' | 'prod'): Promise<SafetyCheckResult | null> {
     try {
       const projectPath = this.getProjectPath(environment)
+      // --untracked-files=no: only flag changes to files git actually
+      // tracks (modified/staged/deleted). Harmless untracked leftovers
+      // (stray docs, an unused duplicate config file, etc.) aren't a
+      // reason to block a deploy — they can't conflict with a `git pull`.
       const gitStatus = await this.runSSHCommand(
-        `cd ${projectPath} && git status --porcelain`,
+        `cd ${projectPath} && git status --porcelain --untracked-files=no`,
         10000
       )
       if (gitStatus.trim().length > 0) {
         return {
           name: 'Git Clean',
           status: 'failed',
-          message: 'Uncommitted changes found. Commit before deploying.',
+          message: `Uncommitted changes to tracked files found. Commit before deploying:\n${gitStatus.trim()}`,
         }
       } else {
         return {
@@ -549,8 +553,18 @@ export class DeploymentService {
     try {
       const minSpace = environment === 'prod' ? 10 : 5 // GB
       const projectPath = this.getProjectPath(environment)
+      // \\$4 (not \$4): the whole SSH command is embedded inside a second
+      // pair of double quotes in runSSHCommand's own sshCmd string, which
+      // the LOCAL shell parses before ssh ever sees it — a bare $4 there
+      // gets expanded as positional parameter 4 (always empty) and awk
+      // silently receives `{print }`. \\$4 survives as a JS runtime string
+      // containing a literal backslash + $4; the local shell's one layer
+      // of double-quote parsing consumes exactly that backslash, leaving
+      // a clean $4 for the remote shell, where it's protected by awk's own
+      // single quotes as intended. (Confirmed this was producing "0.0GB
+      // free" for every disk-space check, always — not a real full disk.)
       const diskOutput = await this.runSSHCommand(
-        `df ${projectPath} | tail -1 | awk '{print $4}'`,
+        `df ${projectPath} | tail -1 | awk '{print \\$4}'`,
         10000
       )
       const freeKB = parseInt(diskOutput.trim()) || 0
@@ -679,14 +693,22 @@ export class DeploymentService {
     // COUNT(*) instead would be wrong the moment history has any drift
     // (a renamed/removed migration leaves a stale tracked row that
     // inflates the count and can mask a real pending migration).
+    // \\" (not "): this whole command is embedded inside a second pair of
+    // double quotes in runSSHCommand's own sshCmd string, parsed by the
+    // LOCAL shell before ssh ever sees it. An unescaped " here terminates
+    // that outer quoting early, corrupting everything after it — which is
+    // exactly what was throwing "SSH command failed" on every call. \\"
+    // survives as a JS runtime string containing a literal backslash +
+    // quote; the local shell's double-quote parsing consumes the
+    // backslash, leaving a clean " for the remote shell to use as intended.
     await this.runSSHCommand(
       `docker exec -i teen_postgres psql -U teen -d ${envConfig.database.name} -q -c ` +
-        `"CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"`,
+        `\\"CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\\"`,
       10000
     )
     const pendingOutput = await this.runSSHCommand(
       `comm -23 <(ls ${migrationsDir}/*.sql | xargs -n1 basename | sort) ` +
-        `<(docker exec -i teen_postgres psql -U teen -d ${envConfig.database.name} -tAc "SELECT filename FROM schema_migrations" | sort)`,
+        `<(docker exec -i teen_postgres psql -U teen -d ${envConfig.database.name} -tAc \\"SELECT filename FROM schema_migrations\\" | sort)`,
       10000
     )
     return pendingOutput.trim().split('\n').filter(Boolean)
@@ -1854,7 +1876,7 @@ export class DeploymentService {
     // Check 3: Disk space available
     try {
       const projectPath = this.getProjectPath(environment)
-      const diskOutput = await this.runSSHCommand(`df ${projectPath} | tail -1 | awk '{print $4}'`)
+      const diskOutput = await this.runSSHCommand(`df ${projectPath} | tail -1 | awk '{print \\$4}'`)
       const availableKb = parseInt(diskOutput.trim())
       const availableGb = availableKb / 1024 / 1024
 
