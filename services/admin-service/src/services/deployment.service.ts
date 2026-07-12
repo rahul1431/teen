@@ -143,6 +143,11 @@ interface EnvironmentConfig {
   envFile: string
   ecosystemConfig: string
   tag: string
+  // Where the built admin-panel SPA is actually served from. Dev serves
+  // straight out of the vite build output (alias in nginx.ssl.conf_api);
+  // prod serves from a plain Hestia static docroot that's NOT the build
+  // output path, so its files must be synced there after every build.
+  frontendDocroot: string
 }
 
 const ENV_CONFIGS: Record<'dev' | 'prod', EnvironmentConfig> = {
@@ -175,6 +180,7 @@ const ENV_CONFIGS: Record<'dev' | 'prod', EnvironmentConfig> = {
     envFile: '.env.dev',
     ecosystemConfig: 'ecosystem.config.dev.js',
     tag: '[DEV]',
+    frontendDocroot: '/opt/teen-dev/admin-panel/dist',
   },
   prod: {
     name: 'prod',
@@ -209,6 +215,7 @@ const ENV_CONFIGS: Record<'dev' | 'prod', EnvironmentConfig> = {
     envFile: '.env',
     ecosystemConfig: 'ecosystem.config.js',
     tag: '[PROD]',
+    frontendDocroot: '/home/admin/web/game.myonlinejoker.com/public_html/admin',
   },
 }
 
@@ -890,9 +897,18 @@ export class DeploymentService {
       )
       await this.logDeployment(jobId, `${envConfig.tag} ${migrationOutput}`, 'info')
 
-      // Step 3-5: npm install for root and services
-      const services = ['', 'services/game-gateway', 'services/admin-service']
-      for (const svc of services) {
+      // Step 3-5: npm install (+ tsc build where applicable) for root and
+      // services. Plain `npm install` does NOT run `tsc` — there's no
+      // postinstall/prepare hook in either package.json — so without an
+      // explicit build here, PM2 would restart against whatever dist/ was
+      // last compiled by hand, silently ignoring the code that was just
+      // pulled. `npm run build` is added for every service that has one.
+      const services = [
+        { path: '', build: false },
+        { path: 'services/game-gateway', build: true },
+        { path: 'services/admin-service', build: true },
+      ]
+      for (const { path: svc, build } of services) {
         const svcPath = svc ? `${projectPath}/${svc}` : projectPath
         const svcName = svc || 'root'
         await this.logDeployment(
@@ -906,7 +922,37 @@ export class DeploymentService {
           `${envConfig.tag} npm install completed for ${svcName}`,
           'info'
         )
+
+        if (build) {
+          await this.logDeployment(jobId, `${envConfig.tag} Building ${svcName}...`, 'info')
+          await this.runSSHCommand(`cd ${svcPath} && npm run build 2>&1`, 3 * 60 * 1000)
+          await this.logDeployment(jobId, `${envConfig.tag} Build completed for ${svcName}`, 'info')
+        }
       }
+
+      // Step 5.5: Build and deploy the admin-panel frontend. The deploy
+      // pipeline never touched this before — a "successful" deploy could
+      // still be running yesterday's frontend. Dev serves straight out of
+      // the build output; prod serves from a separate static docroot
+      // (Hestia's public_html/admin, per nginx.ssl.conf_admin — NOT the
+      // build output path) that has to be synced after every build.
+      await this.logDeployment(jobId, `${envConfig.tag} Installing admin-panel dependencies...`, 'info')
+      await this.runSSHCommand(`cd ${projectPath}/admin-panel && npm install --production=false 2>&1`, 3 * 60 * 1000)
+      await this.logDeployment(jobId, `${envConfig.tag} Building admin-panel...`, 'info')
+      await this.runSSHCommand(`cd ${projectPath}/admin-panel && npm run build 2>&1`, 3 * 60 * 1000)
+      const buildOutputPath = `${projectPath}/admin-panel/dist`
+      if (envConfig.frontendDocroot !== buildOutputPath) {
+        await this.logDeployment(
+          jobId,
+          `${envConfig.tag} Syncing admin-panel build to ${envConfig.frontendDocroot}...`,
+          'info'
+        )
+        // --chown keeps ownership as admin:admin (matching Hestia's existing
+        // web-user convention there) instead of leaving root-owned files
+        // behind from this SSH session running as root.
+        await this.runSSHCommand(`rsync -a --delete --chown=admin:admin ${buildOutputPath}/ ${envConfig.frontendDocroot}/`)
+      }
+      await this.logDeployment(jobId, `${envConfig.tag} admin-panel deployed to ${envConfig.frontendDocroot}`, 'info')
 
       // Step 6: Restart PM2 with environment-specific config
       await this.logDeployment(
