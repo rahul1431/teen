@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert, Collapse, Avatar
+  Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert, Collapse, Avatar, Drawer, Upload
 } from 'antd'
-import { ReloadOutlined, PlusOutlined, SyncOutlined, CloudDownloadOutlined, DeleteOutlined, TeamOutlined, TrophyOutlined, UserOutlined } from '@ant-design/icons'
+import { ReloadOutlined, PlusOutlined, SyncOutlined, CloudDownloadOutlined, DeleteOutlined, TeamOutlined, TrophyOutlined, UserOutlined, UploadOutlined, EyeOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
 const { Text } = Typography
@@ -19,6 +19,39 @@ function groupPlayersByTeam(players: any[]): Record<string, any[]> {
     groups[key].push(p)
   }
   return Object.fromEntries(Object.entries(groups).sort(([a], [b]) => a.localeCompare(b)))
+}
+
+function CountryFlagUploadField({ form }: { form: any }) {
+  const [uploading, setUploading] = useState(false)
+  const url: string | undefined = Form.useWatch('flag_url', form)
+
+  const upload = async (file: File) => {
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await adminApi.post('/uploads/cricket-flag', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      form.setFieldsValue({ flag_url: res.data.url })
+      message.success('Flag uploaded')
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Upload failed')
+    } finally { setUploading(false) }
+  }
+
+  return (
+    <Form.Item label="Flag Icon" required>
+      <Form.Item name="flag_url" noStyle rules={[{ required: true, message: 'Upload a flag icon' }]}>
+        <Input type="hidden" />
+      </Form.Item>
+      <Space direction="vertical">
+        <Upload showUploadList={false} accept="image/*" maxCount={1}
+          beforeUpload={(file) => { upload(file as File); return false }}>
+          <Button icon={<UploadOutlined />} loading={uploading}>{url ? 'Replace Flag' : 'Upload Flag'}</Button>
+        </Upload>
+        {url && <img src={url} alt="Flag" style={{ width: 60, height: 40, objectFit: 'cover', border: '1px solid #eee', borderRadius: 4 }} />}
+      </Space>
+    </Form.Item>
+  )
 }
 
 export default function Cricket() {
@@ -63,6 +96,13 @@ export default function Cricket() {
   // --- Fantasy Contests (per-match) States ---
   const [leaguesByMatch, setLeaguesByMatch] = useState<Record<string, any[]>>({})
   const [loadingLeaguesFor, setLoadingLeaguesFor] = useState<string | null>(null)
+
+  // --- Countries States ---
+  const [countries, setCountries] = useState<any[]>([])
+  const [loadingCountries, setLoadingCountries] = useState(false)
+  const [countryOpen, setCountryOpen] = useState(false)
+  const [editingCountry, setEditingCountry] = useState<any>(null)
+  const [cForm] = Form.useForm()
 
   // --- Scoring Rulebook States ---
   const [rulesOpen, setRulesOpen] = useState(false)
@@ -284,6 +324,35 @@ export default function Cricket() {
     }
   }
 
+  const loadCountries = () => {
+    setLoadingCountries(true)
+    adminApi.get('/betting/cricket/countries')
+      .then(r => setCountries(r.data.countries || []))
+      .finally(() => setLoadingCountries(false))
+  }
+
+  const openCountryModal = (country?: any) => {
+    setEditingCountry(country || null)
+    cForm.resetFields()
+    if (country) cForm.setFieldsValue(country)
+    setCountryOpen(true)
+  }
+
+  const saveCountry = async (v: any) => {
+    try {
+      if (editingCountry) {
+        await adminApi.patch(`/betting/cricket/countries/${editingCountry.id}`, { name: v.name, flag_url: v.flag_url })
+      } else {
+        await adminApi.post('/betting/cricket/countries', { id: v.id, name: v.name, flag_url: v.flag_url })
+      }
+      message.success('Country saved')
+      setCountryOpen(false)
+      loadCountries()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to save country')
+    }
+  }
+
   const createMatch = async (v: any) => {
     try {
       await adminApi.post('/betting/cricket/match', {
@@ -435,6 +504,7 @@ export default function Cricket() {
     loadMatches()
     loadPlayers()
     loadSeriesCatalog()
+    loadCountries()
   }, [])
 
   useEffect(() => {
@@ -826,6 +896,27 @@ export default function Cricket() {
         </Row>
       )
     }
+    ,{
+      key: 'countries',
+      label: '🌍 Countries',
+      children: (
+        <Card title="Country Flags"
+          extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openCountryModal()}>Add Country</Button>}
+          loading={loadingCountries}
+        >
+          <Table
+            rowKey="id"
+            dataSource={countries}
+            columns={[
+              { title: 'Flag', dataIndex: 'flag_url', render: (u: string) => <img src={u} alt="" style={{ width: 32, height: 22, objectFit: 'cover', border: '1px solid #eee' }} /> },
+              { title: 'Code', dataIndex: 'id' },
+              { title: 'Country / Team Name', dataIndex: 'name' },
+              { title: 'Action', render: (record: any) => <Button size="small" onClick={() => openCountryModal(record)}>Edit</Button> },
+            ]}
+          />
+        </Card>
+      )
+    }
   ]
 
   return (
@@ -1007,6 +1098,17 @@ export default function Cricket() {
           <Text type="secondary" style={{ fontSize: 12 }}>
             Strike-rate and economy-rate bonus bands use Dream11's standard tiers and aren't editable here — ask engineering if you need those changed.
           </Text>
+        </Form>
+      </Modal>
+
+      {/* Country / Flag Modal */}
+      <Modal open={countryOpen} title={editingCountry ? 'Edit Country' : 'Add Country'} onCancel={() => setCountryOpen(false)} onOk={() => cForm.submit()} okText="Save">
+        <Form form={cForm} layout="vertical" onFinish={saveCountry}>
+          <Form.Item name="id" label="Code (e.g. IND, AUS)" rules={[{ required: true }]}>
+            <Input maxLength={10} disabled={!!editingCountry} />
+          </Form.Item>
+          <Form.Item name="name" label="Country / Team Name" rules={[{ required: true }]}><Input placeholder="e.g. India" /></Form.Item>
+          <CountryFlagUploadField form={cForm} />
         </Form>
       </Modal>
     </div>
