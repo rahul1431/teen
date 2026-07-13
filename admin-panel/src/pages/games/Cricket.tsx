@@ -1,12 +1,25 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert
+  Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert, Collapse, Avatar
 } from 'antd'
-import { ReloadOutlined, PlusOutlined, SyncOutlined, CloudDownloadOutlined, DeleteOutlined, TeamOutlined, TrophyOutlined } from '@ant-design/icons'
+import { ReloadOutlined, PlusOutlined, SyncOutlined, CloudDownloadOutlined, DeleteOutlined, TeamOutlined, TrophyOutlined, UserOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
 const { Text } = Typography
+
+// Groups the fantasy roster by team/country (Dream11-style squad browsing)
+// instead of one long flat list — team_name IS the country for international
+// squads (synced via sync-squad/sync-series-squads).
+function groupPlayersByTeam(players: any[]): Record<string, any[]> {
+  const groups: Record<string, any[]> = {}
+  for (const p of players) {
+    const key = p.team_name || 'Unassigned'
+    if (!groups[key]) groups[key] = []
+    groups[key].push(p)
+  }
+  return Object.fromEntries(Object.entries(groups).sort(([a], [b]) => a.localeCompare(b)))
+}
 
 export default function Cricket() {
   const [config, setConfig] = useState<any>(null)
@@ -634,26 +647,41 @@ export default function Cricket() {
               }
               loading={loadingPlayers}
             >
-              <Table
-                rowKey="id"
-                dataSource={players}
-                size="small"
-                pagination={{ pageSize: 8 }}
-                columns={[
-                  { title: 'Name', dataIndex: 'name', render: (n: string) => <b>{n}</b> },
-                  { title: 'Team', dataIndex: 'team_name' },
-                  { title: 'Role', dataIndex: 'role', render: (r: string) => <Tag color="blue">{r.toUpperCase().replace('_', ' ')}</Tag> },
-                  { title: 'Credits', dataIndex: 'credits', render: (c: any) => `${Number(c).toFixed(1)}` },
-                  {
-                    title: '', dataIndex: 'id', width: 40,
-                    render: (id: string) => (
-                      <Popconfirm title="Delete this player?" description="Blocked if set as a fantasy team's captain/vice-captain." onConfirm={() => deletePlayer(id)}>
-                        <Button size="small" danger type="text" icon={<DeleteOutlined />} />
-                      </Popconfirm>
+              {players.length === 0 ? (
+                <Text type="secondary">No players seeded yet — use Sync Squad on a match or Sync Squads on a series.</Text>
+              ) : (
+                <Collapse
+                  defaultActiveKey={Object.keys(groupPlayersByTeam(players)).slice(0, 1)}
+                  items={Object.entries(groupPlayersByTeam(players)).map(([team, teamPlayers]) => ({
+                    key: team,
+                    label: <span><b>{team}</b> <Tag>{teamPlayers.length} players</Tag></span>,
+                    children: (
+                      <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                        {teamPlayers.map(p => (
+                          <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid #f0f0f0' }}>
+                            <Avatar src={p.avatar_url || undefined} size={36} icon={!p.avatar_url && <UserOutlined />} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div><b>{p.name}</b></div>
+                              <Space size={4}>
+                                <Tag color="blue" style={{ fontSize: 10 }}>{p.role.toUpperCase().replace('_', ' ')}</Tag>
+                                <Text type="secondary" style={{ fontSize: 11 }}>{Number(p.credits).toFixed(1)} cr</Text>
+                                {Number(p.matches_played) > 0 && (
+                                  <Text type="secondary" style={{ fontSize: 11 }}>
+                                    · {p.matches_played} match{Number(p.matches_played) === 1 ? '' : 'es'} · {Number(p.total_points).toFixed(1)} pts
+                                  </Text>
+                                )}
+                              </Space>
+                            </div>
+                            <Popconfirm title="Delete this player?" description="Blocked if set as a fantasy team's captain/vice-captain." onConfirm={() => deletePlayer(p.id)}>
+                              <Button size="small" danger type="text" icon={<DeleteOutlined />} />
+                            </Popconfirm>
+                          </div>
+                        ))}
+                      </Space>
                     ),
-                  },
-                ]}
-              />
+                  }))}
+                />
+              )}
             </Card>
           </Col>
         </Row>

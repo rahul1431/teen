@@ -1859,8 +1859,23 @@ async function start() {
   })
 
   // --- Cricket Fantasy & Live Updates ---
+  // team_name doubles as the country/squad grouping key the admin panel
+  // sections players by. matches_played/total_points are a lightweight
+  // per-player summary of their cricket_match_players history (session
+  // data) so the roster view isn't just a bare name list.
   app.get('/api/admin/betting/cricket/fantasy/players', { onRequest: [authenticate] }, async (_req, reply) => {
-    const res = await db.query('SELECT * FROM cricket_fantasy_players ORDER BY role ASC, name ASC')
+    const res = await db.query(`
+      SELECT p.*,
+        COALESCE(mp.matches_played, 0) AS matches_played,
+        COALESCE(mp.total_points, 0) AS total_points
+      FROM cricket_fantasy_players p
+      LEFT JOIN (
+        SELECT player_id, COUNT(*) AS matches_played, SUM(fantasy_points) AS total_points
+        FROM cricket_match_players
+        GROUP BY player_id
+      ) mp ON mp.player_id = p.id
+      ORDER BY p.team_name ASC, p.role ASC, p.name ASC
+    `)
     return reply.send({ players: res.rows })
   })
 
