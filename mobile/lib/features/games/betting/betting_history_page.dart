@@ -3,8 +3,10 @@ import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
 
 /// Unified "My Bets" history for the betting games. [type] selects which
-/// endpoint and row layout to use.
-enum BettingType { matka, lottery, cricket }
+/// endpoint and row layout to use. Cricket has no market-odds betting
+/// anymore (removed in favor of Dream11-style fantasy contests, which have
+/// their own "My Contests"/"My Teams" history in cricket_page.dart).
+enum BettingType { matka, lottery }
 
 class BettingHistoryPage extends StatefulWidget {
   final BettingType type;
@@ -20,13 +22,11 @@ class _BettingHistoryPageState extends State<BettingHistoryPage> {
   String get _title => switch (widget.type) {
         BettingType.matka => 'My Matka Bets',
         BettingType.lottery => 'My Lottery Tickets',
-        BettingType.cricket => 'My Cricket Bets',
       };
 
   String get _endpoint => switch (widget.type) {
         BettingType.matka => '/api/betting/matka/my-bets',
         BettingType.lottery => '/api/betting/lottery/my-tickets',
-        BettingType.cricket => '/api/betting/cricket/my-bets',
       };
 
   String get _key => widget.type == BettingType.lottery ? 'tickets' : 'bets';
@@ -55,7 +55,8 @@ class _BettingHistoryPageState extends State<BettingHistoryPage> {
     return Scaffold(
       appBar: AppBar(title: Text(_title)),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.gold))
           : RefreshIndicator(
               onRefresh: _load,
               child: _items.isEmpty
@@ -64,7 +65,8 @@ class _BettingHistoryPageState extends State<BettingHistoryPage> {
                         padding: EdgeInsets.only(top: 80),
                         child: Center(
                             child: Text('No bets yet',
-                                style: TextStyle(color: AppColors.textSecondary))),
+                                style:
+                                    TextStyle(color: AppColors.textSecondary))),
                       ),
                     ])
                   : ListView.separated(
@@ -93,12 +95,6 @@ class _BettingHistoryPageState extends State<BettingHistoryPage> {
               : (b['draw_status'] == 'settled' ? 'lost' : 'pending'),
           _n(b['prize']),
         ),
-      BettingType.cricket => (
-          '${b['team_a']} v ${b['team_b']}',
-          '${b['market_label']} → ${b['option_label']} @ ${b['odds']} · ₹${_n(b['amount'])}',
-          b['status'] as String? ?? 'pending',
-          _n(b['payout']),
-        ),
     };
 
     final color = switch (status) {
@@ -113,7 +109,7 @@ class _BettingHistoryPageState extends State<BettingHistoryPage> {
       decoration: BoxDecoration(
         color: AppColors.cardBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.4)),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
       ),
       child: Row(
         children: [
@@ -135,10 +131,9 @@ class _BettingHistoryPageState extends State<BettingHistoryPage> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                    color: color.withOpacity(0.18),
+                    color: color.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(8)),
                 child: Text(status.toUpperCase(),
                     style: TextStyle(
@@ -150,7 +145,9 @@ class _BettingHistoryPageState extends State<BettingHistoryPage> {
                 const SizedBox(height: 4),
                 Text('+₹${payout.toStringAsFixed(0)}',
                     style: TextStyle(
-                        color: color, fontWeight: FontWeight.bold, fontSize: 13)),
+                        color: color,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13)),
               ],
             ],
           ),
@@ -160,6 +157,5 @@ class _BettingHistoryPageState extends State<BettingHistoryPage> {
   }
 
   double _n(dynamic v) => double.tryParse(v?.toString() ?? '0') ?? 0;
-  String _label(dynamic t) =>
-      (t?.toString() ?? '').replaceAll('_', ' ');
+  String _label(dynamic t) => (t?.toString() ?? '').replaceAll('_', ' ');
 }

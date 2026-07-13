@@ -5,7 +5,8 @@ import crypto from 'crypto'
 import { debitStake, creditPrize } from '../helpers/wallet-client'
 import { MATKA_MULTIPLIERS, validateMatkaBet, settleMatkaSession } from '../helpers/matka'
 import { settleLottery } from '../helpers/lottery'
-import { settleCricketMarket, settleFantasyLeague, settleCricketSession } from '../helpers/cricket'
+import { settleFantasyLeague } from '../helpers/cricket'
+import { aggregateScorecard, computeFantasyPoints, DEFAULT_SCORING_RULES } from '../helpers/fantasy-scoring'
 
 export function bettingPlugin(db: Pool) {
   return async function (app: FastifyInstance) {
@@ -178,37 +179,12 @@ export function bettingPlugin(db: Pool) {
       return { draws: rows.rows }
     })
 
-    // ══ CRICKET ══
+    // ══ CRICKET (Dream11-style fantasy contests — match-odds and session
+    // betting were removed; see archived_cricket_{bets,markets,sessions,
+    // session_bets}) ══
     app.get('/cricket/matches', { onRequest: [auth] }, async () => {
       const matches = await db.query(`SELECT * FROM cricket_matches WHERE status IN ('upcoming','live') ORDER BY start_time ASC`)
-      const out = []
-      for (const m of matches.rows) {
-        const markets = await db.query(`SELECT id, market_type, label, options, status FROM cricket_markets WHERE match_id = $1 AND status = 'open'`, [m.id])
-        out.push({ ...m, markets: markets.rows })
-      }
-      return { matches: out }
-    })
-
-    app.post('/cricket/bet', { onRequest: [auth] }, async (req, reply) => {
-      const body = z.object({ market_id: z.string().uuid(), option_key: z.string(), amount: z.number().positive() }).parse(req.body)
-      const mRes = await db.query(`SELECT mk.*, mt.status AS match_status FROM cricket_markets mk JOIN cricket_matches mt ON mt.id = mk.match_id WHERE mk.id = $1`, [body.market_id])
-      if (!mRes.rows.length) return reply.code(404).send({ error: 'Market not found' })
-      const market = mRes.rows[0]
-      if (market.status !== 'open' || market.match_status === 'settled' || market.match_status === 'closed') return reply.code(409).send({ error: 'Market is closed' })
-      const option = (market.options as any[]).find(o => o.key === body.option_key)
-      if (!option) return reply.code(400).send({ error: 'Invalid option' })
-      const odds = Number(option.odds)
-      const potential = Math.round(body.amount * odds * 100) / 100
-      const betId = crypto.randomUUID()
-      const debit = await debitStake({ userId: uid(req), amount: body.amount, referenceId: betId, idempotencyKey: `cricket_stake_${betId}`, description: 'Cricket bet' })
-      if (!debit.ok) return reply.code(400).send({ error: debit.error })
-      await db.query(`INSERT INTO cricket_bets (id, user_id, match_id, market_id, option_key, option_label, odds, amount, potential_payout) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [betId, uid(req), market.match_id, market.id, option.key, option.label, odds, body.amount, potential])
-      return { success: true, bet_id: betId, odds, potential_payout: potential }
-    })
-
-    app.get('/cricket/my-bets', { onRequest: [auth] }, async (req) => {
-      const rows = await db.query(`SELECT b.*, mt.team_a, mt.team_b, mt.series, mk.label AS market_label FROM cricket_bets b JOIN cricket_matches mt ON mt.id = b.match_id JOIN cricket_markets mk ON mk.id = b.market_id WHERE b.user_id = $1 ORDER BY b.created_at DESC LIMIT 100`, [uid(req)])
-      return { bets: rows.rows }
+      return { matches: matches.rows }
     })
 
     app.get('/cricket/players', { onRequest: [auth] }, async (req) => {
@@ -331,28 +307,8 @@ export function bettingPlugin(db: Pool) {
       const { id } = req.params as { id: string }
       const matchRes = await db.query('SELECT * FROM cricket_matches WHERE id = $1', [id])
       if (!matchRes.rows.length) return reply.code(404).send({ error: 'Match not found' })
-      const [markets, sessions, players] = await Promise.all([
-        db.query(`SELECT id, market_type, label, options, status FROM cricket_markets WHERE match_id = $1`, [id]),
-        db.query(`SELECT id, label, min_runs, max_runs, odds_yes, odds_no, status, result_runs FROM cricket_sessions WHERE match_id = $1`, [id]),
-        db.query(`SELECT mp.*, fp.name, fp.role, fp.team_name FROM cricket_match_players mp JOIN cricket_fantasy_players fp ON fp.id = mp.player_id WHERE mp.match_id = $1`, [id]),
-      ])
-      return { match: matchRes.rows[0], markets: markets.rows, sessions: sessions.rows, player_performances: players.rows }
-    })
-
-    app.post('/cricket/session/bet', { onRequest: [auth] }, async (req, reply) => {
-      const body = z.object({ session_id: z.string().uuid(), selection: z.enum(['yes', 'no']), amount: z.number().positive() }).parse(req.body)
-      const sRes = await db.query(`SELECT s.*, mt.status AS match_status FROM cricket_sessions s JOIN cricket_matches mt ON mt.id = s.match_id WHERE s.id = $1`, [body.session_id])
-      if (!sRes.rows.length) return reply.code(404).send({ error: 'Session not found' })
-      const session = sRes.rows[0]
-      if (session.status !== 'open' || session.match_status === 'settled' || session.match_status === 'closed') return reply.code(409).send({ error: 'Session is closed' })
-      const odds = body.selection === 'yes' ? Number(session.odds_yes) : Number(session.odds_no)
-      const bracket = body.selection === 'yes' ? session.max_runs : session.min_runs
-      const potential = Math.round(body.amount * odds * 100) / 100
-      const betId = crypto.randomUUID()
-      const debit = await debitStake({ userId: uid(req), amount: body.amount, referenceId: betId, idempotencyKey: `cricket_session_stake_${betId}`, description: 'Cricket session bet' })
-      if (!debit.ok) return reply.code(400).send({ error: debit.error })
-      await db.query(`INSERT INTO cricket_session_bets (id, user_id, match_id, session_id, selection, runs_bracket, amount, potential_payout) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [betId, uid(req), session.match_id, session.id, body.selection, bracket, body.amount, potential])
-      return { success: true, bet_id: betId, potential_payout: potential }
+      const players = await db.query(`SELECT mp.*, fp.name, fp.role, fp.team_name FROM cricket_match_players mp JOIN cricket_fantasy_players fp ON fp.id = mp.player_id WHERE mp.match_id = $1`, [id])
+      return { match: matchRes.rows[0], player_performances: players.rows }
     })
 
     // ══ INTERNAL ══
@@ -399,12 +355,6 @@ export function bettingPlugin(db: Pool) {
       return { success: true, match: r.rows[0] }
     })
 
-    app.post('/internal/cricket/market', { onRequest: [internal] }, async (req) => {
-      const body = z.object({ match_id: z.string().uuid(), market_type: z.string(), label: z.string(), options: z.array(z.object({ key: z.string(), label: z.string(), odds: z.number() })) }).parse(req.body)
-      const r = await db.query(`INSERT INTO cricket_markets (match_id, market_type, label, options) VALUES ($1,$2,$3,$4) RETURNING *`, [body.match_id, body.market_type, body.label, JSON.stringify(body.options)])
-      return { success: true, market: r.rows[0] }
-    })
-
     app.post('/internal/cricket/fantasy/players', { onRequest: [internal] }, async (req) => {
       const body = z.object({ name: z.string(), role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']), credits: z.number().min(5.0).max(15.0), team_name: z.string(), avatar_url: z.string().optional() }).parse(req.body)
       const res = await db.query(`INSERT INTO cricket_fantasy_players (name, role, credits, team_name, avatar_url) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [body.name, body.role, body.credits, body.team_name, body.avatar_url || null])
@@ -429,28 +379,47 @@ export function bettingPlugin(db: Pool) {
       return { success: true, match: res.rows[0] }
     })
 
-    app.post('/internal/cricket/session/settle', { onRequest: [internal] }, async (req) => {
-      const body = z.object({ session_id: z.string().uuid(), result_runs: z.number().nullable() }).parse(req.body)
-      const res = await settleCricketSession(db, body.session_id, body.result_runs)
-      return { success: true, ...res }
-    })
-
-    app.post('/internal/cricket/session/create', { onRequest: [internal] }, async (req) => {
-      const body = z.object({ match_id: z.string().uuid(), label: z.string(), min_runs: z.number().int(), max_runs: z.number().int(), odds_yes: z.number().default(1.0), odds_no: z.number().default(1.0) }).parse(req.body)
-      const r = await db.query(`INSERT INTO cricket_sessions (match_id, label, min_runs, max_runs, odds_yes, odds_no) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`, [body.match_id, body.label, body.min_runs, body.max_runs, body.odds_yes, body.odds_no])
-      return { success: true, session: r.rows[0] }
-    })
-
+    // Manual override — kept as an emergency fallback (e.g. cricapi is down
+    // right when a match ends) but no longer the primary path. The admin
+    // panel now uses /finalize below, which computes points automatically.
     app.post('/internal/cricket/fantasy/settle', { onRequest: [internal] }, async (req) => {
       const body = z.object({ match_id: z.string().uuid(), player_points: z.record(z.string().uuid(), z.number()) }).parse(req.body)
       const res = await settleFantasyLeague(db, body.match_id, body.player_points)
       return { success: true, ...res }
     })
 
-    app.post('/internal/cricket/settle', { onRequest: [internal] }, async (req) => {
-      const body = z.object({ market_id: z.string().uuid(), result_key: z.string().nullable() }).parse(req.body)
-      const res = await settleCricketMarket(db, body.market_id, body.result_key)
-      return { success: true, ...res }
+    // Dream11-style finalize: pull the match's final scorecard one more
+    // time, compute every drafted player's points from the scoring
+    // rulebook, then hand off to the existing rank/payout logic. Payout
+    // stays a single explicit admin click — this just removes the manual
+    // "type in every player's points by hand" step.
+    app.post('/internal/cricket/fantasy/finalize', { onRequest: [internal] }, async (req, reply) => {
+      const body = z.object({ match_id: z.string().uuid() }).parse(req.body)
+      const matchRes = await db.query('SELECT match_api_id FROM cricket_matches WHERE id = $1', [body.match_id])
+      if (!matchRes.rows.length || !matchRes.rows[0].match_api_id) {
+        return reply.code(400).send({ error: 'Match has no linked external match — cannot fetch a scorecard to finalize from' })
+      }
+      const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
+      const rules = configRes.rows[0]?.special_rules?.scoring_rules
+        ? { ...DEFAULT_SCORING_RULES, ...configRes.rows[0].special_rules.scoring_rules }
+        : DEFAULT_SCORING_RULES
+      const apiKey = configRes.rows[0]?.special_rules?.api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
+
+      const data = await (await fetch(`https://api.cricapi.com/v1/match_scorecard?apikey=${apiKey}&id=${matchRes.rows[0].match_api_id}`)).json() as any
+      if (data.status !== 'success' || !data.data?.scorecard) {
+        return reply.code(502).send({ error: `Could not fetch final scorecard: ${data.reason || 'unknown error'}` })
+      }
+
+      const statsByPlayer = aggregateScorecard(data.data.scorecard)
+      const playerPoints: Record<string, number> = {}
+      for (const stats of statsByPlayer.values()) {
+        const pRes = await db.query('SELECT id FROM cricket_fantasy_players WHERE external_id = $1', [stats.playerId])
+        if (!pRes.rows.length) continue
+        playerPoints[pRes.rows[0].id] = computeFantasyPoints(rules, stats)
+      }
+
+      const res = await settleFantasyLeague(db, body.match_id, playerPoints)
+      return { success: true, playersScored: Object.keys(playerPoints).length, ...res }
     })
 
     // Cricket API sync routes (pass-through to external API)

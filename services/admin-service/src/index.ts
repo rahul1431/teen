@@ -14,6 +14,20 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { pipeline } from 'stream/promises'
+
+// Mirrors DEFAULT_SCORING_RULES in core-api-service/src/helpers/fantasy-scoring.ts
+// — admin-service and core-api-service are independent deployables with no
+// shared package, so this small constant is duplicated rather than proxied.
+// Keep both copies in sync if the rulebook shape changes.
+const DEFAULT_SCORING_RULES = {
+  runPoint: 1, boundaryBonus: 1, sixBonus: 2, bonus25Runs: 4, bonus50Runs: 8, bonus75Runs: 12, bonus100Runs: 16,
+  duckPenalty: -2, srMinBalls: 10,
+  srBands: [{ max: 50, points: -6 }, { max: 60, points: -4 }, { max: 70, points: -2 }, { max: 130, points: 0 }, { max: 150, points: 2 }, { max: 170, points: 4 }, { max: null, points: 6 }],
+  wicketPoints: 25, bonus4Wickets: 8, bonus5Wickets: 16, maidenOverPoints: 12, bowledLbwBonus: 8, ecoMinOvers: 2,
+  ecoBands: [{ max: 5, points: 6 }, { max: 6, points: 4 }, { max: 7, points: 2 }, { max: 10, points: 0 }, { max: 11, points: -2 }, { max: 12, points: -4 }, { max: null, points: -6 }],
+  catchPoints: 8, bonus3Catches: 4, stumpingPoints: 12, runOutPoints: 12,
+  captainMultiplier: 2.0, viceCaptainMultiplier: 1.5,
+}
 import { registerMLRoutes } from './ml-routes'
 import { registerChurnRoutes } from './churn-routes'
 import { registerBotLearningRoutes } from './bot-learning-routes'
@@ -1831,39 +1845,16 @@ async function start() {
   })
 
   // --- Cricket ---
+  // Match-odds (Match Winner/Toss/etc markets) and Session/Fancy (odd-even
+  // runs) betting were removed in favor of the Dream11-style fantasy contest
+  // system below — see archived_cricket_{bets,markets,sessions,session_bets}.
   app.get('/api/admin/betting/cricket/matches', { onRequest: [authenticate] }, async (_req, reply) => {
     const matches = await db.query(`SELECT * FROM cricket_matches ORDER BY start_time DESC LIMIT 100`)
-    const out = []
-    for (const m of matches.rows) {
-      const markets = await db.query(`SELECT * FROM cricket_markets WHERE match_id = $1`, [m.id])
-      const sessions = await db.query(`SELECT * FROM cricket_sessions WHERE match_id = $1`, [m.id])
-      out.push({ ...m, markets: markets.rows, sessions: sessions.rows })
-    }
-    return reply.send({ matches: out })
+    return reply.send({ matches: matches.rows })
   })
 
   app.post('/api/admin/betting/cricket/match', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/match', req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  app.post('/api/admin/betting/cricket/market', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const r = await callBetting('/internal/cricket/market', req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  app.post('/api/admin/betting/cricket/settle', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const r = await callBetting('/internal/cricket/settle', req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  app.post('/api/admin/betting/cricket/session/create', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const r = await callBetting('/internal/cricket/session/create', req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  app.post('/api/admin/betting/cricket/session/settle', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const r = await callBetting('/internal/cricket/session/settle', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
@@ -1898,6 +1889,26 @@ async function start() {
   app.post('/api/admin/betting/cricket/fantasy/settle', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/fantasy/settle', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/fantasy/finalize', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/fantasy/finalize', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  // --- Cricket Scoring Rulebook ---
+  app.get('/api/admin/betting/cricket/scoring-rules', { onRequest: [authenticate] }, async (_req, reply) => {
+    const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
+    const stored = configRes.rows[0]?.special_rules?.scoring_rules
+    return reply.send({ rules: { ...DEFAULT_SCORING_RULES, ...(stored || {}) } })
+  })
+
+  app.patch('/api/admin/betting/cricket/scoring-rules', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const configRes = await db.query("SELECT id, special_rules FROM game_configs WHERE game_type = 'cricket'")
+    if (!configRes.rows.length) return reply.code(404).send({ error: 'Cricket config not found' })
+    const merged = { ...(configRes.rows[0].special_rules || {}), scoring_rules: { ...DEFAULT_SCORING_RULES, ...(configRes.rows[0].special_rules?.scoring_rules || {}), ...(req.body as object) } }
+    await db.query('UPDATE game_configs SET special_rules = $1 WHERE id = $2', [JSON.stringify(merged), configRes.rows[0].id])
+    return reply.send({ success: true, rules: merged.scoring_rules })
   })
 
   app.post('/api/admin/betting/cricket/sync-api', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
@@ -1962,46 +1973,18 @@ async function start() {
   })
 
   // --- Cricket Deletion ---
-  // Every delete here is superadmin-gated and blocked with a 409 if it would
-  // silently wipe out real-money bets that haven't been settled yet — the
-  // existing Matka/Lottery delete endpoints (below) don't have this check,
-  // but cricket's finer-grained entities (per-match markets/sessions) made
-  // an accidental delete on a live match much easier to trigger.
+  // Superadmin-gated, blocked with a 409 if it would silently wipe out an
+  // active (unsettled, joined) fantasy contest.
   app.delete('/api/admin/betting/cricket/matches/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const { id } = req.params as any
-    const pendingBets = await db.query(
-      `SELECT 1 FROM cricket_bets WHERE match_id = $1 AND status = 'pending'
-       UNION ALL SELECT 1 FROM cricket_session_bets WHERE match_id = $1 AND status = 'pending'
-       UNION ALL SELECT 1 FROM cricket_fantasy_leagues WHERE match_id = $1 AND status != 'settled' AND current_entries > 0
-       LIMIT 1`, [id]
+    const activeContest = await db.query(
+      `SELECT 1 FROM cricket_fantasy_leagues WHERE match_id = $1 AND status != 'settled' AND current_entries > 0 LIMIT 1`, [id]
     )
-    if (pendingBets.rows.length) {
-      return reply.code(409).send({ error: 'This match has unsettled bets or an active fantasy contest — settle or void them first.' })
+    if (activeContest.rows.length) {
+      return reply.code(409).send({ error: 'This match has an active fantasy contest with joined entries — settle it first.' })
     }
-    await db.query('DELETE FROM cricket_session_bets WHERE match_id = $1', [id])
-    await db.query('DELETE FROM cricket_bets WHERE match_id = $1', [id])
-    await db.query('DELETE FROM cricket_markets WHERE match_id = $1', [id])
-    // Everything else (sessions, match_players, fantasy leagues/entries,
-    // user_fantasy_teams, match_cache) cascades from this delete.
+    // match_players, fantasy leagues/entries, user_fantasy_teams, match_cache cascade from this delete.
     await db.query('DELETE FROM cricket_matches WHERE id = $1', [id])
-    return reply.send({ success: true })
-  })
-
-  app.delete('/api/admin/betting/cricket/sessions/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
-    const { id } = req.params as any
-    const pending = await db.query(`SELECT 1 FROM cricket_session_bets WHERE session_id = $1 AND status = 'pending' LIMIT 1`, [id])
-    if (pending.rows.length) return reply.code(409).send({ error: 'This session has unsettled bets — settle or void it first.' })
-    await db.query('DELETE FROM cricket_session_bets WHERE session_id = $1', [id])
-    await db.query('DELETE FROM cricket_sessions WHERE id = $1', [id])
-    return reply.send({ success: true })
-  })
-
-  app.delete('/api/admin/betting/cricket/markets/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
-    const { id } = req.params as any
-    const pending = await db.query(`SELECT 1 FROM cricket_bets WHERE market_id = $1 AND status = 'pending' LIMIT 1`, [id])
-    if (pending.rows.length) return reply.code(409).send({ error: 'This market has unsettled bets — settle or void it first.' })
-    await db.query('DELETE FROM cricket_bets WHERE market_id = $1', [id])
-    await db.query('DELETE FROM cricket_markets WHERE id = $1', [id])
     return reply.send({ success: true })
   })
 

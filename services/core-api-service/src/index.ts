@@ -15,6 +15,7 @@ import { notificationsPlugin } from './plugins/notifications'
 import { bettingPlugin } from './plugins/betting'
 import { supportPlugin } from './plugins/support'
 import { seoMarketingPlugin } from './plugins/seo-marketing'
+import { FantasyScoringPoller } from './helpers/fantasy-scoring-poller'
 
 const PORT = parseInt(process.env.PORT || '3001')
 
@@ -80,6 +81,8 @@ async function start() {
     service: 'core-api',
     services: ['auth', 'users', 'leaderboard', 'notifications', 'betting', 'support', 'seo-marketing'],
   }))
+
+  new FantasyScoringPoller(bettingDb).start()
 
   await app.listen({ port: PORT, host: '0.0.0.0' })
   console.log(`[core-api] Running on port ${PORT} (auth+users+leaderboard+notify+betting)`)
