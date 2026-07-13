@@ -2009,6 +2009,31 @@ async function start() {
     return reply.send({ entries: res.rows })
   })
 
+  // PATCH /api/admin/betting/cricket/fantasy/leagues/:id — edit a contest.
+  // name is always editable; entry_fee/prize_pool/max_entries/prize_distribution
+  // are locked (409) once anyone has joined, so terms can't change under paying players.
+  app.patch('/api/admin/betting/cricket/fantasy/leagues/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const body = req.body as any
+    const current = await db.query('SELECT current_entries FROM cricket_fantasy_leagues WHERE id = $1', [id])
+    if (!current.rows.length) return reply.code(404).send({ error: 'Contest not found' })
+    const hasEntries = current.rows[0].current_entries > 0
+    const touchesMoneyFields = body.entry_fee !== undefined || body.prize_pool !== undefined || body.max_entries !== undefined || body.prize_distribution !== undefined
+    if (hasEntries && touchesMoneyFields) {
+      return reply.code(409).send({ error: 'This contest already has joined entries — entry fee, prize pool, max entries, and prize distribution are locked. You can still rename it.' })
+    }
+    const fields: string[] = [], params: any[] = [id]
+    let i = 2
+    if (body.name !== undefined) { fields.push(`name = $${i++}`); params.push(body.name) }
+    if (body.entry_fee !== undefined) { fields.push(`entry_fee = $${i++}`); params.push(body.entry_fee) }
+    if (body.prize_pool !== undefined) { fields.push(`prize_pool = $${i++}`); params.push(body.prize_pool) }
+    if (body.max_entries !== undefined) { fields.push(`max_entries = $${i++}`); params.push(body.max_entries) }
+    if (body.prize_distribution !== undefined) { fields.push(`prize_distribution = $${i++}`); params.push(JSON.stringify(body.prize_distribution)) }
+    if (!fields.length) return reply.code(400).send({ error: 'No editable fields provided' })
+    const res = await db.query(`UPDATE cricket_fantasy_leagues SET ${fields.join(', ')} WHERE id = $1 RETURNING *`, params)
+    return reply.send({ success: true, contest: res.rows[0] })
+  })
+
   app.post('/api/admin/betting/cricket/scores/update', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/scores/update', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
