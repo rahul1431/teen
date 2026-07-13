@@ -1890,6 +1890,36 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  // --- Cricket Countries (flag icons, shared by match-level flags and player country badges) ---
+  app.get('/api/admin/betting/cricket/countries', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query('SELECT * FROM cricket_countries ORDER BY name ASC')
+    return reply.send({ countries: res.rows })
+  })
+
+  app.post('/api/admin/betting/cricket/countries', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id, name, flag_url } = req.body as any
+    if (!id || !name || !flag_url) return reply.code(400).send({ error: 'id, name, and flag_url are required' })
+    const res = await db.query(
+      `INSERT INTO cricket_countries (id, name, flag_url) VALUES ($1, $2, $3)
+       ON CONFLICT (id) DO UPDATE SET name = $2, flag_url = $3 RETURNING *`,
+      [id, name, flag_url]
+    )
+    return reply.send({ success: true, country: res.rows[0] })
+  })
+
+  app.patch('/api/admin/betting/cricket/countries/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const { name, flag_url } = req.body as any
+    const fields: string[] = [], params: any[] = [id]
+    let i = 2
+    if (name !== undefined) { fields.push(`name = $${i++}`); params.push(name) }
+    if (flag_url !== undefined) { fields.push(`flag_url = $${i++}`); params.push(flag_url) }
+    if (!fields.length) return reply.code(400).send({ error: 'No fields to update' })
+    const res = await db.query(`UPDATE cricket_countries SET ${fields.join(', ')} WHERE id = $1 RETURNING *`, params)
+    if (!res.rows.length) return reply.code(404).send({ error: 'Country not found' })
+    return reply.send({ success: true, country: res.rows[0] })
+  })
+
   // --- Cricket Fantasy & Live Updates ---
   // team_name doubles as the country/squad grouping key the admin panel
   // sections players by. matches_played/total_points are a lightweight
