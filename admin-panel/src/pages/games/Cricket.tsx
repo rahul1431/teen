@@ -54,6 +54,43 @@ function CountryFlagUploadField({ form }: { form: any }) {
   )
 }
 
+function PlayerAvatarUploadField({ form }: { form: any }) {
+  const [uploading, setUploading] = useState(false)
+  const url: string | undefined = Form.useWatch('avatar_url', form)
+
+  const upload = async (file: File) => {
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await adminApi.post('/uploads/cricket-avatar', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      form.setFieldsValue({ avatar_url: res.data.url })
+      message.success('Photo uploaded')
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Upload failed')
+    } finally { setUploading(false) }
+  }
+
+  return (
+    <Form.Item label="Player Photo">
+      <Form.Item name="avatar_url" noStyle>
+        <Input type="hidden" />
+      </Form.Item>
+      <Space direction="vertical">
+        <Space>
+          <Upload showUploadList={false} accept="image/*" maxCount={1}
+            beforeUpload={(file) => { upload(file as File); return false }}>
+            <Button icon={<UploadOutlined />} loading={uploading}>{url ? 'Replace Photo' : 'Upload Photo'}</Button>
+          </Upload>
+          <Text type="secondary" style={{ fontSize: 12 }}>or paste a URL below</Text>
+        </Space>
+        <Input placeholder="https://..." value={url} onChange={e => form.setFieldsValue({ avatar_url: e.target.value })} />
+        {url && <Avatar src={url} size={48} />}
+      </Space>
+    </Form.Item>
+  )
+}
+
 export default function Cricket() {
   const [config, setConfig] = useState<any>(null)
   const [loadingConfig, setLoadingConfig] = useState(false)
@@ -729,7 +766,12 @@ export default function Cricket() {
                       <Space direction="vertical" style={{ width: '100%' }} size={8}>
                         {teamPlayers.map(p => (
                           <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid #f0f0f0' }}>
-                            <Avatar src={p.avatar_url || undefined} size={36} icon={!p.avatar_url && <UserOutlined />} />
+                            <div style={{ position: 'relative' }}>
+                              <Avatar src={p.avatar_url || undefined} size={36} icon={!p.avatar_url && <UserOutlined />} />
+                              {p.flag_url && (
+                                <img src={p.flag_url} alt="" style={{ position: 'absolute', bottom: -2, right: -2, width: 16, height: 11, border: '1px solid #fff', borderRadius: 2 }} />
+                              )}
+                            </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div><b>{p.name}</b></div>
                               <Space size={4}>
@@ -967,7 +1009,7 @@ export default function Cricket() {
             <InputNumber min={5.0} max={15.0} step={0.5} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="team_name" label="Team / Country" rules={[{ required: true }]}><Input placeholder="e.g. India" /></Form.Item>
-          <Form.Item name="avatar_url" label="Avatar URL"><Input placeholder="https://..." /></Form.Item>
+          <PlayerAvatarUploadField form={pForm} />
         </Form>
       </Modal>
 
