@@ -149,6 +149,11 @@ export default function Cricket() {
   const [contestPage, setContestPage] = useState(1)
   const [contestDrawerOpen, setContestDrawerOpen] = useState(false)
   const [selectedContestId, setSelectedContestId] = useState<string | null>(null)
+  const [contestDetail, setContestDetail] = useState<any>(null)
+  const [contestEntries, setContestEntries] = useState<any[]>([])
+  const [loadingContestDetail, setLoadingContestDetail] = useState(false)
+  const [savingContest, setSavingContest] = useState(false)
+  const [contestEditForm] = Form.useForm()
 
   // --- Scoring Rulebook States ---
   const [rulesOpen, setRulesOpen] = useState(false)
@@ -393,6 +398,41 @@ export default function Cricket() {
     setContestDrawerOpen(true)
   }
 
+  const loadContestDetail = (id: string) => {
+    setLoadingContestDetail(true)
+    Promise.all([
+      adminApi.get(`/betting/cricket/fantasy/leagues/${id}`),
+      adminApi.get(`/betting/cricket/fantasy/leagues/${id}/entries`),
+    ])
+      .then(([detailRes, entriesRes]) => {
+        setContestDetail(detailRes.data.contest)
+        setContestEntries(entriesRes.data.entries || [])
+        contestEditForm.setFieldsValue(detailRes.data.contest)
+      })
+      .finally(() => setLoadingContestDetail(false))
+  }
+
+  const saveContestEdit = async (v: any) => {
+    if (!selectedContestId) return
+    setSavingContest(true)
+    try {
+      const payload: any = { name: v.name }
+      if (contestDetail?.current_entries === 0) {
+        payload.entry_fee = v.entry_fee
+        payload.prize_pool = v.prize_pool
+        payload.max_entries = v.max_entries
+      }
+      await adminApi.patch(`/betting/cricket/fantasy/leagues/${selectedContestId}`, payload)
+      message.success('Contest updated')
+      loadContestDetail(selectedContestId)
+      loadContests(contestPage, contestFilters)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to update contest')
+    } finally {
+      setSavingContest(false)
+    }
+  }
+
   const openCountryModal = (country?: any) => {
     setEditingCountry(country || null)
     cForm.resetFields()
@@ -579,6 +619,15 @@ export default function Cricket() {
     loadContests(1, contestFilters)
     setContestPage(1)
   }, [contestFilters])
+
+  useEffect(() => {
+    if (contestDrawerOpen && selectedContestId) {
+      loadContestDetail(selectedContestId)
+    } else {
+      setContestDetail(null)
+      setContestEntries([])
+    }
+  }, [contestDrawerOpen, selectedContestId])
 
   const tabItems = [
     {
@@ -1228,6 +1277,56 @@ export default function Cricket() {
           <CountryFlagUploadField form={cForm} />
         </Form>
       </Modal>
+
+      {/* Contest Detail Drawer */}
+      <Drawer
+        title={contestDetail ? `${contestDetail.team_a} vs ${contestDetail.team_b} — ${contestDetail.name}` : 'Contest Detail'}
+        open={contestDrawerOpen}
+        onClose={() => setContestDrawerOpen(false)}
+        width={640}
+        loading={loadingContestDetail}
+      >
+        {contestDetail && (
+          <>
+            <Form form={contestEditForm} layout="vertical" onFinish={saveContestEdit}>
+              <Form.Item name="name" label="Contest Name" rules={[{ required: true }]}><Input /></Form.Item>
+              {contestDetail.current_entries > 0 && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message={`This contest has ${contestDetail.current_entries} joined entries — entry fee, prize pool, and max entries are locked.`}
+                />
+              )}
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item name="entry_fee" label="Entry Fee (₹)"><InputNumber min={0} style={{ width: '100%' }} disabled={contestDetail.current_entries > 0} /></Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="prize_pool" label="Prize Pool (₹)"><InputNumber min={0} style={{ width: '100%' }} disabled={contestDetail.current_entries > 0} /></Form.Item>
+                </Col>
+              </Row>
+              <Form.Item name="max_entries" label="Max Entries"><InputNumber min={2} style={{ width: '100%' }} disabled={contestDetail.current_entries > 0} /></Form.Item>
+              <Button type="primary" htmlType="submit" loading={savingContest}>Save Changes</Button>
+            </Form>
+
+            <Divider>Participants ({contestEntries.length})</Divider>
+            <Table
+              rowKey="id"
+              size="small"
+              dataSource={contestEntries}
+              pagination={{ pageSize: 10 }}
+              columns={[
+                { title: 'User', dataIndex: 'username' },
+                { title: 'Rank', dataIndex: 'final_rank', render: (r: number | null) => r ?? '-' },
+                { title: 'Points', dataIndex: 'points', render: (p: number) => Number(p).toFixed(1) },
+                { title: 'Payout', dataIndex: 'payout_received', render: (p: number) => `₹${Number(p).toFixed(0)}` },
+                { title: 'Status', dataIndex: 'status', render: (s: string) => <Tag>{s}</Tag> },
+              ]}
+            />
+          </>
+        )}
+      </Drawer>
     </div>
   )
 }
