@@ -993,27 +993,39 @@ async function start() {
 
   // POST /api/admin/uploads/cricket-avatar — upload a fantasy player photo, returns its public URL
   app.post('/api/admin/uploads/cricket-avatar', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
-    const file = await (req as any).file()
+    const file = await (req as any).file({ limits: { fileSize: 5 * 1024 * 1024 } })
     if (!file) return reply.code(400).send({ error: 'No file uploaded' })
     const ext = path.extname(file.filename || '').toLowerCase().slice(0, 8) || '.png'
-    if (!['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
+    if (!['.jpg', '.jpeg', '.png', '.webp'].includes(ext) || !['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+      file.file.resume()
       return reply.code(400).send({ error: 'Unsupported image type' })
     }
     const fname = `avatar_${crypto.randomUUID()}${ext}`
-    await pipeline(file.file, fs.createWriteStream(path.join(CRICKET_AVATAR_UPLOAD_DIR, fname)))
+    const fpath = path.join(CRICKET_AVATAR_UPLOAD_DIR, fname)
+    await pipeline(file.file, fs.createWriteStream(fpath))
+    if (file.file.truncated) {
+      fs.unlinkSync(fpath)
+      return reply.code(400).send({ error: 'File too large (max 5MB)' })
+    }
     return reply.send({ url: `/uploads/cricket-avatars/${fname}` })
   })
 
   // POST /api/admin/uploads/cricket-flag — upload a country flag icon, returns its public URL
   app.post('/api/admin/uploads/cricket-flag', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
-    const file = await (req as any).file()
+    const file = await (req as any).file({ limits: { fileSize: 5 * 1024 * 1024 } })
     if (!file) return reply.code(400).send({ error: 'No file uploaded' })
     const ext = path.extname(file.filename || '').toLowerCase().slice(0, 8) || '.png'
-    if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) {
+    if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext) || !['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'].includes(file.mimetype)) {
+      file.file.resume()
       return reply.code(400).send({ error: 'Unsupported image type' })
     }
     const fname = `flag_${crypto.randomUUID()}${ext}`
-    await pipeline(file.file, fs.createWriteStream(path.join(CRICKET_FLAG_UPLOAD_DIR, fname)))
+    const fpath = path.join(CRICKET_FLAG_UPLOAD_DIR, fname)
+    await pipeline(file.file, fs.createWriteStream(fpath))
+    if (file.file.truncated) {
+      fs.unlinkSync(fpath)
+      return reply.code(400).send({ error: 'File too large (max 5MB)' })
+    }
     return reply.send({ url: `/uploads/cricket-flags/${fname}` })
   })
 

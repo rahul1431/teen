@@ -405,9 +405,13 @@ export default function Cricket() {
       adminApi.get(`/betting/cricket/fantasy/leagues/${id}/entries`),
     ])
       .then(([detailRes, entriesRes]) => {
-        setContestDetail(detailRes.data.contest)
+        const contest = detailRes.data.contest
+        setContestDetail(contest)
         setContestEntries(entriesRes.data.entries || [])
-        contestEditForm.setFieldsValue(detailRes.data.contest)
+        contestEditForm.setFieldsValue({
+          ...contest,
+          prize_distribution: (contest.prize_distribution || []).map((p: any) => `${p.rank_start}|${p.rank_end}|${p.payout}`).join('\n'),
+        })
       })
       .finally(() => setLoadingContestDetail(false))
   }
@@ -421,6 +425,10 @@ export default function Cricket() {
         payload.entry_fee = v.entry_fee
         payload.prize_pool = v.prize_pool
         payload.max_entries = v.max_entries
+        payload.prize_distribution = (v.prize_distribution as string).split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+          const [start, end, pay] = l.split('|').map(s => s.trim())
+          return { rank_start: Number(start), rank_end: Number(end), payout: Number(pay) }
+        })
       }
       await adminApi.patch(`/betting/cricket/fantasy/leagues/${selectedContestId}`, payload)
       message.success('Contest updated')
@@ -1307,6 +1315,11 @@ export default function Cricket() {
                 </Col>
               </Row>
               <Form.Item name="max_entries" label="Max Entries"><InputNumber min={2} style={{ width: '100%' }} disabled={contestDetail.current_entries > 0} /></Form.Item>
+              <Form.Item name="prize_distribution" label="Custom Prize Payout Tiers (one per line: rank_start|rank_end|payout)"
+                tooltip="Specifies cash payout ranges. Example: 1|1|5000 means Rank 1 gets 5000."
+              >
+                <Input.TextArea rows={4} placeholder={'1|1|5000\n2|5|1000\n6|10|500'} disabled={contestDetail.current_entries > 0} />
+              </Form.Item>
               <Button type="primary" htmlType="submit" loading={savingContest}>Save Changes</Button>
             </Form>
 
