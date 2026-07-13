@@ -2030,7 +2030,12 @@ async function start() {
     if (body.max_entries !== undefined) { fields.push(`max_entries = $${i++}`); params.push(body.max_entries) }
     if (body.prize_distribution !== undefined) { fields.push(`prize_distribution = $${i++}`); params.push(JSON.stringify(body.prize_distribution)) }
     if (!fields.length) return reply.code(400).send({ error: 'No editable fields provided' })
-    const res = await db.query(`UPDATE cricket_fantasy_leagues SET ${fields.join(', ')} WHERE id = $1 RETURNING *`, params)
+    const whereClause = touchesMoneyFields ? `WHERE id = $1 AND current_entries = 0` : `WHERE id = $1`
+    const res = await db.query(`UPDATE cricket_fantasy_leagues SET ${fields.join(', ')} ${whereClause} RETURNING *`, params)
+    if (!res.rows.length && touchesMoneyFields) {
+      return reply.code(409).send({ error: 'This contest already has joined entries — entry fee, prize pool, max entries, and prize distribution are locked. You can still rename it.' })
+    }
+    if (!res.rows.length) return reply.code(404).send({ error: 'Contest not found' })
     return reply.send({ success: true, contest: res.rows[0] })
   })
 
