@@ -1929,13 +1929,15 @@ async function start() {
     const res = await db.query(`
       SELECT p.*,
         COALESCE(mp.matches_played, 0) AS matches_played,
-        COALESCE(mp.total_points, 0) AS total_points
+        COALESCE(mp.total_points, 0) AS total_points,
+        c.flag_url
       FROM cricket_fantasy_players p
       LEFT JOIN (
         SELECT player_id, COUNT(*) AS matches_played, SUM(fantasy_points) AS total_points
         FROM cricket_match_players
         GROUP BY player_id
       ) mp ON mp.player_id = p.id
+      LEFT JOIN cricket_countries c ON c.name = p.team_name
       ORDER BY p.team_name ASC, p.role ASC, p.name ASC
     `)
     return reply.send({ players: res.rows })
