@@ -141,6 +141,15 @@ export default function Cricket() {
   const [editingCountry, setEditingCountry] = useState<any>(null)
   const [cForm] = Form.useForm()
 
+  // --- All Contests States ---
+  const [contests, setContests] = useState<any[]>([])
+  const [contestsTotal, setContestsTotal] = useState(0)
+  const [loadingContests, setLoadingContests] = useState(false)
+  const [contestFilters, setContestFilters] = useState<{ status?: string; match_id?: string; from?: string; to?: string }>({})
+  const [contestPage, setContestPage] = useState(1)
+  const [contestDrawerOpen, setContestDrawerOpen] = useState(false)
+  const [selectedContestId, setSelectedContestId] = useState<string | null>(null)
+
   // --- Scoring Rulebook States ---
   const [rulesOpen, setRulesOpen] = useState(false)
   const [savingRules, setSavingRules] = useState(false)
@@ -368,6 +377,22 @@ export default function Cricket() {
       .finally(() => setLoadingCountries(false))
   }
 
+  const CONTEST_PAGE_SIZE = 10
+
+  const loadContests = (page = contestPage, filters = contestFilters) => {
+    setLoadingContests(true)
+    adminApi.get('/betting/cricket/fantasy/contests', {
+      params: { ...filters, limit: CONTEST_PAGE_SIZE, offset: (page - 1) * CONTEST_PAGE_SIZE }
+    })
+      .then(r => { setContests(r.data.contests || []); setContestsTotal(r.data.total || 0) })
+      .finally(() => setLoadingContests(false))
+  }
+
+  const openContestDrawer = (id: string) => {
+    setSelectedContestId(id)
+    setContestDrawerOpen(true)
+  }
+
   const openCountryModal = (country?: any) => {
     setEditingCountry(country || null)
     cForm.resetFields()
@@ -549,6 +574,11 @@ export default function Cricket() {
       loadLiveMatch(liveMatchId)
     }
   }, [liveMatchId])
+
+  useEffect(() => {
+    loadContests(1, contestFilters)
+    setContestPage(1)
+  }, [contestFilters])
 
   const tabItems = [
     {
@@ -954,6 +984,51 @@ export default function Cricket() {
               { title: 'Code', dataIndex: 'id' },
               { title: 'Country / Team Name', dataIndex: 'name' },
               { title: 'Action', render: (record: any) => <Button size="small" onClick={() => openCountryModal(record)}>Edit</Button> },
+            ]}
+          />
+        </Card>
+      )
+    }
+    ,{
+      key: 'contests',
+      label: '📋 All Contests',
+      children: (
+        <Card title="All Fantasy Contests"
+          extra={
+            <Space>
+              <Select allowClear placeholder="Status" style={{ width: 130 }}
+                options={[{ value: 'open', label: 'Open' }, { value: 'closed', label: 'Closed' }, { value: 'settled', label: 'Settled' }, { value: 'cancelled', label: 'Cancelled' }]}
+                onChange={v => setContestFilters(f => ({ ...f, status: v }))} />
+              <Select allowClear placeholder="Match" style={{ width: 240 }} showSearch optionFilterProp="label"
+                options={matches.map(m => ({ value: m.id, label: `${m.team_a} vs ${m.team_b} (${m.series})` }))}
+                onChange={v => setContestFilters(f => ({ ...f, match_id: v }))} />
+              <DatePicker.RangePicker onChange={(dates) => setContestFilters(f => ({
+                ...f,
+                from: dates?.[0]?.toISOString(),
+                to: dates?.[1]?.toISOString(),
+              }))} />
+              <Button onClick={() => loadContests(contestPage, contestFilters)}>Refresh</Button>
+            </Space>
+          }
+          loading={loadingContests}
+        >
+          <Table
+            rowKey="id"
+            dataSource={contests}
+            pagination={{
+              current: contestPage,
+              pageSize: CONTEST_PAGE_SIZE,
+              total: contestsTotal,
+              onChange: (page) => { setContestPage(page); loadContests(page, contestFilters) },
+            }}
+            columns={[
+              { title: 'Match', render: (r: any) => `${r.team_a} vs ${r.team_b}` },
+              { title: 'Contest Name', dataIndex: 'name' },
+              { title: 'Entry Fee', dataIndex: 'entry_fee', render: (v: number) => `₹${Number(v)}` },
+              { title: 'Prize Pool', dataIndex: 'prize_pool', render: (v: number) => `₹${Number(v)}` },
+              { title: 'Entries', render: (r: any) => `${r.current_entries}/${r.max_entries}` },
+              { title: 'Status', dataIndex: 'status', render: (s: string) => <Tag color={s === 'settled' ? 'red' : s === 'cancelled' ? 'default' : 'green'}>{s}</Tag> },
+              { title: 'Action', render: (r: any) => <Button size="small" icon={<EyeOutlined />} onClick={() => openContestDrawer(r.id)}>View</Button> },
             ]}
           />
         </Card>
