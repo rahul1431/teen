@@ -500,6 +500,93 @@ export function bettingPlugin(db: Pool) {
       } catch (e: any) { return reply.code(500).send({ error: `Sync countries failed: ${e.message}` }) }
     })
 
+    // Search cricapi's series catalog by name (e.g. "IPL 2026") — the admin
+    // panel's "Import Series" modal calls this to find a series_id, but this
+    // handler never existed (the panel's fetch just 404'd silently). Adding
+    // it here also backs the new bulk squad-sync-by-series feature below.
+    app.post('/internal/cricket/sync-series', { onRequest: [internal] }, async (req, reply) => {
+      const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
+      const keyToUse = configRes.rows[0]?.special_rules?.api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
+      const { search } = req.body as any
+      try {
+        const url = `https://api.cricapi.com/v1/series?apikey=${keyToUse}&offset=0${search ? `&search=${encodeURIComponent(search)}` : ''}`
+        const data = await (await fetch(url)).json() as any
+        if (data.status !== 'success') throw new Error(data.reason || 'Failed')
+        return { success: true, series: (data.data || []).map((s: any) => ({
+          id: s.id, name: s.name, startDate: s.startDate, endDate: s.endDate, matchCount: s.matches,
+        })) }
+      } catch (e: any) { return reply.code(500).send({ error: `Series search failed: ${e.message}` }) }
+    })
+
+    // Pulls every match in a series in one call (series_info) and upserts
+    // them the same way sync-api does for live matches — plus registers the
+    // series in the cricket_series catalog so it shows up in the Add Match
+    // dropdown without an admin re-typing it.
+    app.post('/internal/cricket/import-series-matches', { onRequest: [internal] }, async (req, reply) => {
+      const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
+      const keyToUse = configRes.rows[0]?.special_rules?.api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
+      const { series_id } = req.body as any
+      if (!series_id) return reply.code(400).send({ error: 'series_id is required' })
+      try {
+        const data = await (await fetch(`https://api.cricapi.com/v1/series_info?apikey=${keyToUse}&id=${series_id}`)).json() as any
+        if (data.status !== 'success') throw new Error(data.reason || 'Failed')
+        const info = data.data?.info
+        const seriesName = info?.name || 'Imported Series'
+        await db.query(`INSERT INTO cricket_series (name, api_series_id) VALUES ($1,$2) ON CONFLICT (name) DO UPDATE SET api_series_id = $2`, [seriesName, series_id])
+
+        const flagsRes = await db.query('SELECT name, flag_url FROM cricket_countries')
+        const flagMap = new Map(flagsRes.rows.map(r => [r.name.toLowerCase(), r.flag_url]))
+        const findFlag = (n: string) => { for (const [k, v] of flagMap) if (n?.toLowerCase().includes(k) || k.includes(n?.toLowerCase())) return v; return null }
+
+        let inserted = 0, updated = 0
+        for (const m of (data.data?.matchList || [])) {
+          if (!m.id) continue
+          const [team_a, team_b] = [m.teams?.[0] || 'Team A', m.teams?.[1] || 'Team B']
+          const status = m.matchEnded ? 'settled' : m.matchStarted ? 'live' : 'upcoming'
+          const existing = await db.query('SELECT id FROM cricket_matches WHERE match_api_id = $1', [m.id])
+          if (existing.rows.length) {
+            await db.query(`UPDATE cricket_matches SET status = $1, team_a_flag = $2, team_b_flag = $3 WHERE id = $4`, [status, findFlag(team_a), findFlag(team_b), existing.rows[0].id])
+            updated++
+          } else {
+            await db.query(`INSERT INTO cricket_matches (series, format, team_a, team_b, team_a_short, team_b_short, start_time, match_api_id, status, team_a_flag, team_b_flag) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+              [seriesName, m.matchType || 't20', team_a, team_b, m.teamInfo?.[0]?.shortname || team_a.substring(0,3).toUpperCase(), m.teamInfo?.[1]?.shortname || team_b.substring(0,3).toUpperCase(), m.dateTimeGMT ? `${m.dateTimeGMT}Z` : new Date().toISOString(), m.id, status, findFlag(team_a), findFlag(team_b)])
+            inserted++
+          }
+        }
+        return { success: true, series: seriesName, inserted, updated }
+      } catch (e: any) { return reply.code(500).send({ error: `Series import failed: ${e.message}` }) }
+    })
+
+    // Bulk player sync for a WHOLE series at once (all teams' squads in one
+    // call) instead of the existing sync-squad, which only pulls the two
+    // teams of a single already-imported match — that's why the fantasy
+    // player catalog stayed stuck around ~20 rows despite 89 matches synced.
+    app.post('/internal/cricket/sync-series-squads', { onRequest: [internal] }, async (req, reply) => {
+      const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
+      const keyToUse = configRes.rows[0]?.special_rules?.api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
+      const { series_id } = req.body as any
+      if (!series_id) return reply.code(400).send({ error: 'series_id is required' })
+      try {
+        const data = await (await fetch(`https://api.cricapi.com/v1/series_info?apikey=${keyToUse}&id=${series_id}`)).json() as any
+        if (data.status !== 'success') throw new Error(data.reason || 'Failed')
+        let playersSeeded = 0, teamsSeeded = 0
+        for (const team of (data.data?.squads || [])) {
+          teamsSeeded++
+          for (const p of (team.players || [])) {
+            if (!p.id) continue
+            const role = p.role?.toLowerCase().replace(/[^a-z]/g, '').includes('keeper') ? 'wicket_keeper' : p.role?.toLowerCase().includes('bowl') ? 'bowler' : p.role?.toLowerCase().includes('allrounder') ? 'all_rounder' : 'batsman'
+            const fallbackAvatar = `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.name)}`
+            await db.query(
+              `INSERT INTO cricket_fantasy_players (name, role, credits, team_name, external_id, avatar_url) VALUES ($1,$2,9.0,$3,$4,$5)
+               ON CONFLICT (external_id) DO UPDATE SET name=$1, role=$2, team_name=$3, avatar_url=COALESCE(cricket_fantasy_players.avatar_url, $5)`,
+              [p.name, role, team.teamName, p.id, fallbackAvatar])
+            playersSeeded++
+          }
+        }
+        return { success: true, teamsSeeded, playersSeeded }
+      } catch (e: any) { return reply.code(500).send({ error: `Series squad sync failed: ${e.message}` }) }
+    })
+
     app.post('/internal/cricket/sync-squad', { onRequest: [internal] }, async (req, reply) => {
       const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
       const keyToUse = configRes.rows[0]?.special_rules?.api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'

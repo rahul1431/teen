@@ -3,7 +3,7 @@ import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
   Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert
 } from 'antd'
-import { ReloadOutlined, PlusOutlined, SyncOutlined, CloudDownloadOutlined } from '@ant-design/icons'
+import { ReloadOutlined, PlusOutlined, SyncOutlined, CloudDownloadOutlined, DeleteOutlined, TeamOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
 const { Text } = Typography
@@ -46,6 +46,15 @@ export default function Cricket() {
 
   // --- Squad Syncing States ---
   const [syncingSquadId, setSyncingSquadId] = useState<string | null>(null)
+  const [syncingSeriesSquadsId, setSyncingSeriesSquadsId] = useState<string | null>(null)
+
+  // --- Series Catalog States ---
+  const [seriesCatalog, setSeriesCatalog] = useState<any[]>([])
+  const [newSeriesName, setNewSeriesName] = useState('')
+
+  // --- Fantasy Contests (per-match) States ---
+  const [leaguesByMatch, setLeaguesByMatch] = useState<Record<string, any[]>>({})
+  const [loadingLeaguesFor, setLoadingLeaguesFor] = useState<string | null>(null)
 
   // --- Live Console States ---
   const [liveMatchId, setLiveMatchId] = useState<string>('')
@@ -145,8 +154,9 @@ export default function Cricket() {
     setImportingSeriesId(seriesId)
     try {
       const r = await adminApi.post('/betting/cricket/import-series-matches', { series_id: seriesId })
-      message.success(`Series imported! Added: ${r.data.imported} matches`)
+      message.success(`Series imported! ${r.data.inserted} new, ${r.data.updated} updated`)
       loadMatches()
+      loadSeriesCatalog()
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'Failed to import series')
     } finally {
@@ -186,6 +196,101 @@ export default function Cricket() {
     adminApi.get('/betting/cricket/fantasy/players')
       .then(r => setPlayers(r.data.players || []))
       .finally(() => setLoadingPlayers(false))
+  }
+
+  const loadSeriesCatalog = () => {
+    adminApi.get('/betting/cricket/series-catalog').then(r => setSeriesCatalog(r.data.series || []))
+  }
+
+  const addSeriesToCatalog = async () => {
+    if (!newSeriesName.trim()) return
+    try {
+      await adminApi.post('/betting/cricket/series-catalog', { name: newSeriesName.trim() })
+      setNewSeriesName('')
+      loadSeriesCatalog()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to add series')
+    }
+  }
+
+  const deleteSeriesFromCatalog = async (id: number) => {
+    try {
+      await adminApi.delete(`/betting/cricket/series-catalog/${id}`)
+      message.success('Series removed')
+      loadSeriesCatalog()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to remove series')
+    }
+  }
+
+  const deleteMatch = async (id: string) => {
+    try {
+      await adminApi.delete(`/betting/cricket/matches/${id}`)
+      message.success('Match deleted')
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to delete match')
+    }
+  }
+
+  const deleteMarket = async (id: string) => {
+    try {
+      await adminApi.delete(`/betting/cricket/markets/${id}`)
+      message.success('Market deleted')
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to delete market')
+    }
+  }
+
+  const deleteSession = async (id: string) => {
+    try {
+      await adminApi.delete(`/betting/cricket/sessions/${id}`)
+      message.success('Session deleted')
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to delete session')
+    }
+  }
+
+  const deletePlayer = async (id: string) => {
+    try {
+      await adminApi.delete(`/betting/cricket/fantasy/players/${id}`)
+      message.success('Player deleted')
+      loadPlayers()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to delete player')
+    }
+  }
+
+  const loadLeagues = (matchId: string) => {
+    setLoadingLeaguesFor(matchId)
+    adminApi.get('/betting/cricket/fantasy/leagues', { params: { match_id: matchId } })
+      .then(r => setLeaguesByMatch(prev => ({ ...prev, [matchId]: r.data.leagues || [] })))
+      .finally(() => setLoadingLeaguesFor(null))
+  }
+
+  const deleteLeague = async (id: string, matchId: string) => {
+    try {
+      await adminApi.delete(`/betting/cricket/fantasy/leagues/${id}`)
+      message.success('Contest deleted')
+      loadLeagues(matchId)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to delete contest')
+    }
+  }
+
+  const syncSeriesSquads = async (seriesId: string) => {
+    setSyncingSeriesSquadsId(seriesId)
+    try {
+      const r = await adminApi.post('/betting/cricket/sync-series-squads', { series_id: seriesId })
+      message.success(`Squads synced! ${r.data.teamsSeeded} teams, ${r.data.playersSeeded} players`)
+      loadPlayers()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to sync series squads')
+    } finally {
+      setSyncingSeriesSquadsId(null)
+    }
   }
 
   const createMatch = async (v: any) => {
@@ -382,6 +487,7 @@ export default function Cricket() {
     loadConfig()
     loadMatches()
     loadPlayers()
+    loadSeriesCatalog()
   }, [])
 
   useEffect(() => {
@@ -472,6 +578,28 @@ export default function Cricket() {
               </Form>
             </Card>
 
+            <Card title="🏆 Series Catalog" style={{ marginTop: 16 }}
+              extra={<Text type="secondary" style={{ fontSize: 12 }}>Powers the Series dropdown below</Text>}>
+              <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
+                <Input
+                  placeholder="e.g. Ranji Trophy"
+                  value={newSeriesName}
+                  onChange={e => setNewSeriesName(e.target.value)}
+                  onPressEnter={addSeriesToCatalog}
+                />
+                <Button type="primary" icon={<PlusOutlined />} onClick={addSeriesToCatalog}>Add</Button>
+              </Space.Compact>
+              <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                <Space wrap>
+                  {seriesCatalog.map(s => (
+                    <Tag key={s.id} closable onClose={(e) => { e.preventDefault(); deleteSeriesFromCatalog(s.id) }} style={{ marginBottom: 6 }}>
+                      {s.name}
+                    </Tag>
+                  ))}
+                </Space>
+              </div>
+            </Card>
+
           </Col>
 
           <Col xs={24} lg={16}>
@@ -509,6 +637,9 @@ export default function Cricket() {
                       )}
                       <Button size="small" onClick={() => setSessionFor(m)}>+ Session</Button>
                       <Button size="small" onClick={() => setMarketFor(m)}>+ Market</Button>
+                      <Popconfirm title="Delete this match?" description="This also removes its markets and sessions. Blocked if there are unsettled bets." onConfirm={() => deleteMatch(m.id)}>
+                        <Button size="small" danger icon={<DeleteOutlined />} />
+                      </Popconfirm>
                     </Space>
                   }>
                   <Text type="secondary">{new Date(m.start_time).toLocaleString()}</Text>
@@ -531,6 +662,9 @@ export default function Cricket() {
                           <Popconfirm title="Void this market and refund all stakes?"
                             disabled={mk.status === 'settled'} onConfirm={() => settleMarket(mk, null)}>
                             <Button size="small" danger disabled={mk.status === 'settled'}>Void / Refund</Button>
+                          </Popconfirm>
+                          <Popconfirm title="Delete this market?" description="Blocked if there are unsettled bets." onConfirm={() => deleteMarket(mk.id)}>
+                            <Button size="small" danger type="text" icon={<DeleteOutlined />} />
                           </Popconfirm>
                         </Space>
                       </div>
@@ -557,6 +691,9 @@ export default function Cricket() {
                               </Space>
                             )}
                             {s.status === 'settled' && <Text type="success">Result: {s.result_runs} runs</Text>}
+                            <Popconfirm title="Delete this session?" description="Blocked if there are unsettled bets." onConfirm={() => deleteSession(s.id)}>
+                              <Button size="small" danger type="text" icon={<DeleteOutlined />} />
+                            </Popconfirm>
                           </Space>
                         </div>
                       ))}
@@ -587,23 +724,47 @@ export default function Cricket() {
                 <Card key={m.id} type="inner" style={{ marginBottom: 16 }}
                   title={<span>{m.series} — <b>{m.team_a} vs {m.team_b}</b></span>}
                   extra={
-                    <Button size="small" type="primary" disabled={m.status === 'settled'}
-                      onClick={() => {
-                        setSettleFantasyFor(m)
-                        settleForm.resetFields()
-                      }}
-                    >
-                      Settle Points
-                    </Button>
+                    <Space>
+                      <Button size="small" onClick={() => loadLeagues(m.id)} loading={loadingLeaguesFor === m.id}>
+                        {leaguesByMatch[m.id] ? 'Refresh Contests' : 'View Contests'}
+                      </Button>
+                      <Button size="small" type="primary" disabled={m.status === 'settled'}
+                        onClick={() => {
+                          setSettleFantasyFor(m)
+                          settleForm.resetFields()
+                        }}
+                      >
+                        Settle Points
+                      </Button>
+                    </Space>
                   }
                 >
                   <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
                     Starts: {new Date(m.start_time).toLocaleString()} · Status: <Tag color={m.status === 'settled' ? 'red' : 'green'}>{m.status}</Tag>
                   </Text>
-                  
-                  {/* Fetching leagues would require fetching details, for simplicity we show match status and action */}
-                  <Divider style={{ margin: '8px 0' }} />
-                  <Text type="secondary">Admin Action: Create contests using the button above and select this match.</Text>
+
+                  {leaguesByMatch[m.id] && (
+                    <>
+                      <Divider style={{ margin: '8px 0' }} />
+                      {leaguesByMatch[m.id].length === 0 ? (
+                        <Text type="secondary">No contests created for this match yet.</Text>
+                      ) : (
+                        leaguesByMatch[m.id].map(l => (
+                          <div key={l.id} style={{ marginTop: 6 }}>
+                            <Space wrap>
+                              <Text strong>{l.name}</Text>
+                              <Tag>{l.current_entries}/{l.max_entries} joined</Tag>
+                              <Tag color={l.status === 'settled' ? 'red' : 'green'}>{l.status}</Tag>
+                              <Text type="secondary">₹{Number(l.entry_fee)} entry · ₹{Number(l.prize_pool)} pool</Text>
+                              <Popconfirm title="Delete this contest?" description="Blocked if it has joined entries and isn't settled yet." onConfirm={() => deleteLeague(l.id, m.id)}>
+                                <Button size="small" danger type="text" icon={<DeleteOutlined />} />
+                              </Popconfirm>
+                            </Space>
+                          </div>
+                        ))
+                      )}
+                    </>
+                  )}
                 </Card>
               ))}
             </Card>
@@ -626,8 +787,16 @@ export default function Cricket() {
                   { title: 'Name', dataIndex: 'name', render: (n: string) => <b>{n}</b> },
                   { title: 'Team', dataIndex: 'team_name' },
                   { title: 'Role', dataIndex: 'role', render: (r: string) => <Tag color="blue">{r.toUpperCase().replace('_', ' ')}</Tag> },
-                  { title: 'Credits', dataIndex: 'credits', render: (c: any) => `${Number(c).toFixed(1)}` }
-                ]} 
+                  { title: 'Credits', dataIndex: 'credits', render: (c: any) => `${Number(c).toFixed(1)}` },
+                  {
+                    title: '', dataIndex: 'id', width: 40,
+                    render: (id: string) => (
+                      <Popconfirm title="Delete this player?" description="Blocked if set as a fantasy team's captain/vice-captain." onConfirm={() => deletePlayer(id)}>
+                        <Button size="small" danger type="text" icon={<DeleteOutlined />} />
+                      </Popconfirm>
+                    ),
+                  },
+                ]}
               />
             </Card>
           </Col>
@@ -800,7 +969,15 @@ export default function Cricket() {
       {/* Add Match Modal */}
       <Modal open={matchOpen} title="Add Cricket Match" onCancel={() => setMatchOpen(false)} onOk={() => mForm.submit()} okText="Add">
         <Form form={mForm} layout="vertical" onFinish={createMatch}>
-          <Form.Item name="series" label="Series" rules={[{ required: true }]}><Input placeholder="IPL 2026 / ICC T20 World Cup" /></Form.Item>
+          <Form.Item name="series" label="Series" rules={[{ required: true }]}>
+            <Select
+              showSearch
+              placeholder="Select a series"
+              options={seriesCatalog.map(s => ({ value: s.name, label: s.name }))}
+              filterOption={(input, option) => (option?.label as string).toLowerCase().includes(input.toLowerCase())}
+              notFoundContent={<Text type="secondary">No match — add it to the Series Catalog card first.</Text>}
+            />
+          </Form.Item>
           <Form.Item name="format" label="Format" rules={[{ required: true }]} initialValue="t20">
             <Select options={['ipl', 't20', 'odi', 'test'].map(f => ({ value: f, label: f.toUpperCase() }))} />
           </Form.Item>
@@ -940,18 +1117,28 @@ export default function Cricket() {
             { title: 'Start Date', dataIndex: 'startDate', render: (d: string) => d ? new Date(d).toLocaleDateString() : '-' },
             { title: 'End Date', dataIndex: 'endDate', render: (d: string) => d ? new Date(d).toLocaleDateString() : '-' },
             { title: 'Matches', dataIndex: 'matches' },
-            { 
-              title: 'Action', 
+            {
+              title: 'Action',
               render: (record: any) => (
-                <Button 
-                  size="small" 
-                  type="primary" 
-                  loading={importingSeriesId === record.id} 
-                  onClick={() => importSeriesMatches(record.id)}
-                >
-                  Import Matches
-                </Button>
-              ) 
+                <Space>
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={importingSeriesId === record.id}
+                    onClick={() => importSeriesMatches(record.id)}
+                  >
+                    Import Matches
+                  </Button>
+                  <Button
+                    size="small"
+                    icon={<TeamOutlined />}
+                    loading={syncingSeriesSquadsId === record.id}
+                    onClick={() => syncSeriesSquads(record.id)}
+                  >
+                    Sync Squads
+                  </Button>
+                </Space>
+              )
             }
           ]}
         />

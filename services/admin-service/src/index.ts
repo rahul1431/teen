@@ -1873,6 +1873,13 @@ async function start() {
     return reply.send({ players: res.rows })
   })
 
+  app.get('/api/admin/betting/cricket/fantasy/leagues', { onRequest: [authenticate] }, async (req, reply) => {
+    const { match_id } = req.query as any
+    if (!match_id) return reply.code(400).send({ error: 'match_id is required' })
+    const res = await db.query('SELECT * FROM cricket_fantasy_leagues WHERE match_id = $1 ORDER BY created_at DESC', [match_id])
+    return reply.send({ leagues: res.rows })
+  })
+
   app.post('/api/admin/betting/cricket/fantasy/players', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/fantasy/players', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
@@ -1918,6 +1925,110 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  app.post('/api/admin/betting/cricket/sync-series-squads', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/sync-series-squads', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  // --- Cricket Series Catalog ---
+  // Fixed, admin-managed list of tournaments (IPL, ICC World Cup, ...) that
+  // the Add Match form picks from instead of free-text, so the same
+  // tournament doesn't end up spelled three different ways across matches.
+  app.get('/api/admin/betting/cricket/series-catalog', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query('SELECT * FROM cricket_series WHERE is_active = true ORDER BY name ASC')
+    return reply.send({ series: res.rows })
+  })
+
+  app.post('/api/admin/betting/cricket/series-catalog', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const body = z.object({ name: z.string().min(1), short_name: z.string().optional() }).parse(req.body)
+    const res = await db.query(
+      `INSERT INTO cricket_series (name, short_name) VALUES ($1, $2)
+       ON CONFLICT (name) DO UPDATE SET is_active = true RETURNING *`,
+      [body.name.trim(), body.short_name?.trim() || null]
+    )
+    return reply.send({ success: true, series: res.rows[0] })
+  })
+
+  app.delete('/api/admin/betting/cricket/series-catalog/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const seriesRow = await db.query('SELECT name FROM cricket_series WHERE id = $1', [id])
+    if (!seriesRow.rows.length) return reply.code(404).send({ error: 'Series not found' })
+    const inUse = await db.query('SELECT 1 FROM cricket_matches WHERE series = $1 LIMIT 1', [seriesRow.rows[0].name])
+    if (inUse.rows.length) {
+      return reply.code(409).send({ error: 'This series is used by existing matches — remove or reassign those matches first.' })
+    }
+    await db.query('DELETE FROM cricket_series WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+  // --- Cricket Deletion ---
+  // Every delete here is superadmin-gated and blocked with a 409 if it would
+  // silently wipe out real-money bets that haven't been settled yet — the
+  // existing Matka/Lottery delete endpoints (below) don't have this check,
+  // but cricket's finer-grained entities (per-match markets/sessions) made
+  // an accidental delete on a live match much easier to trigger.
+  app.delete('/api/admin/betting/cricket/matches/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const pendingBets = await db.query(
+      `SELECT 1 FROM cricket_bets WHERE match_id = $1 AND status = 'pending'
+       UNION ALL SELECT 1 FROM cricket_session_bets WHERE match_id = $1 AND status = 'pending'
+       UNION ALL SELECT 1 FROM cricket_fantasy_leagues WHERE match_id = $1 AND status != 'settled' AND current_entries > 0
+       LIMIT 1`, [id]
+    )
+    if (pendingBets.rows.length) {
+      return reply.code(409).send({ error: 'This match has unsettled bets or an active fantasy contest — settle or void them first.' })
+    }
+    await db.query('DELETE FROM cricket_session_bets WHERE match_id = $1', [id])
+    await db.query('DELETE FROM cricket_bets WHERE match_id = $1', [id])
+    await db.query('DELETE FROM cricket_markets WHERE match_id = $1', [id])
+    // Everything else (sessions, match_players, fantasy leagues/entries,
+    // user_fantasy_teams, match_cache) cascades from this delete.
+    await db.query('DELETE FROM cricket_matches WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+  app.delete('/api/admin/betting/cricket/sessions/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const pending = await db.query(`SELECT 1 FROM cricket_session_bets WHERE session_id = $1 AND status = 'pending' LIMIT 1`, [id])
+    if (pending.rows.length) return reply.code(409).send({ error: 'This session has unsettled bets — settle or void it first.' })
+    await db.query('DELETE FROM cricket_session_bets WHERE session_id = $1', [id])
+    await db.query('DELETE FROM cricket_sessions WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+  app.delete('/api/admin/betting/cricket/markets/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const pending = await db.query(`SELECT 1 FROM cricket_bets WHERE market_id = $1 AND status = 'pending' LIMIT 1`, [id])
+    if (pending.rows.length) return reply.code(409).send({ error: 'This market has unsettled bets — settle or void it first.' })
+    await db.query('DELETE FROM cricket_bets WHERE market_id = $1', [id])
+    await db.query('DELETE FROM cricket_markets WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+  app.delete('/api/admin/betting/cricket/fantasy/leagues/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const league = await db.query('SELECT status, current_entries FROM cricket_fantasy_leagues WHERE id = $1', [id])
+    if (!league.rows.length) return reply.code(404).send({ error: 'League not found' })
+    if (league.rows[0].status !== 'settled' && league.rows[0].current_entries > 0) {
+      return reply.code(409).send({ error: 'This contest has joined entries and is not settled yet — settle it first.' })
+    }
+    // cricket_fantasy_entries cascades automatically.
+    await db.query('DELETE FROM cricket_fantasy_leagues WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+  app.delete('/api/admin/betting/cricket/fantasy/players/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const captaining = await db.query(
+      `SELECT 1 FROM user_fantasy_teams WHERE captain_id = $1 OR vice_captain_id = $1 LIMIT 1`, [id]
+    )
+    if (captaining.rows.length) {
+      return reply.code(409).send({ error: 'This player is set as captain/vice-captain on an existing fantasy team — cannot delete.' })
+    }
+    // cricket_match_players cascades automatically.
+    await db.query('DELETE FROM cricket_fantasy_players WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
 
   // --- Satta Matka Market Creation & Deletion ---
   app.get('/api/admin/betting/matka/markets', { onRequest: [authenticate] }, async (_req, reply) => {
