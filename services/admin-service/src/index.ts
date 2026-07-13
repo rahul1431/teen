@@ -41,6 +41,10 @@ import { createRateLimiter } from './middleware/rate-limiter'
 // QR images for payment methods are stored here, served by nginx at /uploads/qr/.
 const QR_UPLOAD_DIR = process.env.QR_UPLOAD_DIR || '/opt/teen-prod/uploads/qr'
 
+// Cricket fantasy player avatars and country flag icons, served by nginx at /uploads/cricket-avatars/ and /uploads/cricket-flags/.
+const CRICKET_AVATAR_UPLOAD_DIR = process.env.CRICKET_AVATAR_UPLOAD_DIR || '/opt/teen-prod/uploads/cricket-avatars'
+const CRICKET_FLAG_UPLOAD_DIR = process.env.CRICKET_FLAG_UPLOAD_DIR || '/opt/teen-prod/uploads/cricket-flags'
+
 // Thin wrapper to keep the call sites readable (matches the old `authenticator` API)
 const totp = {
   generateSecret: () => generateSecret(),
@@ -73,6 +77,8 @@ async function start() {
   await app.register(multipart, { limits: { fileSize: 150 * 1024 * 1024 } }) // 150MB (APK uploads)
   if (redis.status === 'wait') await redis.connect()
   fs.mkdirSync(QR_UPLOAD_DIR, { recursive: true })
+  fs.mkdirSync(CRICKET_AVATAR_UPLOAD_DIR, { recursive: true })
+  fs.mkdirSync(CRICKET_FLAG_UPLOAD_DIR, { recursive: true })
 
   try {
     await db.query('ALTER TABLE game_emojis ALTER COLUMN emoji TYPE VARCHAR(256)');
@@ -983,6 +989,32 @@ async function start() {
     fs.mkdirSync(EMOJI_UPLOAD_DIR, { recursive: true })
     await pipeline(file.file, fs.createWriteStream(path.join(EMOJI_UPLOAD_DIR, fname)))
     return reply.send({ url: `/uploads/emojis/${fname}` })
+  })
+
+  // POST /api/admin/uploads/cricket-avatar — upload a fantasy player photo, returns its public URL
+  app.post('/api/admin/uploads/cricket-avatar', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const file = await (req as any).file()
+    if (!file) return reply.code(400).send({ error: 'No file uploaded' })
+    const ext = path.extname(file.filename || '').toLowerCase().slice(0, 8) || '.png'
+    if (!['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
+      return reply.code(400).send({ error: 'Unsupported image type' })
+    }
+    const fname = `avatar_${crypto.randomUUID()}${ext}`
+    await pipeline(file.file, fs.createWriteStream(path.join(CRICKET_AVATAR_UPLOAD_DIR, fname)))
+    return reply.send({ url: `/uploads/cricket-avatars/${fname}` })
+  })
+
+  // POST /api/admin/uploads/cricket-flag — upload a country flag icon, returns its public URL
+  app.post('/api/admin/uploads/cricket-flag', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const file = await (req as any).file()
+    if (!file) return reply.code(400).send({ error: 'No file uploaded' })
+    const ext = path.extname(file.filename || '').toLowerCase().slice(0, 8) || '.png'
+    if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) {
+      return reply.code(400).send({ error: 'Unsupported image type' })
+    }
+    const fname = `flag_${crypto.randomUUID()}${ext}`
+    await pipeline(file.file, fs.createWriteStream(path.join(CRICKET_FLAG_UPLOAD_DIR, fname)))
+    return reply.send({ url: `/uploads/cricket-flags/${fname}` })
   })
 
   // GET /api/admin/payment-methods â€” list all (active + inactive)
