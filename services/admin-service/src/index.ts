@@ -1853,7 +1853,7 @@ async function start() {
     return reply.send({ matches: matches.rows })
   })
 
-  app.post('/api/admin/betting/cricket/match', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+  app.post('/api/admin/betting/cricket/match', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/match', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
