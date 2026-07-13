@@ -1960,6 +1960,55 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  // GET /api/admin/betting/cricket/fantasy/contests — cross-match, filterable contest list
+  app.get('/api/admin/betting/cricket/fantasy/contests', { onRequest: [authenticate] }, async (req, reply) => {
+    const { status, match_id, from, to, limit, offset } = req.query as any
+    const lim = Math.min(Number(limit) || 20, 100)
+    const off = Number(offset) || 0
+    const res = await db.query(
+      `SELECT l.*, m.series, m.team_a, m.team_b, m.start_time AS match_start_time, m.status AS match_status,
+              COUNT(*) OVER() AS total_count
+       FROM cricket_fantasy_leagues l
+       JOIN cricket_matches m ON m.id = l.match_id
+       WHERE ($1::text IS NULL OR l.status = $1)
+         AND ($2::uuid IS NULL OR l.match_id = $2)
+         AND ($3::timestamptz IS NULL OR m.start_time >= $3)
+         AND ($4::timestamptz IS NULL OR m.start_time <= $4)
+       ORDER BY m.start_time DESC
+       LIMIT $5 OFFSET $6`,
+      [status || null, match_id || null, from || null, to || null, lim, off]
+    )
+    const total = res.rows[0]?.total_count ? Number(res.rows[0].total_count) : 0
+    return reply.send({ contests: res.rows.map(({ total_count, ...r }) => r), total })
+  })
+
+  // GET /api/admin/betting/cricket/fantasy/leagues/:id — single contest detail
+  app.get('/api/admin/betting/cricket/fantasy/leagues/:id', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT l.*, m.series, m.team_a, m.team_b, m.start_time AS match_start_time
+       FROM cricket_fantasy_leagues l JOIN cricket_matches m ON m.id = l.match_id
+       WHERE l.id = $1`, [id]
+    )
+    if (!res.rows.length) return reply.code(404).send({ error: 'Contest not found' })
+    return reply.send({ contest: res.rows[0] })
+  })
+
+  // GET /api/admin/betting/cricket/fantasy/leagues/:id/entries — who joined this contest
+  app.get('/api/admin/betting/cricket/fantasy/leagues/:id/entries', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT e.id, e.points, e.final_rank, e.payout_received, e.status, e.created_at,
+              u.username, u.id AS user_id, t.id AS team_id
+       FROM cricket_fantasy_entries e
+       JOIN users u ON u.id = e.user_id
+       JOIN user_fantasy_teams t ON t.id = e.team_id
+       WHERE e.league_id = $1
+       ORDER BY e.final_rank ASC NULLS LAST, e.points DESC`, [id]
+    )
+    return reply.send({ entries: res.rows })
+  })
+
   app.post('/api/admin/betting/cricket/scores/update', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/scores/update', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
