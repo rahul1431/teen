@@ -1888,6 +1888,30 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  // --- Lottery: Instant (Scratch Card) ---
+  app.get('/api/admin/betting/lottery/scratch/products', { onRequest: [authenticate] }, async (_req, reply) => {
+    const rows = await db.query(`
+      SELECT p.*,
+             (SELECT COUNT(*) FROM lottery_scratch_tickets t WHERE t.product_id = p.id) AS tickets_sold,
+             (SELECT COALESCE(SUM(t.amount), 0) FROM lottery_scratch_tickets t WHERE t.product_id = p.id) AS total_paid,
+             (SELECT COUNT(*) * p.price FROM lottery_scratch_tickets t WHERE t.product_id = p.id) AS total_revenue
+      FROM lottery_scratch_products p ORDER BY p.created_at DESC`)
+    return reply.send({ products: rows.rows })
+  })
+
+  app.post('/api/admin/betting/lottery/scratch/create', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/lottery/scratch/create', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.patch('/api/admin/betting/lottery/scratch/products/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const body = z.object({ is_active: z.boolean() }).parse(req.body)
+    const r = await db.query(`UPDATE lottery_scratch_products SET is_active = $1 WHERE id = $2 RETURNING *`, [body.is_active, id])
+    if (!r.rows.length) return reply.code(404).send({ error: 'Product not found' })
+    return reply.send({ success: true, product: r.rows[0] })
+  })
+
   // --- Cricket ---
   // Match-odds (Match Winner/Toss/etc markets) stays archived in favor of
   // the Dream11-style fantasy contest system — see archived_cricket_{bets,
