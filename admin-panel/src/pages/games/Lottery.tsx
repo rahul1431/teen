@@ -10,6 +10,7 @@ import {
 import { adminApi } from '../../api/client'
 import dayjs from 'dayjs'
 import LotteryScratch from './LotteryScratch'
+import LotteryBingo from './LotteryBingo'
 
 const { Text, Title } = Typography
 
@@ -660,6 +661,11 @@ export default function Lottery() {
           key: 'scratch',
           label: 'Instant Lottery',
           children: <LotteryScratch />,
+        },
+        {
+          key: 'bingo',
+          label: 'Daily Lottery',
+          children: <LotteryBingo />,
         },
       ]}
     />
