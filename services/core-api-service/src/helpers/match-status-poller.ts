@@ -66,6 +66,10 @@ export class MatchStatusPoller {
           }
           return
         }
+        // Every key in the pool came back rate-limited or otherwise failed —
+        // this used to fail silently, making quota exhaustion look like a
+        // frozen/broken poller instead of a temporary, self-resolving block.
+        console.error(`[match-status] ${m.id} CricAPI non-success response: ${JSON.stringify(data)}`)
       } catch (e) {
         console.error(`[match-status] CricAPI check failed for ${m.id}`, e)
       }

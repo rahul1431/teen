@@ -45,7 +45,12 @@ export class FantasyScoringPoller {
 
   async updateMatch(matchId: string, matchApiId: string, rules: ScoringRules): Promise<void> {
     const data = await cricApiFetch(this.db, apiKey => `https://api.cricapi.com/v1/match_scorecard?apikey=${apiKey}&id=${matchApiId}`)
-    if (data.status !== 'success' || !data.data?.scorecard) return
+    if (data.status !== 'success' || !data.data?.scorecard) {
+      // Same silent-failure gap as match-status-poller — surface it instead
+      // of leaving fantasy points frozen with no trace of why.
+      console.error(`[fantasy-scoring] ${matchId} CricAPI non-success response: ${JSON.stringify(data)}`)
+      return
+    }
 
     const statsByPlayer = aggregateScorecard(data.data.scorecard)
     const client = await this.db.connect()
