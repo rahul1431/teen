@@ -369,8 +369,12 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
 
   Widget _drawCard(dynamic d) {
     final price = double.tryParse(d['ticket_price']?.toString() ?? '0') ?? 0;
-    final mult = double.tryParse(d['prize_multiplier']?.toString() ?? '0') ?? 0;
-    final digits = d['digits'] is int ? d['digits'] as int : int.tryParse(d['digits']?.toString() ?? '4') ?? 4;
+    final tiers = (d['prize_tiers'] as List?) ?? [];
+    final exactTier = tiers.cast<Map>().firstWhere(
+          (t) => t['match_type'] == 'exact',
+          orElse: () => {},
+        );
+    final mult = double.tryParse(exactTier['multiplier']?.toString() ?? '0') ?? 0;
     final maxPrize = price * mult;
     final drawTime = DateTime.tryParse(d['draw_time']?.toString() ?? '');
     final ticketCount = int.tryParse(d['ticket_count']?.toString() ?? '0') ?? 0;
@@ -478,8 +482,8 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
                                   color: Colors.black.withOpacity(0.3),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
-                                child: Text('$digits digits',
-                                    style: const TextStyle(
+                                child: const Text('4-digit',
+                                    style: TextStyle(
                                         color: AppColors.textSecondary, fontSize: 10, fontWeight: FontWeight.bold)),
                               ),
                             ],
@@ -556,7 +560,7 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
                         child: ElevatedButton.icon(
                           onPressed: isExpired ? null : () {
                             SoundService.instance.play(Sfx.buttonTap);
-                            _showTicketPicker(d, digits, price);
+                            _showTicketPicker(d, price);
                           },
                           icon: const Icon(Icons.confirmation_num_rounded, size: 16),
                           label: const Text('Buy Ticket'),
@@ -604,7 +608,7 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
     );
   }
 
-  void _showTicketPicker(dynamic draw, int digits, double price) {
+  void _showTicketPicker(dynamic draw, double price) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -612,7 +616,6 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
       useSafeArea: true,
       builder: (_) => _TicketPickerSheet(
         draw: draw,
-        digits: digits,
         price: price,
         balance: _balance,
         onPurchased: () {
