@@ -91,7 +91,12 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
 
   double get _totalJackpot => _draws.fold(0.0, (sum, d) {
     final price = double.tryParse(d['ticket_price']?.toString() ?? '0') ?? 0;
-    final mult = double.tryParse(d['prize_multiplier']?.toString() ?? '0') ?? 0;
+    final tiers = (d['prize_tiers'] as List?) ?? [];
+    final exactTier = tiers.cast<Map>().firstWhere(
+          (t) => t['match_type'] == 'exact',
+          orElse: () => {},
+        );
+    final mult = double.tryParse(exactTier['multiplier']?.toString() ?? '0') ?? 0;
     return sum + price * mult;
   });
 
