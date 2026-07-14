@@ -26,6 +26,7 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
   bool _resLoading = false;
   double _balance = 0;
   Timer? _ticker;
+  int _lastCategoryTabIndex = 0;
 
   @override
   void initState() {
@@ -33,6 +34,7 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
     _tab = TabController(length: 6, vsync: this);
     _tab.addListener(() {
       if (!_tab.indexIsChanging) {
+        if (_tab.index < _categories.length) _lastCategoryTabIndex = _tab.index;
         setState(() {});
         if (_tab.index == 4 && _myTickets.isEmpty) _loadMyTickets();
         if (_tab.index == 5 && _results.isEmpty) _loadResults();
@@ -46,8 +48,7 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
   List<dynamic> _drawsFor(String category) =>
       _draws.where((d) => d['category'] == category).toList();
 
-  String get _activeCategory =>
-      _categories[_tab.index.clamp(0, _categories.length - 1)];
+  String get _activeCategory => _categories[_lastCategoryTabIndex];
 
   @override
   void dispose() {
