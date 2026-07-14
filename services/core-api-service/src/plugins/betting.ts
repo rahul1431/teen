@@ -398,7 +398,11 @@ export function bettingPlugin(db: Pool) {
           match_type: z.enum(['exact', 'last_3', 'last_2', 'last_1']),
           multiplier: z.number().positive(),
         })).min(1),
-        category: z.enum(['daily', 'instant', 'weekly', 'monthly']),
+        // Only weekly/monthly are creatable today — daily/instant are
+        // reserved for the future Card/Bingo and Scratch Card mechanics.
+        // The DB's CHECK constraint already allows all four so widening
+        // this enum later needs no migration, just this one-line change.
+        category: z.enum(['weekly', 'monthly']),
       }).parse(req.body)
       const r = await db.query(`INSERT INTO lottery_draws (name, ticket_price, draw_time, prize_tiers, category) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [body.name, body.ticket_price, body.draw_time, JSON.stringify(body.prize_tiers), body.category])
       return { success: true, draw: r.rows[0] }

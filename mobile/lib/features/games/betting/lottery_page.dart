@@ -26,12 +26,12 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
   bool _resLoading = false;
   double _balance = 0;
   Timer? _ticker;
-  int _lastCategoryTabIndex = 0;
+  int _lastCategoryTabIndex = 2;
 
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 6, vsync: this);
+    _tab = TabController(length: 6, vsync: this, initialIndex: 2);
     _tab.addListener(() {
       if (!_tab.indexIsChanging) {
         if (_tab.index < _categories.length) _lastCategoryTabIndex = _tab.index;
