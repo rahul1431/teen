@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Divider, Popconfirm, Drawer, Statistic, Radio
+  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Divider, Popconfirm, Drawer, Statistic, Radio, Tabs
 } from 'antd'
 import { 
   ReloadOutlined, DeleteOutlined, TrophyOutlined, WalletOutlined, 
@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 import dayjs from 'dayjs'
+import LotteryScratch from './LotteryScratch'
 
 const { Text, Title } = Typography
 
@@ -163,6 +164,13 @@ export default function Lottery() {
   })
 
   return (
+    <Tabs
+      defaultActiveKey="draws"
+      items={[
+        {
+          key: 'draws',
+          label: 'Weekly & Monthly Draws',
+          children: (
     <div style={{ padding: '4px 0' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
         <div>
@@ -646,5 +654,14 @@ export default function Lottery() {
         />
       </Drawer>
     </div>
+          ),
+        },
+        {
+          key: 'scratch',
+          label: 'Instant Lottery',
+          children: <LotteryScratch />,
+        },
+      ]}
+    />
   )
 }
