@@ -2306,7 +2306,10 @@ async function start() {
       name: z.string().optional(),
       ticket_price: z.number().positive().optional(),
       draw_time: z.string().optional(),
-      prize_multiplier: z.number().positive().optional(),
+      prize_tiers: z.array(z.object({
+        match_type: z.enum(['exact', 'last_3', 'last_2', 'last_1']),
+        multiplier: z.number().positive(),
+      })).optional(),
     }).parse(req.body)
     const existing = await db.query(`SELECT status FROM lottery_draws WHERE id = $1`, [id])
     if (!existing.rows.length) return reply.code(404).send({ error: 'Draw not found' })
@@ -2316,7 +2319,7 @@ async function start() {
     if (body.name) { fields.push(`name = $${i++}`); params.push(body.name) }
     if (body.ticket_price) { fields.push(`ticket_price = $${i++}`); params.push(body.ticket_price) }
     if (body.draw_time) { fields.push(`draw_time = $${i++}`); params.push(body.draw_time) }
-    if (body.prize_multiplier) { fields.push(`prize_multiplier = $${i++}`); params.push(body.prize_multiplier) }
+    if (body.prize_tiers) { fields.push(`prize_tiers = $${i++}`); params.push(JSON.stringify(body.prize_tiers)) }
     if (!fields.length) return reply.code(400).send({ error: 'No fields to update' })
     const r = await db.query(`UPDATE lottery_draws SET ${fields.join(', ')} WHERE id = $1 RETURNING *`, params)
     return reply.send({ success: true, draw: r.rows[0] })
