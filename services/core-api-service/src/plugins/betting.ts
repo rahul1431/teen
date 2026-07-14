@@ -199,6 +199,16 @@ export function bettingPlugin(db: Pool) {
 
       const result = rollOutcome(product.payouts)
 
+      try {
+        await db.query(
+          `INSERT INTO lottery_scratch_tickets (id, product_id, user_id, outcome, amount, promo_code_id) VALUES ($1,$2,$3,$4,$5,$6)`,
+          [ticketId, body.product_id, uid(req), result.outcome, result.amount, result.promo_code_id],
+        )
+      } catch (err) {
+        await creditPrize({ userId: uid(req), amount: Number(product.price), referenceId: ticketId, idempotencyKey: `scratch_buy_refund_${ticketId}` })
+        return reply.code(500).send({ error: 'Purchase failed, your stake has been refunded' })
+      }
+
       if (result.outcome === 'cash' && result.amount > 0) {
         await creditPrize({
           userId: uid(req),
@@ -208,11 +218,6 @@ export function bettingPlugin(db: Pool) {
           notification: { title: 'Scratch Card Win! 🎉', body: `You won ₹${result.amount.toFixed(2)} on ${product.name}!` },
         })
       }
-
-      await db.query(
-        `INSERT INTO lottery_scratch_tickets (id, product_id, user_id, outcome, amount, promo_code_id) VALUES ($1,$2,$3,$4,$5,$6)`,
-        [ticketId, body.product_id, uid(req), result.outcome, result.amount, result.promo_code_id],
-      )
 
       let promoCode: string | null = null
       if (result.outcome === 'coupon' && result.promo_code_id) {
