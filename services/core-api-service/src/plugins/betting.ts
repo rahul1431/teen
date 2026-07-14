@@ -5,6 +5,7 @@ import crypto from 'crypto'
 import { debitStake, creditPrize } from '../helpers/wallet-client'
 import { MATKA_MULTIPLIERS, validateMatkaBet, settleMatkaSession } from '../helpers/matka'
 import { settleLottery, generateWinningNumber } from '../helpers/lottery'
+import { rollOutcome } from '../helpers/scratch'
 import { settleFantasyLeague, settleCricketSession } from '../helpers/cricket'
 import { aggregateScorecard, computeFantasyPoints, DEFAULT_SCORING_RULES } from '../helpers/fantasy-scoring'
 import { cricApiFetch } from '../helpers/cricapi-client'
@@ -178,6 +179,60 @@ export function bettingPlugin(db: Pool) {
         LIMIT 20
       `)
       return { draws: rows.rows }
+    })
+
+    // ══ LOTTERY — INSTANT (SCRATCH CARD) ══
+    app.get('/lottery/scratch/products', { onRequest: [auth] }, async () => {
+      const rows = await db.query(`SELECT * FROM lottery_scratch_products WHERE is_active = true ORDER BY price ASC`)
+      return { products: rows.rows }
+    })
+
+    app.post('/lottery/scratch/buy', { onRequest: [auth] }, async (req, reply) => {
+      const body = z.object({ product_id: z.string().uuid() }).parse(req.body)
+      const productRes = await db.query(`SELECT * FROM lottery_scratch_products WHERE id = $1 AND is_active = true`, [body.product_id])
+      if (!productRes.rows.length) return reply.code(409).send({ error: 'Product not available' })
+      const product = productRes.rows[0]
+
+      const ticketId = crypto.randomUUID()
+      const debit = await debitStake({ userId: uid(req), amount: Number(product.price), referenceId: ticketId, idempotencyKey: `scratch_buy_${ticketId}`, description: `Scratch Card: ${product.name}` })
+      if (!debit.ok) return reply.code(400).send({ error: debit.error })
+
+      const result = rollOutcome(product.payouts)
+
+      if (result.outcome === 'cash' && result.amount > 0) {
+        await creditPrize({
+          userId: uid(req),
+          amount: result.amount,
+          referenceId: ticketId,
+          idempotencyKey: `scratch_payout_${ticketId}`,
+          notification: { title: 'Scratch Card Win! 🎉', body: `You won ₹${result.amount.toFixed(2)} on ${product.name}!` },
+        })
+      }
+
+      await db.query(
+        `INSERT INTO lottery_scratch_tickets (id, product_id, user_id, outcome, amount, promo_code_id) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [ticketId, body.product_id, uid(req), result.outcome, result.amount, result.promo_code_id],
+      )
+
+      let promoCode: string | null = null
+      if (result.outcome === 'coupon' && result.promo_code_id) {
+        const promoRes = await db.query(`SELECT code FROM promo_codes WHERE id = $1`, [result.promo_code_id])
+        promoCode = promoRes.rows[0]?.code || null
+      }
+
+      return { success: true, ticket_id: ticketId, outcome: result.outcome, amount: result.amount, promo_code: promoCode }
+    })
+
+    app.get('/lottery/scratch/my-tickets', { onRequest: [auth] }, async (req) => {
+      const rows = await db.query(
+        `SELECT t.*, p.name AS product_name, p.price AS product_price, pc.code AS promo_code
+         FROM lottery_scratch_tickets t
+         JOIN lottery_scratch_products p ON p.id = t.product_id
+         LEFT JOIN promo_codes pc ON pc.id = t.promo_code_id
+         WHERE t.user_id = $1 ORDER BY t.created_at DESC LIMIT 100`,
+        [uid(req)],
+      )
+      return { tickets: rows.rows }
     })
 
     // ══ CRICKET (Dream11-style fantasy contests, plus session/fancy
@@ -430,6 +485,32 @@ export function bettingPlugin(db: Pool) {
         creditPrize({ userId: t.user_id, amount: Number(t.amount), referenceId: t.id, idempotencyKey: `lottery_refund_${t.id}` })
       ))
       return { success: true, refunded: tickets.rows.length }
+    })
+
+    app.post('/internal/lottery/scratch/create', { onRequest: [internal] }, async (req, reply) => {
+      const body = z.object({
+        name: z.string(),
+        price: z.number().positive(),
+        payouts: z.array(z.object({
+          outcome: z.enum(['cash', 'coupon', 'no_win']),
+          amount: z.number().positive().optional(),
+          promo_code_id: z.string().uuid().optional(),
+          probability: z.number().min(0).max(100),
+        })).min(1),
+      }).parse(req.body)
+
+      const total = body.payouts.reduce((sum, p) => sum + p.probability, 0)
+      if (Math.abs(total - 100) > 0.01) return reply.code(400).send({ error: 'Payout probabilities must sum to 100' })
+      for (const p of body.payouts) {
+        if (p.outcome === 'cash' && p.amount === undefined) return reply.code(400).send({ error: 'Cash payouts require an amount' })
+        if (p.outcome === 'coupon' && !p.promo_code_id) return reply.code(400).send({ error: 'Coupon payouts require a promo_code_id' })
+      }
+
+      const r = await db.query(
+        `INSERT INTO lottery_scratch_products (name, price, payouts) VALUES ($1,$2,$3) RETURNING *`,
+        [body.name, body.price, JSON.stringify(body.payouts)],
+      )
+      return { success: true, product: r.rows[0] }
     })
 
     // Looks up a cached flag by matching a team/country name against
