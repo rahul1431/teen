@@ -8,18 +8,23 @@ The lottery product has four sections — Daily, Instant, Weekly, Monthly. Weekl
 
 ## Goals
 
-- A live-paced, 90-ball UK-bingo-style draw: admin creates a draw with a scheduled start time; players buy tickets (auto-generated cards) beforehand; at the scheduled time, all 90 numbers are called one at a time over a live WebSocket channel; tickets that complete a pattern win automatically.
+- A live-paced, 90-ball UK-bingo-style draw: admin creates a draw with a scheduled start time; players buy tickets (auto-generated cards) beforehand; at the scheduled time, numbers are called one at a time over a live WebSocket channel until any ticket completes Full House (or all 90 are called, whichever first); tickets that complete a pattern win automatically.
 - Standard three-tier win structure (One Line, Two Lines, Full House), admin-configurable multipliers per draw, same `prize_tiers` shape convention as Weekly/Monthly.
-- No racing/claiming: every ticket that completes a pattern by the time all 90 numbers are called wins that tier, automatically, cumulatively (a Full House winner also collects the One Line and Two Lines prizes it passed through).
+- No racing/claiming: every ticket that completes a pattern by the time calling stops wins that tier, automatically, cumulatively (a Full House winner also collects the One Line and Two Lines prizes it passed through).
 - A dedicated `/ws/bingo` WebSocket channel (mirroring the existing Aviator precedent: its own nginx location, its own mobile-side socket singleton) delivers live number calls.
 
 ## Non-goals
 
 - Player choice of card — cards are always server-generated at purchase time (a valid 90-ball card has a fixed number distribution per row, not freely pickable like Dedicated Number's digits).
-- Early-stopping calling once every tier is won — every draw always calls all 90 numbers, giving every ticket a full, fair shot at Full House. Fixed, predictable draw duration (~5-6 minutes at one call per 3-4 seconds).
-- First-to-complete "claim" mechanics — no racing, no tie-breaking logic; every qualifying ticket wins regardless of when during the draw it completed.
+- First-to-complete "claim" mechanics — no racing, no tie-breaking logic; every qualifying ticket wins regardless of when during the draw it completed (multiple tickets can complete Full House on the same call).
 - Sharing code with Weekly/Monthly's `settleLottery`/digit-tier-matching or Scratch Card's `rollOutcome` — this mechanic's win-checking (matching a card's numbers against a growing called-numbers list) is structurally different enough to warrant its own settlement logic.
 - Auto-recurring daily draw creation — admin creates each day's draw manually, same as Weekly/Monthly today.
+
+## Design Correction (post-launch verification, 2026-07-14)
+
+The original design called ALL 90 numbers every draw with no early stop, reasoning it gave "every ticket a full, fair shot at Full House." Live end-to-end verification against production revealed this was a critical error: since every card's 15 numbers are necessarily a subset of the full 1-90 pool, calling all 90 numbers guarantees EVERY ticket eventually completes Full House, with 100% certainty — not a probability. Combined with cumulative tier payouts, this meant the house would pay out the full multiplier sum (e.g. 120x ticket price) to every single buyer, every single draw, with no exceptions — a guaranteed, unbounded loss, not a lottery.
+
+Fixed: calling now stops the instant any ticket completes Full House (checked after every number call), with the 90-number mark remaining only as a fallback ceiling for the rare case where nobody ever completes one. This restores genuine chance/variance to the tier payouts — most tickets will not reach Full House, matching how real bingo halls actually work (calling stops the moment someone wins).
 
 ## Data Model
 
