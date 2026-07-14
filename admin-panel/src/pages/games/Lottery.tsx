@@ -84,8 +84,8 @@ export default function Lottery() {
   const create = async (v: any) => {
     try {
       await adminApi.post('/betting/lottery/create', {
-        name: v.name, ticket_price: v.ticket_price, digits: v.digits,
-        prize_multiplier: v.prize_multiplier, draw_time: v.draw_time.toISOString(),
+        name: v.name, ticket_price: v.ticket_price,
+        prize_tiers: v.prize_tiers, draw_time: v.draw_time.toISOString(),
       })
       message.success('Draw created successfully!')
       setCreateOpen(false)
@@ -461,20 +461,49 @@ export default function Lottery() {
           <Form.Item name="name" label="Draw Name" rules={[{ required: true, message: 'Please enter a name' }]}>
             <Input placeholder="e.g., Weekly Megadraw, Daily Lucky Draw" style={{ borderRadius: '6px' }} />
           </Form.Item>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="ticket_price" label="Ticket Price (₹)" rules={[{ required: true }]} initialValue={10}>
-                <InputNumber min={1} style={{ width: '100%', borderRadius: '6px' }} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="digits" label="Length limit (digits)" initialValue={8}>
-                <InputNumber min={1} max={8} style={{ width: '100%', borderRadius: '6px' }} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item name="prize_multiplier" label="Prize Multiplier (payout = price × multiplier)" initialValue={1000} rules={[{ required: true }]}>
+          <Form.Item name="ticket_price" label="Ticket Price (₹)" rules={[{ required: true }]} initialValue={10}>
             <InputNumber min={1} style={{ width: '100%', borderRadius: '6px' }} />
+          </Form.Item>
+          <Form.Item label="Prize Tiers" required tooltip="Every ticket is a 4-digit number. Define which digit-match patterns pay out and at what multiple of the ticket price.">
+            <Form.List name="prize_tiers" initialValue={[{ match_type: 'exact', multiplier: 5000 }]}>
+              {(fields, { add, remove }) => (
+                <>
+                  {fields.map(({ key, name, ...restField }) => (
+                    <Space key={key} style={{ display: 'flex', marginBottom: 12 }} align="baseline">
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'match_type']}
+                        rules={[{ required: true, message: 'Missing match type' }]}
+                        style={{ marginBottom: 0 }}
+                      >
+                        <Select style={{ width: 180, borderRadius: '6px' }} options={[
+                          { value: 'exact', label: 'Exact (4/4 digits)' },
+                          { value: 'last_3', label: 'Last 3 digits' },
+                          { value: 'last_2', label: 'Last 2 digits' },
+                          { value: 'last_1', label: 'Last 1 digit' },
+                        ]} />
+                      </Form.Item>
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'multiplier']}
+                        rules={[{ required: true, message: 'Missing multiplier' }]}
+                        style={{ marginBottom: 0 }}
+                      >
+                        <InputNumber min={1} placeholder="Multiplier" style={{ width: 140, borderRadius: '6px' }} formatter={(v) => `${v}x`} />
+                      </Form.Item>
+                      {fields.length > 1 ? (
+                        <Button danger onClick={() => remove(name)} style={{ borderRadius: '6px' }}>Remove</Button>
+                      ) : null}
+                    </Space>
+                  ))}
+                  <Form.Item style={{ marginTop: '8px' }}>
+                    <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />} style={{ borderRadius: '8px' }}>
+                      Add Prize Tier
+                    </Button>
+                  </Form.Item>
+                </>
+              )}
+            </Form.List>
           </Form.Item>
           <Form.Item name="draw_time" label="Draw Time" rules={[{ required: true, message: 'Please select draw time' }]}>
             <DatePicker showTime style={{ width: '100%', borderRadius: '6px' }} />
