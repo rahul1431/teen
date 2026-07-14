@@ -400,14 +400,17 @@ export function bettingPlugin(db: Pool) {
     })
 
     app.post('/internal/cricket/fantasy/players', { onRequest: [internal] }, async (req) => {
-      const body = z.object({ name: z.string(), role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']), credits: z.number().min(5.0).max(15.0), team_name: z.string(), avatar_url: z.string().optional() }).parse(req.body)
+      // credits uses z.coerce.number() because the admin panel round-trips
+      // this value from cricket_fantasy_players.credits (NUMERIC column),
+      // which node-postgres returns as a string, not a JS number.
+      const body = z.object({ name: z.string(), role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']), credits: z.coerce.number().min(5.0).max(15.0), team_name: z.string(), avatar_url: z.string().optional() }).parse(req.body)
       const res = await db.query(`INSERT INTO cricket_fantasy_players (name, role, credits, team_name, avatar_url) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [body.name, body.role, body.credits, body.team_name, body.avatar_url || null])
       return { success: true, player: res.rows[0] }
     })
 
     app.patch('/internal/cricket/fantasy/players/:id', { onRequest: [internal] }, async (req, reply) => {
       const { id } = req.params as { id: string }
-      const body = z.object({ name: z.string().optional(), role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']).optional(), credits: z.number().min(5.0).max(15.0).optional(), team_name: z.string().optional(), avatar_url: z.string().optional() }).parse(req.body)
+      const body = z.object({ name: z.string().optional(), role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']).optional(), credits: z.coerce.number().min(5.0).max(15.0).optional(), team_name: z.string().optional(), avatar_url: z.string().optional() }).parse(req.body)
       const fields: string[] = [], params: any[] = [id]
       let i = 2
       for (const [key, val] of Object.entries(body)) {
