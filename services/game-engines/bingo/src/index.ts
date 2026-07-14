@@ -64,6 +64,7 @@ async function callNext(drawId: string) {
   broadcastToDraw(drawId, 'bingo:number_called', { number, called_numbers: calledSoFar })
 
   const ticketsRes = await db.query(`SELECT * FROM lottery_bingo_tickets WHERE draw_id = $1`, [drawId])
+  let someoneHitFullHouse = false
   for (const t of ticketsRes.rows) {
     const alreadyWon: BingoTier[] = t.tiers_won || []
     const newTiers = checkNewTiers(t.card, calledSoFar, alreadyWon)
@@ -71,10 +72,18 @@ async function callNext(drawId: string) {
       const updatedTiers = [...alreadyWon, ...newTiers]
       await db.query(`UPDATE lottery_bingo_tickets SET tiers_won = $1 WHERE id = $2`, [JSON.stringify(updatedTiers), t.id])
       broadcastToDraw(drawId, 'bingo:tier_won', { ticket_id: t.id, user_id: t.user_id, new_tiers: newTiers })
+      if (newTiers.includes('full_house')) someoneHitFullHouse = true
     }
   }
 
-  if (entry.calledCount >= 90) {
+  // Stop as soon as any ticket completes Full House — calling every one of
+  // the 90 numbers guarantees every card eventually completes (every
+  // card's 15 numbers are a subset of the full 1-90 pool), which would
+  // make every payout certain rather than a game of chance. Stopping at
+  // the first Full House restores real variance: most tickets never get
+  // that far. The 90-number mark remains as a hard ceiling for the rare
+  // case nobody ever completes one.
+  if (someoneHitFullHouse || entry.calledCount >= 90) {
     clearInterval(entry.timer)
     activeDraws.delete(drawId)
     await settleDraw(drawId)
