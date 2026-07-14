@@ -71,17 +71,17 @@ class _CricketPageState extends State<CricketPage>
         ],
         bottom: TabBar(
           controller: _tabs,
-          isScrollable: true,
           indicatorColor: AppColors.gold,
           indicatorWeight: 3,
           labelColor: AppColors.gold,
           unselectedLabelColor: AppColors.textSecondary,
-          labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+          labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+          labelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
           tabs: const [
             Tab(icon: Icon(Icons.sports_cricket_rounded, size: 18), text: 'Fixtures'),
             Tab(icon: Icon(Icons.emoji_events_rounded, size: 18), text: 'My Contests'),
             Tab(icon: Icon(Icons.groups_rounded, size: 18), text: 'My Teams'),
-            Tab(text: 'History'),
+            Tab(child: Center(child: Text('History'))),
           ],
         ),
       ),
@@ -579,7 +579,8 @@ class _FantasyContestLobbyScreenState
                         itemCount: _leagues.length,
                         itemBuilder: (_, i) {
                           final league = _leagues[i];
-                          final joined = league['joined_entry_id'] != null;
+                          final joinedCount = league['joined_count'] ?? 0;
+                          final joined = joinedCount > 0;
                           final spotsFilled = league['current_entries'] ?? 0;
                           final maxSpots = league['max_entries'] ?? 100;
                           final pct = (spotsFilled / maxSpots).clamp(0.0, 1.0);
@@ -598,11 +599,36 @@ class _FantasyContestLobbyScreenState
                                     mainAxisAlignment:
                                         MainAxisAlignment.spaceBetween,
                                     children: [
-                                      Text(league['name'] ?? 'Contest',
-                                          style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.bold)),
+                                      Expanded(
+                                        child: Row(
+                                          children: [
+                                            Flexible(
+                                              child: Text(league['name'] ?? 'Contest',
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 13,
+                                                      fontWeight: FontWeight.bold)),
+                                            ),
+                                            if (joined) ...[
+                                              const SizedBox(width: 6),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(
+                                                    horizontal: 6, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: AppColors.green.withValues(alpha: 0.18),
+                                                  borderRadius: BorderRadius.circular(8),
+                                                ),
+                                                child: Text('Joined ×$joinedCount',
+                                                    style: const TextStyle(
+                                                        color: AppColors.green,
+                                                        fontSize: 9,
+                                                        fontWeight: FontWeight.bold)),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
                                       Text(
                                           league['entry_fee'] == 0
                                               ? 'FREE'
@@ -665,49 +691,69 @@ class _FantasyContestLobbyScreenState
                                                   fontSize: 9)),
                                         ],
                                       ),
-                                      ElevatedButton(
-                                        onPressed: () {
-                                          if (joined) {
-                                            Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (_) =>
-                                                    _ContestLeaderboardScreen(
-                                                        league: league),
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          if (joined) ...[
+                                            OutlinedButton(
+                                              onPressed: () {
+                                                Navigator.push(
+                                                  context,
+                                                  MaterialPageRoute(
+                                                    builder: (_) =>
+                                                        _ContestLeaderboardScreen(
+                                                            league: league),
+                                                  ),
+                                                );
+                                              },
+                                              style: OutlinedButton.styleFrom(
+                                                side: const BorderSide(color: AppColors.green),
+                                                foregroundColor: AppColors.green,
+                                                padding: const EdgeInsets.symmetric(
+                                                    horizontal: 12, vertical: 8),
+                                                shape: RoundedRectangleBorder(
+                                                    borderRadius:
+                                                        BorderRadius.circular(8)),
                                               ),
-                                            );
-                                          } else {
-                                            Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (_) =>
-                                                    _DraftTeamScreen(
-                                                        match: widget.match,
-                                                        league: league),
-                                              ),
-                                            );
-                                          }
-                                        },
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: joined
-                                              ? AppColors.green
-                                              : AppColors.gold,
-                                          foregroundColor: Colors.black,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 16, vertical: 8),
-                                          shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(8)),
-                                        ),
-                                        child: Text(
-                                          joined
-                                              ? 'Leaderboard'
-                                              : 'Draft & Join',
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 12),
-                                        ),
-                                      )
+                                              child: const Text('Leaderboard',
+                                                  style: TextStyle(
+                                                      fontWeight: FontWeight.bold,
+                                                      fontSize: 12)),
+                                            ),
+                                            const SizedBox(width: 8),
+                                          ],
+                                          ElevatedButton(
+                                            onPressed: () {
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (_) =>
+                                                      _DraftTeamScreen(
+                                                          match: widget.match,
+                                                          league: league),
+                                                ),
+                                              );
+                                            },
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: AppColors.gold,
+                                              foregroundColor: Colors.black,
+                                              padding: const EdgeInsets.symmetric(
+                                                  horizontal: 16, vertical: 8),
+                                              shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(8)),
+                                            ),
+                                            child: Text(
+                                              joined
+                                                  ? 'Join Again'
+                                                  : 'Draft & Join',
+                                              style: const TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 12),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ],
                                   ),
                                 ],
@@ -1409,7 +1455,8 @@ class _DraftTeamScreenState extends State<_DraftTeamScreen>
                   Stack(
                     alignment: Alignment.center,
                     children: [
-                      // Circular player shirt bubble
+                      // Circular player photo (falls back to a shirt icon
+                      // when the player has no avatar_url on file).
                       Container(
                         width: 42,
                         height: 42,
@@ -1420,16 +1467,25 @@ class _DraftTeamScreenState extends State<_DraftTeamScreen>
                               : Colors.white,
                           border: Border.all(
                               color: AppColors.goldLight, width: 1.5),
+                          image: p['avatar_url'] != null
+                              ? DecorationImage(
+                                  image: NetworkImage(p['avatar_url']),
+                                  fit: BoxFit.cover,
+                                )
+                              : null,
                         ),
-                        child: Center(
-                          child: Icon(
-                            Icons.sports_cricket,
-                            size: 18,
-                            color: p['team_name'] == widget.match['team_a']
-                                ? Colors.white
-                                : Colors.black,
-                          ),
-                        ),
+                        child: p['avatar_url'] == null
+                            ? Center(
+                                child: Icon(
+                                  Icons.sports_cricket,
+                                  size: 18,
+                                  color:
+                                      p['team_name'] == widget.match['team_a']
+                                          ? Colors.white
+                                          : Colors.black,
+                                ),
+                              )
+                            : null,
                       ),
                       // Role multiplier bubble (C / VC)
                       if (isC || isVC)
@@ -1798,11 +1854,19 @@ class _ContestLeaderboardScreenState extends State<_ContestLeaderboardScreen> {
                       shape: BoxShape.circle,
                       color: Colors.black87,
                       border: Border.all(color: AppColors.gold, width: 1),
+                      image: p['avatar_url'] != null
+                          ? DecorationImage(
+                              image: NetworkImage(p['avatar_url']),
+                              fit: BoxFit.cover,
+                            )
+                          : null,
                     ),
-                    child: const Center(
-                      child: Icon(Icons.sports_cricket,
-                          color: Colors.white70, size: 16),
-                    ),
+                    child: p['avatar_url'] == null
+                        ? const Center(
+                            child: Icon(Icons.sports_cricket,
+                                color: Colors.white70, size: 16),
+                          )
+                        : null,
                   ),
                   if (isC || isVC)
                     Positioned(
@@ -1877,7 +1941,7 @@ class _MyContestsTabState extends State<_MyContestsTab> {
             .get('/api/betting/cricket/fantasy/leagues?match_id=${m['id']}');
         final leagues = res.data['leagues'] as List<dynamic>;
         for (final l in leagues) {
-          if (l['joined_entry_id'] != null) {
+          if ((l['joined_count'] ?? 0) > 0) {
             out.add({
               'match': m,
               'league': l,
@@ -1943,11 +2007,34 @@ class _MyContestsTabState extends State<_MyContestsTab> {
                   ),
                 );
               },
-              title: Text(league['name'] ?? 'Mega Contest',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold)),
+              title: Row(
+                children: [
+                  Flexible(
+                    child: Text(league['name'] ?? 'Mega Contest',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold)),
+                  ),
+                  if ((league['joined_count'] ?? 0) > 1) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.green.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text('×${league['joined_count']} entries',
+                          style: const TextStyle(
+                              color: AppColors.green,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ],
+              ),
               subtitle: Text(
                 '${match['team_a_short']} vs ${match['team_b_short']}  •  ${match['series']}',
                 style: const TextStyle(
@@ -2249,11 +2336,19 @@ class _MyCreatedTeamsTabState extends State<_MyCreatedTeamsTab> {
                       shape: BoxShape.circle,
                       color: Colors.black87,
                       border: Border.all(color: AppColors.gold, width: 1),
+                      image: p['avatar_url'] != null
+                          ? DecorationImage(
+                              image: NetworkImage(p['avatar_url']),
+                              fit: BoxFit.cover,
+                            )
+                          : null,
                     ),
-                    child: const Center(
-                      child: Icon(Icons.sports_cricket,
-                          color: Colors.white70, size: 16),
-                    ),
+                    child: p['avatar_url'] == null
+                        ? const Center(
+                            child: Icon(Icons.sports_cricket,
+                                color: Colors.white70, size: 16),
+                          )
+                        : null,
                   ),
                   if (isC || isVC)
                     Positioned(

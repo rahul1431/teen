@@ -260,8 +260,11 @@ export function bettingPlugin(db: Pool) {
 
     app.get('/cricket/fantasy/leagues', { onRequest: [auth] }, async (req) => {
       const { match_id } = req.query as { match_id: string }
-      const res = await db.query(`SELECT l.*, (SELECT id FROM cricket_fantasy_entries WHERE league_id = l.id AND user_id = $2) AS joined_entry_id FROM cricket_fantasy_leagues l WHERE l.match_id = $1 ORDER BY l.entry_fee ASC`, [match_id, uid(req)])
-      return { leagues: res.rows }
+      // joined_count supports multi-entry contests — a user can hold more
+      // than one entry in the same league (with different drafted teams),
+      // so this is a count rather than a single scalar entry id.
+      const res = await db.query(`SELECT l.*, (SELECT COUNT(*) FROM cricket_fantasy_entries WHERE league_id = l.id AND user_id = $2) AS joined_count FROM cricket_fantasy_leagues l WHERE l.match_id = $1 ORDER BY l.entry_fee ASC`, [match_id, uid(req)])
+      return { leagues: res.rows.map(r => ({ ...r, joined_count: Number(r.joined_count) })) }
     })
 
     app.get('/cricket/fantasy/leagues/:id/leaderboard', { onRequest: [auth] }, async (req) => {
@@ -302,8 +305,25 @@ export function bettingPlugin(db: Pool) {
       const team = teamRes.rows[0]
       if (team.user_id !== uid(req)) return reply.code(403).send({ error: 'Not your team roster' })
       if (team.match_id !== league.match_id) return reply.code(400).send({ error: 'Team match mismatch' })
-      const entryRes = await db.query('SELECT id FROM cricket_fantasy_entries WHERE league_id = $1 AND user_id = $2', [body.league_id, uid(req)])
-      if (entryRes.rows.length) return reply.code(409).send({ error: 'You have already joined this league' })
+
+      // Multi-entry contests: a user can join the same league more than
+      // once, but only with a different drafted XI each time — reject if
+      // any of their existing entries in this league used an identical
+      // roster (same 11 players + same captain/vice-captain).
+      const existingRes = await db.query(
+        `SELECT t.player_ids, t.captain_id, t.vice_captain_id FROM cricket_fantasy_entries e
+         JOIN user_fantasy_teams t ON t.id = e.team_id
+         WHERE e.league_id = $1 AND e.user_id = $2`,
+        [body.league_id, uid(req)],
+      )
+      const newRoster = [...team.player_ids].sort()
+      const isDuplicateRoster = existingRes.rows.some((r: any) => {
+        if (r.captain_id !== team.captain_id || r.vice_captain_id !== team.vice_captain_id) return false
+        const existingRoster = [...r.player_ids].sort()
+        return existingRoster.length === newRoster.length && existingRoster.every((id: string, i: number) => id === newRoster[i])
+      })
+      if (isDuplicateRoster) return reply.code(409).send({ error: 'You already joined this contest with an identical team — draft a different XI to join again.' })
+
       const entryId = crypto.randomUUID()
       const debit = await debitStake({ userId: uid(req), amount: Number(league.entry_fee), referenceId: entryId, idempotencyKey: `cricket_fantasy_stake_${entryId}`, description: `Joined fantasy league: ${league.name}` })
       if (!debit.ok) return reply.code(400).send({ error: debit.error || 'Debit failed' })
@@ -323,6 +343,12 @@ export function bettingPlugin(db: Pool) {
         return { success: true, entry_id: entryId }
       } catch (err) {
         await client.query('ROLLBACK')
+        // Insert/update failed after the stake was already debited (e.g. a
+        // double-submit hitting the league_id+team_id unique constraint) —
+        // refund so the user isn't charged for a contest they never joined.
+        await creditPrize({ userId: uid(req), amount: Number(league.entry_fee), referenceId: entryId, idempotencyKey: `cricket_fantasy_refund_${entryId}` })
+        const pgErr = err as { code?: string }
+        if (pgErr.code === '23505') return reply.code(409).send({ error: 'This team has already been entered into this contest' })
         return reply.code(400).send({ error: (err as Error).message })
       } finally {
         client.release()

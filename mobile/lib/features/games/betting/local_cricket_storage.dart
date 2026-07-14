@@ -102,7 +102,7 @@ class LocalCricketStorage {
       'max_entries': 250,
       'current_entries': 34,
       'status': 'open',
-      'joined_entry_id': null,
+      'joined_count': 0,
       'prize_distribution': [
         {'rank_start': 1, 'rank_end': 1, 'payout': 5000},
         {'rank_start': 2, 'rank_end': 2, 'payout': 2000},
@@ -118,7 +118,7 @@ class LocalCricketStorage {
       'max_entries': 2,
       'current_entries': 1,
       'status': 'open',
-      'joined_entry_id': null,
+      'joined_count': 0,
       'prize_distribution': [
         {'rank_start': 1, 'rank_end': 1, 'payout': 450}
       ]
@@ -132,7 +132,7 @@ class LocalCricketStorage {
       'max_entries': 100,
       'current_entries': 12,
       'status': 'open',
-      'joined_entry_id': null,
+      'joined_count': 0,
       'prize_distribution': []
     }
   ];
