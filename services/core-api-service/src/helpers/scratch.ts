@@ -17,6 +17,7 @@ export type ScratchResult = {
 // creation time, see betting.ts's /internal/lottery/scratch/create).
 // Independent roll per purchase — no shared pool, no finite stock.
 export function rollOutcome(payouts: ScratchPayout[]): ScratchResult {
+  if (payouts.length === 0) return { outcome: 'no_win', amount: 0, promo_code_id: null }
   const roll = Math.random() * 100
   let cumulative = 0
   for (const p of payouts) {
