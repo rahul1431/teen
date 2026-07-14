@@ -363,7 +363,22 @@ export function bettingPlugin(db: Pool) {
         db.query(`SELECT mp.*, fp.name, fp.role, fp.team_name FROM cricket_match_players mp JOIN cricket_fantasy_players fp ON fp.id = mp.player_id WHERE mp.match_id = $1`, [id]),
         db.query(`SELECT id, label, min_runs, max_runs, odds_yes, odds_no, status, result_runs FROM cricket_sessions WHERE match_id = $1`, [id]),
       ])
-      return { match: matchRes.rows[0], player_performances: players.rows, sessions: sessions.rows }
+      // fantasy_points/overs_bowled are NUMERIC columns — node-postgres
+      // returns those as strings, and the mobile app does an unguarded
+      // `as num?` cast on fantasy_points that throws on a String, taking
+      // down the whole live match screen. Coerce to real numbers here so
+      // every client gets proper JSON numbers, not a type it has to guess at.
+      const performances = players.rows.map(p => ({
+        ...p,
+        overs_bowled: Number(p.overs_bowled),
+        fantasy_points: Number(p.fantasy_points),
+      }))
+      const sessionRows = sessions.rows.map(s => ({
+        ...s,
+        odds_yes: Number(s.odds_yes),
+        odds_no: Number(s.odds_no),
+      }))
+      return { match: matchRes.rows[0], player_performances: performances, sessions: sessionRows }
     })
 
     // ══ INTERNAL ══
