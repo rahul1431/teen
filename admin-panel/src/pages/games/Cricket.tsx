@@ -21,6 +21,18 @@ function groupPlayersByTeam(players: any[]): Record<string, any[]> {
   return Object.fromEntries(Object.entries(groups).sort(([a], [b]) => a.localeCompare(b)))
 }
 
+// Every match-picker dropdown used to label matches as just "Team A vs Team B
+// (Series)" — indistinguishable when a series has multiple fixtures between
+// the same two teams (e.g. a 3-ODI series), which is how a contest ended up
+// attached to the wrong match. Adds the date/time plus a short match code
+// admins can cross-check against the match card in the Matches tab.
+function matchLabel(m: any): string {
+  const date = new Date(m.start_time)
+  const dateStr = date.toLocaleDateString(undefined, { day: '2-digit', month: 'short' })
+  const timeStr = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  return `${m.team_a} vs ${m.team_b} · ${dateStr} ${timeStr} (${m.series}) [#${m.id.slice(0, 8)}]`
+}
+
 function CountryFlagUploadField({ form }: { form: any }) {
   const [uploading, setUploading] = useState(false)
   const url: string | undefined = Form.useWatch('flag_url', form)
@@ -910,6 +922,7 @@ export default function Cricket() {
                         {m.team_b_flag && <img src={m.team_b_flag} alt="" style={{ width: 22, height: 15, marginLeft: 6, verticalAlign: 'middle', border: '1px solid #ddd', borderRadius: 2 }} />}
                       </b>{' '}
                       <Tag color={m.status === 'settled' ? 'red' : m.status === 'live' ? 'orange' : 'blue'}>{m.status}</Tag>
+                      <Tag>#{m.id.slice(0, 8)}</Tag>
                     </span>
                   }
                   extra={
@@ -981,7 +994,7 @@ export default function Cricket() {
             >
               {matches.map(m => (
                 <Card key={m.id} type="inner" style={{ marginBottom: 16 }}
-                  title={<span>{m.series} — <b>{m.team_a} vs {m.team_b}</b></span>}
+                  title={<span>{m.series} — <b>{m.team_a} vs {m.team_b}</b> <Tag>#{m.id.slice(0, 8)}</Tag></span>}
                   extra={
                     <Space>
                       <Button size="small" onClick={() => loadLeagues(m.id)} loading={loadingLeaguesFor === m.id}>
@@ -1099,7 +1112,7 @@ export default function Cricket() {
                   placeholder="Select match to operate..."
                   value={liveMatchId}
                   onChange={(val) => setLiveMatchId(val)}
-                  options={matches.map(m => ({ value: m.id, label: `${m.team_a} vs ${m.team_b} (${m.series})` }))}
+                  options={matches.map(m => ({ value: m.id, label: matchLabel(m) }))}
                 />
               </div>
 
@@ -1309,7 +1322,7 @@ export default function Cricket() {
                 options={[{ value: 'open', label: 'Open' }, { value: 'closed', label: 'Closed' }, { value: 'settled', label: 'Settled' }, { value: 'cancelled', label: 'Cancelled' }]}
                 onChange={v => setContestFilters(f => ({ ...f, status: v }))} />
               <Select allowClear placeholder="Match" style={{ width: 240 }} showSearch optionFilterProp="label"
-                options={matches.map(m => ({ value: m.id, label: `${m.team_a} vs ${m.team_b} (${m.series})` }))}
+                options={matches.map(m => ({ value: m.id, label: matchLabel(m) }))}
                 onChange={v => setContestFilters(f => ({ ...f, match_id: v }))} />
               <DatePicker.RangePicker onChange={(dates) => setContestFilters(f => ({
                 ...f,
@@ -1424,7 +1437,7 @@ export default function Cricket() {
       <Modal open={leagueOpen} title="Create Fantasy Contest Pool" onCancel={() => setLeagueOpen(false)} onOk={() => lForm.submit()} okText="Create Pool">
         <Form form={lForm} layout="vertical" onFinish={createLeague}>
           <Form.Item name="match_id" label="Target Match" rules={[{ required: true }]}>
-            <Select options={matches.map(m => ({ value: m.id, label: `${m.team_a} vs ${m.team_b} (${m.series})` }))} />
+            <Select options={matches.map(m => ({ value: m.id, label: matchLabel(m) }))} />
           </Form.Item>
           <Form.Item name="name" label="Contest Pool Name" rules={[{ required: true }]}><Input placeholder="e.g. Mega Contest / Head to Head" /></Form.Item>
           <Row gutter={16}>
@@ -1674,7 +1687,7 @@ export default function Cricket() {
                       placeholder="Select a match to add this player to"
                       value={mapMatchId}
                       onChange={setMapMatchId}
-                      options={matches.map(m => ({ value: m.id, label: `${m.team_a} vs ${m.team_b} (${m.series})` }))}
+                      options={matches.map(m => ({ value: m.id, label: matchLabel(m) }))}
                     />
                     <Button type="primary" loading={mappingMatch} onClick={mapPlayerToMatch} disabled={!mapMatchId}>Add</Button>
                   </Space.Compact>
