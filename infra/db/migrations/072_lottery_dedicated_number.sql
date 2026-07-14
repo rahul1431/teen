@@ -4,6 +4,8 @@
 -- settlement. Clean-slate migration — confirmed only test data exists
 -- (6 draws, 6 tickets, no real users) as of 2026-07-14.
 
+BEGIN;
+
 DELETE FROM lottery_tickets;
 DELETE FROM lottery_draws;
 
@@ -14,3 +16,6 @@ ALTER TABLE lottery_draws ALTER COLUMN winning_number TYPE VARCHAR(4);
 
 ALTER TABLE lottery_tickets ALTER COLUMN ticket_number TYPE VARCHAR(4);
 ALTER TABLE lottery_tickets ADD CONSTRAINT lottery_tickets_ticket_number_numeric CHECK (ticket_number ~ '^[0-9]{4}$');
+ALTER TABLE lottery_tickets ADD CONSTRAINT lottery_tickets_draw_ticket_unique UNIQUE (draw_id, ticket_number);
+
+COMMIT;
