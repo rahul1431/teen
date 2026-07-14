@@ -4,7 +4,7 @@ import { z } from 'zod'
 import crypto from 'crypto'
 import { debitStake, creditPrize } from '../helpers/wallet-client'
 import { MATKA_MULTIPLIERS, validateMatkaBet, settleMatkaSession } from '../helpers/matka'
-import { settleLottery } from '../helpers/lottery'
+import { settleLottery, generateWinningNumber } from '../helpers/lottery'
 import { settleFantasyLeague, settleCricketSession } from '../helpers/cricket'
 import { aggregateScorecard, computeFantasyPoints, DEFAULT_SCORING_RULES } from '../helpers/fantasy-scoring'
 import { cricApiFetch } from '../helpers/cricapi-client'
@@ -136,7 +136,7 @@ export function bettingPlugin(db: Pool) {
       const drawRes = await db.query(`SELECT * FROM lottery_draws WHERE id = $1 AND status = 'open'`, [body.draw_id])
       if (!drawRes.rows.length) return reply.code(409).send({ error: 'Draw not open' })
       const draw = drawRes.rows[0]
-      if (!/^[a-zA-Z0-9]{1,8}$/.test(ticketNumClean)) return reply.code(400).send({ error: 'Ticket must be alphanumeric and up to 8 characters.' })
+      if (!/^[0-9]{4}$/.test(ticketNumClean)) return reply.code(400).send({ error: 'Ticket number must be exactly 4 digits.' })
       
       const checkRes = await db.query(`SELECT 1 FROM lottery_tickets WHERE draw_id = $1 AND ticket_number = $2`, [body.draw_id, ticketNumClean])
       if (checkRes.rows.length > 0) return reply.code(409).send({ error: 'Ticket number is already reserved by another player' })
@@ -390,22 +390,29 @@ export function bettingPlugin(db: Pool) {
     })
 
     app.post('/internal/lottery/create', { onRequest: [internal] }, async (req) => {
-      const body = z.object({ name: z.string(), ticket_price: z.number().positive(), draw_time: z.string(), digits: z.number().int().min(1).max(8).default(4), prize_multiplier: z.number().positive().default(1000) }).parse(req.body)
-      const r = await db.query(`INSERT INTO lottery_draws (name, ticket_price, draw_time, digits, prize_multiplier) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [body.name, body.ticket_price, body.draw_time, body.digits, body.prize_multiplier])
+      const body = z.object({
+        name: z.string(),
+        ticket_price: z.number().positive(),
+        draw_time: z.string(),
+        prize_tiers: z.array(z.object({
+          match_type: z.enum(['exact', 'last_3', 'last_2', 'last_1']),
+          multiplier: z.number().positive(),
+        })).min(1),
+      }).parse(req.body)
+      const r = await db.query(`INSERT INTO lottery_draws (name, ticket_price, draw_time, prize_tiers) VALUES ($1,$2,$3,$4) RETURNING *`, [body.name, body.ticket_price, body.draw_time, JSON.stringify(body.prize_tiers)])
       return { success: true, draw: r.rows[0] }
     })
 
-    app.post('/internal/lottery/draw', { onRequest: [internal] }, async (req) => {
+    app.post('/internal/lottery/draw', { onRequest: [internal] }, async (req, reply) => {
       const body = z.object({
         draw_id: z.string().uuid(),
-        winners: z.array(z.object({
-          ticket_number: z.string(),
-          prize: z.number().positive(),
-          rank: z.number().optional()
-        }))
+        winning_number: z.string().regex(/^[0-9]{4}$/).optional(),
+        random: z.boolean().optional(),
       }).parse(req.body)
-      const res = await settleLottery(db, body.draw_id, body.winners as any)
-      return { success: true, ...res }
+      const winningNumber = body.random ? generateWinningNumber() : body.winning_number
+      if (!winningNumber) return reply.code(400).send({ error: 'winning_number or random must be provided' })
+      const res = await settleLottery(db, body.draw_id, winningNumber)
+      return { success: true, winning_number: winningNumber, ...res }
     })
 
     app.post('/internal/lottery/cancel', { onRequest: [internal] }, async (req, reply) => {
