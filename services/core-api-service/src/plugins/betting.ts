@@ -243,13 +243,19 @@ export function bettingPlugin(db: Pool) {
 
     // ══ LOTTERY — DAILY (90-BALL BINGO) ══
     app.get('/lottery/bingo/draws', { onRequest: [auth] }, async () => {
+      // Serves all three mobile tabs (Browse/History) from one call: open
+      // and calling draws are always included so Browse never misses an
+      // active draw; settled draws are included for the last 7 days so
+      // History has something to show, bounded rather than unbounded.
       const rows = await db.query(`
         SELECT d.*, COUNT(t.id)::int AS ticket_count
         FROM lottery_bingo_draws d
         LEFT JOIN lottery_bingo_tickets t ON t.draw_id = d.id
-        WHERE d.status IN ('open', 'calling') AND d.draw_time > NOW() - INTERVAL '15 minutes'
+        WHERE d.status IN ('open', 'calling')
+           OR (d.status = 'settled' AND d.draw_time > NOW() - INTERVAL '7 days')
         GROUP BY d.id
-        ORDER BY d.draw_time ASC
+        ORDER BY d.draw_time DESC
+        LIMIT 100
       `)
       return { draws: rows.rows }
     })

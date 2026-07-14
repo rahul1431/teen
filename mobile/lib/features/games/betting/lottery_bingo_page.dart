@@ -170,7 +170,9 @@ class _LotteryBingoPageState extends State<LotteryBingoPage> with SingleTickerPr
   Widget _drawCard(dynamic d) {
     final price = double.tryParse(d['ticket_price']?.toString() ?? '0') ?? 0;
     final drawTime = DateTime.tryParse(d['draw_time']?.toString() ?? '');
-    final isCalling = d['status'] == 'calling';
+    final status = d['status']?.toString() ?? 'open';
+    final isCalling = status == 'calling';
+    final isSettled = status == 'settled';
     final tiers = (d['prize_tiers'] as List?) ?? [];
 
     return Container(
@@ -196,6 +198,12 @@ class _LotteryBingoPageState extends State<LotteryBingoPage> with SingleTickerPr
                   decoration: BoxDecoration(color: AppColors.gold.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(6)),
                   child: const Text('LIVE NOW', style: TextStyle(color: AppColors.gold, fontSize: 10, fontWeight: FontWeight.w900)),
                 ),
+              if (isSettled)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.3), borderRadius: BorderRadius.circular(6)),
+                  child: const Text('SETTLED', style: TextStyle(color: AppColors.textSecondary, fontSize: 10, fontWeight: FontWeight.w900)),
+                ),
             ],
           ),
           const SizedBox(height: 8),
@@ -212,42 +220,44 @@ class _LotteryBingoPageState extends State<LotteryBingoPage> with SingleTickerPr
             )).toList(),
           ),
           const SizedBox(height: 12),
-          if (drawTime != null && !isCalling)
+          if (drawTime != null && !isCalling && !isSettled)
             Text('Starts in ${_countdown(drawTime)}',
                 style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              if (!isCalling)
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => _buy(d),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.gold,
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          if (!isSettled) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                if (!isCalling)
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => _buy(d),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.gold,
+                        foregroundColor: Colors.black,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: const Text('Buy Ticket', style: TextStyle(fontWeight: FontWeight.w900)),
                     ),
-                    child: const Text('Buy Ticket', style: TextStyle(fontWeight: FontWeight.w900)),
                   ),
-                ),
-              if (isCalling) ...[
-                const SizedBox(width: 0),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => _LiveDrawScreen(draw: d),
-                    )),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.gold,
-                      side: const BorderSide(color: AppColors.gold),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                if (isCalling) ...[
+                  const SizedBox(width: 0),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.push(context, MaterialPageRoute(
+                        builder: (_) => _LiveDrawScreen(draw: d),
+                      )),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.gold,
+                        side: const BorderSide(color: AppColors.gold),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: const Text('Watch Live', style: TextStyle(fontWeight: FontWeight.w900)),
                     ),
-                    child: const Text('Watch Live', style: TextStyle(fontWeight: FontWeight.w900)),
                   ),
-                ),
+                ],
               ],
-            ],
-          ),
+            ),
+          ],
         ],
       ),
     );
