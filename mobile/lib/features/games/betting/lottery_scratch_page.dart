@@ -340,7 +340,6 @@ class _ScratchRevealScreen extends StatefulWidget {
 class _ScratchRevealScreenState extends State<_ScratchRevealScreen> {
   final List<Offset> _scratchPoints = [];
   bool _revealed = false;
-  static const double _revealThreshold = 0.55;
 
   void _addScratchPoint(Offset p) {
     setState(() => _scratchPoints.add(p));
