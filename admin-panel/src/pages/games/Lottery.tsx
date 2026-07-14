@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Divider, Popconfirm, Drawer, Statistic
+  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Divider, Popconfirm, Drawer, Statistic, Radio
 } from 'antd'
 import { 
   ReloadOutlined, DeleteOutlined, TrophyOutlined, WalletOutlined, 
@@ -21,6 +21,7 @@ export default function Lottery() {
   const [loadingDraws, setLoadingDraws] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [drawFor, setDrawFor] = useState<any>(null)
+  const [declareMode, setDeclareMode] = useState<'manual' | 'random'>('manual')
   const [cForm] = Form.useForm()
   const [dForm] = Form.useForm()
 
@@ -99,12 +100,13 @@ export default function Lottery() {
 
   const declare = async (v: any) => {
     try {
-      const r = await adminApi.post('/betting/lottery/draw', {
-        draw_id: drawFor.id,
-        winners: v.winners,
-      })
-      message.success(`Drawn — ${r.data.winners}/${r.data.tickets} winners, ₹${Number(r.data.paid).toFixed(0)} paid`)
+      const payload: any = { draw_id: drawFor.id }
+      if (declareMode === 'random') payload.random = true
+      else payload.winning_number = v.winning_number
+      const r = await adminApi.post('/betting/lottery/draw', payload)
+      message.success(`Drawn (${r.data.winning_number}) — ${r.data.winners}/${r.data.tickets} winners, ₹${Number(r.data.paid).toFixed(0)} paid`)
       setDrawFor(null)
+      setDeclareMode('manual')
       dForm.resetFields()
       loadDraws()
       loadStats()
@@ -353,15 +355,18 @@ export default function Lottery() {
                   dataIndex: 'ticket_price', 
                   render: (v: any) => <span style={{ color: '#34d399', fontWeight: 600 }}>₹{Number(v).toFixed(0)}</span> 
                 },
-                { 
-                  title: 'Length', 
-                  dataIndex: 'digits',
-                  render: (v: any) => `${v} Digits`
-                },
-                { 
-                  title: 'Payout', 
-                  dataIndex: 'prize_multiplier', 
-                  render: (v: any) => <Tag color="gold" style={{ fontWeight: 'bold' }}>{Number(v).toLocaleString()}x</Tag> 
+                {
+                  title: 'Prize Tiers',
+                  dataIndex: 'prize_tiers',
+                  render: (tiers: any[]) => (
+                    <Space wrap size={4}>
+                      {(tiers || []).map((t, i) => (
+                        <Tag key={i} color="gold" style={{ fontWeight: 'bold', fontSize: 10 }}>
+                          {t.match_type === 'exact' ? '4/4' : t.match_type.replace('last_', 'Last ')}: {t.multiplier}x
+                        </Tag>
+                      ))}
+                    </Space>
+                  )
                 },
                 { 
                   title: 'Sold', 
@@ -511,69 +516,51 @@ export default function Lottery() {
         </Form>
       </Modal>
 
-      {/* Modal: Declare Winners */}
-      <Modal 
-        open={!!drawFor} 
+      {/* Modal: Declare Result */}
+      <Modal
+        open={!!drawFor}
         title={
           <span style={{ fontSize: '18px' }}>
-            🏆 Declare Winners — <span style={{ color: '#d4af37' }}>{drawFor?.name}</span>
+            🏆 Declare Result — <span style={{ color: '#d4af37' }}>{drawFor?.name}</span>
           </span>
-        } 
-        onCancel={() => { setDrawFor(null); dForm.resetFields(); }} 
-        onOk={() => dForm.submit()} 
+        }
+        onCancel={() => { setDrawFor(null); setDeclareMode('manual'); dForm.resetFields(); }}
+        onOk={() => { if (declareMode === 'random') declare({}); else dForm.submit(); }}
         okText="Declare & Settle"
         okButtonProps={{ danger: true, style: { borderRadius: '6px' } }}
         cancelButtonProps={{ style: { borderRadius: '6px' } }}
         width={600}
       >
-        <Form 
-          form={dForm} 
-          layout="vertical" 
-          onFinish={declare} 
-          initialValues={{ winners: [{ ticket_number: '', prize: 1000 }] }}
-          style={{ marginTop: '16px' }}
-        >
-          <Form.List name="winners">
-            {(fields, { add, remove }) => (
-              <>
-                {fields.map(({ key, name, ...restField }) => (
-                  <Space key={key} style={{ display: 'flex', marginBottom: 12 }} align="baseline">
-                    <Form.Item
-                      {...restField}
-                      name={[name, 'ticket_number']}
-                      rules={[{ required: true, message: 'Missing ticket number' }]}
-                      style={{ marginBottom: 0 }}
-                    >
-                      <Input placeholder="Ticket Number (e.g. LUCKY7)" style={{ width: 220, borderRadius: '6px' }} />
-                    </Form.Item>
-                    <Form.Item
-                      {...restField}
-                      name={[name, 'prize']}
-                      rules={[{ required: true, message: 'Missing prize amount' }]}
-                      style={{ marginBottom: 0 }}
-                    >
-                      <InputNumber min={1} placeholder="Prize (₹)" style={{ width: 180, borderRadius: '6px' }} formatter={(v) => `₹ ${v}`} />
-                    </Form.Item>
-                    {fields.length > 1 ? (
-                      <Button danger onClick={() => remove(name)} style={{ borderRadius: '6px' }}>Remove</Button>
-                    ) : null}
-                  </Space>
-                ))}
-                <Form.Item style={{ marginTop: '8px' }}>
-                  <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />} style={{ borderRadius: '8px' }}>
-                    Add Another Winner Rank
-                  </Button>
-                </Form.Item>
-              </>
-            )}
-          </Form.List>
-          
-          <div style={{ 
-            background: '#fff2f0', 
-            border: '1px solid #ffccc7', 
-            borderRadius: '8px', 
-            padding: '12px 16px', 
-            marginTop: '20px', 
+        <div style={{ marginTop: '16px' }}>
+          <Radio.Group value={declareMode} onChange={e => setDeclareMode(e.target.value)} style={{ marginBottom: 20 }}>
+            <Radio.Button value="manual">Enter Manually</Radio.Button>
+            <Radio.Button value="random">Generate Randomly 🎲</Radio.Button>
+          </Radio.Group>
+
+          {declareMode === 'manual' ? (
+            <Form form={dForm} layout="vertical" onFinish={declare}>
+              <Form.Item
+                name="winning_number"
+                label="Winning 4-Digit Number"
+                rules={[{ required: true, pattern: /^[0-9]{4}$/, message: 'Must be exactly 4 digits' }]}
+              >
+                <Input
+                  maxLength={4}
+                  placeholder="e.g. 4821"
+                  style={{ fontSize: 22, letterSpacing: 6, textAlign: 'center', fontWeight: 'bold', borderRadius: '6px' }}
+                />
+              </Form.Item>
+            </Form>
+          ) : (
+            <Text type="secondary">A random 4-digit number will be generated by the server and used to settle this draw.</Text>
+          )}
+
+          <div style={{
+            background: '#fff2f0',
+            border: '1px solid #ffccc7',
+            borderRadius: '8px',
+            padding: '12px 16px',
+            marginTop: '20px',
             display: 'flex',
             alignItems: 'flex-start'
           }}>
@@ -581,11 +568,11 @@ export default function Lottery() {
             <div>
               <Text strong style={{ color: '#ff4d4f', display: 'block', marginBottom: '2px' }}>Critical Action</Text>
               <Text type="danger" style={{ fontSize: '12px' }}>
-                This will close the draw, credit all winner balances immediately, and mark all other tickets as lost. This cannot be undone.
+                This will close the draw, automatically match every ticket against the winning number using this draw's prize tiers, credit all winner balances immediately, and mark all other tickets as lost. This cannot be undone.
               </Text>
             </div>
           </div>
-        </Form>
+        </div>
       </Modal>
 
       {/* Drawer: Tickets purchased */}
