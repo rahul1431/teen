@@ -106,8 +106,8 @@ export default function Lottery() {
       const r = await adminApi.post('/betting/lottery/draw', payload)
       message.success(`Drawn (${r.data.winning_number}) — ${r.data.winners}/${r.data.tickets} winners, ₹${Number(r.data.paid).toFixed(0)} paid`)
       setDrawFor(null)
+      if (declareMode === 'manual') dForm.resetFields()
       setDeclareMode('manual')
-      dForm.resetFields()
       loadDraws()
       loadStats()
     } catch (e: any) {
@@ -524,7 +524,7 @@ export default function Lottery() {
             🏆 Declare Result — <span style={{ color: '#d4af37' }}>{drawFor?.name}</span>
           </span>
         }
-        onCancel={() => { setDrawFor(null); setDeclareMode('manual'); dForm.resetFields(); }}
+        onCancel={() => { setDrawFor(null); if (declareMode === 'manual') dForm.resetFields(); setDeclareMode('manual'); }}
         onOk={() => { if (declareMode === 'random') declare({}); else dForm.submit(); }}
         okText="Declare & Settle"
         okButtonProps={{ danger: true, style: { borderRadius: '6px' } }}
