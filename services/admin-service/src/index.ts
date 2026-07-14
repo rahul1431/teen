@@ -2309,7 +2309,7 @@ async function start() {
       prize_tiers: z.array(z.object({
         match_type: z.enum(['exact', 'last_3', 'last_2', 'last_1']),
         multiplier: z.number().positive(),
-      })).optional(),
+      })).min(1).optional(),
     }).parse(req.body)
     const existing = await db.query(`SELECT status FROM lottery_draws WHERE id = $1`, [id])
     if (!existing.rows.length) return reply.code(404).send({ error: 'Draw not found' })
