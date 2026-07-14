@@ -16,6 +16,7 @@ class LotteryPage extends StatefulWidget {
 }
 
 class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin {
+  static const _categories = ['daily', 'instant', 'weekly', 'monthly'];
   late final TabController _tab;
   List<dynamic> _draws = [];
   List<dynamic> _myTickets = [];
@@ -29,17 +30,24 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 3, vsync: this);
+    _tab = TabController(length: 6, vsync: this);
     _tab.addListener(() {
       if (!_tab.indexIsChanging) {
-        if (_tab.index == 1 && _myTickets.isEmpty) _loadMyTickets();
-        if (_tab.index == 2 && _results.isEmpty) _loadResults();
+        setState(() {});
+        if (_tab.index == 4 && _myTickets.isEmpty) _loadMyTickets();
+        if (_tab.index == 5 && _results.isEmpty) _loadResults();
       }
     });
     _loadDraws();
     _loadBalance();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) { if (mounted) setState(() {}); });
   }
+
+  List<dynamic> _drawsFor(String category) =>
+      _draws.where((d) => d['category'] == category).toList();
+
+  String get _activeCategory =>
+      _categories[_tab.index.clamp(0, _categories.length - 1)];
 
   @override
   void dispose() {
@@ -89,7 +97,7 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
     }
   }
 
-  double get _totalJackpot => _draws.fold(0.0, (sum, d) {
+  double get _totalJackpot => _drawsFor(_activeCategory).fold(0.0, (sum, d) {
     final price = double.tryParse(d['ticket_price']?.toString() ?? '0') ?? 0;
     final tiers = (d['prize_tiers'] as List?) ?? [];
     final exactTier = tiers.cast<Map>().firstWhere(
@@ -101,7 +109,7 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
   });
 
   DateTime? get _nextDraw {
-    final times = _draws
+    final times = _drawsFor(_activeCategory)
         .map((d) => DateTime.tryParse(d['draw_time']?.toString() ?? ''))
         .whereType<DateTime>()
         .where((t) => t.isAfter(DateTime.now()))
@@ -146,7 +154,14 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
         headerSliverBuilder: (ctx, _) => [_buildSliverAppBar()],
         body: TabBarView(
           controller: _tab,
-          children: [_drawsTab(), _myTicketsTab(), _resultsTab()],
+          children: [
+            _categoryDrawsTab('daily'),
+            _categoryDrawsTab('instant'),
+            _categoryDrawsTab('weekly'),
+            _categoryDrawsTab('monthly'),
+            _myTicketsTab(),
+            _resultsTab(),
+          ],
         ),
       ),
     );
@@ -199,12 +214,20 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
           color: const Color(0xFF03070A),
           child: TabBar(
             controller: _tab,
+            isScrollable: true,
             indicatorColor: AppColors.gold,
             indicatorWeight: 3.0,
             labelColor: AppColors.gold,
             unselectedLabelColor: AppColors.textSecondary,
             labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 0.5),
-            tabs: const [Tab(text: 'Active Draws'), Tab(text: 'My Tickets'), Tab(text: 'Results')],
+            tabs: const [
+              Tab(text: 'Daily'),
+              Tab(text: 'Instant'),
+              Tab(text: 'Weekly'),
+              Tab(text: 'Monthly'),
+              Tab(text: 'My Tickets'),
+              Tab(text: 'Results'),
+            ],
           ),
         ),
       ),
@@ -327,11 +350,20 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
     ),
   );
 
-  // ── Tab 1: Active Draws ─────────────────────────────────────────────────
+  // ── Tabs 1-4: Category Draws ─────────────────────────────────────────────
 
-  Widget _drawsTab() {
+  static const _categoryLabels = {
+    'daily': 'Daily Lottery (Card/Bingo)',
+    'instant': 'Instant Lottery (Scratch Card)',
+  };
+
+  Widget _categoryDrawsTab(String category) {
+    if (_categoryLabels.containsKey(category)) {
+      return _comingSoonTab(_categoryLabels[category]!);
+    }
     if (_loading) return const Center(child: CircularProgressIndicator(color: AppColors.gold));
-    if (_draws.isEmpty) {
+    final draws = _drawsFor(category);
+    if (draws.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -366,8 +398,27 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
       backgroundColor: AppColors.cardBg,
       child: ListView.builder(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-        itemCount: _draws.length,
-        itemBuilder: (_, i) => _drawCard(_draws[i]),
+        itemCount: draws.length,
+        itemBuilder: (_, i) => _drawCard(draws[i]),
+      ),
+    );
+  }
+
+  Widget _comingSoonTab(String label) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.hourglass_empty_rounded,
+              size: 64, color: AppColors.textSecondary.withOpacity(0.2)),
+          const SizedBox(height: 18),
+          Text('$label',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 15, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text('This game mode is coming soon',
+              style: TextStyle(color: AppColors.textSecondary.withOpacity(0.45), fontSize: 12)),
+        ],
       ),
     );
   }
@@ -677,6 +728,31 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
     );
   }
 
+  static const _categoryTagColors = {
+    'daily': Colors.cyanAccent,
+    'instant': Colors.purpleAccent,
+    'weekly': Colors.lightBlueAccent,
+    'monthly': AppColors.gold,
+  };
+
+  Widget _categoryTag(String? category) {
+    if (category == null) return const SizedBox.shrink();
+    final color = _categoryTagColors[category] ?? AppColors.textSecondary;
+    return Container(
+      margin: const EdgeInsets.only(left: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Text(
+        category[0].toUpperCase() + category.substring(1),
+        style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+
   Widget _ticketRow(dynamic t) {
     final isWinner = t['is_winner'] == true;
     final isLoser = t['is_winner'] == false;
@@ -732,6 +808,8 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
                           child: Text(t['draw_name'] ?? 'Lottery',
                               style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5, color: Colors.white)),
                         ),
+                        _categoryTag(t['draw_category']?.toString()),
+                        const SizedBox(width: 6),
                         _statusBadge(isWinner, isLoser, drawStatus),
                       ],
                     ),
@@ -934,6 +1012,7 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
                           child: Text(d['name'] ?? 'Lottery Draw',
                               style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5, color: Colors.white)),
                         ),
+                        _categoryTag(d['category']?.toString()),
                         Text(drawTime != null ? _fmtDt(drawTime) : '',
                             style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10.5, fontWeight: FontWeight.w600)),
                       ],
