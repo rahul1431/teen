@@ -3,10 +3,9 @@ import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
 
 /// Unified "My Bets" history for the betting games. [type] selects which
-/// endpoint and row layout to use. Cricket fantasy contests have their own
-/// "My Contests"/"My Teams" history in cricket_page.dart — this shows
-/// cricket session (fancy) bets only, since match-odds betting stays archived.
-enum BettingType { matka, lottery, cricket }
+/// endpoint and row layout to use. Cricket has its own dedicated History
+/// tab in cricket_page.dart instead of using this shared page.
+enum BettingType { matka, lottery }
 
 class BettingHistoryPage extends StatefulWidget {
   final BettingType type;
@@ -22,13 +21,11 @@ class _BettingHistoryPageState extends State<BettingHistoryPage> {
   String get _title => switch (widget.type) {
         BettingType.matka => 'My Matka Bets',
         BettingType.lottery => 'My Lottery Tickets',
-        BettingType.cricket => 'My Cricket Bets',
       };
 
   String get _endpoint => switch (widget.type) {
         BettingType.matka => '/api/betting/matka/my-bets',
         BettingType.lottery => '/api/betting/lottery/my-tickets',
-        BettingType.cricket => '/api/betting/cricket/session/my-bets',
       };
 
   String get _key => widget.type == BettingType.lottery ? 'tickets' : 'bets';
@@ -96,12 +93,6 @@ class _BettingHistoryPageState extends State<BettingHistoryPage> {
               ? 'won'
               : (b['draw_status'] == 'settled' ? 'lost' : 'pending'),
           _n(b['prize']),
-        ),
-      BettingType.cricket => (
-          '${b['team_a']} v ${b['team_b']}',
-          '${b['session_label']} → ${(b['selection'] as String? ?? '').toUpperCase()} [${b['runs_bracket']}] · ₹${_n(b['amount'])}',
-          b['status'] as String? ?? 'pending',
-          _n(b['payout']),
         ),
     };
 

@@ -2002,6 +2002,39 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  // GET a player's per-match performance history (for the Players section's View drawer)
+  app.get('/api/admin/betting/cricket/fantasy/players/:id/matches', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT mp.*, m.series, m.team_a, m.team_b, m.start_time, m.status
+       FROM cricket_match_players mp JOIN cricket_matches m ON m.id = mp.match_id
+       WHERE mp.player_id = $1 ORDER BY m.start_time DESC`,
+      [id]
+    )
+    return reply.send({ matches: res.rows })
+  })
+
+  // Map a global fantasy player into a specific match's squad — no wallet/
+  // settlement side effects, so this writes directly rather than proxying
+  // through betting-service internal routes.
+  app.post('/api/admin/betting/cricket/fantasy/players/:id/map-match', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const { match_id } = req.body as any
+    if (!match_id) return reply.code(400).send({ error: 'match_id is required' })
+    const res = await db.query(
+      `INSERT INTO cricket_match_players (match_id, player_id) VALUES ($1, $2)
+       ON CONFLICT (match_id, player_id) DO NOTHING RETURNING *`,
+      [match_id, id]
+    )
+    return reply.send({ success: true, mapping: res.rows[0] || null })
+  })
+
+  app.delete('/api/admin/betting/cricket/fantasy/players/:id/map-match/:matchId', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id, matchId } = req.params as any
+    await db.query('DELETE FROM cricket_match_players WHERE player_id = $1 AND match_id = $2', [id, matchId])
+    return reply.send({ success: true })
+  })
+
   app.post('/api/admin/betting/cricket/fantasy/leagues', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/fantasy/leagues', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)

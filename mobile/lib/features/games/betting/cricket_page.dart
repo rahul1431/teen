@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import '../../../core/audio/sound_service.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
-import 'betting_history_page.dart';
 import 'local_cricket_storage.dart';
 
 /// Premium Cricket Hub — Dream11 & MPL Style Design
@@ -23,7 +22,7 @@ class _CricketPageState extends State<CricketPage>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
+    _tabs = TabController(length: 4, vsync: this);
     _load();
   }
 
@@ -66,21 +65,13 @@ class _CricketPageState extends State<CricketPage>
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         actions: [
           IconButton(
-            icon: const Icon(Icons.receipt_long_rounded),
-            tooltip: 'My Bets',
-            onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) =>
-                        const BettingHistoryPage(type: BettingType.cricket))),
-          ),
-          IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _load,
           )
         ],
         bottom: TabBar(
           controller: _tabs,
+          isScrollable: true,
           indicatorColor: AppColors.gold,
           indicatorWeight: 3,
           labelColor: AppColors.gold,
@@ -90,6 +81,7 @@ class _CricketPageState extends State<CricketPage>
             Tab(icon: Icon(Icons.sports_cricket_rounded, size: 18), text: 'Fixtures'),
             Tab(icon: Icon(Icons.emoji_events_rounded, size: 18), text: 'My Contests'),
             Tab(icon: Icon(Icons.groups_rounded, size: 18), text: 'My Teams'),
+            Tab(text: 'History'),
           ],
         ),
       ),
@@ -102,6 +94,7 @@ class _CricketPageState extends State<CricketPage>
                 _LobbyTab(matches: _matches, onRefresh: _load),
                 _MyContestsTab(matches: _matches),
                 _MyCreatedTeamsTab(matches: _matches),
+                const _HistoryTab(),
               ],
             ),
     );
@@ -2300,6 +2293,135 @@ class _MyCreatedTeamsTabState extends State<_MyCreatedTeamsTab> {
           ),
         );
       }).toList(),
+    );
+  }
+}
+
+// =============================================================================
+// HISTORY TAB (SESSION/FANCY BET HISTORY)
+// =============================================================================
+
+class _HistoryTab extends StatefulWidget {
+  const _HistoryTab();
+
+  @override
+  State<_HistoryTab> createState() => _HistoryTabState();
+}
+
+class _HistoryTabState extends State<_HistoryTab> {
+  List<dynamic> _bets = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final res =
+          await ApiClient().dio.get('/api/betting/cricket/session/my-bets');
+      if (!mounted) return;
+      setState(() {
+        _bets = res.data['bets'] ?? [];
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  double _n(dynamic v) => double.tryParse(v?.toString() ?? '0') ?? 0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(
+          child: CircularProgressIndicator(color: AppColors.gold));
+    }
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: AppColors.gold,
+      child: _bets.isEmpty
+          ? ListView(children: const [
+              Padding(
+                padding: EdgeInsets.only(top: 80),
+                child: Center(
+                    child: Text('No session bets yet',
+                        style: TextStyle(color: AppColors.textSecondary))),
+              ),
+            ])
+          : ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: _bets.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (_, i) {
+                final b = _bets[i];
+                final status = b['status'] as String? ?? 'pending';
+                final payout = _n(b['payout']);
+                final color = switch (status) {
+                  'won' => AppColors.green,
+                  'lost' => AppColors.red,
+                  'void' => Colors.orange,
+                  _ => AppColors.textSecondary,
+                };
+                return Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.cardBg,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: color.withValues(alpha: 0.4)),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('${b['team_a']} v ${b['team_b']}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700, fontSize: 14)),
+                            const SizedBox(height: 3),
+                            Text(
+                              '${b['session_label']} → ${(b['selection'] as String? ?? '').toUpperCase()} [${b['runs_bracket']}] · ₹${_n(b['amount'])}',
+                              style: const TextStyle(
+                                  color: AppColors.textSecondary, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                                color: color.withValues(alpha: 0.18),
+                                borderRadius: BorderRadius.circular(8)),
+                            child: Text(status.toUpperCase(),
+                                style: TextStyle(
+                                    color: color,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold)),
+                          ),
+                          if (status == 'won' || status == 'void') ...[
+                            const SizedBox(height: 4),
+                            Text('+₹${payout.toStringAsFixed(0)}',
+                                style: TextStyle(
+                                    color: color,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13)),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
     );
   }
 }

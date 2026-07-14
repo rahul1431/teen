@@ -116,6 +116,18 @@ export default function Cricket() {
   const [editingSession, setEditingSession] = useState<any>(null)
   const [sForm] = Form.useForm()
 
+  // --- Players Section States (View / Map) ---
+  const [viewingPlayer, setViewingPlayer] = useState<any>(null)
+  const [playerHistory, setPlayerHistory] = useState<any[]>([])
+  const [loadingPlayerHistory, setLoadingPlayerHistory] = useState(false)
+  const [mappingPlayer, setMappingPlayer] = useState<any>(null)
+  const [playerMappings, setPlayerMappings] = useState<any[]>([])
+  const [loadingMappings, setLoadingMappings] = useState(false)
+  const [mappingMatch, setMappingMatch] = useState(false)
+  const [mapMatchId, setMapMatchId] = useState<string | undefined>(undefined)
+  const [mappingCountry, setMappingCountry] = useState(false)
+  const [mapCountryId, setMapCountryId] = useState<string | undefined>(undefined)
+
   // --- Sports API States ---
   const [syncing, setSyncing] = useState(false)
   const [syncingCountries, setSyncingCountries] = useState(false)
@@ -389,6 +401,77 @@ export default function Cricket() {
       loadPlayers()
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'Failed')
+    }
+  }
+
+  // --- Player View (per-match performance history) ---
+  const openPlayerView = (player: any) => {
+    setViewingPlayer(player)
+    setLoadingPlayerHistory(true)
+    adminApi.get(`/betting/cricket/fantasy/players/${player.id}/matches`)
+      .then(r => setPlayerHistory(r.data.matches || []))
+      .finally(() => setLoadingPlayerHistory(false))
+  }
+
+  // --- Player Map (to a match squad, or to a country) ---
+  const loadPlayerMappings = (playerId: string) => {
+    setLoadingMappings(true)
+    adminApi.get(`/betting/cricket/fantasy/players/${playerId}/matches`)
+      .then(r => setPlayerMappings(r.data.matches || []))
+      .finally(() => setLoadingMappings(false))
+  }
+
+  const openMapModal = (player: any) => {
+    setMappingPlayer(player)
+    setMapMatchId(undefined)
+    setMapCountryId(player.team_name ? countries.find(c => c.name === player.team_name)?.id : undefined)
+    loadPlayerMappings(player.id)
+  }
+
+  const closeMapModal = () => {
+    setMappingPlayer(null)
+    setPlayerMappings([])
+  }
+
+  const mapPlayerToMatch = async () => {
+    if (!mappingPlayer || !mapMatchId) return
+    setMappingMatch(true)
+    try {
+      await adminApi.post(`/betting/cricket/fantasy/players/${mappingPlayer.id}/map-match`, { match_id: mapMatchId })
+      message.success('Player mapped to match squad')
+      setMapMatchId(undefined)
+      loadPlayerMappings(mappingPlayer.id)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to map player to match')
+    } finally {
+      setMappingMatch(false)
+    }
+  }
+
+  const unmapPlayerFromMatch = async (matchId: string) => {
+    if (!mappingPlayer) return
+    try {
+      await adminApi.delete(`/betting/cricket/fantasy/players/${mappingPlayer.id}/map-match/${matchId}`)
+      message.success('Mapping removed')
+      loadPlayerMappings(mappingPlayer.id)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to remove mapping')
+    }
+  }
+
+  const mapPlayerToCountry = async () => {
+    if (!mappingPlayer || !mapCountryId) return
+    const country = countries.find(c => c.id === mapCountryId)
+    if (!country) return
+    setMappingCountry(true)
+    try {
+      await adminApi.patch(`/betting/cricket/fantasy/players/${mappingPlayer.id}`, { team_name: country.name })
+      message.success(`Mapped to ${country.name}`)
+      loadPlayers()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to map player to country')
+    } finally {
+      setMappingCountry(false)
     }
   }
 
@@ -1132,6 +1215,53 @@ export default function Cricket() {
       )
     }
     ,{
+      key: 'players',
+      label: '🧢 Players',
+      children: (
+        <Card title="Fantasy Players — full roster management"
+          extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openPlayerModal()}>Add Player</Button>}
+          loading={loadingPlayers}
+        >
+          <Table
+            rowKey="id"
+            dataSource={players}
+            columns={[
+              {
+                title: 'Player', render: (p: any) => (
+                  <Space>
+                    <div style={{ position: 'relative' }}>
+                      <Avatar src={p.avatar_url || undefined} size={32} icon={!p.avatar_url && <UserOutlined />} />
+                      {p.flag_url && (
+                        <img src={p.flag_url} alt="" style={{ position: 'absolute', bottom: -2, right: -2, width: 14, height: 10, border: '1px solid #fff', borderRadius: 2 }} />
+                      )}
+                    </div>
+                    <b>{p.name}</b>
+                  </Space>
+                )
+              },
+              { title: 'Role', dataIndex: 'role', render: (r: string) => <Tag color="blue">{r.toUpperCase().replace('_', ' ')}</Tag> },
+              { title: 'Team / Country', dataIndex: 'team_name' },
+              { title: 'Credits', dataIndex: 'credits', render: (c: number) => Number(c).toFixed(1) },
+              { title: 'Matches', dataIndex: 'matches_played' },
+              { title: 'Total Points', dataIndex: 'total_points', render: (v: number) => Number(v).toFixed(1) },
+              {
+                title: 'Action', render: (p: any) => (
+                  <Space>
+                    <Button size="small" icon={<EyeOutlined />} onClick={() => openPlayerView(p)} />
+                    <Button size="small" icon={<EditOutlined />} onClick={() => openPlayerModal(p)} />
+                    <Button size="small" onClick={() => openMapModal(p)}>Map</Button>
+                    <Popconfirm title="Delete this player?" description="Blocked if set as a fantasy team's captain/vice-captain." onConfirm={() => deletePlayer(p.id)}>
+                      <Button size="small" danger type="text" icon={<DeleteOutlined />} />
+                    </Popconfirm>
+                  </Space>
+                )
+              },
+            ]}
+          />
+        </Card>
+      )
+    }
+    ,{
       key: 'countries',
       label: '🌍 Countries',
       children: (
@@ -1469,6 +1599,114 @@ export default function Cricket() {
           </>
         )}
       </Drawer>
+
+      {/* Player View Drawer */}
+      <Drawer
+        title={viewingPlayer ? viewingPlayer.name : 'Player Detail'}
+        open={!!viewingPlayer}
+        onClose={() => setViewingPlayer(null)}
+        width={520}
+        loading={loadingPlayerHistory}
+      >
+        {viewingPlayer && (
+          <>
+            <Space align="start" style={{ marginBottom: 16 }}>
+              <div style={{ position: 'relative' }}>
+                <Avatar src={viewingPlayer.avatar_url || undefined} size={56} icon={!viewingPlayer.avatar_url && <UserOutlined />} />
+                {viewingPlayer.flag_url && (
+                  <img src={viewingPlayer.flag_url} alt="" style={{ position: 'absolute', bottom: -2, right: -2, width: 20, height: 14, border: '1px solid #fff', borderRadius: 2 }} />
+                )}
+              </div>
+              <div>
+                <Tag color="blue">{viewingPlayer.role.toUpperCase().replace('_', ' ')}</Tag>
+                <div style={{ marginTop: 4 }}><Text type="secondary">{viewingPlayer.team_name} · {Number(viewingPlayer.credits).toFixed(1)} cr</Text></div>
+              </div>
+            </Space>
+            <Divider>Match History ({playerHistory.length})</Divider>
+            {playerHistory.length === 0 ? (
+              <Text type="secondary">No match performances recorded yet.</Text>
+            ) : (
+              <Table
+                rowKey={(r: any) => `${r.match_id}`}
+                size="small"
+                dataSource={playerHistory}
+                pagination={{ pageSize: 10 }}
+                columns={[
+                  { title: 'Match', render: (r: any) => `${r.team_a} vs ${r.team_b}` },
+                  { title: 'Runs', dataIndex: 'runs_scored' },
+                  { title: 'Wkts', dataIndex: 'wickets' },
+                  { title: 'Catches', dataIndex: 'catches' },
+                  { title: 'Points', dataIndex: 'fantasy_points', render: (v: number) => Number(v).toFixed(1) },
+                ]}
+              />
+            )}
+          </>
+        )}
+      </Drawer>
+
+      {/* Player Map Modal (to a match squad, or to a country) */}
+      <Modal open={!!mappingPlayer} title={mappingPlayer ? `Map — ${mappingPlayer.name}` : 'Map Player'} onCancel={closeMapModal} footer={null} width={560}>
+        {mappingPlayer && (
+          <Tabs items={[
+            {
+              key: 'match', label: 'Match Squad', children: (
+                <div>
+                  <Space.Compact style={{ width: '100%', marginBottom: 16 }}>
+                    <Select
+                      style={{ width: '100%' }}
+                      showSearch optionFilterProp="label"
+                      placeholder="Select a match to add this player to"
+                      value={mapMatchId}
+                      onChange={setMapMatchId}
+                      options={matches.map(m => ({ value: m.id, label: `${m.team_a} vs ${m.team_b} (${m.series})` }))}
+                    />
+                    <Button type="primary" loading={mappingMatch} onClick={mapPlayerToMatch} disabled={!mapMatchId}>Add</Button>
+                  </Space.Compact>
+                  <Table
+                    rowKey="match_id"
+                    size="small"
+                    loading={loadingMappings}
+                    dataSource={playerMappings}
+                    pagination={false}
+                    columns={[
+                      { title: 'Match', render: (r: any) => `${r.team_a} vs ${r.team_b}` },
+                      { title: 'Status', dataIndex: 'status', render: (s: string) => <Tag>{s}</Tag> },
+                      { title: 'Points', dataIndex: 'fantasy_points', render: (v: number) => Number(v).toFixed(1) },
+                      {
+                        title: 'Action', render: (r: any) => (
+                          <Popconfirm title="Remove this player from the match squad?" onConfirm={() => unmapPlayerFromMatch(r.match_id)}>
+                            <Button size="small" danger type="text" icon={<DeleteOutlined />} />
+                          </Popconfirm>
+                        )
+                      },
+                    ]}
+                  />
+                </div>
+              )
+            },
+            {
+              key: 'country', label: 'Country', children: (
+                <div>
+                  <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+                    Sets this player's team/country to exactly match a Countries entry, so the flag badge renders correctly.
+                  </Text>
+                  <Space.Compact style={{ width: '100%' }}>
+                    <Select
+                      style={{ width: '100%' }}
+                      showSearch optionFilterProp="label"
+                      placeholder="Select a country"
+                      value={mapCountryId}
+                      onChange={setMapCountryId}
+                      options={countries.map(c => ({ value: c.id, label: c.name }))}
+                    />
+                    <Button type="primary" loading={mappingCountry} onClick={mapPlayerToCountry} disabled={!mapCountryId}>Save</Button>
+                  </Space.Compact>
+                </div>
+              )
+            },
+          ]} />
+        )}
+      </Modal>
     </div>
   )
 }
