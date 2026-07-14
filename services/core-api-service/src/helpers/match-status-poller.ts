@@ -5,13 +5,16 @@ import { Pool } from 'pg'
 // in the Live Console, or "Sync Matches" happening to match it against
 // CricAPI's currentMatches feed (which doesn't always surface bilateral
 // series matches). Matches were getting stuck showing a countdown in
-// Upcoming Fixtures long after they'd actually started.
+// Upcoming Fixtures long after they'd actually started, and the live
+// runs/wickets scoreboard stayed blank until an admin typed it in by hand.
 //
-// This sweep checks every 'upcoming' match whose start_time has passed:
-// first tries to confirm via CricAPI's match_info (accurate through toss/
-// rain delays), and if that call fails or is rate-limited, falls back to
-// a time-based flip after a grace period so a match never gets stuck
-// waiting on an API that might be unavailable.
+// This sweep covers both, off a single CricAPI call per match per cycle
+// (deliberately not two, to go easy on the free-tier rate limit):
+// - 'upcoming' matches past their start_time: confirm via match_info
+//   (accurate through toss/rain delays), falling back to a time-based flip
+//   after a grace period if the API call fails or is rate-limited.
+// - 'live' matches: refresh live_score from the same match_info response,
+//   and flip to 'settled' once CricAPI confirms matchEnded.
 export class MatchStatusPoller {
   private static readonly POLL_MS = 2 * 60 * 1000
   private static readonly GRACE_MS = 10 * 60 * 1000
@@ -32,7 +35,9 @@ export class MatchStatusPoller {
 
   private async sweep(): Promise<void> {
     const matches = await this.db.query(
-      `SELECT id, match_api_id, start_time FROM cricket_matches WHERE status = 'upcoming' AND start_time <= NOW()`
+      `SELECT id, match_api_id, start_time, status FROM cricket_matches
+       WHERE (status = 'upcoming' AND start_time <= NOW())
+          OR (status = 'live' AND match_api_id IS NOT NULL)`
     )
     if (!matches.rows.length) return
     const apiKey = await this.getApiKey()
@@ -45,26 +50,36 @@ export class MatchStatusPoller {
     }
   }
 
-  private async checkMatch(m: { id: string; match_api_id: string | null; start_time: string }, apiKey: string): Promise<void> {
+  private async checkMatch(m: { id: string; match_api_id: string | null; start_time: string; status: string }, apiKey: string): Promise<void> {
     if (m.match_api_id) {
       try {
         const data = await (await fetch(`https://api.cricapi.com/v1/match_info?apikey=${apiKey}&id=${m.match_api_id}`)).json() as any
         if (data.status === 'success' && data.data) {
-          const status = data.data.matchEnded ? 'settled' : data.data.matchStarted ? 'live' : null
-          if (status) {
-            await this.db.query('UPDATE cricket_matches SET status = $1 WHERE id = $2', [status, m.id])
-            console.log(`[match-status] ${m.id} -> ${status} (confirmed via CricAPI)`)
+          const newStatus = data.data.matchEnded ? 'settled' : data.data.matchStarted ? 'live' : null
+          const scoreArr = data.data.score
+          const liveScore = scoreArr?.length
+            ? { runs: scoreArr.at(-1).r, wickets: scoreArr.at(-1).w, overs: scoreArr.at(-1).o, description: data.data.status }
+            : null
+
+          const fields: string[] = [], params: any[] = [m.id]
+          let i = 2
+          if (newStatus && newStatus !== m.status) { fields.push(`status = $${i++}`); params.push(newStatus) }
+          if (liveScore) { fields.push(`live_score = $${i++}`); params.push(JSON.stringify(liveScore)) }
+          if (fields.length) {
+            await this.db.query(`UPDATE cricket_matches SET ${fields.join(', ')} WHERE id = $1`, params)
+            console.log(`[match-status] ${m.id} updated (${fields.join(', ')})`)
           }
           return
         }
       } catch (e) {
-        console.error(`[match-status] CricAPI check failed for ${m.id}, falling back to time-based flip`, e)
+        console.error(`[match-status] CricAPI check failed for ${m.id}`, e)
       }
     }
 
-    // No match_api_id, or the API call failed/was rate-limited — fall back
-    // to a time-based flip once the grace period has passed, rather than
-    // leaving the match stuck showing a stale countdown indefinitely.
+    // No match_api_id, or the API call failed/was rate-limited — only the
+    // upcoming->live transition has a time-based fallback (there's no safe
+    // fallback for live_score or for detecting a match has ended).
+    if (m.status !== 'upcoming') return
     const startedMs = new Date(m.start_time).getTime()
     if (Date.now() - startedMs >= MatchStatusPoller.GRACE_MS) {
       await this.db.query(`UPDATE cricket_matches SET status = 'live' WHERE id = $1`, [m.id])
