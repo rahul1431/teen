@@ -1154,6 +1154,8 @@ class _TicketPickerSheetState extends State<_TicketPickerSheet> {
               borderSide:
                   const BorderSide(color: Color(0xFF0D9488), width: 1.8)),
         ),
+        onTap: () => _controllers[index].selection = TextSelection(
+            baseOffset: 0, extentOffset: _controllers[index].text.length),
         onChanged: (val) {
           setState(() => _error = null);
           if (val.isNotEmpty && index < 3) {
