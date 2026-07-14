@@ -7,6 +7,7 @@ import { MATKA_MULTIPLIERS, validateMatkaBet, settleMatkaSession } from '../help
 import { settleLottery } from '../helpers/lottery'
 import { settleFantasyLeague, settleCricketSession } from '../helpers/cricket'
 import { aggregateScorecard, computeFantasyPoints, DEFAULT_SCORING_RULES } from '../helpers/fantasy-scoring'
+import { cricApiFetch } from '../helpers/cricapi-client'
 
 export function bettingPlugin(db: Pool) {
   return async function (app: FastifyInstance) {
@@ -560,9 +561,8 @@ export function bettingPlugin(db: Pool) {
       const rules = configRes.rows[0]?.special_rules?.scoring_rules
         ? { ...DEFAULT_SCORING_RULES, ...configRes.rows[0].special_rules.scoring_rules }
         : DEFAULT_SCORING_RULES
-      const apiKey = configRes.rows[0]?.special_rules?.api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
 
-      const data = await (await fetch(`https://api.cricapi.com/v1/match_scorecard?apikey=${apiKey}&id=${matchRes.rows[0].match_api_id}`)).json() as any
+      const data = await cricApiFetch(db, apiKey => `https://api.cricapi.com/v1/match_scorecard?apikey=${apiKey}&id=${matchRes.rows[0].match_api_id}`)
       if (data.status !== 'success' || !data.data?.scorecard) {
         return reply.code(502).send({ error: `Could not fetch final scorecard: ${data.reason || 'unknown error'}` })
       }
@@ -581,11 +581,8 @@ export function bettingPlugin(db: Pool) {
 
     // Cricket API sync routes (pass-through to external API)
     app.post('/internal/cricket/sync-api', { onRequest: [internal] }, async (req, reply) => {
-      const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
-      const { api_key } = configRes.rows[0]?.special_rules || {}
-      const keyToUse = api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
       try {
-        const currentData = await (await fetch(`https://api.cricapi.com/v1/currentMatches?apikey=${keyToUse}&offset=0`)).json() as any
+        const currentData = await cricApiFetch(db, apiKey => `https://api.cricapi.com/v1/currentMatches?apikey=${apiKey}&offset=0`)
         if (currentData.status !== 'success') throw new Error(currentData.reason || 'Failed')
         const flagsRes = await db.query('SELECT name, flag_url FROM cricket_countries')
         const flagMap = new Map(flagsRes.rows.map(r => [r.name.toLowerCase(), r.flag_url]))
@@ -611,10 +608,8 @@ export function bettingPlugin(db: Pool) {
     })
 
     app.post('/internal/cricket/sync-countries', { onRequest: [internal] }, async (req, reply) => {
-      const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
-      const keyToUse = configRes.rows[0]?.special_rules?.api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
       try {
-        const data = await (await fetch(`https://api.cricapi.com/v1/countries?apikey=${keyToUse}&offset=0`)).json() as any
+        const data = await cricApiFetch(db, apiKey => `https://api.cricapi.com/v1/countries?apikey=${apiKey}&offset=0`)
         if (data.status !== 'success') throw new Error(data.reason || 'Failed')
         let count = 0
         for (const c of (data.data || [])) {
@@ -631,12 +626,9 @@ export function bettingPlugin(db: Pool) {
     // handler never existed (the panel's fetch just 404'd silently). Adding
     // it here also backs the new bulk squad-sync-by-series feature below.
     app.post('/internal/cricket/sync-series', { onRequest: [internal] }, async (req, reply) => {
-      const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
-      const keyToUse = configRes.rows[0]?.special_rules?.api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
       const { search } = req.body as any
       try {
-        const url = `https://api.cricapi.com/v1/series?apikey=${keyToUse}&offset=0${search ? `&search=${encodeURIComponent(search)}` : ''}`
-        const data = await (await fetch(url)).json() as any
+        const data = await cricApiFetch(db, apiKey => `https://api.cricapi.com/v1/series?apikey=${apiKey}&offset=0${search ? `&search=${encodeURIComponent(search)}` : ''}`)
         if (data.status !== 'success') throw new Error(data.reason || 'Failed')
         return { success: true, series: (data.data || []).map((s: any) => ({
           id: s.id, name: s.name, startDate: s.startDate, endDate: s.endDate, matchCount: s.matches,
@@ -649,12 +641,10 @@ export function bettingPlugin(db: Pool) {
     // series in the cricket_series catalog so it shows up in the Add Match
     // dropdown without an admin re-typing it.
     app.post('/internal/cricket/import-series-matches', { onRequest: [internal] }, async (req, reply) => {
-      const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
-      const keyToUse = configRes.rows[0]?.special_rules?.api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
       const { series_id } = req.body as any
       if (!series_id) return reply.code(400).send({ error: 'series_id is required' })
       try {
-        const data = await (await fetch(`https://api.cricapi.com/v1/series_info?apikey=${keyToUse}&id=${series_id}`)).json() as any
+        const data = await cricApiFetch(db, apiKey => `https://api.cricapi.com/v1/series_info?apikey=${apiKey}&id=${series_id}`)
         if (data.status !== 'success') throw new Error(data.reason || 'Failed')
         const info = data.data?.info
         const seriesName = info?.name || 'Imported Series'
@@ -688,12 +678,10 @@ export function bettingPlugin(db: Pool) {
     // teams of a single already-imported match — that's why the fantasy
     // player catalog stayed stuck around ~20 rows despite 89 matches synced.
     app.post('/internal/cricket/sync-series-squads', { onRequest: [internal] }, async (req, reply) => {
-      const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
-      const keyToUse = configRes.rows[0]?.special_rules?.api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
       const { series_id } = req.body as any
       if (!series_id) return reply.code(400).send({ error: 'series_id is required' })
       try {
-        const data = await (await fetch(`https://api.cricapi.com/v1/series_info?apikey=${keyToUse}&id=${series_id}`)).json() as any
+        const data = await cricApiFetch(db, apiKey => `https://api.cricapi.com/v1/series_info?apikey=${apiKey}&id=${series_id}`)
         if (data.status !== 'success') throw new Error(data.reason || 'Failed')
         let playersSeeded = 0, teamsSeeded = 0
         for (const team of (data.data?.squads || [])) {
@@ -711,12 +699,10 @@ export function bettingPlugin(db: Pool) {
     })
 
     app.post('/internal/cricket/sync-squad', { onRequest: [internal] }, async (req, reply) => {
-      const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
-      const keyToUse = configRes.rows[0]?.special_rules?.api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
       const { match_id, match_api_id } = req.body as any
       if (!match_id || !match_api_id) return reply.code(400).send({ error: 'match_id and match_api_id are required' })
       try {
-        const data = await (await fetch(`https://api.cricapi.com/v1/match_squad?apikey=${keyToUse}&id=${match_api_id}`)).json() as any
+        const data = await cricApiFetch(db, apiKey => `https://api.cricapi.com/v1/match_squad?apikey=${apiKey}&id=${match_api_id}`)
         if (data.status !== 'success') throw new Error(data.reason || 'Failed')
         let playersSeeded = 0
         for (const team of (data.data || [])) {

@@ -1,4 +1,5 @@
 import { Pool } from 'pg'
+import { cricApiFetch } from './cricapi-client'
 
 // Nothing used to flip a match from 'upcoming' to 'live' once its scheduled
 // start_time arrived — that only happened via an admin manually setting it
@@ -28,11 +29,6 @@ export class MatchStatusPoller {
     console.log('[match-status] poller started (every 2m)')
   }
 
-  private async getApiKey(): Promise<string> {
-    const res = await this.db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
-    return res.rows[0]?.special_rules?.api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
-  }
-
   private async sweep(): Promise<void> {
     const matches = await this.db.query(
       `SELECT id, match_api_id, start_time, status FROM cricket_matches
@@ -40,20 +36,19 @@ export class MatchStatusPoller {
           OR (status = 'live' AND match_api_id IS NOT NULL)`
     )
     if (!matches.rows.length) return
-    const apiKey = await this.getApiKey()
     for (const m of matches.rows) {
       try {
-        await this.checkMatch(m, apiKey)
+        await this.checkMatch(m)
       } catch (e) {
         console.error(`[match-status] failed to check match ${m.id}`, e)
       }
     }
   }
 
-  private async checkMatch(m: { id: string; match_api_id: string | null; start_time: string; status: string }, apiKey: string): Promise<void> {
+  private async checkMatch(m: { id: string; match_api_id: string | null; start_time: string; status: string }): Promise<void> {
     if (m.match_api_id) {
       try {
-        const data = await (await fetch(`https://api.cricapi.com/v1/match_info?apikey=${apiKey}&id=${m.match_api_id}`)).json() as any
+        const data = await cricApiFetch(this.db, apiKey => `https://api.cricapi.com/v1/match_info?apikey=${apiKey}&id=${m.match_api_id}`)
         if (data.status === 'success' && data.data) {
           const newStatus = data.data.matchEnded ? 'settled' : data.data.matchStarted ? 'live' : null
           const scoreArr = data.data.score

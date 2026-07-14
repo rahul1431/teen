@@ -1,5 +1,6 @@
 import { Pool } from 'pg'
 import { aggregateScorecard, computeFantasyPoints, DEFAULT_SCORING_RULES, ScoringRules } from './fantasy-scoring'
+import { cricApiFetch } from './cricapi-client'
 
 // Polls cricapi's match_scorecard for every currently-live match and keeps
 // fantasy points + contest leaderboards updating in near-real-time (Dream11
@@ -27,28 +28,23 @@ export class FantasyScoringPoller {
     return stored ? { ...DEFAULT_SCORING_RULES, ...stored } : DEFAULT_SCORING_RULES
   }
 
-  private async getApiKey(): Promise<string> {
-    const res = await this.db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
-    return res.rows[0]?.special_rules?.api_key || 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
-  }
-
   private async sweep(): Promise<void> {
     const matches = await this.db.query(
       `SELECT id, match_api_id FROM cricket_matches WHERE status = 'live' AND match_api_id IS NOT NULL`
     )
     if (!matches.rows.length) return
-    const [rules, apiKey] = await Promise.all([this.getRules(), this.getApiKey()])
+    const rules = await this.getRules()
     for (const m of matches.rows) {
       try {
-        await this.updateMatch(m.id, m.match_api_id, rules, apiKey)
+        await this.updateMatch(m.id, m.match_api_id, rules)
       } catch (e) {
         console.error(`[fantasy-scoring] failed to update match ${m.id}`, e)
       }
     }
   }
 
-  async updateMatch(matchId: string, matchApiId: string, rules: ScoringRules, apiKey: string): Promise<void> {
-    const data = await (await fetch(`https://api.cricapi.com/v1/match_scorecard?apikey=${apiKey}&id=${matchApiId}`)).json() as any
+  async updateMatch(matchId: string, matchApiId: string, rules: ScoringRules): Promise<void> {
+    const data = await cricApiFetch(this.db, apiKey => `https://api.cricapi.com/v1/match_scorecard?apikey=${apiKey}&id=${matchApiId}`)
     if (data.status !== 'success' || !data.data?.scorecard) return
 
     const statsByPlayer = aggregateScorecard(data.data.scorecard)

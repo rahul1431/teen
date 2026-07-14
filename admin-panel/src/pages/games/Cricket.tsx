@@ -204,8 +204,11 @@ export default function Cricket() {
         const ckConfig = r.data.find((c: any) => c.game_type === 'cricket')
         setConfig(ckConfig)
         if (ckConfig?.special_rules) {
+          const keys: string[] = ckConfig.special_rules.api_keys?.length
+            ? ckConfig.special_rules.api_keys
+            : ckConfig.special_rules.api_key ? [ckConfig.special_rules.api_key] : []
           apiConfigForm.setFieldsValue({
-            api_key: ckConfig.special_rules.api_key || '',
+            api_keys: keys.join('\n'),
             api_provider: ckConfig.special_rules.api_provider || 'cricket_data_api',
           })
         }
@@ -229,15 +232,16 @@ export default function Cricket() {
   const saveApiConfig = async (values: any) => {
     setSavingConfig(true)
     try {
+      const api_keys = (values.api_keys as string || '').split('\n').map((k: string) => k.trim()).filter(Boolean)
       await adminApi.patch('/game-configs/cricket', {
         ...config,
         special_rules: {
           ...(config?.special_rules || {}),
           api_provider: values.api_provider,
-          api_key: values.api_key,
+          api_keys,
         }
       })
-      message.success('Sports API Key saved!')
+      message.success(`Saved ${api_keys.length} CricAPI key${api_keys.length === 1 ? '' : 's'}!`)
       loadConfig()
     } catch {
       message.error('Failed to save API config')
@@ -862,8 +866,8 @@ export default function Cricket() {
             <Card title="🌐 CricAPI Integration" style={{ marginTop: 16 }} loading={loadingConfig}>
               <Alert
                 type="info"
-                message="CricAPI Key Configured"
-                description={<span>Paste your API key below to auto-import matches, squads, and flags. By default, the system includes a free key: <code>dd511ce4-aeb7-4e1f-86f4-1160404b2776</code>.</span>}
+                message="CricAPI free-tier keys are capped at 100 hits/day each"
+                description="Paste one key per line to pool multiple free accounts — calls rotate round-robin across them and automatically fail over to the next key if one gets rate-limited, multiplying your effective daily quota. A single key works fine too."
                 style={{ marginBottom: 16 }}
                 showIcon
               />
@@ -873,12 +877,12 @@ export default function Cricket() {
                     { value: 'cricket_data_api', label: 'CricAPI (cricapi.com)' }
                   ]} />
                 </Form.Item>
-                <Form.Item name="api_key" label="API Key">
-                  <Input.Password placeholder="Enter your CricAPI key here..." />
+                <Form.Item name="api_keys" label="API Keys (one per line)">
+                  <Input.TextArea rows={4} placeholder={'key1...\nkey2...\nkey3...'} />
                 </Form.Item>
                 <Space style={{ width: '100%' }} direction="vertical">
                   <Button type="primary" htmlType="submit" block loading={savingConfig} icon={<CloudDownloadOutlined />}>
-                    Save API Key
+                    Save API Keys
                   </Button>
                   <Button block onClick={syncCountries} loading={syncingCountries} icon={<SyncOutlined />} style={{ backgroundColor: '#13c2c2', color: 'white', border: 'none' }}>
                     {syncingCountries ? 'Caching flags...' : 'Sync Countries & Flags'}
