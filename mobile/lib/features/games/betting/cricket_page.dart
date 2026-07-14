@@ -2600,11 +2600,19 @@ class _LiveMatchCenterScreen extends StatefulWidget {
 class _LiveMatchCenterScreenState extends State<_LiveMatchCenterScreen> {
   Map<String, dynamic> _liveData = {};
   bool _loading = true;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) => _load());
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
