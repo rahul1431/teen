@@ -16,6 +16,7 @@ import { bettingPlugin } from './plugins/betting'
 import { supportPlugin } from './plugins/support'
 import { seoMarketingPlugin } from './plugins/seo-marketing'
 import { FantasyScoringPoller } from './helpers/fantasy-scoring-poller'
+import { MatchStatusPoller } from './helpers/match-status-poller'
 
 const PORT = parseInt(process.env.PORT || '3001')
 
@@ -83,6 +84,7 @@ async function start() {
   }))
 
   new FantasyScoringPoller(bettingDb).start()
+  new MatchStatusPoller(bettingDb).start()
 
   await app.listen({ port: PORT, host: '0.0.0.0' })
   console.log(`[core-api] Running on port ${PORT} (auth+users+leaderboard+notify+betting)`)
