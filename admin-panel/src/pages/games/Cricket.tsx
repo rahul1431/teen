@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert, Collapse, Avatar, Drawer, Upload
+  Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert, Collapse, Avatar, Drawer, Upload, AutoComplete
 } from 'antd'
 import { ReloadOutlined, PlusOutlined, SyncOutlined, CloudDownloadOutlined, DeleteOutlined, TeamOutlined, TrophyOutlined, UserOutlined, UploadOutlined, EyeOutlined, EditOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
@@ -793,6 +793,16 @@ export default function Cricket() {
     }
   }, [contestDrawerOpen, selectedContestId])
 
+  // Seeded roster for the live match, so the operator console searches
+  // real player names instead of free-typing them. Falls back to every
+  // seeded player if the live match's squad hasn't been synced yet.
+  const liveRosterOptions = (() => {
+    const squad = players.filter(p => p.team_name === liveMatch?.team_a || p.team_name === liveMatch?.team_b)
+    const pool = squad.length ? squad : players
+    const seen = new Set<string>()
+    return pool.filter(p => (seen.has(p.name) ? false : (seen.add(p.name), true))).map(p => ({ value: p.name }))
+  })()
+
   const tabItems = [
     {
       key: 'matches',
@@ -1141,7 +1151,9 @@ export default function Cricket() {
                   <Divider style={{ margin: '8px 0' }}>Batsmen on Crease</Divider>
                   <Row gutter={8}>
                     <Col span={12}>
-                      <Form.Item name="batsman1_name" label="Batsman 1 Name"><Input placeholder="e.g. Virat Kohli" /></Form.Item>
+                      <Form.Item name="batsman1_name" label="Batsman 1 Name">
+                        <AutoComplete options={liveRosterOptions} filterOption={(input, opt) => (opt?.value as string).toLowerCase().includes(input.toLowerCase())} placeholder="Search player…" />
+                      </Form.Item>
                     </Col>
                     <Col span={6}>
                       <Form.Item name="batsman1_runs" label="Runs"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
@@ -1152,7 +1164,9 @@ export default function Cricket() {
                   </Row>
                   <Row gutter={8}>
                     <Col span={12}>
-                      <Form.Item name="batsman2_name" label="Batsman 2 Name"><Input placeholder="e.g. Rohit Sharma" /></Form.Item>
+                      <Form.Item name="batsman2_name" label="Batsman 2 Name">
+                        <AutoComplete options={liveRosterOptions} filterOption={(input, opt) => (opt?.value as string).toLowerCase().includes(input.toLowerCase())} placeholder="Search player…" />
+                      </Form.Item>
                     </Col>
                     <Col span={6}>
                       <Form.Item name="batsman2_runs" label="Runs"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
@@ -1165,7 +1179,9 @@ export default function Cricket() {
                   <Divider style={{ margin: '8px 0' }}>Active Bowler</Divider>
                   <Row gutter={8}>
                     <Col span={10}>
-                      <Form.Item name="bowler_name" label="Bowler Name"><Input placeholder="e.g. Jasprit Bumrah" /></Form.Item>
+                      <Form.Item name="bowler_name" label="Bowler Name">
+                        <AutoComplete options={liveRosterOptions} filterOption={(input, opt) => (opt?.value as string).toLowerCase().includes(input.toLowerCase())} placeholder="Search player…" />
+                      </Form.Item>
                     </Col>
                     <Col span={4}>
                       <Form.Item name="bowler_overs" label="Overs"><InputNumber min={0} step={0.1} style={{ width: '100%' }} /></Form.Item>
