@@ -87,6 +87,7 @@ export default function Lottery() {
       await adminApi.post('/betting/lottery/create', {
         name: v.name, ticket_price: v.ticket_price,
         prize_tiers: v.prize_tiers, draw_time: v.draw_time.toISOString(),
+        category: v.category,
       })
       message.success('Draw created successfully!')
       setCreateOpen(false)
@@ -368,8 +369,16 @@ export default function Lottery() {
                     </Space>
                   )
                 },
-                { 
-                  title: 'Sold', 
+                {
+                  title: 'Category',
+                  dataIndex: 'category',
+                  render: (c: string) => {
+                    const colors: Record<string, string> = { daily: 'cyan', instant: 'purple', weekly: 'blue', monthly: 'gold' }
+                    return <Tag color={colors[c] || 'default'} style={{ fontWeight: 'bold', textTransform: 'capitalize' }}>{c}</Tag>
+                  }
+                },
+                {
+                  title: 'Sold',
                   dataIndex: 'ticket_count',
                   render: (v) => <span style={{ fontWeight: 'bold' }}>{v || 0}</span>
                 },
@@ -512,6 +521,14 @@ export default function Lottery() {
           </Form.Item>
           <Form.Item name="draw_time" label="Draw Time" rules={[{ required: true, message: 'Please select draw time' }]}>
             <DatePicker showTime style={{ width: '100%', borderRadius: '6px' }} />
+          </Form.Item>
+          <Form.Item name="category" label="Category" rules={[{ required: true, message: 'Please select a category' }]} initialValue="weekly">
+            <Radio.Group>
+              <Radio.Button value="daily" disabled>Daily 🔜</Radio.Button>
+              <Radio.Button value="instant" disabled>Instant 🔜</Radio.Button>
+              <Radio.Button value="weekly">Weekly</Radio.Button>
+              <Radio.Button value="monthly">Monthly</Radio.Button>
+            </Radio.Group>
           </Form.Item>
         </Form>
       </Modal>
