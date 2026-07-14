@@ -1893,7 +1893,14 @@ async function start() {
   // the Dream11-style fantasy contest system — see archived_cricket_{bets,
   // markets}. Session/Fancy betting was restored alongside it.
   app.get('/api/admin/betting/cricket/matches', { onRequest: [authenticate] }, async (_req, reply) => {
-    const matches = await db.query(`SELECT * FROM cricket_matches ORDER BY start_time DESC LIMIT 100`)
+    // Live/upcoming matches float to the top (soonest first) so today's
+    // fixture isn't buried under a backlog of already-settled ones; settled
+    // matches sort earliest-first too, just after everything actionable.
+    const matches = await db.query(`
+      SELECT * FROM cricket_matches
+      ORDER BY CASE status WHEN 'live' THEN 0 WHEN 'upcoming' THEN 1 ELSE 2 END, start_time ASC
+      LIMIT 100
+    `)
     const out = []
     for (const m of matches.rows) {
       const sessions = await db.query(`SELECT * FROM cricket_sessions WHERE match_id = $1 ORDER BY created_at ASC`, [m.id])
