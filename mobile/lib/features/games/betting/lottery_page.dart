@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'lottery_draws_page.dart';
 import 'lottery_scratch_page.dart';
+import 'lottery_bingo_page.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Lottery Page — top-level menu of the four lottery types
@@ -37,10 +38,11 @@ class LotteryPage extends StatelessWidget {
           _typeCard(
             context,
             title: 'Daily Lottery',
-            subtitle: 'Card/Bingo — Coming Soon',
+            subtitle: '90-ball bingo — live number calling',
             icon: Icons.calendar_today_rounded,
             color: Colors.cyanAccent,
-            onTap: () => _openComingSoon(context, 'Daily Lottery (Card/Bingo)'),
+            onTap: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const LotteryBingoPage())),
           ),
           const SizedBox(height: 16),
           _typeCard(
@@ -81,42 +83,6 @@ class LotteryPage extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  void _openComingSoon(BuildContext context, String label) {
-    Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (_) => Scaffold(
-                  backgroundColor: const Color(0xFF03070A),
-                  appBar: AppBar(
-                    backgroundColor: const Color(0xFF03070A),
-                    elevation: 0,
-                    leading: const BackButton(color: AppColors.gold),
-                  ),
-                  body: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.hourglass_empty_rounded,
-                            size: 64,
-                            color: AppColors.textSecondary.withValues(alpha: 0.2)),
-                        const SizedBox(height: 18),
-                        Text(label,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                                color: AppColors.textSecondary,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 4),
-                        Text('This game mode is coming soon',
-                            style: TextStyle(
-                                color: AppColors.textSecondary.withValues(alpha: 0.45),
-                                fontSize: 12)),
-                      ],
-                    ),
-                  ),
-                )));
   }
 
   Widget _typeCard(
