@@ -418,6 +418,29 @@ export function bettingPlugin(db: Pool) {
       return null
     }
 
+    // Squad syncs (sync-squad, sync-series-squads) used to match only by
+    // external_id, so any pre-existing player row without one (manually
+    // seeded, or created before external_id existed) got duplicated the
+    // first time a real API sync ran for their team. Falls back to a
+    // name+team match and backfills external_id so it's tagged going
+    // forward. Also never overwrites role/team_name on an existing row —
+    // the API's role string is unreliable (e.g. it mis-tagged wicket-
+    // keepers Jos Buttler and KL Rahul as "batsman"), so a curated role
+    // shouldn't get clobbered by every sync.
+    async function upsertFantasyPlayer(p: { name: string; externalId: string; role: string; teamName: string; avatarUrl: string }): Promise<string> {
+      let match = await db.query('SELECT id FROM cricket_fantasy_players WHERE external_id = $1', [p.externalId])
+      if (!match.rows.length) {
+        match = await db.query('SELECT id FROM cricket_fantasy_players WHERE external_id IS NULL AND lower(name) = lower($1) AND team_name = $2', [p.name, p.teamName])
+      }
+      if (match.rows.length) {
+        const pId = match.rows[0].id
+        await db.query('UPDATE cricket_fantasy_players SET external_id = COALESCE(external_id, $1), avatar_url = COALESCE(avatar_url, $2) WHERE id = $3', [p.externalId, p.avatarUrl, pId])
+        return pId
+      }
+      const ins = await db.query(`INSERT INTO cricket_fantasy_players (name, role, credits, team_name, external_id, avatar_url) VALUES ($1,$2,9.0,$3,$4,$5) RETURNING id`, [p.name, p.role, p.teamName, p.externalId, p.avatarUrl])
+      return ins.rows[0].id
+    }
+
     app.post('/internal/cricket/match', { onRequest: [internal] }, async (req) => {
       const body = z.object({ series: z.string(), format: z.string(), team_a: z.string(), team_b: z.string(), team_a_short: z.string().optional(), team_b_short: z.string().optional(), start_time: z.string() }).parse(req.body)
       const [teamAFlag, teamBFlag] = await Promise.all([findCountryFlag(body.team_a), findCountryFlag(body.team_b)])
@@ -664,10 +687,7 @@ export function bettingPlugin(db: Pool) {
             if (!p.id) continue
             const role = p.role?.toLowerCase().replace(/[^a-z]/g, '').includes('keeper') ? 'wicket_keeper' : p.role?.toLowerCase().includes('bowl') ? 'bowler' : p.role?.toLowerCase().includes('allrounder') ? 'all_rounder' : 'batsman'
             const fallbackAvatar = `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.name)}`
-            await db.query(
-              `INSERT INTO cricket_fantasy_players (name, role, credits, team_name, external_id, avatar_url) VALUES ($1,$2,9.0,$3,$4,$5)
-               ON CONFLICT (external_id) DO UPDATE SET name=$1, role=$2, team_name=$3, avatar_url=COALESCE(cricket_fantasy_players.avatar_url, $5)`,
-              [p.name, role, team.teamName, p.id, fallbackAvatar])
+            await upsertFantasyPlayer({ name: p.name, externalId: p.id, role, teamName: team.teamName, avatarUrl: fallbackAvatar })
             playersSeeded++
           }
         }
@@ -688,16 +708,8 @@ export function bettingPlugin(db: Pool) {
           for (const p of (team.players || [])) {
             if (!p.id) continue
             const role = p.role?.toLowerCase().replace(/[^a-z]/g, '').includes('keeper') ? 'wicket_keeper' : p.role?.toLowerCase().includes('bowl') ? 'bowler' : p.role?.toLowerCase().includes('allrounder') ? 'all_rounder' : 'batsman'
-            const ep = await db.query('SELECT id FROM cricket_fantasy_players WHERE external_id = $1', [p.id])
-            let pId: string
-            const fallbackAvatar = `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.name)}`;
-            if (ep.rows.length) {
-              pId = ep.rows[0].id;
-              await db.query('UPDATE cricket_fantasy_players SET name=$1, role=$2, team_name=$3, avatar_url=COALESCE(avatar_url, $5) WHERE id=$4', [p.name, role, team.teamName, pId, fallbackAvatar])
-            } else {
-              const ins = await db.query(`INSERT INTO cricket_fantasy_players (name, role, credits, team_name, external_id, avatar_url) VALUES ($1,$2,9.0,$3,$4,$5) RETURNING id`, [p.name, role, team.teamName, p.id, fallbackAvatar]);
-              pId = ins.rows[0].id
-            }
+            const fallbackAvatar = `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.name)}`
+            const pId = await upsertFantasyPlayer({ name: p.name, externalId: p.id, role, teamName: team.teamName, avatarUrl: fallbackAvatar })
             await db.query(`INSERT INTO cricket_match_players (match_id, player_id, runs_scored, balls_faced, fours, sixes, wickets, runs_conceded, overs_bowled, catches, stumpings, run_outs, fantasy_points) VALUES ($1,$2,0,0,0,0,0,0,0.0,0,0,0,0.0) ON CONFLICT (match_id, player_id) DO NOTHING`, [match_id, pId])
             playersSeeded++
           }
