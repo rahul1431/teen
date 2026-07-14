@@ -119,6 +119,7 @@ export default function Cricket() {
   const [playerOpen, setPlayerOpen] = useState(false)
   const [editingPlayer, setEditingPlayer] = useState<any>(null)
   const [leagueOpen, setLeagueOpen] = useState(false)
+  const [leagueMatchLocked, setLeagueMatchLocked] = useState(false)
   const [finalizingFor, setFinalizingFor] = useState<string | null>(null)
   const [pForm] = Form.useForm()
   const [lForm] = Form.useForm()
@@ -662,6 +663,20 @@ export default function Cricket() {
     }
   }
 
+  // Opening from a specific match's "+ Add Contest" button pre-fills and
+  // locks the Target Match field — removes the exact mistake that put a
+  // contest on the wrong fixture in a multi-match series (see matchLabel()).
+  const openLeagueModal = (matchId?: string) => {
+    lForm.resetFields()
+    if (matchId) {
+      lForm.setFieldsValue({ match_id: matchId })
+      setLeagueMatchLocked(true)
+    } else {
+      setLeagueMatchLocked(false)
+    }
+    setLeagueOpen(true)
+  }
+
   const createLeague = async (v: any) => {
     try {
       const prize_distribution = (v.prize_distribution as string).split('\n').map(l => l.trim()).filter(Boolean).map(l => {
@@ -986,7 +1001,7 @@ export default function Cricket() {
             <Card title="Matches & Fantasy Pools"
               extra={
                 <Space>
-                  <Button type="primary" onClick={() => setLeagueOpen(true)}>+ Create Contest</Button>
+                  <Button type="primary" onClick={() => openLeagueModal()}>+ Create Contest</Button>
                   <Button icon={<TrophyOutlined />} onClick={() => { loadScoringRules(); setRulesOpen(true) }}>Scoring Rulebook</Button>
                   <Button onClick={loadMatches}>Refresh</Button>
                 </Space>
@@ -997,6 +1012,7 @@ export default function Cricket() {
                   title={<span>{m.series} — <b>{m.team_a} vs {m.team_b}</b> <Tag>#{m.id.slice(0, 8)}</Tag></span>}
                   extra={
                     <Space>
+                      <Button size="small" type="primary" onClick={() => openLeagueModal(m.id)}>+ Add Contest</Button>
                       <Button size="small" onClick={() => loadLeagues(m.id)} loading={loadingLeaguesFor === m.id}>
                         {leaguesByMatch[m.id] ? 'Refresh' : 'View Contests'}
                       </Button>
@@ -1437,7 +1453,7 @@ export default function Cricket() {
       <Modal open={leagueOpen} title="Create Fantasy Contest Pool" onCancel={() => setLeagueOpen(false)} onOk={() => lForm.submit()} okText="Create Pool">
         <Form form={lForm} layout="vertical" onFinish={createLeague}>
           <Form.Item name="match_id" label="Target Match" rules={[{ required: true }]}>
-            <Select options={matches.map(m => ({ value: m.id, label: matchLabel(m) }))} />
+            <Select disabled={leagueMatchLocked} options={matches.map(m => ({ value: m.id, label: matchLabel(m) }))} />
           </Form.Item>
           <Form.Item name="name" label="Contest Pool Name" rules={[{ required: true }]}><Input placeholder="e.g. Mega Contest / Head to Head" /></Form.Item>
           <Row gutter={16}>
