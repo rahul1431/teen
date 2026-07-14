@@ -1843,9 +1843,9 @@ async function start() {
   // betting-service internal endpoints (which hold the result-settlement
   // logic and wallet payouts) using the shared internal key.
   const BETTING_URL = process.env.BETTING_SERVICE_URL || 'http://127.0.0.1:3012'
-  const callBetting = async (path: string, body: any) => {
+  const callBetting = async (path: string, body: any, method: string = 'POST') => {
     const res = await fetch(`${BETTING_URL}${path}`, {
-      method: 'POST',
+      method,
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
       body: JSON.stringify(body),
     })
@@ -1889,17 +1889,47 @@ async function start() {
   })
 
   // --- Cricket ---
-  // Match-odds (Match Winner/Toss/etc markets) and Session/Fancy (odd-even
-  // runs) betting were removed in favor of the Dream11-style fantasy contest
-  // system below — see archived_cricket_{bets,markets,sessions,session_bets}.
+  // Match-odds (Match Winner/Toss/etc markets) stays archived in favor of
+  // the Dream11-style fantasy contest system — see archived_cricket_{bets,
+  // markets}. Session/Fancy betting was restored alongside it.
   app.get('/api/admin/betting/cricket/matches', { onRequest: [authenticate] }, async (_req, reply) => {
     const matches = await db.query(`SELECT * FROM cricket_matches ORDER BY start_time DESC LIMIT 100`)
-    return reply.send({ matches: matches.rows })
+    const out = []
+    for (const m of matches.rows) {
+      const sessions = await db.query(`SELECT * FROM cricket_sessions WHERE match_id = $1 ORDER BY created_at ASC`, [m.id])
+      out.push({ ...m, sessions: sessions.rows })
+    }
+    return reply.send({ matches: out })
   })
 
   app.post('/api/admin/betting/cricket/match', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/match', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  // --- Cricket Sessions (Fancy betting: e.g. "6 Over Session - India") ---
+  app.post('/api/admin/betting/cricket/session/create', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/session/create', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.patch('/api/admin/betting/cricket/sessions/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting(`/internal/cricket/session/${(req.params as any).id}`, req.body, 'PATCH')
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/session/settle', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/session/settle', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.delete('/api/admin/betting/cricket/sessions/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const pending = await db.query(`SELECT 1 FROM cricket_session_bets WHERE session_id = $1 AND status = 'pending' LIMIT 1`, [id])
+    if (pending.rows.length) return reply.code(409).send({ error: 'This session has unsettled bets — settle or void it first.' })
+    await db.query('DELETE FROM cricket_session_bets WHERE session_id = $1', [id])
+    await db.query('DELETE FROM cricket_sessions WHERE id = $1', [id])
+    return reply.send({ success: true })
   })
 
   // --- Cricket Countries (flag icons, shared by match-level flags and player country badges) ---
@@ -1964,6 +1994,11 @@ async function start() {
 
   app.post('/api/admin/betting/cricket/fantasy/players', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/fantasy/players', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.patch('/api/admin/betting/cricket/fantasy/players/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting(`/internal/cricket/fantasy/players/${(req.params as any).id}`, req.body, 'PATCH')
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 

@@ -3,7 +3,7 @@ import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
   Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert, Collapse, Avatar, Drawer, Upload
 } from 'antd'
-import { ReloadOutlined, PlusOutlined, SyncOutlined, CloudDownloadOutlined, DeleteOutlined, TeamOutlined, TrophyOutlined, UserOutlined, UploadOutlined, EyeOutlined } from '@ant-design/icons'
+import { ReloadOutlined, PlusOutlined, SyncOutlined, CloudDownloadOutlined, DeleteOutlined, TeamOutlined, TrophyOutlined, UserOutlined, UploadOutlined, EyeOutlined, EditOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
 const { Text } = Typography
@@ -105,10 +105,16 @@ export default function Cricket() {
   const [players, setPlayers] = useState<any[]>([])
   const [loadingPlayers, setLoadingPlayers] = useState(false)
   const [playerOpen, setPlayerOpen] = useState(false)
+  const [editingPlayer, setEditingPlayer] = useState<any>(null)
   const [leagueOpen, setLeagueOpen] = useState(false)
   const [finalizingFor, setFinalizingFor] = useState<string | null>(null)
   const [pForm] = Form.useForm()
   const [lForm] = Form.useForm()
+
+  // --- Session (Fancy) Betting States ---
+  const [sessionFor, setSessionFor] = useState<any>(null)
+  const [editingSession, setEditingSession] = useState<any>(null)
+  const [sForm] = Form.useForm()
 
   // --- Sports API States ---
   const [syncing, setSyncing] = useState(false)
@@ -358,6 +364,88 @@ export default function Cricket() {
     }
   }
 
+  const openPlayerModal = (player?: any) => {
+    setEditingPlayer(player || null)
+    pForm.resetFields()
+    if (player) pForm.setFieldsValue(player)
+    setPlayerOpen(true)
+  }
+
+  const savePlayer = async (v: any) => {
+    try {
+      if (editingPlayer) {
+        await adminApi.patch(`/betting/cricket/fantasy/players/${editingPlayer.id}`, {
+          name: v.name, role: v.role, credits: v.credits, team_name: v.team_name, avatar_url: v.avatar_url
+        })
+        message.success('Player updated')
+      } else {
+        await adminApi.post('/betting/cricket/fantasy/players', {
+          name: v.name, role: v.role, credits: v.credits, team_name: v.team_name, avatar_url: v.avatar_url
+        })
+        message.success('Player added globally')
+      }
+      setPlayerOpen(false)
+      pForm.resetFields()
+      loadPlayers()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed')
+    }
+  }
+
+  // --- Session (Fancy) Betting ---
+  const openSessionModal = (match: any, session?: any) => {
+    setSessionFor(match)
+    setEditingSession(session || null)
+    sForm.resetFields()
+    if (session) sForm.setFieldsValue(session)
+    else sForm.setFieldsValue({ label: '6 Over Session - India', min_runs: 45, max_runs: 47 })
+  }
+
+  const closeSessionModal = () => {
+    setSessionFor(null)
+    setEditingSession(null)
+  }
+
+  const saveSession = async (v: any) => {
+    try {
+      if (editingSession) {
+        await adminApi.patch(`/betting/cricket/sessions/${editingSession.id}`, {
+          label: v.label, min_runs: v.min_runs, max_runs: v.max_runs,
+        })
+        message.success('Session updated')
+      } else {
+        await adminApi.post('/betting/cricket/session/create', {
+          match_id: sessionFor.id, label: v.label, min_runs: v.min_runs, max_runs: v.max_runs,
+        })
+        message.success('Session added')
+      }
+      closeSessionModal()
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed')
+    }
+  }
+
+  const settleSession = async (sessionId: string, runs: number | null) => {
+    try {
+      const r = await adminApi.post('/betting/cricket/session/settle', { session_id: sessionId, result_runs: runs })
+      message.success(`Session Settled — ${r.data.winners} winners paid`)
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Session settle failed')
+    }
+  }
+
+  const deleteSession = async (id: string) => {
+    try {
+      await adminApi.delete(`/betting/cricket/sessions/${id}`)
+      message.success('Session deleted')
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to delete session')
+    }
+  }
+
   const loadLeagues = (matchId: string) => {
     setLoadingLeaguesFor(matchId)
     adminApi.get('/betting/cricket/fantasy/leagues', { params: { match_id: matchId } })
@@ -476,21 +564,6 @@ export default function Cricket() {
       loadMatches()
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'Failed to add match')
-    }
-  }
-
-  // --- Fantasy Operators ---
-  const addPlayer = async (v: any) => {
-    try {
-      await adminApi.post('/betting/cricket/fantasy/players', {
-        name: v.name, role: v.role, credits: v.credits, team_name: v.team_name, avatar_url: v.avatar_url
-      })
-      message.success('Player added globally')
-      setPlayerOpen(false)
-      pForm.resetFields()
-      loadPlayers()
-    } catch (e: any) {
-      message.error(e?.response?.data?.error || 'Failed')
     }
   }
 
@@ -753,12 +826,44 @@ export default function Cricket() {
                           Sync Squad
                         </Button>
                       )}
+                      <Button size="small" onClick={() => openSessionModal(m)}>+ Session</Button>
                       <Popconfirm title="Delete this match?" description="Blocked if it has an active fantasy contest with joined entries." onConfirm={() => deleteMatch(m.id)}>
                         <Button size="small" danger icon={<DeleteOutlined />} />
                       </Popconfirm>
                     </Space>
                   }>
                   <Text type="secondary">{new Date(m.start_time).toLocaleString()}</Text>
+
+                  {(m.sessions || []).length > 0 && (
+                    <>
+                      <Divider style={{ margin: '10px 0' }} />
+                      <Text strong style={{ fontSize: 12 }}>Sessions (Fancy)</Text>
+                      {m.sessions.map((s: any) => (
+                        <div key={s.id} style={{ marginTop: 8 }}>
+                          <Space wrap>
+                            <Text style={{ fontSize: 12 }}>{s.label} ({s.min_runs}-{s.max_runs})</Text>
+                            <Tag color={s.status === 'settled' ? 'red' : 'green'}>{s.status}</Tag>
+                            {s.status === 'settled' ? (
+                              <Text type="success" style={{ fontSize: 12 }}>Result: {s.result_runs} runs</Text>
+                            ) : (
+                              <Space>
+                                <Button size="small" icon={<EditOutlined />} onClick={() => openSessionModal(m, s)} />
+                                <InputNumber size="small" placeholder="Final Runs" id={`runs-${s.id}`} />
+                                <Button size="small" type="primary" onClick={() => {
+                                  const el = document.getElementById(`runs-${s.id}`) as HTMLInputElement
+                                  const val = el?.value
+                                  if (val) settleSession(s.id, parseInt(val))
+                                }}>Settle</Button>
+                                <Popconfirm title="Delete this session?" description="Blocked if there are unsettled bets." onConfirm={() => deleteSession(s.id)}>
+                                  <Button size="small" danger type="text" icon={<DeleteOutlined />} />
+                                </Popconfirm>
+                              </Space>
+                            )}
+                          </Space>
+                        </div>
+                      ))}
+                    </>
+                  )}
                 </Card>
               ))}
             </Card>
@@ -835,7 +940,7 @@ export default function Cricket() {
           <Col xs={24} lg={10}>
             <Card title="Seeded Fantasy Players"
               extra={
-                <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => setPlayerOpen(true)}>
+                <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => openPlayerModal()}>
                   Add Player
                 </Button>
               }
@@ -871,6 +976,7 @@ export default function Cricket() {
                                 )}
                               </Space>
                             </div>
+                            <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openPlayerModal(p)} />
                             <Popconfirm title="Delete this player?" description="Blocked if set as a fantasy team's captain/vice-captain." onConfirm={() => deletePlayer(p.id)}>
                               <Button size="small" danger type="text" icon={<DeleteOutlined />} />
                             </Popconfirm>
@@ -1125,9 +1231,32 @@ export default function Cricket() {
         </Form>
       </Modal>
 
-      {/* Add Player Modal */}
-      <Modal open={playerOpen} title="Seed Global Fantasy Player" onCancel={() => setPlayerOpen(false)} onOk={() => pForm.submit()} okText="Add Player">
-        <Form form={pForm} layout="vertical" onFinish={addPlayer}>
+      {/* Add/Edit Session Modal */}
+      <Modal open={!!sessionFor} title={editingSession ? `Edit Session — ${sessionFor?.team_a} vs ${sessionFor?.team_b}` : `Add Session — ${sessionFor?.team_a} vs ${sessionFor?.team_b}`}
+        onCancel={closeSessionModal} onOk={() => sForm.submit()} okText={editingSession ? 'Save' : 'Add Session'}>
+        <Form form={sForm} layout="vertical" onFinish={saveSession}>
+          <Form.Item name="label" label="Label" rules={[{ required: true }]}>
+            <Input placeholder="e.g. 6 Over Session - India" />
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="min_runs" label="Line (Min)" rules={[{ required: true }]}>
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="max_runs" label="Line (Max)" rules={[{ required: true }]}>
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Text type="secondary">Min is for 'No' bet, Max is for 'Yes' bet.</Text>
+        </Form>
+      </Modal>
+
+      {/* Add/Edit Player Modal */}
+      <Modal open={playerOpen} title={editingPlayer ? 'Edit Fantasy Player' : 'Seed Global Fantasy Player'} onCancel={() => setPlayerOpen(false)} onOk={() => pForm.submit()} okText={editingPlayer ? 'Save' : 'Add Player'}>
+        <Form form={pForm} layout="vertical" onFinish={savePlayer}>
           <Form.Item name="name" label="Player Name" rules={[{ required: true }]}><Input placeholder="e.g. Virat Kohli" /></Form.Item>
           <Form.Item name="role" label="Role" rules={[{ required: true }]} initialValue="batsman">
             <Select options={[

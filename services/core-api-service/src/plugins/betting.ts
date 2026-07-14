@@ -5,7 +5,7 @@ import crypto from 'crypto'
 import { debitStake, creditPrize } from '../helpers/wallet-client'
 import { MATKA_MULTIPLIERS, validateMatkaBet, settleMatkaSession } from '../helpers/matka'
 import { settleLottery } from '../helpers/lottery'
-import { settleFantasyLeague } from '../helpers/cricket'
+import { settleFantasyLeague, settleCricketSession } from '../helpers/cricket'
 import { aggregateScorecard, computeFantasyPoints, DEFAULT_SCORING_RULES } from '../helpers/fantasy-scoring'
 
 export function bettingPlugin(db: Pool) {
@@ -179,12 +179,38 @@ export function bettingPlugin(db: Pool) {
       return { draws: rows.rows }
     })
 
-    // ══ CRICKET (Dream11-style fantasy contests — match-odds and session
-    // betting were removed; see archived_cricket_{bets,markets,sessions,
-    // session_bets}) ══
+    // ══ CRICKET (Dream11-style fantasy contests, plus session/fancy
+    // betting — match-odds betting stays archived; see archived_cricket_{
+    // bets,markets}) ══
     app.get('/cricket/matches', { onRequest: [auth] }, async () => {
       const matches = await db.query(`SELECT * FROM cricket_matches WHERE status IN ('upcoming','live') ORDER BY start_time ASC`)
-      return { matches: matches.rows }
+      const out = []
+      for (const m of matches.rows) {
+        const sessions = await db.query(`SELECT id, label, min_runs, max_runs, odds_yes, odds_no, status, result_runs FROM cricket_sessions WHERE match_id = $1 AND status = 'open'`, [m.id])
+        out.push({ ...m, sessions: sessions.rows })
+      }
+      return { matches: out }
+    })
+
+    app.post('/cricket/session/bet', { onRequest: [auth] }, async (req, reply) => {
+      const body = z.object({ session_id: z.string().uuid(), selection: z.enum(['yes', 'no']), amount: z.number().positive() }).parse(req.body)
+      const sRes = await db.query(`SELECT s.*, mt.status AS match_status FROM cricket_sessions s JOIN cricket_matches mt ON mt.id = s.match_id WHERE s.id = $1`, [body.session_id])
+      if (!sRes.rows.length) return reply.code(404).send({ error: 'Session not found' })
+      const session = sRes.rows[0]
+      if (session.status !== 'open' || session.match_status === 'settled' || session.match_status === 'closed') return reply.code(409).send({ error: 'Session is closed' })
+      const odds = body.selection === 'yes' ? Number(session.odds_yes) : Number(session.odds_no)
+      const bracket = body.selection === 'yes' ? session.max_runs : session.min_runs
+      const potential = Math.round(body.amount * odds * 100) / 100
+      const betId = crypto.randomUUID()
+      const debit = await debitStake({ userId: uid(req), amount: body.amount, referenceId: betId, idempotencyKey: `cricket_session_stake_${betId}`, description: 'Cricket session bet' })
+      if (!debit.ok) return reply.code(400).send({ error: debit.error })
+      await db.query(`INSERT INTO cricket_session_bets (id, user_id, match_id, session_id, selection, runs_bracket, amount, potential_payout) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [betId, uid(req), session.match_id, session.id, body.selection, bracket, body.amount, potential])
+      return { success: true, bet_id: betId, potential_payout: potential }
+    })
+
+    app.get('/cricket/session/my-bets', { onRequest: [auth] }, async (req) => {
+      const rows = await db.query(`SELECT b.*, mt.team_a, mt.team_b, mt.series, s.label AS session_label FROM cricket_session_bets b JOIN cricket_matches mt ON mt.id = b.match_id JOIN cricket_sessions s ON s.id = b.session_id WHERE b.user_id = $1 ORDER BY b.created_at DESC LIMIT 100`, [uid(req)])
+      return { bets: rows.rows }
     })
 
     app.get('/cricket/players', { onRequest: [auth] }, async (req) => {
@@ -307,8 +333,11 @@ export function bettingPlugin(db: Pool) {
       const { id } = req.params as { id: string }
       const matchRes = await db.query('SELECT * FROM cricket_matches WHERE id = $1', [id])
       if (!matchRes.rows.length) return reply.code(404).send({ error: 'Match not found' })
-      const players = await db.query(`SELECT mp.*, fp.name, fp.role, fp.team_name FROM cricket_match_players mp JOIN cricket_fantasy_players fp ON fp.id = mp.player_id WHERE mp.match_id = $1`, [id])
-      return { match: matchRes.rows[0], player_performances: players.rows }
+      const [players, sessions] = await Promise.all([
+        db.query(`SELECT mp.*, fp.name, fp.role, fp.team_name FROM cricket_match_players mp JOIN cricket_fantasy_players fp ON fp.id = mp.player_id WHERE mp.match_id = $1`, [id]),
+        db.query(`SELECT id, label, min_runs, max_runs, odds_yes, odds_no, status, result_runs FROM cricket_sessions WHERE match_id = $1`, [id]),
+      ])
+      return { match: matchRes.rows[0], player_performances: players.rows, sessions: sessions.rows }
     })
 
     // ══ INTERNAL ══
@@ -349,9 +378,24 @@ export function bettingPlugin(db: Pool) {
       return { success: true, refunded: tickets.rows.length }
     })
 
+    // Looks up a cached flag by matching a team/country name against
+    // cricket_countries — same fuzzy substring match used by sync-api and
+    // import-series-matches, so manually-added matches get flags too instead
+    // of relying only on the sync flows.
+    async function findCountryFlag(name: string): Promise<string | null> {
+      const flagsRes = await db.query('SELECT name, flag_url FROM cricket_countries')
+      const n = name?.toLowerCase() || ''
+      for (const row of flagsRes.rows) {
+        const k = row.name.toLowerCase()
+        if (n.includes(k) || k.includes(n)) return row.flag_url
+      }
+      return null
+    }
+
     app.post('/internal/cricket/match', { onRequest: [internal] }, async (req) => {
       const body = z.object({ series: z.string(), format: z.string(), team_a: z.string(), team_b: z.string(), team_a_short: z.string().optional(), team_b_short: z.string().optional(), start_time: z.string() }).parse(req.body)
-      const r = await db.query(`INSERT INTO cricket_matches (series, format, team_a, team_b, team_a_short, team_b_short, start_time) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [body.series, body.format, body.team_a, body.team_b, body.team_a_short, body.team_b_short, body.start_time])
+      const [teamAFlag, teamBFlag] = await Promise.all([findCountryFlag(body.team_a), findCountryFlag(body.team_b)])
+      const r = await db.query(`INSERT INTO cricket_matches (series, format, team_a, team_b, team_a_short, team_b_short, start_time, team_a_flag, team_b_flag) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [body.series, body.format, body.team_a, body.team_b, body.team_a_short, body.team_b_short, body.start_time, teamAFlag, teamBFlag])
       return { success: true, match: r.rows[0] }
     })
 
@@ -359,6 +403,52 @@ export function bettingPlugin(db: Pool) {
       const body = z.object({ name: z.string(), role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']), credits: z.number().min(5.0).max(15.0), team_name: z.string(), avatar_url: z.string().optional() }).parse(req.body)
       const res = await db.query(`INSERT INTO cricket_fantasy_players (name, role, credits, team_name, avatar_url) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [body.name, body.role, body.credits, body.team_name, body.avatar_url || null])
       return { success: true, player: res.rows[0] }
+    })
+
+    app.patch('/internal/cricket/fantasy/players/:id', { onRequest: [internal] }, async (req, reply) => {
+      const { id } = req.params as { id: string }
+      const body = z.object({ name: z.string().optional(), role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']).optional(), credits: z.number().min(5.0).max(15.0).optional(), team_name: z.string().optional(), avatar_url: z.string().optional() }).parse(req.body)
+      const fields: string[] = [], params: any[] = [id]
+      let i = 2
+      for (const [key, val] of Object.entries(body)) {
+        if (val === undefined) continue
+        fields.push(`${key} = $${i++}`)
+        params.push(val)
+      }
+      if (!fields.length) return reply.code(400).send({ error: 'No fields to update' })
+      const res = await db.query(`UPDATE cricket_fantasy_players SET ${fields.join(', ')} WHERE id = $1 RETURNING *`, params)
+      if (!res.rows.length) return reply.code(404).send({ error: 'Player not found' })
+      return { success: true, player: res.rows[0] }
+    })
+
+    app.post('/internal/cricket/session/create', { onRequest: [internal] }, async (req) => {
+      const body = z.object({ match_id: z.string().uuid(), label: z.string(), min_runs: z.number().int(), max_runs: z.number().int(), odds_yes: z.number().default(1.0), odds_no: z.number().default(1.0) }).parse(req.body)
+      const r = await db.query(`INSERT INTO cricket_sessions (match_id, label, min_runs, max_runs, odds_yes, odds_no) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`, [body.match_id, body.label, body.min_runs, body.max_runs, body.odds_yes, body.odds_no])
+      return { success: true, session: r.rows[0] }
+    })
+
+    app.patch('/internal/cricket/session/:id', { onRequest: [internal] }, async (req, reply) => {
+      const { id } = req.params as { id: string }
+      const body = z.object({ label: z.string().optional(), min_runs: z.number().int().optional(), max_runs: z.number().int().optional(), odds_yes: z.number().optional(), odds_no: z.number().optional() }).parse(req.body)
+      const existing = await db.query('SELECT status FROM cricket_sessions WHERE id = $1', [id])
+      if (!existing.rows.length) return reply.code(404).send({ error: 'Session not found' })
+      if (existing.rows[0].status === 'settled') return reply.code(409).send({ error: 'Cannot edit a settled session' })
+      const fields: string[] = [], params: any[] = [id]
+      let i = 2
+      for (const [key, val] of Object.entries(body)) {
+        if (val === undefined) continue
+        fields.push(`${key} = $${i++}`)
+        params.push(val)
+      }
+      if (!fields.length) return reply.code(400).send({ error: 'No fields to update' })
+      const res = await db.query(`UPDATE cricket_sessions SET ${fields.join(', ')} WHERE id = $1 RETURNING *`, params)
+      return { success: true, session: res.rows[0] }
+    })
+
+    app.post('/internal/cricket/session/settle', { onRequest: [internal] }, async (req) => {
+      const body = z.object({ session_id: z.string().uuid(), result_runs: z.number().nullable() }).parse(req.body)
+      const res = await settleCricketSession(db, body.session_id, body.result_runs)
+      return { success: true, ...res }
     })
 
     app.post('/internal/cricket/fantasy/leagues', { onRequest: [internal] }, async (req) => {

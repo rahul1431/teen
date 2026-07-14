@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../../core/audio/sound_service.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
+import 'betting_history_page.dart';
 import 'local_cricket_storage.dart';
 
 /// Premium Cricket Hub — Dream11 & MPL Style Design
@@ -59,9 +60,20 @@ class _CricketPageState extends State<CricketPage>
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
         title: const Text('Cricket Fantasy & Betting',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.receipt_long_rounded),
+            tooltip: 'My Bets',
+            onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) =>
+                        const BettingHistoryPage(type: BettingType.cricket))),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _load,
@@ -70,12 +82,14 @@ class _CricketPageState extends State<CricketPage>
         bottom: TabBar(
           controller: _tabs,
           indicatorColor: AppColors.gold,
+          indicatorWeight: 3,
           labelColor: AppColors.gold,
           unselectedLabelColor: AppColors.textSecondary,
+          labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
           tabs: const [
-            Tab(text: 'Fixtures Lobby'),
-            Tab(text: 'My Contests'),
-            Tab(text: 'My Teams'),
+            Tab(icon: Icon(Icons.sports_cricket_rounded, size: 18), text: 'Fixtures'),
+            Tab(icon: Icon(Icons.emoji_events_rounded, size: 18), text: 'My Contests'),
+            Tab(icon: Icon(Icons.groups_rounded, size: 18), text: 'My Teams'),
           ],
         ),
       ),
@@ -114,6 +128,60 @@ class _LobbyTab extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         children: [
+          // Identity banner — establishes the Dream11/MPL-style fantasy
+          // framing up front, same visual language as the other game hubs.
+          Container(
+            padding: const EdgeInsets.all(18),
+            margin: const EdgeInsets.only(bottom: 18),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                  begin: Alignment.topLeft, end: Alignment.bottomRight, colors: AppColors.cricketGrad),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: AppColors.gold.withValues(alpha: 0.6), width: 1.5),
+              boxShadow: [
+                BoxShadow(color: AppColors.cricketGrad.last.withValues(alpha: 0.5), blurRadius: 18, offset: const Offset(0, 8)),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 54, height: 54,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(colors: [
+                      Colors.white.withValues(alpha: 0.22),
+                      Colors.white.withValues(alpha: 0.06),
+                    ]),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.35), width: 1.2),
+                  ),
+                  child: const Center(child: Text('🏏', style: TextStyle(fontSize: 26))),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Fantasy Cricket',
+                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.white)),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.28),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+                        ),
+                        child: const Text('DRAFT · COMPETE · WIN CASH',
+                            style: TextStyle(
+                                fontSize: 9.5, fontWeight: FontWeight.w800, letterSpacing: 0.6, color: Colors.white)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
           if (live.isNotEmpty) ...[
             const Row(
               children: [
@@ -188,13 +256,20 @@ class _MatchLobbyCard extends StatelessWidget {
       }
     }
 
-    return Card(
-      color: AppColors.cardBg,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 4,
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: AppColors.cardBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+            color: isLive ? AppColors.red.withValues(alpha: 0.5) : AppColors.gold.withValues(alpha: 0.35),
+            width: isLive ? 1.5 : 1),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 10, offset: const Offset(0, 4)),
+        ],
+      ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         onTap: () {
           Navigator.push(
             context,
@@ -225,16 +300,31 @@ class _MatchLobbyCard extends StatelessWidget {
                       color: isLive
                           ? AppColors.red.withValues(alpha: 0.2)
                           : Colors.white.withValues(alpha: 0.05),
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                          color: isLive ? AppColors.red.withValues(alpha: 0.5) : Colors.white.withValues(alpha: 0.12)),
                     ),
-                    child: Text(
-                      isLive
-                          ? 'LIVE'
-                          : (match['format'] ?? 'T20').toString().toUpperCase(),
-                      style: TextStyle(
-                          color: isLive ? AppColors.red : AppColors.gold,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isLive) ...[
+                          Container(
+                            width: 5, height: 5,
+                            decoration: const BoxDecoration(color: AppColors.red, shape: BoxShape.circle),
+                          ),
+                          const SizedBox(width: 4),
+                        ],
+                        Text(
+                          isLive
+                              ? 'LIVE'
+                              : (match['format'] ?? 'T20').toString().toUpperCase(),
+                          style: TextStyle(
+                              color: isLive ? AppColors.red : AppColors.gold,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5),
+                        ),
+                      ],
                     ),
                   )
                 ],
@@ -334,20 +424,40 @@ class _MatchLobbyCard extends StatelessWidget {
                 ],
               ),
               const Divider(color: Colors.white10, height: 24),
-              // Card Footer (Mega contest entry preview)
+              // Card Footer CTA
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Mega Contest running',
-                      style: TextStyle(color: Colors.white70, fontSize: 11)),
-                  Text(
-                      isLive
-                          ? 'Tap to view live bets'
-                          : 'Draft 11 & Join Contest',
-                      style: const TextStyle(
-                          color: AppColors.goldLight,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 11)),
+                  Row(
+                    children: [
+                      Icon(isLive ? Icons.bar_chart_rounded : Icons.groups_rounded,
+                          size: 13, color: AppColors.textSecondary),
+                      const SizedBox(width: 5),
+                      Text(isLive ? 'Live fantasy points' : 'Contests open',
+                          style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                    ],
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: AppColors.gold.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: AppColors.gold.withValues(alpha: 0.5)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                            isLive ? 'View Live' : 'Draft Team',
+                            style: const TextStyle(
+                                color: AppColors.goldLight,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 11)),
+                        const SizedBox(width: 3),
+                        const Icon(Icons.chevron_right_rounded, size: 14, color: AppColors.goldLight),
+                      ],
+                    ),
+                  ),
                 ],
               )
             ],
@@ -358,29 +468,26 @@ class _MatchLobbyCard extends StatelessWidget {
   }
 
   Widget _buildTeamFlag(String? url) {
-    if (url == null || url.isEmpty) {
-      return Container(
-        width: 34,
-        height: 34,
-        decoration: const BoxDecoration(
-          color: Colors.white10,
-          shape: BoxShape.circle,
-        ),
-        child: const Icon(Icons.flag_rounded, color: Colors.white60, size: 16),
-      );
-    }
-    return Container(
-      width: 34,
-      height: 34,
+    final ring = Container(
+      width: 40,
+      height: 40,
+      padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.white24),
-        image: DecorationImage(
-          image: NetworkImage(url),
-          fit: BoxFit.cover,
-        ),
+        gradient: RadialGradient(colors: [
+          Colors.white.withValues(alpha: 0.18),
+          Colors.white.withValues(alpha: 0.04),
+        ]),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.3), width: 1),
       ),
+      child: url == null || url.isEmpty
+          ? const Icon(Icons.flag_rounded, color: Colors.white60, size: 16)
+          : ClipOval(
+              child: Image.network(url, fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Icon(Icons.flag_rounded, color: Colors.white60, size: 16)),
+            ),
     );
+    return ring;
   }
 }
 
@@ -2369,8 +2476,154 @@ class _LiveMatchCenterScreenState extends State<_LiveMatchCenterScreen> {
             )
           else
             ...performances.take(15).map((p) => _LivePlayerPointsRow(p: p)),
+          const SizedBox(height: 20),
+          // Session (Fancy) betting — e.g. "6 Over Session - India".
+          const Text('Session bets',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14)),
+          const SizedBox(height: 8),
+          if ((_liveData['sessions'] as List?)?.where((s) => s['status'] == 'open').isEmpty ?? true)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Text('No session brackets open.',
+                  style: TextStyle(color: AppColors.textSecondary)),
+            )
+          else
+            ...(_liveData['sessions'] as List)
+                .where((s) => s['status'] == 'open')
+                .map((s) => _SessionRow(match: m, session: s)),
         ],
       ),
+    );
+  }
+}
+
+class _SessionRow extends StatelessWidget {
+  final dynamic match;
+  final dynamic session;
+  const _SessionRow({required this.match, required this.session});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.01),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 2,
+            child: Text(
+              session['label'] ?? '',
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: ElevatedButton(
+              onPressed: () => _placeSessionBet(context, 'yes'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.green.withValues(alpha: 0.15),
+                foregroundColor: AppColors.green,
+                side: const BorderSide(color: AppColors.green, width: 0.5),
+                padding: const EdgeInsets.symmetric(vertical: 6),
+              ),
+              child: Text(
+                'YES (${session['odds_yes']}x)\n[${session['max_runs']} runs]',
+                style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: ElevatedButton(
+              onPressed: () => _placeSessionBet(context, 'no'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.red.withValues(alpha: 0.15),
+                foregroundColor: AppColors.red,
+                side: const BorderSide(color: AppColors.red, width: 0.5),
+                padding: const EdgeInsets.symmetric(vertical: 6),
+              ),
+              child: Text(
+                'NO (${session['odds_no']}x)\n[${session['min_runs']} runs]',
+                style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _placeSessionBet(BuildContext context, String selection) {
+    final txt = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: Text('Session: ${selection.toUpperCase()}',
+              style: const TextStyle(color: Colors.white, fontSize: 14)),
+          content: TextField(
+            controller: txt,
+            keyboardType: TextInputType.number,
+            style: const TextStyle(color: Colors.white),
+            decoration: const InputDecoration(
+              hintText: 'Enter stake amount in ₹',
+              hintStyle: TextStyle(color: AppColors.textSecondary),
+              enabledBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: AppColors.gold)),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final amt = double.tryParse(txt.text);
+                if (amt == null || amt <= 0) return;
+                try {
+                  await ApiClient()
+                      .dio
+                      .post('/api/betting/cricket/session/bet', data: {
+                    'session_id': session['id'],
+                    'selection': selection,
+                    'amount': amt,
+                  });
+                  SoundService.instance.play(Sfx.chipBet);
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Session bet accepted! 🏏'),
+                      backgroundColor: AppColors.green,
+                    ));
+                  }
+                } catch (e) {
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Insufficient balance or closed session'),
+                      backgroundColor: AppColors.red,
+                    ));
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold),
+              child: const Text('Submit Bet',
+                  style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
     );
   }
 }

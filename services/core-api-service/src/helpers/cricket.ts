@@ -90,3 +90,62 @@ export async function settleFantasyLeague(
 
   return { settledLeagues, entriesUpdated, totalPaid }
 }
+
+export async function settleCricketSession(
+  db: Pool, sessionId: string, resultRuns: number | null,
+): Promise<{ settled: number; winners: number; paid: number }> {
+  const client = await db.connect()
+  let settled = 0, winners = 0, paid = 0
+  const credits: { userId: string; amount: number; betId: string; ikey: string }[] = []
+
+  try {
+    await client.query('BEGIN')
+    const sRes = await client.query('SELECT * FROM cricket_sessions WHERE id = $1 FOR UPDATE', [sessionId])
+    if (!sRes.rows.length) throw new Error('Session not found')
+    const isVoid = resultRuns === null
+    await client.query(`UPDATE cricket_sessions SET status = 'settled', result_runs = $1 WHERE id = $2`, [resultRuns, sessionId])
+    const betsRes = await client.query(`SELECT * FROM cricket_session_bets WHERE session_id = $1 AND status = 'pending'`, [sessionId])
+
+    for (const bet of betsRes.rows) {
+      settled++
+      if (isVoid) {
+        await client.query(`UPDATE cricket_session_bets SET status = 'void', payout = $1 WHERE id = $2`, [Number(bet.amount), bet.id])
+        credits.push({ userId: bet.user_id, amount: Number(bet.amount), betId: bet.id, ikey: `cricket_session_refund_${bet.id}` })
+      } else {
+        const won = bet.selection === 'yes' ? resultRuns >= bet.runs_bracket : resultRuns < bet.runs_bracket
+        if (won) {
+          winners++
+          const payout = Number(bet.potential_payout)
+          paid += payout
+          await client.query(`UPDATE cricket_session_bets SET status = 'won', payout = $1 WHERE id = $2`, [payout, bet.id])
+          credits.push({ userId: bet.user_id, amount: payout, betId: bet.id, ikey: `cricket_session_payout_${bet.id}` })
+        } else {
+          await client.query(`UPDATE cricket_session_bets SET status = 'lost' WHERE id = $1`, [bet.id])
+        }
+      }
+    }
+    await client.query('COMMIT')
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
+  }
+
+  for (const c of credits) {
+    const isRefund = c.ikey.startsWith('cricket_session_refund_')
+    await creditPrize({
+      userId: c.userId,
+      amount: c.amount,
+      referenceId: c.betId,
+      idempotencyKey: c.ikey,
+      notification: {
+        title: isRefund ? 'Cricket Session Refunded 🏏' : 'Cricket Session Win! 🏏',
+        body: isRefund
+          ? `Your session bet was voided and ₹${c.amount.toFixed(2)} refunded.`
+          : `Congratulations! Your session bet won. ₹${c.amount.toFixed(2)} has been credited.`,
+      },
+    })
+  }
+  return { settled, winners, paid }
+}
