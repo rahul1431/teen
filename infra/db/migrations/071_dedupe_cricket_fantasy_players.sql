@@ -30,10 +30,12 @@ BEGIN
     UPDATE user_fantasy_teams SET player_ids = array_replace(player_ids, pair.new_id, pair.old_id)
       WHERE pair.new_id = ANY(player_ids);
 
+    -- Delete the duplicate first — external_id is unique, so it must be
+    -- freed up before backfilling it onto the original row.
+    DELETE FROM cricket_fantasy_players WHERE id = pair.new_id;
+
     -- Tag the original with the external_id so future sync-squad calls
     -- match it directly instead of inserting yet another duplicate.
     UPDATE cricket_fantasy_players SET external_id = pair.ext_id WHERE id = pair.old_id;
-
-    DELETE FROM cricket_fantasy_players WHERE id = pair.new_id;
   END LOOP;
 END $$;
