@@ -1,10 +1,58 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../../../core/audio/sound_service.dart';
+import '../../../core/constants/app_config.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'local_cricket_storage.dart';
+
+/// Renders a fantasy player's photo. Handles the two things that silently
+/// broke every avatar in the app: seeded placeholder photos come back as
+/// dicebear SVG URLs (`Image`/`NetworkImage` can't decode SVG at all), and
+/// admin-uploaded photos come back as a path relative to the API host
+/// (`/uploads/cricket-avatars/...`) rather than an absolute URL.
+class _PlayerAvatarImage extends StatelessWidget {
+  final String? url;
+  final double size;
+  final Widget Function() fallback;
+  const _PlayerAvatarImage(
+      {required this.url, required this.size, required this.fallback});
+
+  static String? _resolve(String? p) {
+    if (p == null || p.isEmpty) return null;
+    if (p.startsWith('http')) return p;
+    return '${AppConfig.apiBaseUrl}$p';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final resolved = _resolve(url);
+    if (resolved == null) {
+      return SizedBox(
+          width: size, height: size, child: Center(child: fallback()));
+    }
+    if (resolved.contains('/svg')) {
+      return SvgPicture.network(
+        resolved,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        placeholderBuilder: (_) =>
+            Center(child: fallback()),
+      );
+    }
+    return Image.network(
+      resolved,
+      width: size,
+      height: size,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) =>
+          SizedBox(width: size, height: size, child: Center(child: fallback())),
+    );
+  }
+}
 
 /// Premium Cricket Hub — Dream11 & MPL Style Design
 class CricketPage extends StatefulWidget {
@@ -219,13 +267,40 @@ class _LobbyTab extends StatelessWidget {
   }
 }
 
-class _MatchLobbyCard extends StatelessWidget {
+class _MatchLobbyCard extends StatefulWidget {
   final dynamic match;
   final bool isLive;
   const _MatchLobbyCard({required this.match, required this.isLive});
 
   @override
+  State<_MatchLobbyCard> createState() => _MatchLobbyCardState();
+}
+
+class _MatchLobbyCardState extends State<_MatchLobbyCard> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    // The countdown text below is computed fresh every build from
+    // DateTime.now() — without this periodic rebuild it would otherwise
+    // freeze at whatever value was on screen when the tab first loaded
+    // and silently go stale as real time passes.
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final match = widget.match;
+    final isLive = widget.isLive;
     final teamA = match['team_a'] ?? 'Team A';
     final teamB = match['team_b'] ?? 'Team B';
     final teamAShort = match['team_a_short'] ?? 'TMA';
@@ -243,8 +318,10 @@ class _MatchLobbyCard extends StatelessWidget {
           countdown = 'Starting soon';
         } else if (diff.inDays > 0) {
           countdown = '${diff.inDays}d ${diff.inHours % 24}h';
-        } else {
+        } else if (diff.inHours > 0) {
           countdown = '${diff.inHours}h ${diff.inMinutes % 60}m';
+        } else {
+          countdown = '${diff.inMinutes}m';
         }
       }
     }
@@ -1062,22 +1139,18 @@ class _DraftTeamScreenState extends State<_DraftTeamScreen>
         final isSelected = _selectedIds.contains(p['id'] as String);
         return ListTile(
           onTap: () => _togglePlayer(p),
-          leading: Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
+          leading: ClipOval(
+            child: Container(
+              width: 44,
+              height: 44,
               color: Colors.white.withValues(alpha: 0.05),
-              image: p['avatar_url'] != null
-                  ? DecorationImage(
-                      image: NetworkImage(p['avatar_url']),
-                      fit: BoxFit.cover,
-                    )
-                  : null,
+              child: _PlayerAvatarImage(
+                url: p['avatar_url'],
+                size: 44,
+                fallback: () =>
+                    const Icon(Icons.person, color: Colors.white54),
+              ),
             ),
-            child: p['avatar_url'] == null
-                ? const Icon(Icons.person, color: Colors.white54)
-                : null,
           ),
           title: Text(p['name'] ?? '',
               style: const TextStyle(
@@ -1136,14 +1209,18 @@ class _DraftTeamScreenState extends State<_DraftTeamScreen>
               final isVC = _vcId == p['id'];
 
               return ListTile(
-                leading: CircleAvatar(
-                  backgroundImage: p['avatar_url'] != null
-                      ? NetworkImage(p['avatar_url'])
-                      : null,
-                  backgroundColor: Colors.white10,
-                  child: p['avatar_url'] == null
-                      ? const Icon(Icons.person, color: Colors.white70)
-                      : null,
+                leading: ClipOval(
+                  child: Container(
+                    width: 40,
+                    height: 40,
+                    color: Colors.white10,
+                    child: _PlayerAvatarImage(
+                      url: p['avatar_url'],
+                      size: 40,
+                      fallback: () =>
+                          const Icon(Icons.person, color: Colors.white70),
+                    ),
+                  ),
                 ),
                 title: Text(p['name'] ?? '',
                     style: const TextStyle(
@@ -1467,25 +1544,20 @@ class _DraftTeamScreenState extends State<_DraftTeamScreen>
                               : Colors.white,
                           border: Border.all(
                               color: AppColors.goldLight, width: 1.5),
-                          image: p['avatar_url'] != null
-                              ? DecorationImage(
-                                  image: NetworkImage(p['avatar_url']),
-                                  fit: BoxFit.cover,
-                                )
-                              : null,
                         ),
-                        child: p['avatar_url'] == null
-                            ? Center(
-                                child: Icon(
-                                  Icons.sports_cricket,
-                                  size: 18,
-                                  color:
-                                      p['team_name'] == widget.match['team_a']
-                                          ? Colors.white
-                                          : Colors.black,
-                                ),
-                              )
-                            : null,
+                        child: ClipOval(
+                          child: _PlayerAvatarImage(
+                            url: p['avatar_url'],
+                            size: 42,
+                            fallback: () => Icon(
+                              Icons.sports_cricket,
+                              size: 18,
+                              color: p['team_name'] == widget.match['team_a']
+                                  ? Colors.white
+                                  : Colors.black,
+                            ),
+                          ),
+                        ),
                       ),
                       // Role multiplier bubble (C / VC)
                       if (isC || isVC)
@@ -1854,19 +1926,15 @@ class _ContestLeaderboardScreenState extends State<_ContestLeaderboardScreen> {
                       shape: BoxShape.circle,
                       color: Colors.black87,
                       border: Border.all(color: AppColors.gold, width: 1),
-                      image: p['avatar_url'] != null
-                          ? DecorationImage(
-                              image: NetworkImage(p['avatar_url']),
-                              fit: BoxFit.cover,
-                            )
-                          : null,
                     ),
-                    child: p['avatar_url'] == null
-                        ? const Center(
-                            child: Icon(Icons.sports_cricket,
-                                color: Colors.white70, size: 16),
-                          )
-                        : null,
+                    child: ClipOval(
+                      child: _PlayerAvatarImage(
+                        url: p['avatar_url'],
+                        size: 40,
+                        fallback: () => const Icon(Icons.sports_cricket,
+                            color: Colors.white70, size: 16),
+                      ),
+                    ),
                   ),
                   if (isC || isVC)
                     Positioned(
@@ -2336,19 +2404,15 @@ class _MyCreatedTeamsTabState extends State<_MyCreatedTeamsTab> {
                       shape: BoxShape.circle,
                       color: Colors.black87,
                       border: Border.all(color: AppColors.gold, width: 1),
-                      image: p['avatar_url'] != null
-                          ? DecorationImage(
-                              image: NetworkImage(p['avatar_url']),
-                              fit: BoxFit.cover,
-                            )
-                          : null,
                     ),
-                    child: p['avatar_url'] == null
-                        ? const Center(
-                            child: Icon(Icons.sports_cricket,
-                                color: Colors.white70, size: 16),
-                          )
-                        : null,
+                    child: ClipOval(
+                      child: _PlayerAvatarImage(
+                        url: p['avatar_url'],
+                        size: 40,
+                        fallback: () => const Icon(Icons.sports_cricket,
+                            color: Colors.white70, size: 16),
+                      ),
+                    ),
                   ),
                   if (isC || isVC)
                     Positioned(
