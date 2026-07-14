@@ -158,7 +158,7 @@ export function bettingPlugin(db: Pool) {
     })
 
     app.get('/lottery/my-tickets', { onRequest: [auth] }, async (req) => {
-      const rows = await db.query(`SELECT t.*, d.name AS draw_name, d.winning_number, d.draw_time, d.status AS draw_status FROM lottery_tickets t JOIN lottery_draws d ON d.id = t.draw_id WHERE t.user_id = $1 ORDER BY t.created_at DESC LIMIT 100`, [uid(req)])
+      const rows = await db.query(`SELECT t.*, d.name AS draw_name, d.winning_number, d.draw_time, d.status AS draw_status, d.category AS draw_category FROM lottery_tickets t JOIN lottery_draws d ON d.id = t.draw_id WHERE t.user_id = $1 ORDER BY t.created_at DESC LIMIT 100`, [uid(req)])
       return { tickets: rows.rows }
     })
 
@@ -398,8 +398,9 @@ export function bettingPlugin(db: Pool) {
           match_type: z.enum(['exact', 'last_3', 'last_2', 'last_1']),
           multiplier: z.number().positive(),
         })).min(1),
+        category: z.enum(['daily', 'instant', 'weekly', 'monthly']),
       }).parse(req.body)
-      const r = await db.query(`INSERT INTO lottery_draws (name, ticket_price, draw_time, prize_tiers) VALUES ($1,$2,$3,$4) RETURNING *`, [body.name, body.ticket_price, body.draw_time, JSON.stringify(body.prize_tiers)])
+      const r = await db.query(`INSERT INTO lottery_draws (name, ticket_price, draw_time, prize_tiers, category) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [body.name, body.ticket_price, body.draw_time, JSON.stringify(body.prize_tiers), body.category])
       return { success: true, draw: r.rows[0] }
     })
 
