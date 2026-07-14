@@ -1912,6 +1912,27 @@ async function start() {
     return reply.send({ success: true, product: r.rows[0] })
   })
 
+  // --- Lottery: Daily (Bingo) ---
+  app.get('/api/admin/betting/lottery/bingo/draws', { onRequest: [authenticate] }, async (_req, reply) => {
+    const rows = await db.query(`
+      SELECT d.*,
+             (SELECT COUNT(*) FROM lottery_bingo_tickets t WHERE t.draw_id = d.id) AS ticket_count,
+             (SELECT COALESCE(SUM(t.prize), 0) FROM lottery_bingo_tickets t WHERE t.draw_id = d.id) AS total_paid
+      FROM lottery_bingo_draws d ORDER BY d.draw_time DESC LIMIT 100`)
+    return reply.send({ draws: rows.rows })
+  })
+
+  app.post('/api/admin/betting/lottery/bingo/create', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/lottery/bingo/create', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/lottery/bingo/cancel/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const r = await callBetting('/internal/lottery/bingo/cancel', { draw_id: id })
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
   // --- Cricket ---
   // Match-odds (Match Winner/Toss/etc markets) stays archived in favor of
   // the Dream11-style fantasy contest system — see archived_cricket_{bets,
