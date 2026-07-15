@@ -79,4 +79,26 @@ describe('Daily Lottery Settlement', () => {
       expect(matchTicketToTier('1111', '2221')).toBe('last_1')
     })
   })
+
+  describe('matchTicketToTier - Input Validation', () => {
+    it('should throw error for invalid ticket number (too short)', () => {
+      expect(() => matchTicketToTier('123', '1234')).toThrow(/exactly 4 digits/)
+    })
+
+    it('should throw error for invalid ticket number (too long)', () => {
+      expect(() => matchTicketToTier('12345', '1234')).toThrow(/exactly 4 digits/)
+    })
+
+    it('should throw error for invalid ticket number (non-digit)', () => {
+      expect(() => matchTicketToTier('abc1', '1234')).toThrow(/exactly 4 digits/)
+    })
+
+    it('should throw error for invalid winning number (too short)', () => {
+      expect(() => matchTicketToTier('1234', '123')).toThrow(/exactly 4 digits/)
+    })
+
+    it('should throw error for invalid winning number (non-digit)', () => {
+      expect(() => matchTicketToTier('1234', 'abcd')).toThrow(/exactly 4 digits/)
+    })
+  })
 })
