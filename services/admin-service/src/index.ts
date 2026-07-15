@@ -1941,6 +1941,12 @@ async function start() {
     return reply.code(r.status).send(r.data)
   })
 
+  app.get('/api/admin/betting/lottery/daily/admin/draws/:id/tickets', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const r = await callBetting(`/lottery/daily/admin/draws/${id}/tickets`, undefined, 'GET')
+    return reply.code(r.status).send(r.data)
+  })
+
   app.post('/api/admin/betting/lottery/daily/admin/draws/:id/declare', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const { id } = req.params as { id: string }
     const r = await callBetting(`/lottery/daily/admin/draws/${id}/declare`, req.body)

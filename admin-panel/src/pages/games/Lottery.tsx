@@ -11,8 +11,38 @@ import { adminApi } from '../../api/client'
 import dayjs from 'dayjs'
 import LotteryScratch from './LotteryScratch'
 import LotteryDailyDashboard from '../../components/LotteryDailyDashboard'
+import LotteryDailyTiers from '../../components/LotteryDailyTiers'
+import LotteryDailyDraws from '../../components/LotteryDailyDraws'
 
 const { Text, Title } = Typography
+
+function LotteryDaily() {
+  const [refreshKey, setRefreshKey] = useState(0)
+  const handleRefresh = () => setRefreshKey((k) => k + 1)
+
+  return (
+    <Tabs
+      defaultActiveKey="tiers"
+      items={[
+        {
+          key: 'tiers',
+          label: 'Tiers',
+          children: <LotteryDailyTiers key={refreshKey} onRefresh={handleRefresh} />,
+        },
+        {
+          key: 'draws',
+          label: 'Draws',
+          children: <LotteryDailyDraws key={refreshKey} onRefresh={handleRefresh} />,
+        },
+        {
+          key: 'dashboard',
+          label: 'Dashboard',
+          children: <LotteryDailyDashboard key={refreshKey} />,
+        },
+      ]}
+    />
+  )
+}
 
 export default function Lottery() {
   const [config, setConfig] = useState<any>(null)
@@ -665,7 +695,7 @@ export default function Lottery() {
         {
           key: 'daily',
           label: 'Daily Lottery',
-          children: <LotteryDailyDashboard />,
+          children: <LotteryDaily />,
         },
       ]}
     />

@@ -11,6 +11,7 @@ export interface Draw {
   winning_number: string | null
   prize_tiers: PrizeTier[]
   created_at: string
+  tickets_count?: number
 }
 
 export async function createDraw(req: {
@@ -99,9 +100,12 @@ export async function getDrawsForToday(): Promise<Draw[]> {
   const today = new Date().toISOString().split('T')[0]
 
   const result = await pool.query(
-    `SELECT * FROM lottery_daily_draws
-     WHERE draw_date = $1
-     ORDER BY draw_time ASC`,
+    `SELECT d.*, COUNT(t.id)::int AS tickets_count
+     FROM lottery_daily_draws d
+     LEFT JOIN lottery_daily_tickets t ON t.draw_id = d.id
+     WHERE d.draw_date = $1
+     GROUP BY d.id
+     ORDER BY d.draw_time ASC`,
     [today]
   )
 
@@ -155,5 +159,6 @@ function formatDraw(row: any): Draw {
     winning_number: row.winning_number,
     prize_tiers: row.prize_tiers,
     created_at: row.created_at,
+    ...(row.tickets_count !== undefined && { tickets_count: row.tickets_count }),
   }
 }

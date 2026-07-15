@@ -167,6 +167,59 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
     }
   )
 
+  // GET /betting/lottery/daily/my-tickets — Current user's tickets, joined with draw state
+  app.get(
+    '/lottery/daily/my-tickets',
+    { onRequest: [auth] },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const user_id = uid(req)
+        const result = await pool.query(
+          `SELECT t.id, t.draw_id, t.ticket_number, t.match_type, t.outcome_type, t.prize, t.created_at,
+                  d.tier_id, d.draw_time, d.status,
+                  CASE
+                    WHEN d.status != 'settled' THEN NULL
+                    WHEN t.outcome_type != 'none' THEN true
+                    ELSE false
+                  END AS is_winner
+           FROM lottery_daily_tickets t
+           JOIN lottery_daily_draws d ON d.id = t.draw_id
+           WHERE t.user_id = $1
+           ORDER BY t.created_at DESC
+           LIMIT 100`,
+          [user_id]
+        )
+        return reply.send({ tickets: result.rows })
+      } catch (err: any) {
+        return reply.code(500).send({ error: err.message })
+      }
+    }
+  )
+
+  // GET /betting/lottery/daily/history — Settled draws (global), with tier price and ticket count
+  app.get(
+    '/lottery/daily/history',
+    { onRequest: [auth] },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const result = await pool.query(
+          `SELECT d.id, d.draw_date, d.draw_time, d.winning_number, d.status, tr.amount,
+                  COUNT(t.id)::int AS ticket_count
+           FROM lottery_daily_draws d
+           JOIN lottery_daily_tiers tr ON tr.id = d.tier_id
+           LEFT JOIN lottery_daily_tickets t ON t.draw_id = d.id
+           WHERE d.status = 'settled'
+           GROUP BY d.id, tr.amount
+           ORDER BY d.draw_time DESC
+           LIMIT 50`
+        )
+        return reply.send({ draws: result.rows })
+      } catch (err: any) {
+        return reply.code(500).send({ error: err.message })
+      }
+    }
+  )
+
   // ══ ADMIN ENDPOINTS ══
 
   // GET /betting/lottery/daily/admin/tiers — List all tiers
@@ -267,6 +320,24 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
       try {
         const draws = await drawsService.getDrawsForToday()
         return reply.send({ draws })
+      } catch (err: any) {
+        return reply.code(500).send({ error: err.message })
+      }
+    }
+  )
+
+  // GET /betting/lottery/daily/admin/draws/:id/tickets — List tickets for a draw
+  app.get(
+    '/lottery/daily/admin/draws/:id/tickets',
+    { onRequest: [adminCheck] },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const { id } = req.params as { id: string }
+        const result = await pool.query(
+          'SELECT * FROM lottery_daily_tickets WHERE draw_id = $1 ORDER BY created_at DESC',
+          [id]
+        )
+        return reply.send({ tickets: result.rows })
       } catch (err: any) {
         return reply.code(500).send({ error: err.message })
       }
