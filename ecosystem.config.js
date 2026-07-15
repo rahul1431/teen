@@ -101,17 +101,6 @@ module.exports = {
       env: NODE_OPTS,
     },
     {
-      name: 'teen-bingo',
-      cwd: `${BASE}/game-engines/bingo`,
-      script: 'dist/index.js',
-      env_file: ENV_FILE('game-engines/bingo'),
-      instances: 1,
-      exec_mode: 'fork',
-      watch: false,
-      max_memory_restart: '200M',
-      env: NODE_OPTS,
-    },
-    {
       name: 'teen-ludo',
       cwd: `${BASE}/game-engines/ludo`,
       script: 'dist/index.js',
