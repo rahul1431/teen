@@ -388,7 +388,7 @@ export default function Lottery() {
                 { 
                   title: 'Draw Name', 
                   dataIndex: 'name',
-                  render: (name) => <span style={{ fontWeight: 600, color: '#f9fafb' }}>{name}</span>
+                  render: (name) => <span style={{ fontWeight: 600 }}>{name}</span>
                 },
                 { 
                   title: 'Price', 
@@ -542,7 +542,7 @@ export default function Lottery() {
                         rules={[{ required: true, message: 'Missing multiplier' }]}
                         style={{ marginBottom: 0 }}
                       >
-                        <InputNumber min={1} placeholder="Multiplier" style={{ width: 140, borderRadius: '6px' }} formatter={(v) => `${v}x`} />
+                        <InputNumber min={1} placeholder="Multiplier" style={{ width: 140, borderRadius: '6px' }} formatter={(v) => `${v}x`} parser={(v) => v!.replace('x', '')} />
                       </Form.Item>
                       {fields.length > 1 ? (
                         <Button danger onClick={() => remove(name)} style={{ borderRadius: '6px' }}>Remove</Button>
