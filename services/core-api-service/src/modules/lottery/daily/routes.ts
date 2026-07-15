@@ -11,20 +11,28 @@ import type { PrizeTier } from './tiers'
 /**
  * Daily Lottery API Routes
  *
- * Player endpoints:
- * - GET /betting/lottery/daily/draws — list today's draws
- * - GET /betting/lottery/daily/draws/:id — get single draw
- * - GET /betting/lottery/daily/tiers — list active tiers
- * - POST /betting/lottery/daily/buy — purchase ticket
+ * Registered under core-api-service's bettingPlugin, which itself has no
+ * URL prefix -- nginx's /api/betting/ location strips that prefix before
+ * proxying here (rewrite ^/api/betting/(.*) /$1 break), matching the
+ * existing /matka/*, /lottery/draws etc. routes. Do NOT add a /betting
+ * prefix to these paths or nginx-proxied requests 404.
  *
- * Admin endpoints (require INTERNAL_SERVICE_KEY):
- * - GET /betting/lottery/daily/admin/tiers — list all tiers
- * - POST /betting/lottery/daily/admin/tiers — create tier
- * - PUT /betting/lottery/daily/admin/tiers/:id — update tier
- * - GET /betting/lottery/daily/admin/draws — list draws (today)
- * - POST /betting/lottery/daily/admin/draws — create draw
- * - POST /betting/lottery/daily/admin/draws/:id/declare — declare winning number
- * - POST /betting/lottery/daily/admin/draws/:id/cancel — cancel draw
+ * Player endpoints (mobile calls via /api/betting/lottery/daily/...):
+ * - GET /lottery/daily/draws — list today's draws
+ * - GET /lottery/daily/draws/:id — get single draw
+ * - GET /lottery/daily/tiers — list active tiers
+ * - POST /lottery/daily/buy — purchase ticket
+ *
+ * Admin endpoints (require INTERNAL_SERVICE_KEY via x-internal-key header;
+ * admin-panel does NOT call these directly -- it calls admin-service's
+ * /api/admin/betting/lottery/daily/... which proxies here with the key):
+ * - GET /lottery/daily/admin/tiers — list all tiers
+ * - POST /lottery/daily/admin/tiers — create tier
+ * - PUT /lottery/daily/admin/tiers/:id — update tier
+ * - GET /lottery/daily/admin/draws — list draws (today)
+ * - POST /lottery/daily/admin/draws — create draw
+ * - POST /lottery/daily/admin/draws/:id/declare — declare winning number
+ * - POST /lottery/daily/admin/draws/:id/cancel — cancel draw
  */
 
 function uid(req: any): string {
@@ -45,7 +53,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
 
   // GET /betting/lottery/daily/draws — List today's draws
   app.get(
-    '/betting/lottery/daily/draws',
+    '/lottery/daily/draws',
     { onRequest: [auth] },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -59,7 +67,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
 
   // GET /betting/lottery/daily/draws/:id — Get single draw
   app.get(
-    '/betting/lottery/daily/draws/:id',
+    '/lottery/daily/draws/:id',
     { onRequest: [auth] },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -74,7 +82,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
 
   // GET /betting/lottery/daily/tiers — List active tiers
   app.get(
-    '/betting/lottery/daily/tiers',
+    '/lottery/daily/tiers',
     { onRequest: [auth] },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -88,7 +96,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
 
   // POST /betting/lottery/daily/buy — Purchase ticket
   app.post(
-    '/betting/lottery/daily/buy',
+    '/lottery/daily/buy',
     { onRequest: [auth] },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -163,7 +171,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
 
   // GET /betting/lottery/daily/admin/tiers — List all tiers
   app.get(
-    '/betting/lottery/daily/admin/tiers',
+    '/lottery/daily/admin/tiers',
     { onRequest: [adminCheck] },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -177,7 +185,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
 
   // POST /betting/lottery/daily/admin/tiers — Create tier
   app.post(
-    '/betting/lottery/daily/admin/tiers',
+    '/lottery/daily/admin/tiers',
     { onRequest: [adminCheck] },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -213,7 +221,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
 
   // PUT /betting/lottery/daily/admin/tiers/:id — Update tier
   app.put(
-    '/betting/lottery/daily/admin/tiers/:id',
+    '/lottery/daily/admin/tiers/:id',
     { onRequest: [adminCheck] },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -253,7 +261,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
 
   // GET /betting/lottery/daily/admin/draws — List draws for today
   app.get(
-    '/betting/lottery/daily/admin/draws',
+    '/lottery/daily/admin/draws',
     { onRequest: [adminCheck] },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -267,7 +275,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
 
   // POST /betting/lottery/daily/admin/draws — Create draw
   app.post(
-    '/betting/lottery/daily/admin/draws',
+    '/lottery/daily/admin/draws',
     { onRequest: [adminCheck] },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -314,7 +322,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
 
   // POST /betting/lottery/daily/admin/draws/:id/declare — Declare winning number
   app.post(
-    '/betting/lottery/daily/admin/draws/:id/declare',
+    '/lottery/daily/admin/draws/:id/declare',
     { onRequest: [adminCheck] },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -361,7 +369,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
 
   // POST /betting/lottery/daily/admin/draws/:id/cancel — Cancel draw
   app.post(
-    '/betting/lottery/daily/admin/draws/:id/cancel',
+    '/lottery/daily/admin/draws/:id/cancel',
     { onRequest: [adminCheck] },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {

@@ -1912,6 +1912,47 @@ async function start() {
     return reply.send({ success: true, product: r.rows[0] })
   })
 
+  // --- Lottery: Daily (tier-based) ---
+  // All CRUD/validation logic lives in core-api-service's tiersService/
+  // drawsService (Task 5/6) -- proxy through rather than duplicate it here.
+  app.get('/api/admin/betting/lottery/daily/admin/tiers', { onRequest: [authenticate] }, async (_req, reply) => {
+    const r = await callBetting('/lottery/daily/admin/tiers', undefined, 'GET')
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/lottery/daily/admin/tiers', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/lottery/daily/admin/tiers', req.body)
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.put('/api/admin/betting/lottery/daily/admin/tiers/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const r = await callBetting(`/lottery/daily/admin/tiers/${id}`, req.body, 'PUT')
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.get('/api/admin/betting/lottery/daily/admin/draws', { onRequest: [authenticate] }, async (_req, reply) => {
+    const r = await callBetting('/lottery/daily/admin/draws', undefined, 'GET')
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/lottery/daily/admin/draws', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/lottery/daily/admin/draws', req.body)
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/lottery/daily/admin/draws/:id/declare', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const r = await callBetting(`/lottery/daily/admin/draws/${id}/declare`, req.body)
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/lottery/daily/admin/draws/:id/cancel', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const r = await callBetting(`/lottery/daily/admin/draws/${id}/cancel`, req.body)
+    return reply.code(r.status).send(r.data)
+  })
+
   // --- Cricket ---
   // Match-odds (Match Winner/Toss/etc markets) stays archived in favor of
   // the Dream11-style fantasy contest system — see archived_cricket_{bets,
