@@ -54,19 +54,24 @@ export async function settleDraw(draw_id: string): Promise<{
       const prize = tier.amount * (prizeTier.multiplier || 1)
 
       // Credit via wallet with idempotency
-      const creditSuccess = await creditPrize({
-        userId: ticket.user_id,
-        amount: prize,
-        referenceId: `lottery_daily_${draw_id}_${ticket.id}`,
-        idempotencyKey: `lottery_daily_${draw_id}_${ticket.id}`,
-        notification: {
-          title: 'Daily Lottery Win!',
-          body: `You won ₹${prize} with ${matchType}!`,
-        },
-      })
+      try {
+        const creditSuccess = await creditPrize({
+          userId: ticket.user_id,
+          amount: prize,
+          referenceId: `lottery_daily_${draw_id}_${ticket.id}`,
+          idempotencyKey: `lottery_daily_${draw_id}_${ticket.id}`,
+          notification: {
+            title: 'Daily Lottery Win!',
+            body: `You won ₹${prize} with ${matchType}!`,
+          },
+        })
 
-      if (!creditSuccess) {
-        console.error(`[Settlement] Failed to credit prize for ticket ${ticket.id}`)
+        if (!creditSuccess) {
+          throw new Error(`Wallet service returned false for ticket ${ticket.id}`)
+        }
+      } catch (err) {
+        console.error(`[Settlement] Failed to credit prize for ticket ${ticket.id}:`, (err as Error).message)
+        // Don't update ticket as winner; leave for manual reconciliation
         continue
       }
 
@@ -109,6 +114,11 @@ export function matchTicketToTier(
   ticket_number: string,
   winning_number: string
 ): 'exact' | 'last_3' | 'last_2' | 'last_1' | null {
+  // Validate inputs: both must be exactly 4 digits
+  if (!/^\d{4}$/.test(ticket_number) || !/^\d{4}$/.test(winning_number)) {
+    throw new Error('Ticket and winning numbers must be exactly 4 digits');
+  }
+
   // Check exact match (all 4 digits)
   if (ticket_number === winning_number) {
     return 'exact'
@@ -139,9 +149,22 @@ export function matchTicketToTier(
   return null
 }
 
+/**
+ * Assigns a coupon to a user for daily lottery wins.
+ *
+ * PLACEHOLDER IMPLEMENTATION: This function currently returns a generated coupon ID.
+ * It defers actual coupon system integration to a future task (coupon system design & implementation).
+ * The placeholder allows settlement processing to proceed without blocking on external coupon logic.
+ *
+ * TODO: Replace with actual coupon system integration that:
+ * - Validates coupon_code exists in coupon system
+ * - Creates a user coupon record with expiration
+ * - Returns the actual coupon_id from the coupon system
+ *
+ * @param user_id - User ID receiving the coupon
+ * @param coupon_code - Coupon code to assign (e.g., 'default', 'bonus_50')
+ * @returns Generated coupon ID (placeholder)
+ */
 async function assignCoupon(user_id: string, coupon_code: string): Promise<string> {
-  // TODO: Integrate with existing coupon system
-  // For now, return a placeholder coupon_id that will be integrated later
-  // This allows the settlement to proceed while coupon assignment is implemented separately
   return `coupon_${user_id}_${Date.now()}`
 }
