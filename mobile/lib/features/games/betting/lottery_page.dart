@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'lottery_draws_page.dart';
 import 'lottery_scratch_page.dart';
-import 'lottery_bingo_page.dart';
+import 'lottery_daily_page.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Lottery Page — top-level menu of the four lottery types
@@ -38,11 +38,11 @@ class LotteryPage extends StatelessWidget {
           _typeCard(
             context,
             title: 'Daily Lottery',
-            subtitle: '90-ball bingo — live number calling',
+            subtitle: 'Tier-based draws — multiple chances daily',
             icon: Icons.calendar_today_rounded,
             color: Colors.cyanAccent,
             onTap: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const LotteryBingoPage())),
+                MaterialPageRoute(builder: (_) => const LotteryDailyPage())),
           ),
           const SizedBox(height: 16),
           _typeCard(
