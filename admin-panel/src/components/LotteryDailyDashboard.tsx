@@ -274,12 +274,11 @@ export default function LotteryDailyDashboard() {
         <Col xs={24} sm={12} md={6}>
           <Card style={highlightCardStyle} loading={loading}>
             <Statistic
-              title="Revenue Today"
+              title={<span style={{ color: 'rgba(255, 255, 255, 0.85)' }}>Revenue Today</span>}
               value={dashboardData.totalRevenue}
               prefix={<DollarOutlined />}
               suffix="₹"
               valueStyle={{ color: '#fff', fontSize: '24px' }}
-              titleStyle={{ color: 'rgba(255, 255, 255, 0.85)' }}
             />
           </Card>
         </Col>
