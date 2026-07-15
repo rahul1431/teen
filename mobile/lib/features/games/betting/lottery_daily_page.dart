@@ -14,11 +14,16 @@ class LotteryDailyPage extends StatefulWidget {
 
 class _LotteryDailyPageState extends State<LotteryDailyPage> with TickerProviderStateMixin {
   late TabController _tabController;
+  final _myTicketsKey = GlobalKey<LotteryDailyMyTicketsTabState>();
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging || _tabController.index != 1) return;
+      _myTicketsKey.currentState?.reload();
+    });
   }
 
   @override
@@ -58,7 +63,7 @@ class _LotteryDailyPageState extends State<LotteryDailyPage> with TickerProvider
         controller: _tabController,
         children: [
           LotteryDailyBrowseTab(),
-          LotteryDailyMyTicketsTab(),
+          LotteryDailyMyTicketsTab(key: _myTicketsKey),
           LotteryDailyHistoryTab(),
         ],
       ),

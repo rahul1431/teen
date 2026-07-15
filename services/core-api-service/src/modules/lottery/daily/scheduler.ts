@@ -9,39 +9,45 @@ import * as settlementService from './settlement'
  * standalone scheduler process would need its own pool wiring and cannot
  * import this module's sibling files without leaving its own rootDir.
  */
-export function startLotteryDailyScheduler(): void {
-  // Job 1: Create today's draws for every active tier, once per day at 00:00
-  new CronJob('0 0 * * *', async () => {
-    console.log('[Lottery Daily] Creating draws for today')
+async function ensureDrawsForToday(): Promise<void> {
+  try {
+    const tiersResult = await pool.query(
+      "SELECT * FROM lottery_daily_tiers WHERE status = 'active'"
+    )
 
-    try {
-      const tiersResult = await pool.query(
-        "SELECT * FROM lottery_daily_tiers WHERE status = 'active'"
-      )
+    let createdCount = 0
 
-      let createdCount = 0
+    for (const tier of tiersResult.rows) {
+      try {
+        const draw = await drawsService.createDraw({
+          tier_id: tier.id,
+          draw_date: new Date(),
+          prize_tiers: tier.default_prize_tiers,
+        })
 
-      for (const tier of tiersResult.rows) {
-        try {
-          const draw = await drawsService.createDraw({
-            tier_id: tier.id,
-            draw_date: new Date(),
-            prize_tiers: tier.default_prize_tiers,
-          })
-
-          console.log(`[Lottery Daily] Created draw ${draw.id} for tier ${tier.id}`)
-          createdCount++
-        } catch (err) {
-          // Draw already exists for this tier/date (unique constraint) — expected on restart
-          console.log(`[Lottery Daily] Draw already exists for tier ${tier.id}`)
-        }
+        console.log(`[Lottery Daily] Created draw ${draw.id} for tier ${tier.id}`)
+        createdCount++
+      } catch (err) {
+        // Draw already exists for this tier/date (unique constraint) — expected
       }
-
-      console.log(`[Lottery Daily] Created ${createdCount} draws`)
-    } catch (err: any) {
-      console.error('[Lottery Daily] Error creating draws:', err.message)
     }
-  }).start()
+
+    if (createdCount > 0) {
+      console.log(`[Lottery Daily] Created ${createdCount} draws`)
+    }
+  } catch (err: any) {
+    console.error('[Lottery Daily] Error creating draws:', err.message)
+  }
+}
+
+export function startLotteryDailyScheduler(): void {
+  // Job 1: Ensure every active tier has today's draw. Runs immediately on
+  // startup (so a service restart mid-day self-heals) and every 15 minutes
+  // (so a tier activated mid-day gets a draw without waiting for the next
+  // midnight run). Idempotent — createDraw's unique constraint is caught
+  // above, so re-running is a cheap no-op once a tier's draw exists.
+  ensureDrawsForToday()
+  new CronJob('*/15 * * * *', ensureDrawsForToday).start()
 
   // Job 2: Settle draws whose draw_time has arrived, checked every 30 seconds
   new CronJob('*/30 * * * * *', async () => {

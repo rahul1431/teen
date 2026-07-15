@@ -9,10 +9,10 @@ class LotteryDailyMyTicketsTab extends StatefulWidget {
   const LotteryDailyMyTicketsTab({super.key});
 
   @override
-  State<LotteryDailyMyTicketsTab> createState() => _LotteryDailyMyTicketsTabState();
+  State<LotteryDailyMyTicketsTab> createState() => LotteryDailyMyTicketsTabState();
 }
 
-class _LotteryDailyMyTicketsTabState extends State<LotteryDailyMyTicketsTab> {
+class LotteryDailyMyTicketsTabState extends State<LotteryDailyMyTicketsTab> {
   late final LotteryDailyService _service;
   List<dynamic> _tickets = [];
   List<dynamic> _draws = [];
@@ -35,6 +35,8 @@ class _LotteryDailyMyTicketsTabState extends State<LotteryDailyMyTicketsTab> {
     _ticker?.cancel();
     super.dispose();
   }
+
+  void reload() => _loadData();
 
   Future<void> _loadData() async {
     setState(() => _loading = true);
