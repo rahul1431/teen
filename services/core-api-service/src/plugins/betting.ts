@@ -6,7 +6,6 @@ import { debitStake, creditPrize } from '../helpers/wallet-client'
 import { MATKA_MULTIPLIERS, validateMatkaBet, settleMatkaSession } from '../helpers/matka'
 import { settleLottery, generateWinningNumber } from '../helpers/lottery'
 import { rollOutcome } from '../helpers/scratch'
-import { generateBingoCard } from '../helpers/bingo'
 import { settleFantasyLeague, settleCricketSession } from '../helpers/cricket'
 import { aggregateScorecard, computeFantasyPoints, DEFAULT_SCORING_RULES } from '../helpers/fantasy-scoring'
 import { cricApiFetch } from '../helpers/cricapi-client'
@@ -239,64 +238,6 @@ export function bettingPlugin(db: Pool) {
          FROM lottery_scratch_tickets t
          JOIN lottery_scratch_products p ON p.id = t.product_id
          LEFT JOIN promo_codes pc ON pc.id = t.promo_code_id
-         WHERE t.user_id = $1 ORDER BY t.created_at DESC LIMIT 100`,
-        [uid(req)],
-      )
-      return { tickets: rows.rows }
-    })
-
-    // ══ LOTTERY — DAILY (90-BALL BINGO) ══
-    app.get('/lottery/bingo/draws', { onRequest: [auth] }, async () => {
-      // Serves all three mobile tabs (Browse/History) from one call: open
-      // draws keep the original 15-minute staleness guard (a draw stuck in
-      // 'open' past its draw_time means the bingo-engine's sweep missed it
-      // -- don't keep showing a live Buy Ticket button for it indefinitely),
-      // calling draws are always shown since they're actively in progress,
-      // and settled draws are included for the last 7 days so History has
-      // something to show, bounded rather than unbounded.
-      const rows = await db.query(`
-        SELECT d.*, COUNT(t.id)::int AS ticket_count
-        FROM lottery_bingo_draws d
-        LEFT JOIN lottery_bingo_tickets t ON t.draw_id = d.id
-        WHERE (d.status = 'open' AND d.draw_time > NOW() - INTERVAL '15 minutes')
-           OR d.status = 'calling'
-           OR (d.status = 'settled' AND d.draw_time > NOW() - INTERVAL '7 days')
-        GROUP BY d.id
-        ORDER BY d.draw_time DESC
-        LIMIT 100
-      `)
-      return { draws: rows.rows }
-    })
-
-    app.post('/lottery/bingo/buy', { onRequest: [auth] }, async (req, reply) => {
-      const body = z.object({ draw_id: z.string().uuid() }).parse(req.body)
-      const drawRes = await db.query(`SELECT * FROM lottery_bingo_draws WHERE id = $1 AND status = 'open'`, [body.draw_id])
-      if (!drawRes.rows.length) return reply.code(409).send({ error: 'Draw not open' })
-      const draw = drawRes.rows[0]
-
-      const ticketId = crypto.randomUUID()
-      const debit = await debitStake({ userId: uid(req), amount: Number(draw.ticket_price), referenceId: ticketId, idempotencyKey: `bingo_buy_${ticketId}`, description: `Bingo: ${draw.name}` })
-      if (!debit.ok) return reply.code(400).send({ error: debit.error })
-
-      const card = generateBingoCard()
-      try {
-        await db.query(
-          `INSERT INTO lottery_bingo_tickets (id, draw_id, user_id, card) VALUES ($1,$2,$3,$4)`,
-          [ticketId, body.draw_id, uid(req), JSON.stringify(card)],
-        )
-      } catch (err) {
-        await creditPrize({ userId: uid(req), amount: Number(draw.ticket_price), referenceId: ticketId, idempotencyKey: `bingo_buy_refund_${ticketId}` })
-        return reply.code(500).send({ error: 'Purchase failed, your stake has been refunded' })
-      }
-
-      return { success: true, ticket_id: ticketId, card }
-    })
-
-    app.get('/lottery/bingo/my-tickets', { onRequest: [auth] }, async (req) => {
-      const rows = await db.query(
-        `SELECT t.*, d.name AS draw_name, d.draw_time, d.status AS draw_status
-         FROM lottery_bingo_tickets t
-         JOIN lottery_bingo_draws d ON d.id = t.draw_id
          WHERE t.user_id = $1 ORDER BY t.created_at DESC LIMIT 100`,
         [uid(req)],
       )
@@ -579,36 +520,6 @@ export function bettingPlugin(db: Pool) {
         [body.name, body.price, JSON.stringify(body.payouts)],
       )
       return { success: true, product: r.rows[0] }
-    })
-
-    app.post('/internal/lottery/bingo/create', { onRequest: [internal] }, async (req) => {
-      const body = z.object({
-        name: z.string(),
-        ticket_price: z.number().positive(),
-        draw_time: z.string(),
-        prize_tiers: z.array(z.object({
-          match_type: z.enum(['one_line', 'two_lines', 'full_house']),
-          multiplier: z.number().positive(),
-        })).min(1),
-      }).parse(req.body)
-      const r = await db.query(
-        `INSERT INTO lottery_bingo_draws (name, ticket_price, draw_time, prize_tiers) VALUES ($1,$2,$3,$4) RETURNING *`,
-        [body.name, body.ticket_price, body.draw_time, JSON.stringify(body.prize_tiers)],
-      )
-      return { success: true, draw: r.rows[0] }
-    })
-
-    app.post('/internal/lottery/bingo/cancel', { onRequest: [internal] }, async (req, reply) => {
-      const body = z.object({ draw_id: z.string().uuid() }).parse(req.body)
-      const drawRes = await db.query(`SELECT * FROM lottery_bingo_draws WHERE id = $1 AND status = 'open'`, [body.draw_id])
-      if (!drawRes.rows.length) return reply.code(409).send({ error: 'Draw not open or already started' })
-      const tickets = await db.query(`SELECT * FROM lottery_bingo_tickets WHERE draw_id = $1`, [body.draw_id])
-      await db.query(`UPDATE lottery_bingo_draws SET status = 'cancelled' WHERE id = $1`, [body.draw_id])
-      const draw = drawRes.rows[0]
-      await Promise.all(tickets.rows.map((t: any) =>
-        creditPrize({ userId: t.user_id, amount: Number(draw.ticket_price), referenceId: t.id, idempotencyKey: `bingo_refund_${t.id}` })
-      ))
-      return { success: true, refunded: tickets.rows.length }
     })
 
     // Looks up a cached flag by matching a team/country name against

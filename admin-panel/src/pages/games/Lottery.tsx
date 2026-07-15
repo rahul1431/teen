@@ -3,14 +3,14 @@ import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
   Space, Modal, Input, Typography, message, Row, Col, DatePicker, Divider, Popconfirm, Drawer, Statistic, Radio, Tabs
 } from 'antd'
-import { 
-  ReloadOutlined, DeleteOutlined, TrophyOutlined, WalletOutlined, 
+import {
+  ReloadOutlined, DeleteOutlined, TrophyOutlined, WalletOutlined,
   ShoppingCartOutlined, CalendarOutlined, PlusOutlined, SettingOutlined, WarningOutlined
 } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 import dayjs from 'dayjs'
 import LotteryScratch from './LotteryScratch'
-import LotteryBingo from './LotteryBingo'
+import LotteryDailyDashboard from '../../components/LotteryDailyDashboard'
 
 const { Text, Title } = Typography
 
@@ -663,9 +663,9 @@ export default function Lottery() {
           children: <LotteryScratch />,
         },
         {
-          key: 'bingo',
+          key: 'daily',
           label: 'Daily Lottery',
-          children: <LotteryBingo />,
+          children: <LotteryDailyDashboard />,
         },
       ]}
     />
