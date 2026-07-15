@@ -10,12 +10,17 @@ import { settleFantasyLeague, settleCricketSession } from '../helpers/cricket'
 import { aggregateScorecard, computeFantasyPoints, DEFAULT_SCORING_RULES } from '../helpers/fantasy-scoring'
 import { cricApiFetch } from '../helpers/cricapi-client'
 import { initPool } from '../db/pool'
+import { registerDailyLotteryRoutes } from '../modules/lottery/daily/routes'
+import { startLotteryDailyScheduler } from '../modules/lottery/daily/scheduler'
 
 export function bettingPlugin(db: Pool) {
   // Initialize the shared pool for lottery/betting modules
   initPool(db)
+  startLotteryDailyScheduler()
 
   return async function (app: FastifyInstance) {
+    await registerDailyLotteryRoutes(app)
+
     const auth = app.authenticate
     const internal = async (req: any, reply: any) => {
       const key = process.env.INTERNAL_SERVICE_KEY

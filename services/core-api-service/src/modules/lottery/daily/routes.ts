@@ -6,6 +6,7 @@ import * as settlementService from './settlement'
 import { debitStake, creditPrize } from '../../../helpers/wallet-client'
 import { z } from 'zod'
 import crypto from 'crypto'
+import type { PrizeTier } from './tiers'
 
 /**
  * Daily Lottery API Routes
@@ -199,7 +200,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
         const tier = await tiersService.createTier({
           amount: body.amount,
           draw_time: body.draw_time,
-          default_prize_tiers: body.default_prize_tiers,
+          default_prize_tiers: body.default_prize_tiers as PrizeTier[],
           status: body.status,
         })
 
@@ -236,7 +237,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
 
         const tier = await tiersService.updateTier(id, {
           draw_time: body.draw_time,
-          default_prize_tiers: body.default_prize_tiers,
+          default_prize_tiers: body.default_prize_tiers as PrizeTier[] | undefined,
           status: body.status,
         })
 
@@ -295,7 +296,7 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
         const draw = await drawsService.createDraw({
           tier_id: body.tier_id,
           draw_date: drawDate,
-          prize_tiers: body.prize_tiers,
+          prize_tiers: body.prize_tiers as PrizeTier[] | undefined,
         })
 
         return reply.code(201).send(draw)

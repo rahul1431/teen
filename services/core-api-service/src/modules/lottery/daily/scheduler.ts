@@ -1,10 +1,16 @@
-import { pool } from '../../../core-api-service/src/db/pool'
-import * as drawsService from '../../../core-api-service/src/modules/lottery/daily/draws'
-import * as settlementService from '../../../core-api-service/src/modules/lottery/daily/settlement'
 import { CronJob } from 'cron'
+import { pool } from '../../../db/pool'
+import * as drawsService from './draws'
+import * as settlementService from './settlement'
 
-export function startLotteryDailyScheduler() {
-  // Job 1: Create draws at 00:00 daily
+/**
+ * Daily Lottery scheduler — runs inside core-api-service so it shares the
+ * same initialized DB pool and business logic as the HTTP routes. A
+ * standalone scheduler process would need its own pool wiring and cannot
+ * import this module's sibling files without leaving its own rootDir.
+ */
+export function startLotteryDailyScheduler(): void {
+  // Job 1: Create today's draws for every active tier, once per day at 00:00
   new CronJob('0 0 * * *', async () => {
     console.log('[Lottery Daily] Creating draws for today')
 
@@ -13,24 +19,20 @@ export function startLotteryDailyScheduler() {
         "SELECT * FROM lottery_daily_tiers WHERE status = 'active'"
       )
 
-      const tiers = tiersResult.rows
       let createdCount = 0
 
-      for (const tier of tiers) {
+      for (const tier of tiersResult.rows) {
         try {
-          const today = new Date()
           const draw = await drawsService.createDraw({
             tier_id: tier.id,
-            draw_date: today,
-            prize_tiers: tier.default_prize_tiers
+            draw_date: new Date(),
+            prize_tiers: tier.default_prize_tiers,
           })
 
-          console.log(
-            `[Lottery Daily] Created draw ${draw.id} for tier ${tier.id}`
-          )
+          console.log(`[Lottery Daily] Created draw ${draw.id} for tier ${tier.id}`)
           createdCount++
         } catch (err) {
-          // Draw might already exist for this tier/date (duplicate key)
+          // Draw already exists for this tier/date (unique constraint) — expected on restart
           console.log(`[Lottery Daily] Draw already exists for tier ${tier.id}`)
         }
       }
@@ -41,14 +43,13 @@ export function startLotteryDailyScheduler() {
     }
   }).start()
 
-  // Job 2: Settle draws every 30 seconds
+  // Job 2: Settle draws whose draw_time has arrived, checked every 30 seconds
   new CronJob('*/30 * * * * *', async () => {
     try {
       const drawsDue = await drawsService.getDrawsDueForSettlement()
 
       for (const draw of drawsDue) {
         if (draw.status === 'open') {
-          // Generate winning number if not declared
           const winningNumber = draw.winning_number || generateRandomNumber()
           await drawsService.updateDrawWinningNumber(draw.id, winningNumber)
           await drawsService.updateDrawStatus(draw.id, 'calling')
@@ -61,18 +62,12 @@ export function startLotteryDailyScheduler() {
               `[Lottery Daily] Settled draw ${draw.id}: ${result.settled_count} winners`
             )
           } catch (err: any) {
-            console.error(
-              `[Lottery Daily] Error settling draw ${draw.id}:`,
-              err.message
-            )
+            console.error(`[Lottery Daily] Error settling draw ${draw.id}:`, err.message)
           }
         }
       }
     } catch (err: any) {
-      console.error(
-        '[Lottery Daily] Error in settlement job:',
-        err.message
-      )
+      console.error('[Lottery Daily] Error in settlement job:', err.message)
     }
   }).start()
 
