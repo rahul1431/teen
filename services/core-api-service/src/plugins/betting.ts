@@ -10,8 +10,12 @@ import { generateBingoCard } from '../helpers/bingo'
 import { settleFantasyLeague, settleCricketSession } from '../helpers/cricket'
 import { aggregateScorecard, computeFantasyPoints, DEFAULT_SCORING_RULES } from '../helpers/fantasy-scoring'
 import { cricApiFetch } from '../helpers/cricapi-client'
+import { initPool } from '../db/pool'
 
 export function bettingPlugin(db: Pool) {
+  // Initialize the shared pool for lottery/betting modules
+  initPool(db)
+
   return async function (app: FastifyInstance) {
     const auth = app.authenticate
     const internal = async (req: any, reply: any) => {
