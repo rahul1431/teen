@@ -25,16 +25,13 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
 
     // Listen for wallet updates from admin/system credits via Redis Pub/Sub
     if (redis) {
-      console.error('[notifications] REDIS INSTANCE EXISTS, setting up wallet:updated subscriber')
       const walletUpdateSub = redis.duplicate()
       walletUpdateSub.subscribe('wallet:updated', async (err) => {
         if (err) console.error('[wallet:updated subscriber] subscription error:', err)
-        else console.error('[wallet:updated subscriber] SUBSCRIBED SUCCESSFULLY')
       })
 
       walletUpdateSub.on('message', async (channel, message) => {
         if (channel !== 'wallet:updated') return
-        console.error('[wallet:updated handler] RECEIVED MESSAGE:', message)
         try {
           const event = JSON.parse(message)
           const { userId, type, amount, walletType } = event
