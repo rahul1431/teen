@@ -437,6 +437,7 @@ export default function Matka() {
                       dataSource={markets}
                       pagination={false}
                       size="small"
+                      scroll={{ x: 'max-content' }}
                       columns={[
                         { title: 'Market Name', dataIndex: 'name', render: (n: string) => <Text strong>{n}</Text> },
                         { title: 'Open Time', dataIndex: 'open_time' },
@@ -482,6 +483,7 @@ export default function Matka() {
                     <Table
                       size="small"
                       pagination={false}
+                      scroll={{ x: 'max-content' }}
                       dataSource={[
                         { type: 'Single (Ank)', mult: '9.5x', note: 'Single digit 0-9' },
                         { type: 'Jodi', mult: '95x', note: 'Two digit combo 00-99' },
@@ -535,6 +537,32 @@ export default function Matka() {
             <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* View Bets Modal */}
+      <Modal
+        open={!!selectedDraw}
+        title="View Bets"
+        width={800}
+        onCancel={() => { setSelectedDraw(null); setBets([]) }}
+        footer={null}
+      >
+        <Table
+          dataSource={bets}
+          rowKey="id"
+          loading={loadingBets}
+          pagination={{ pageSize: 10 }}
+          size="small"
+          scroll={{ x: 'max-content' }}
+          columns={[
+            { title: 'User', dataIndex: 'username', render: (t, r: any) => <Space><Text strong>{t}</Text><Text type="secondary" style={{fontSize:12}}>{r.phone}</Text></Space> },
+            { title: 'Bet Type', dataIndex: 'bet_type', render: t => <Tag color="blue">{t}</Tag> },
+            { title: 'Selection', dataIndex: 'selection', render: (t, r: any) => <Text code>{t || r.panna || r.digit || r.jodi}</Text> },
+            { title: 'Amount', dataIndex: 'amount', render: (a: string) => <Text strong>₹{Number(a).toFixed(0)}</Text> },
+            { title: 'Status', dataIndex: 'status', render: (s: string) => <Tag color={s === 'won' ? 'green' : s === 'lost' ? 'red' : 'default'}>{s}</Tag> },
+            { title: 'Won', dataIndex: 'won_amount', render: (a: string) => a && Number(a) > 0 ? <Text strong style={{ color: '#52c41a' }}>+₹{Number(a).toFixed(0)}</Text> : '-' },
+          ]}
+        />
       </Modal>
 
       {/* Declare Result Modal — Enhanced */}

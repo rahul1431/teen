@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag, Badge,
   Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col,
-  Input, Popconfirm, Modal, Typography, Spin, Upload
+  Input, Popconfirm, Modal, Typography, Spin, Upload, Grid
 } from 'antd'
 import { ReloadOutlined, EyeOutlined, PlusOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
@@ -42,6 +42,8 @@ function PlayingCards({ cards }: { cards: any[] }) {
 }
 
 export default function TeenPatti() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const [config, setConfig] = useState<any>(null)
   const [loadingConfig, setLoadingConfig] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
@@ -283,7 +285,7 @@ export default function TeenPatti() {
               </Space>
             }
           >
-            <Table dataSource={rooms} columns={roomColumns} rowKey="id" loading={loadingRooms} size="small" />
+            <Table dataSource={rooms} columns={roomColumns} rowKey="id" loading={loadingRooms} size="small" scroll={{ x: 'max-content' }} />
           </Card>
         </Col>
       </Row>
@@ -309,6 +311,7 @@ export default function TeenPatti() {
               rowKey="id"
               size="small"
               pagination={{ pageSize: 10 }}
+              scroll={{ x: 'max-content' }}
             />
           </Card>
         </Col>
@@ -374,7 +377,7 @@ export default function TeenPatti() {
         )}
       </Modal>
 
-      <Drawer title="Room Details" open={!!selectedRoom} onClose={() => setSelectedRoom(null)} width={480}>
+      <Drawer title="Room Details" open={!!selectedRoom} onClose={() => setSelectedRoom(null)} width={isMobile ? '100%' : 480}>
         {selectedRoom && (
           <>
             <Descriptions column={2} size="small" bordered>

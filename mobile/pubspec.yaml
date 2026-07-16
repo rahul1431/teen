@@ -1,6 +1,6 @@
 name: myonlinejoker
 description: MyOnlineJoker Gaming Platform
-version: 1.2.0+3
+version: 1.2.0+4
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -37,10 +37,12 @@ dependencies:
   # Firebase
   firebase_core: ^3.3.0
   firebase_messaging: ^15.1.0
+  firebase_crashlytics: ^4.1.0
   flutter_local_notifications: ^17.2.2
 
   # UI
   cached_network_image: ^3.3.1
+  flutter_svg: ^2.0.10+1
   shimmer: ^3.0.0
   lottie: ^3.1.2
   flutter_animate: ^4.5.0

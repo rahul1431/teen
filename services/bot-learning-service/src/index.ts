@@ -94,8 +94,12 @@ async function start() {
   logger.info('Daily anomaly report cron scheduled (08:00 UTC)')
 
   // Initialize event-driven streaming profile evaluator (Task 27)
-  await streamingEvaluator.initialize()
-  logger.info('Event-driven streaming profile evaluator initialized')
+  try {
+    await streamingEvaluator.initialize()
+    logger.info('Event-driven streaming profile evaluator initialized')
+  } catch (err) {
+    logger.error({ err }, 'Kafka connection failed, skipping streaming evaluator')
+  }
 
   // Health
   app.get('/health', async (_req, reply) => {

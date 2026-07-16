@@ -420,6 +420,24 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
           console.error(`[Daily Lottery] Settlement failed for draw ${id}:`, err.message)
         })
 
+        try {
+          const tierRes = await pool.query('SELECT name FROM daily_lottery_tiers WHERE id = $1', [draw.tier_id])
+          const tierName = tierRes.rows[0]?.name || 'Lottery'
+          const internalKey = process.env.INTERNAL_SERVICE_KEY || 'dev-internal-key'
+          const port = process.env.PORT || 3001
+          fetch(`http://127.0.0.1:${port}/internal/notifications/broadcast`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+            body: JSON.stringify({
+              title: `${tierName} Results Declared!`,
+              body: `The winning number is ${updatedDraw.winning_number}. Check if you won!`,
+              type: 'lottery_result'
+            })
+          }).catch(err => console.error('[Daily Lottery] FCM broadcast fetch failed:', err))
+        } catch (err) {
+          console.error('[Daily Lottery] Failed to broadcast FCM:', err)
+        }
+
         return reply.send({
           id: updatedDraw.id,
           status: 'calling',

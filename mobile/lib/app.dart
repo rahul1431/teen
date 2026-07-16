@@ -50,7 +50,6 @@ final GoRouter _router = GoRouter(
     final isPublic = state.matchedLocation.startsWith('/auth') ||
         state.matchedLocation == '/splash' ||
         state.matchedLocation.startsWith('/onboarding') ||
-        state.matchedLocation.endsWith('/demo') ||
         state.matchedLocation.endsWith('/practice');
     if (!isAuth && !isPublic) return '/auth/login';
     // Register/refresh FCM push token on every authenticated navigation
@@ -122,17 +121,11 @@ final GoRouter _router = GoRouter(
         ),
       ),
     ),
-    GoRoute(
-      path: '/games/teen-patti/demo',
-      pageBuilder: (context, state) => const NoTransitionPage(
-        child: TeenPattiGamePage(roomId: 'DEMO', demo: true),
-      ),
-    ),
     GoRoute(path: '/games/aviator', builder: (_, __) => const AviatorPage()),
     GoRoute(path: '/games/ludo/lobby', builder: (_, s) => LudoLobbyPage(privateMode: s.uri.queryParameters['private'], privateCode: s.uri.queryParameters['code'])),
     GoRoute(path: '/games/ludo/friends', builder: (_, s) => LudoFriendsPage(
       mode: s.uri.queryParameters['mode'] ?? 'join',
-      stake: double.tryParse(s.uri.queryParameters['stake'] ?? '') ?? 10,
+      stake: double.tryParse(s.uri.queryParameters['stake'] ?? '') ?? 50,
       code: s.uri.queryParameters['code'],
     )),
     GoRoute(path: '/games/ludo/history', builder: (_, __) => const LudoHistoryPage()),

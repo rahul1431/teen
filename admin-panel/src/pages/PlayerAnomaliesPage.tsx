@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { Card, Row, Col, Select, Slider, DatePicker, Button, Space, Statistic, message, Typography, Tabs, Drawer, Empty } from 'antd'
+import { Card, Row, Col, Select, Slider, DatePicker, Button, Space, Statistic, message, Typography, Tabs, Drawer, Empty, Grid } from 'antd'
 import { FilterOutlined, ReloadOutlined, DownloadOutlined } from '@ant-design/icons'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import dayjs from 'dayjs'
@@ -40,6 +40,8 @@ interface TrendDataPoint {
 }
 
 export default function PlayerAnomaliesPage() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const [anomalies, setAnomalies] = useState<PlayerAnomaly[]>([])
   const [loading, setLoading] = useState(false)
   const [stats, setStats] = useState<AnomalyStats | null>(null)
@@ -364,7 +366,7 @@ export default function PlayerAnomaliesPage() {
         placement="right"
         onClose={() => setDrawerOpen(false)}
         open={drawerOpen}
-        width={400}
+        width={isMobile ? '100%' : 400}
       >
         {selectedAnomaly && (
           <Tabs

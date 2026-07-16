@@ -54,7 +54,8 @@ class _BankDetailsPageState extends State<BankDetailsPage> {
         _hasExisting = true;
       }
     } catch (_) {
-      if (mounted) AppSnackBar.show(context, 'Could not load bank details', error: true);
+      if (mounted)
+        AppSnackBar.show(context, 'Could not load bank details', error: true);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -72,12 +73,18 @@ class _BankDetailsPageState extends State<BankDetailsPage> {
         if (_upiCtrl.text.trim().isNotEmpty) 'upi_id': _upiCtrl.text.trim(),
       });
       if (!mounted) return;
-      setState(() { _verified = false; _hasExisting = true; });
-      AppSnackBar.show(context, res.data['message'] ?? 'Bank details saved', success: true);
+      setState(() {
+        _verified = false;
+        _hasExisting = true;
+      });
+      AppSnackBar.show(context, res.data['message'] ?? 'Bank details saved',
+          success: true);
     } on DioException catch (e) {
       if (mounted) {
-        AppSnackBar.show(context,
-            e.response?.data?['error']?.toString() ?? 'Could not save bank details',
+        AppSnackBar.show(
+            context,
+            e.response?.data?['error']?.toString() ??
+                'Could not save bank details',
             error: true);
       }
     } finally {
@@ -91,7 +98,8 @@ class _BankDetailsPageState extends State<BankDetailsPage> {
       backgroundColor: AppColors.background,
       appBar: AppBar(title: const Text('Bank Details')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.gold))
           : SingleChildScrollView(
               padding: const EdgeInsets.all(20),
               child: Form(
@@ -102,21 +110,36 @@ class _BankDetailsPageState extends State<BankDetailsPage> {
                     if (_hasExisting)
                       Container(
                         margin: const EdgeInsets.only(bottom: 18),
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
                         decoration: BoxDecoration(
-                          color: (_verified ? AppColors.green : AppColors.orange).withOpacity(0.12),
+                          color:
+                              (_verified ? AppColors.green : AppColors.orange)
+                                  .withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                              color: (_verified ? AppColors.green : AppColors.orange).withOpacity(0.4)),
+                              color: (_verified
+                                      ? AppColors.green
+                                      : AppColors.orange)
+                                  .withValues(alpha: 0.4)),
                         ),
                         child: Row(
                           children: [
-                            Icon(_verified ? Icons.verified_rounded : Icons.hourglass_top_rounded,
-                                color: _verified ? AppColors.green : AppColors.orange, size: 18),
+                            Icon(
+                                _verified
+                                    ? Icons.verified_rounded
+                                    : Icons.hourglass_top_rounded,
+                                color: _verified
+                                    ? AppColors.green
+                                    : AppColors.orange,
+                                size: 18),
                             const SizedBox(width: 8),
-                            Text(_verified ? 'Verified' : 'Pending verification',
+                            Text(
+                                _verified ? 'Verified' : 'Pending verification',
                                 style: TextStyle(
-                                  color: _verified ? AppColors.green : AppColors.orange,
+                                  color: _verified
+                                      ? AppColors.green
+                                      : AppColors.orange,
                                   fontSize: 13,
                                   fontWeight: FontWeight.w700,
                                 )),
@@ -129,7 +152,9 @@ class _BankDetailsPageState extends State<BankDetailsPage> {
                         labelText: 'Account Holder Name',
                         prefixIcon: Icon(Icons.person_rounded),
                       ),
-                      validator: (v) => (v == null || v.trim().length < 2) ? 'Enter the account holder name' : null,
+                      validator: (v) => (v == null || v.trim().length < 2)
+                          ? 'Enter the account holder name'
+                          : null,
                     ),
                     const SizedBox(height: 14),
                     TextFormField(
@@ -138,7 +163,9 @@ class _BankDetailsPageState extends State<BankDetailsPage> {
                         labelText: 'Bank Name',
                         prefixIcon: Icon(Icons.account_balance_rounded),
                       ),
-                      validator: (v) => (v == null || v.trim().length < 2) ? 'Enter the bank name' : null,
+                      validator: (v) => (v == null || v.trim().length < 2)
+                          ? 'Enter the bank name'
+                          : null,
                     ),
                     const SizedBox(height: 14),
                     TextFormField(
@@ -148,7 +175,8 @@ class _BankDetailsPageState extends State<BankDetailsPage> {
                         labelText: 'Account Number',
                         prefixIcon: Icon(Icons.numbers_rounded),
                       ),
-                      validator: (v) => (v == null || !RegExp(r'^\d{6,20}$').hasMatch(v.trim()))
+                      validator: (v) => (v == null ||
+                              !RegExp(r'^\d{6,20}$').hasMatch(v.trim()))
                           ? 'Enter a valid account number (digits only)'
                           : null,
                     ),
@@ -161,7 +189,8 @@ class _BankDetailsPageState extends State<BankDetailsPage> {
                         prefixIcon: Icon(Icons.qr_code_rounded),
                       ),
                       validator: (v) => (v == null ||
-                              !RegExp(r'^[A-Za-z]{4}0[A-Za-z0-9]{6}$').hasMatch(v.trim()))
+                              !RegExp(r'^[A-Za-z]{4}0[A-Za-z0-9]{6}$')
+                                  .hasMatch(v.trim()))
                           ? 'Enter a valid IFSC code (e.g. HDFC0001234)'
                           : null,
                     ),
@@ -181,20 +210,28 @@ class _BankDetailsPageState extends State<BankDetailsPage> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.gold,
                           foregroundColor: Colors.black,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16)),
                         ),
                         child: _saving
-                            ? const SizedBox(width: 22, height: 22,
-                                child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.black))
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2.5, color: Colors.black))
                             : const Text('Save Bank Details',
-                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                                style: TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.w900)),
                       ),
                     ),
                     const SizedBox(height: 12),
                     const Text(
                       'Withdrawals are paid only to a verified account. Updating details requires re-verification by our team.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.textSecondary, fontSize: 11.5, height: 1.4),
+                      style: TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 11.5,
+                          height: 1.4),
                     ),
                   ],
                 ),

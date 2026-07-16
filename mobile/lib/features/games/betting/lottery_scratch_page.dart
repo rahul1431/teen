@@ -22,10 +22,12 @@ class _LotteryScratchPageState extends State<LotteryScratchPage> with SingleTick
   bool _loading = true;
   bool _myLoading = false;
   double _balance = 0;
+  late final AnimationController _shimmerCtrl;
 
   @override
   void initState() {
     super.initState();
+    _shimmerCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 2000))..repeat();
     _tab = TabController(length: 2, vsync: this);
     _tab.addListener(() {
       if (!_tab.indexIsChanging && _tab.index == 1 && _myTickets.isEmpty) _loadMyTickets();
@@ -37,6 +39,7 @@ class _LotteryScratchPageState extends State<LotteryScratchPage> with SingleTick
   @override
   void dispose() {
     _tab.dispose();
+    _shimmerCtrl.dispose();
     super.dispose();
   }
 
@@ -214,21 +217,37 @@ class _LotteryScratchPageState extends State<LotteryScratchPage> with SingleTick
         _buy(product);
       },
       borderRadius: BorderRadius.circular(18),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          gradient: const LinearGradient(
-            colors: [Color(0xFF3B0764), Color(0xFF1E1033)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.3)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+      child: AnimatedBuilder(
+        animation: _shimmerCtrl,
+        builder: (context, child) {
+          return Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              gradient: LinearGradient(
+                colors: const [
+                  Color(0xFF3B0764),
+                  Color(0xFF6B21A8),
+                  Color(0xFF3B0764),
+                ],
+                stops: [
+                  0.0,
+                  _shimmerCtrl.value,
+                  1.0,
+                ],
+                begin: const Alignment(-1.0, -1.0),
+                end: const Alignment(2.0, 2.0),
+              ),
+              border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.3)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: child,
+            ),
+          );
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
               const Icon(Icons.auto_awesome_rounded, color: Colors.purpleAccent, size: 28),
               const Spacer(),
               Text(product['name'] ?? 'Scratch Card',
@@ -254,7 +273,6 @@ class _LotteryScratchPageState extends State<LotteryScratchPage> with SingleTick
             ],
           ),
         ),
-      ),
     );
   }
 
@@ -423,7 +441,16 @@ class _ScratchRevealScreenState extends State<_ScratchRevealScreen> {
                         border: Border.all(color: AppColors.gold.withValues(alpha: 0.3)),
                       ),
                       alignment: Alignment.center,
-                      child: _resultContent(),
+                      child: AnimatedScale(
+                        scale: _revealed ? 1.0 : 0.5,
+                        duration: const Duration(milliseconds: 600),
+                        curve: Curves.elasticOut,
+                        child: AnimatedOpacity(
+                          opacity: _revealed ? 1.0 : 0.0,
+                          duration: const Duration(milliseconds: 300),
+                          child: _resultContent()
+                        )
+                      ),
                     ),
                     if (!_revealed)
                       GestureDetector(

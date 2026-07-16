@@ -28,6 +28,7 @@ class _LotteryDrawsPageState extends State<LotteryDrawsPage> with TickerProvider
   bool _resLoading = false;
   double _balance = 0;
   Timer? _ticker;
+  late final AnimationController _pulseCtrl;
 
   @override
   void initState() {
@@ -41,6 +42,7 @@ class _LotteryDrawsPageState extends State<LotteryDrawsPage> with TickerProvider
     });
     _loadDraws();
     _loadBalance();
+    _pulseCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 1))..repeat(reverse: true);
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) { if (mounted) setState(() {}); });
   }
 
@@ -48,6 +50,7 @@ class _LotteryDrawsPageState extends State<LotteryDrawsPage> with TickerProvider
   void dispose() {
     _tab.dispose();
     _ticker?.cancel();
+    _pulseCtrl.dispose();
     super.dispose();
   }
 
@@ -309,12 +312,26 @@ class _LotteryDrawsPageState extends State<LotteryDrawsPage> with TickerProvider
                           const SizedBox(width: 6),
                           Text('Next draw in ',
                               style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 11, fontWeight: FontWeight.w600)),
-                          Text(
-                            _countdown(next),
-                            style: const TextStyle(
-                                color: AppColors.goldLight,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 14),
+                          AnimatedBuilder(
+                            animation: _pulseCtrl,
+                            builder: (context, child) {
+                              return Opacity(
+                                opacity: 0.7 + (0.3 * _pulseCtrl.value),
+                                child: Transform.scale(
+                                  scale: 1.0 + (0.05 * _pulseCtrl.value),
+                                  child: Text(
+                                    _countdown(next),
+                                    style: const TextStyle(
+                                        color: AppColors.goldLight,
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 14,
+                                        shadows: [
+                                          Shadow(color: AppColors.gold, blurRadius: 8)
+                                        ]),
+                                  ),
+                                ),
+                              );
+                            }
                           ),
                         ],
                       ),

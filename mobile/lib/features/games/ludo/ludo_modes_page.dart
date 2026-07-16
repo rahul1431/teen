@@ -41,11 +41,13 @@ class _LudoModesPageState extends State<LudoModesPage> {
             padding: const EdgeInsets.symmetric(horizontal: 14),
             child: Center(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                 decoration: BoxDecoration(
                   color: AppColors.feltDark,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.gold.withOpacity(0.6)),
+                  border:
+                      Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
                 ),
                 child: Text('₹${_balance ?? '—'}',
                     style: const TextStyle(
@@ -66,14 +68,19 @@ class _LudoModesPageState extends State<LudoModesPage> {
             height: 130,
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFF6B1FE8), Color(0xFF2A1A8E), Color(0xFF0E1640)],
+                colors: [
+                  Color(0xFF6B1FE8),
+                  Color(0xFF2A1A8E),
+                  Color(0xFF0E1640)
+                ],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
               borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppColors.gold.withValues(alpha: 0.5), width: 1.5),
               boxShadow: [
                 BoxShadow(
-                    color: const Color(0xFF6B1FE8).withOpacity(0.4),
+                    color: const Color(0xFF6B1FE8).withValues(alpha: 0.4),
                     blurRadius: 20,
                     offset: const Offset(0, 6))
               ],
@@ -85,6 +92,20 @@ class _LudoModesPageState extends State<LudoModesPage> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(20),
                     child: CustomPaint(painter: _HeroDotsPainter()),
+                  ),
+                ),
+                // Four-color corner accent — a quiet nod to the board's seat
+                // colours (red/green/yellow/blue) without literally drawing it.
+                Positioned(
+                  right: 16,
+                  top: 16,
+                  child: Row(
+                    children: [
+                      _seatDot(AppColors.ludoRed),
+                      _seatDot(AppColors.ludoGreen),
+                      _seatDot(AppColors.ludoYellow),
+                      _seatDot(AppColors.ludoBlue),
+                    ],
                   ),
                 ),
                 Padding(
@@ -103,14 +124,16 @@ class _LudoModesPageState extends State<LudoModesPage> {
                                 fontSize: 32,
                                 fontWeight: FontWeight.w900,
                                 letterSpacing: 4,
-                                shadows: [Shadow(color: Colors.black38, blurRadius: 8)],
+                                shadows: [
+                                  Shadow(color: Colors.black38, blurRadius: 8)
+                                ],
                               ),
                             ),
                             const SizedBox(height: 4),
                             Text(
                               'Roll · Race · Capture · Win',
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.8),
+                                color: Colors.white.withValues(alpha: 0.8),
                                 fontSize: 13,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -143,7 +166,7 @@ class _LudoModesPageState extends State<LudoModesPage> {
             children: [
               _modeCard(
                 title: 'Quick Match',
-                subtitle: 'Online · win cash',
+                rule: 'ONLINE · WIN CASH',
                 icon: Icons.bolt_rounded,
                 gradient: AppColors.ludoGrad,
                 onTap: () {
@@ -153,9 +176,9 @@ class _LudoModesPageState extends State<LudoModesPage> {
               ),
               _modeCard(
                 title: 'Friends',
-                subtitle: 'Private room',
+                rule: 'PRIVATE ROOM',
                 icon: Icons.group_rounded,
-                gradient: AppColors.aviatorGrad,
+                gradient: const [Color(0xFF2196F3), Color(0xFF0D47A1)],
                 onTap: () {
                   SoundService.instance.play(Sfx.ludoTap);
                   _friendsSheet();
@@ -163,9 +186,9 @@ class _LudoModesPageState extends State<LudoModesPage> {
               ),
               _modeCard(
                 title: 'Practice',
-                subtitle: 'Offline vs bots · free',
+                rule: 'VS BOTS · FREE',
                 icon: Icons.smart_toy_rounded,
-                gradient: AppColors.variationsGrad,
+                gradient: const [Color(0xFF00C853), Color(0xFF064E3B)],
                 onTap: () {
                   SoundService.instance.play(Sfx.ludoTap);
                   context.push('/games/ludo/practice');
@@ -173,7 +196,7 @@ class _LudoModesPageState extends State<LudoModesPage> {
               ),
               _modeCard(
                 title: 'History',
-                subtitle: 'Your past games',
+                rule: 'PAST GAMES',
                 icon: Icons.history_rounded,
                 gradient: AppColors.premiumGrad,
                 onTap: () {
@@ -187,6 +210,17 @@ class _LudoModesPageState extends State<LudoModesPage> {
       ),
     );
   }
+
+  Widget _seatDot(Color c) => Container(
+        width: 8,
+        height: 8,
+        margin: const EdgeInsets.only(left: 4),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: c,
+          boxShadow: [BoxShadow(color: c.withValues(alpha: 0.7), blurRadius: 4)],
+        ),
+      );
 
   // --- Friends: create or join a private room by code ---
   void _friendsSheet() {
@@ -216,7 +250,7 @@ class _LudoModesPageState extends State<LudoModesPage> {
             ElevatedButton.icon(
               onPressed: () {
                 Navigator.pop(ctx);
-                context.push('/games/ludo/friends?mode=create&stake=10');
+                context.push('/games/ludo/friends?mode=create&stake=50');
               },
               icon: const Icon(Icons.add_circle_outline_rounded),
               label: const Text('Create Private Room'),
@@ -228,7 +262,8 @@ class _LudoModesPageState extends State<LudoModesPage> {
               Expanded(child: Divider(color: AppColors.border)),
               Padding(
                   padding: EdgeInsets.symmetric(horizontal: 10),
-                  child: Text('OR', style: TextStyle(color: AppColors.textSecondary))),
+                  child: Text('OR',
+                      style: TextStyle(color: AppColors.textSecondary))),
               Expanded(child: Divider(color: AppColors.border)),
             ]),
             const SizedBox(height: 14),
@@ -259,7 +294,7 @@ class _LudoModesPageState extends State<LudoModesPage> {
 
   Widget _modeCard({
     required String title,
-    required String subtitle,
+    required String rule,
     required IconData icon,
     required List<Color> gradient,
     required VoidCallback onTap,
@@ -273,10 +308,11 @@ class _LudoModesPageState extends State<LudoModesPage> {
                 end: Alignment.bottomRight,
                 colors: gradient),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AppColors.gold.withOpacity(0.5), width: 1.5),
+            border: Border.all(
+                color: AppColors.gold.withValues(alpha: 0.5), width: 1.5),
             boxShadow: [
               BoxShadow(
-                  color: gradient.last.withOpacity(0.5),
+                  color: gradient.last.withValues(alpha: 0.5),
                   blurRadius: 16,
                   offset: const Offset(0, 6)),
             ],
@@ -291,9 +327,15 @@ class _LudoModesPageState extends State<LudoModesPage> {
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                      color: Colors.black26,
-                      borderRadius: BorderRadius.circular(14)),
-                  child: Icon(icon, color: Colors.white.withOpacity(0.9), size: 28),
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(colors: [
+                      Colors.white.withValues(alpha: 0.22),
+                      Colors.white.withValues(alpha: 0.06),
+                    ]),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.35), width: 1.2),
+                  ),
+                  child: Icon(icon,
+                      color: Colors.white, size: 24),
                 ),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -303,11 +345,24 @@ class _LudoModesPageState extends State<LudoModesPage> {
                             fontSize: 18,
                             fontWeight: FontWeight.w900,
                             color: Colors.white,
-                            shadows: [Shadow(color: Colors.black38, blurRadius: 4)])),
-                    const SizedBox(height: 2),
-                    Text(subtitle,
-                        style: TextStyle(
-                            fontSize: 11, color: Colors.white.withOpacity(0.85))),
+                            shadows: [
+                              Shadow(color: Colors.black38, blurRadius: 4)
+                            ])),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.28),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+                      ),
+                      child: Text(rule,
+                          style: TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.6,
+                              color: Colors.white.withValues(alpha: 0.9))),
+                    ),
                   ],
                 ),
               ],
@@ -320,7 +375,7 @@ class _LudoModesPageState extends State<LudoModesPage> {
 class _HeroDotsPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final p = Paint()..color = Colors.white.withOpacity(0.05);
+    final p = Paint()..color = Colors.white.withValues(alpha: 0.05);
     for (var x = 0.0; x < size.width; x += 20) {
       for (var y = 0.0; y < size.height; y += 20) {
         canvas.drawCircle(Offset(x, y), 1.5, p);
@@ -328,7 +383,7 @@ class _HeroDotsPainter extends CustomPainter {
     }
     // Diagonal stripe overlay
     final sp = Paint()
-      ..color = Colors.white.withOpacity(0.03)
+      ..color = Colors.white.withValues(alpha: 0.03)
       ..strokeWidth = 8;
     for (var i = -size.height.toInt(); i < size.width.toInt(); i += 30) {
       canvas.drawLine(
@@ -342,4 +397,3 @@ class _HeroDotsPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
-

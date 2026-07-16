@@ -390,6 +390,7 @@ export default function DailyBonus() {
           rowKey="day_number"
           loading={loadingConfig}
           pagination={false}
+          scroll={{ x: 'max-content' }}
           size="small"
           rowClassName={(row) => row.is_special ? 'special-row' : ''}
           style={{ background: 'transparent' }}

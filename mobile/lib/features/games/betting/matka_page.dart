@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/audio/sound_service.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
+import 'package:dio/dio.dart';
 import 'betting_history_page.dart';
 
 // --- MATHEMATICAL SATTA MATKA PANNA GENERATOR ---
@@ -114,7 +115,8 @@ class _MatkaPageState extends State<MatkaPage> {
               _buildAppBar(context),
               Expanded(
                 child: _loading
-                    ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
+                    ? const Center(
+                        child: CircularProgressIndicator(color: AppColors.gold))
                     : RefreshIndicator(
                         onRefresh: _load,
                         child: ListView(
@@ -125,7 +127,8 @@ class _MatkaPageState extends State<MatkaPage> {
                                 padding: EdgeInsets.only(top: 80),
                                 child: Center(
                                     child: Text('No markets open right now',
-                                        style: TextStyle(color: AppColors.textSecondary))),
+                                        style: TextStyle(
+                                            color: AppColors.textSecondary))),
                               ),
                             ..._markets.map(_marketCard),
                           ],
@@ -193,19 +196,23 @@ class _MatkaPageState extends State<MatkaPage> {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1B1229).withOpacity(0.85),
+        color: const Color(0xFF1B1229).withValues(alpha: 0.85),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: settled ? Colors.white.withOpacity(0.04) : AppColors.gold.withOpacity(0.35),
+          color: settled
+              ? Colors.white.withValues(alpha: 0.04)
+              : AppColors.gold.withValues(alpha: 0.35),
           width: settled ? 1.0 : 1.5,
         ),
-        boxShadow: settled ? [] : [
-          BoxShadow(
-            color: AppColors.gold.withOpacity(0.05),
-            blurRadius: 12,
-            spreadRadius: 1,
-          )
-        ],
+        boxShadow: settled
+            ? []
+            : [
+                BoxShadow(
+                  color: AppColors.gold.withValues(alpha: 0.05),
+                  blurRadius: 12,
+                  spreadRadius: 1,
+                )
+              ],
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -235,19 +242,28 @@ class _MatkaPageState extends State<MatkaPage> {
                       ),
                     );
                   },
-                  icon: const Icon(Icons.table_chart_outlined, size: 14, color: AppColors.gold),
-                  label: const Text('CHART', style: TextStyle(color: AppColors.gold, fontSize: 11, fontWeight: FontWeight.bold)),
+                  icon: const Icon(Icons.table_chart_outlined,
+                      size: 14, color: AppColors.gold),
+                  label: const Text('CHART',
+                      style: TextStyle(
+                          color: AppColors.gold,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold)),
                   style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     minimumSize: Size.zero,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: settled ? Colors.white.withOpacity(0.08) : AppColors.green.withOpacity(0.15),
+                    color: settled
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : AppColors.green.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
                       color: settled ? Colors.white30 : AppColors.green,
@@ -267,16 +283,20 @@ class _MatkaPageState extends State<MatkaPage> {
             const SizedBox(height: 6),
             Row(
               children: [
-                const Icon(Icons.schedule_rounded, size: 13, color: AppColors.textSecondary),
+                const Icon(Icons.schedule_rounded,
+                    size: 13, color: AppColors.textSecondary),
                 const SizedBox(width: 4),
                 Text(
                   '${m['open_time']} – ${m['close_time']}',
-                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold),
                 ),
               ],
             ),
             const Divider(color: Colors.white10, height: 24),
-            
+
             // Traditional Clay Matka Pot + Slot Reels Row
             Row(
               children: [
@@ -297,22 +317,24 @@ class _MatkaPageState extends State<MatkaPage> {
                 ),
               ],
             ),
-            
+
             const SizedBox(height: 18),
             SizedBox(
               width: double.infinity,
               height: 44,
               child: Container(
-                decoration: !settled ? BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.gold.withOpacity(0.25),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ) : null,
+                decoration: !settled
+                    ? BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.gold.withValues(alpha: 0.25),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      )
+                    : null,
                 child: ElevatedButton(
                   onPressed: settled
                       ? null
@@ -321,15 +343,20 @@ class _MatkaPageState extends State<MatkaPage> {
                           _openBetSheet(m);
                         },
                   style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.gold,
-                      foregroundColor: Colors.black,
-                      disabledBackgroundColor: Colors.white.withOpacity(0.04),
-                      disabledForegroundColor: Colors.white30,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      elevation: 0,
+                    backgroundColor: AppColors.gold,
+                    foregroundColor: Colors.black,
+                    disabledBackgroundColor:
+                        Colors.white.withValues(alpha: 0.04),
+                    disabledForegroundColor: Colors.white30,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    elevation: 0,
                   ),
                   child: Text(settled ? 'CLOSED FOR TODAY' : 'PLACE BET NOW',
-                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 0.5)),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 13,
+                          letterSpacing: 0.5)),
                 ),
               ),
             ),
@@ -366,7 +393,7 @@ class _MatkaPageState extends State<MatkaPage> {
           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: isJodi 
+              colors: isJodi
                   ? [const Color(0xFFC62828), const Color(0xFF5C0000)]
                   : [const Color(0xFF2C3E50), const Color(0xFF0F171E)],
               begin: Alignment.topCenter,
@@ -374,12 +401,14 @@ class _MatkaPageState extends State<MatkaPage> {
             ),
             borderRadius: BorderRadius.circular(6),
             border: Border.all(
-              color: isJodi ? const Color(0xFFFF5252).withOpacity(0.5) : const Color(0xFFFFD700).withOpacity(0.35),
+              color: isJodi
+                  ? const Color(0xFFFF5252).withValues(alpha: 0.5)
+                  : const Color(0xFFFFD700).withValues(alpha: 0.35),
               width: 1,
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.5),
+                color: Colors.black.withValues(alpha: 0.5),
                 blurRadius: 3,
                 offset: const Offset(0, 2),
               ),
@@ -426,7 +455,8 @@ class MatkaPotWidget extends StatefulWidget {
   State<MatkaPotWidget> createState() => _MatkaPotWidgetState();
 }
 
-class _MatkaPotWidgetState extends State<MatkaPotWidget> with SingleTickerProviderStateMixin {
+class _MatkaPotWidgetState extends State<MatkaPotWidget>
+    with SingleTickerProviderStateMixin {
   late AnimationController _animCtrl;
 
   @override
@@ -499,10 +529,14 @@ class MatkaPotPainter extends CustomPainter {
     // 1. Draw Pot Body (rounded clay jar)
     final path = Path();
     path.moveTo(w * 0.25, h * 0.15); // neck top left
-    path.quadraticBezierTo(w * 0.1, h * 0.35, w * 0.05, h * 0.6); // outer body left
-    path.quadraticBezierTo(w * 0.05, h * 0.95, w * 0.5, h * 0.98); // bottom left base
-    path.quadraticBezierTo(w * 0.95, h * 0.95, w * 0.95, h * 0.6); // bottom right base
-    path.quadraticBezierTo(w * 0.9, h * 0.35, w * 0.75, h * 0.15); // outer body right
+    path.quadraticBezierTo(
+        w * 0.1, h * 0.35, w * 0.05, h * 0.6); // outer body left
+    path.quadraticBezierTo(
+        w * 0.05, h * 0.95, w * 0.5, h * 0.98); // bottom left base
+    path.quadraticBezierTo(
+        w * 0.95, h * 0.95, w * 0.95, h * 0.6); // bottom right base
+    path.quadraticBezierTo(
+        w * 0.9, h * 0.35, w * 0.75, h * 0.15); // outer body right
     path.close();
     canvas.drawPath(path, paint);
 
@@ -545,7 +579,8 @@ class MatkaPotPainter extends CustomPainter {
 class MatkaPanelChartDialog extends StatefulWidget {
   final String marketId;
   final String marketName;
-  const MatkaPanelChartDialog({super.key, required this.marketId, required this.marketName});
+  const MatkaPanelChartDialog(
+      {super.key, required this.marketId, required this.marketName});
   @override
   State<MatkaPanelChartDialog> createState() => _MatkaPanelChartDialogState();
 }
@@ -562,7 +597,9 @@ class _MatkaPanelChartDialogState extends State<MatkaPanelChartDialog> {
 
   Future<void> _load() async {
     try {
-      final res = await ApiClient().dio.get('/api/betting/matka/markets/${widget.marketId}/chart');
+      final res = await ApiClient()
+          .dio
+          .get('/api/betting/matka/markets/${widget.marketId}/chart');
       if (!mounted) return;
       setState(() {
         _weeks = res.data['chart'] ?? [];
@@ -588,7 +625,11 @@ class _MatkaPanelChartDialogState extends State<MatkaPanelChartDialog> {
                 Expanded(
                   child: Text(
                     '${widget.marketName} Panel Chart'.toUpperCase(),
-                    style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 0.5),
+                    style: const TextStyle(
+                        color: AppColors.gold,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                        letterSpacing: 0.5),
                   ),
                 ),
                 IconButton(
@@ -600,23 +641,39 @@ class _MatkaPanelChartDialogState extends State<MatkaPanelChartDialog> {
             const Divider(color: Colors.white12),
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
+                  ? const Center(
+                      child: CircularProgressIndicator(color: AppColors.gold))
                   : _weeks.isEmpty
-                      ? const Center(child: Text('No historical results found', style: TextStyle(color: Colors.white38)))
+                      ? const Center(
+                          child: Text('No historical results found',
+                              style: TextStyle(color: Colors.white38)))
                       : SingleChildScrollView(
                           scrollDirection: Axis.vertical,
                           child: SingleChildScrollView(
                             scrollDirection: Axis.horizontal,
                             child: Table(
-                              border: TableBorder.all(color: Colors.white12, width: 1),
+                              border: TableBorder.all(
+                                  color: Colors.white12, width: 1),
                               defaultColumnWidth: const FixedColumnWidth(60),
                               children: [
                                 // Table Header row
                                 TableRow(
-                                  decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.04)),
-                                  children: ['Date', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) {
+                                  decoration: BoxDecoration(
+                                      color:
+                                          Colors.white.withValues(alpha: 0.04)),
+                                  children: [
+                                    'Date',
+                                    'Mon',
+                                    'Tue',
+                                    'Wed',
+                                    'Thu',
+                                    'Fri',
+                                    'Sat',
+                                    'Sun'
+                                  ].map((day) {
                                     return Padding(
-                                      padding: const EdgeInsets.symmetric(vertical: 8),
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 8),
                                       child: Center(
                                         child: Text(
                                           day,
@@ -639,37 +696,67 @@ class _MatkaPanelChartDialogState extends State<MatkaPanelChartDialog> {
                                         padding: const EdgeInsets.all(4.0),
                                         child: Center(
                                           child: Text(
-                                            week['week_start']?.substring(5) ?? '', // MM-DD
-                                            style: const TextStyle(color: Colors.white54, fontSize: 9, fontWeight: FontWeight.bold),
+                                            week['week_start']?.substring(5) ??
+                                                '', // MM-DD
+                                            style: const TextStyle(
+                                                color: Colors.white54,
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.bold),
                                           ),
                                         ),
                                       ),
-                                      ...['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((dayKey) {
+                                      ...[
+                                        'mon',
+                                        'tue',
+                                        'wed',
+                                        'thu',
+                                        'fri',
+                                        'sat',
+                                        'sun'
+                                      ].map((dayKey) {
                                         final result = week[dayKey];
                                         if (result == null) {
                                           return const Padding(
                                             padding: EdgeInsets.all(6.0),
-                                            child: Center(child: Text('-', style: TextStyle(color: Colors.white24))),
+                                            child: Center(
+                                                child: Text('-',
+                                                    style: TextStyle(
+                                                        color:
+                                                            Colors.white24))),
                                           );
                                         }
-                                        final isRed = result['open_digit'] == result['close_digit'] && result['jodi'] != '**';
+                                        final isRed = result['open_digit'] ==
+                                                result['close_digit'] &&
+                                            result['jodi'] != '**';
                                         return Padding(
-                                          padding: const EdgeInsets.symmetric(vertical: 4.0),
+                                          padding: const EdgeInsets.symmetric(
+                                              vertical: 4.0),
                                           child: Column(
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
-                                              Text(result['open_panna'] ?? '***', style: const TextStyle(color: Colors.white38, fontSize: 8)),
+                                              Text(
+                                                  result['open_panna'] ?? '***',
+                                                  style: const TextStyle(
+                                                      color: Colors.white38,
+                                                      fontSize: 8)),
                                               const SizedBox(height: 1.5),
                                               Text(
                                                 result['jodi'] ?? '**',
                                                 style: TextStyle(
-                                                  color: isRed ? const Color(0xFFFF5252) : AppColors.gold,
+                                                  color: isRed
+                                                      ? const Color(0xFFFF5252)
+                                                      : AppColors.gold,
                                                   fontWeight: FontWeight.w900,
                                                   fontSize: 11,
                                                 ),
                                               ),
                                               const SizedBox(height: 1.5),
-                                              Text(result['close_panna'] ?? '***', style: const TextStyle(color: Colors.white38, fontSize: 8)),
+                                              Text(
+                                                  result['close_panna'] ??
+                                                      '***',
+                                                  style: const TextStyle(
+                                                      color: Colors.white38,
+                                                      fontSize: 8)),
                                             ],
                                           ),
                                         );
@@ -694,7 +781,10 @@ class _MatkaBetSheet extends StatefulWidget {
   final dynamic market;
   final Map<String, dynamic> multipliers;
   final VoidCallback onPlaced;
-  const _MatkaBetSheet({required this.market, required this.multipliers, required this.onPlaced});
+  const _MatkaBetSheet(
+      {required this.market,
+      required this.multipliers,
+      required this.onPlaced});
   @override
   State<_MatkaBetSheet> createState() => _MatkaBetSheetState();
 }
@@ -720,11 +810,13 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
   ];
 
   // Subsections inside Panna
-  String _pannaSubtype = 'single_panna'; // single_panna | double_panna | triple_panna
+  String _pannaSubtype =
+      'single_panna'; // single_panna | double_panna | triple_panna
   int _selectedPannaAnk = 1; // 0-9
 
   // Subsections inside Sangam
-  String _sangamSubtype = 'half_sangam_a'; // half_sangam_a | half_sangam_b | full_sangam
+  String _sangamSubtype =
+      'half_sangam_a'; // half_sangam_a | half_sangam_b | full_sangam
   String _sangamOpenPanna = '';
   int _sangamOpenPannaAnk = 1;
   String _sangamClosePanna = '';
@@ -757,10 +849,10 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
 
   Future<void> _submit() async {
     final number = _numberCtrl.text.trim();
-    final currentType = _betType == 'panna' 
-        ? _pannaSubtype 
-        : _betType == 'sangam' 
-            ? _sangamSubtype 
+    final currentType = _betType == 'panna'
+        ? _pannaSubtype
+        : _betType == 'sangam'
+            ? _sangamSubtype
             : _betType;
 
     if (number.isEmpty) {
@@ -785,24 +877,29 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
       if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Bet placed successfully! 🎯'), backgroundColor: AppColors.green));
+          content: Text('Bet placed successfully! 🎯'),
+          backgroundColor: AppColors.green));
       widget.onPlaced();
     } catch (e) {
+      String errMsg = 'Could not place bet';
+      if (e is DioException && e.response?.data != null && e.response!.data is Map && e.response!.data['error'] != null) {
+        errMsg = e.response!.data['error'].toString();
+      } else if (e.toString().contains('Insufficient')) {
+        errMsg = 'Insufficient balance';
+      }
       setState(() {
         _submitting = false;
-        _error = e.toString().contains('Insufficient')
-            ? 'Insufficient balance'
-            : 'Could not place bet';
+        _error = errMsg;
       });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final currentType = _betType == 'panna' 
-        ? _pannaSubtype 
-        : _betType == 'sangam' 
-            ? _sangamSubtype 
+    final currentType = _betType == 'panna'
+        ? _pannaSubtype
+        : _betType == 'sangam'
+            ? _sangamSubtype
             : _betType;
     final mult = widget.multipliers[currentType]?.toString() ?? '';
 
@@ -820,14 +917,20 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
             child: Container(
               width: 40,
               height: 4,
-              decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(2)),
+              decoration: BoxDecoration(
+                  color: Colors.white12,
+                  borderRadius: BorderRadius.circular(2)),
             ),
           ),
           const SizedBox(height: 12),
           Text('${widget.market['name']} · Betting Slip'.toUpperCase(),
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: AppColors.gold, letterSpacing: 0.5)),
+              style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  color: AppColors.gold,
+                  letterSpacing: 0.5)),
           const SizedBox(height: 12),
-          
+
           // Main Bidding Mode Tabs
           _buildMainTabs(),
           const SizedBox(height: 12),
@@ -836,7 +939,11 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
           if (_betType != 'jodi' && _betType != 'sangam') ...[
             Row(
               children: [
-                const Text('Session:  ', style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
+                const Text('Session:  ',
+                    style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold)),
                 _buildSessionChips(),
               ],
             ),
@@ -847,35 +954,46 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.02),
+              color: Colors.white.withValues(alpha: 0.02),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: Colors.white10),
             ),
             child: _buildBiddingPanel(),
           ),
-          
+
           const SizedBox(height: 10),
           _buildPayoutDisplay(mult),
-          
+
           if (_error != null) ...[
             const SizedBox(height: 8),
             Row(
               children: [
-                const Icon(Icons.error_outline_rounded, color: AppColors.red, size: 16),
+                const Icon(Icons.error_outline_rounded,
+                    color: AppColors.red, size: 16),
                 const SizedBox(width: 6),
-                Text(_error!, style: const TextStyle(color: AppColors.red, fontWeight: FontWeight.bold, fontSize: 11)),
+                Text(_error!,
+                    style: const TextStyle(
+                        color: AppColors.red,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11)),
               ],
             ),
           ],
-          
+
           const SizedBox(height: 12),
-          const Text('Bet Amount (Chips)', style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
+          const Text('Bet Amount (Chips)',
+              style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [10, 50, 100, 500].map((v) => _buildPokerChip(v.toDouble())).toList(),
+            children: [10, 50, 100, 500]
+                .map((v) => _buildPokerChip(v.toDouble()))
+                .toList(),
           ),
-          
+
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
@@ -885,7 +1003,7 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
                 borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.gold.withOpacity(0.3),
+                    color: AppColors.gold.withValues(alpha: 0.3),
                     blurRadius: 10,
                     offset: const Offset(0, 2),
                   ),
@@ -896,15 +1014,23 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
                 style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.gold,
                     foregroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                     elevation: 0),
                 child: _submitting
-                    ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.black))
                     : Text(
                         _numberCtrl.text.isEmpty
                             ? 'SELECT A NUMBER TO BID'
                             : 'PLACE BET OF ₹${_amount.toInt()} ON ${_numberCtrl.text}',
-                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 0.5)),
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13,
+                            letterSpacing: 0.5)),
               ),
             ),
           ),
@@ -929,10 +1055,16 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
               margin: const EdgeInsets.symmetric(horizontal: 2.5),
               padding: const EdgeInsets.symmetric(vertical: 8),
               decoration: BoxDecoration(
-                gradient: sel ? const LinearGradient(colors: [Color(0xFFFFD54F), Color(0xFFFFA000)]) : null,
-                color: sel ? null : Colors.white.withOpacity(0.04),
+                gradient: sel
+                    ? const LinearGradient(
+                        colors: [Color(0xFFFFD54F), Color(0xFFFFA000)])
+                    : null,
+                color: sel ? null : Colors.white.withValues(alpha: 0.04),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: sel ? Colors.transparent : Colors.white.withOpacity(0.04)),
+                border: Border.all(
+                    color: sel
+                        ? Colors.transparent
+                        : Colors.white.withValues(alpha: 0.04)),
               ),
               child: Center(
                 child: Text(t[1],
@@ -960,9 +1092,14 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
               duration: const Duration(milliseconds: 180),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                color: sel ? AppColors.gold.withOpacity(0.18) : Colors.white.withOpacity(0.03),
+                color: sel
+                    ? AppColors.gold.withValues(alpha: 0.18)
+                    : Colors.white.withValues(alpha: 0.03),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: sel ? AppColors.gold : Colors.white.withOpacity(0.04)),
+                border: Border.all(
+                    color: sel
+                        ? AppColors.gold
+                        : Colors.white.withValues(alpha: 0.04)),
               ),
               child: Text(
                 s.toUpperCase(),
@@ -985,7 +1122,11 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Tap to select Single Ank (0-9)', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
+          const Text('Tap to select Single Ank (0-9)',
+              style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
           GridView.builder(
             shrinkWrap: true,
@@ -1015,17 +1156,27 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Select Open Ank', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
+          const Text('Select Open Ank',
+              style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           _buildRowSelector(openVal, (val) {
-            final close = _numberCtrl.text.length == 2 ? _numberCtrl.text[1] : '0';
+            final close =
+                _numberCtrl.text.length == 2 ? _numberCtrl.text[1] : '0';
             setState(() => _numberCtrl.text = "$val$close");
           }),
           const SizedBox(height: 12),
-          const Text('Select Close Ank', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
+          const Text('Select Close Ank',
+              style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           _buildRowSelector(closeVal, (val) {
-            final open = _numberCtrl.text.isNotEmpty ? _numberCtrl.text[0] : '0';
+            final open =
+                _numberCtrl.text.isNotEmpty ? _numberCtrl.text[0] : '0';
             setState(() => _numberCtrl.text = "$open$val");
           }),
         ],
@@ -1050,7 +1201,11 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
           ),
           const SizedBox(height: 12),
           if (_pannaSubtype != 'triple_panna') ...[
-            const Text('Filter by Ending Ank (0-9)', style: TextStyle(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.bold)),
+            const Text('Filter by Ending Ank (0-9)',
+                style: TextStyle(
+                    color: Colors.white60,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             _buildRowSelector(_selectedPannaAnk.toString(), (val) {
               setState(() {
@@ -1060,7 +1215,11 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
             }),
             const SizedBox(height: 12),
           ],
-          const Text('Select Panna Card', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
+          const Text('Select Panna Card',
+              style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           _buildPannaSelectionGrid(),
         ],
@@ -1110,9 +1269,12 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
                 duration: const Duration(milliseconds: 150),
                 width: 32,
                 decoration: BoxDecoration(
-                  color: sel ? AppColors.gold : Colors.white.withOpacity(0.04),
+                  color: sel
+                      ? AppColors.gold
+                      : Colors.white.withValues(alpha: 0.04),
                   shape: BoxShape.circle,
-                  border: Border.all(color: sel ? Colors.transparent : Colors.white10),
+                  border: Border.all(
+                      color: sel ? Colors.transparent : Colors.white10),
                 ),
                 child: Center(
                   child: Text(
@@ -1143,7 +1305,9 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: sel ? AppColors.gold.withOpacity(0.2) : Colors.white.withOpacity(0.02),
+          color: sel
+              ? AppColors.gold.withValues(alpha: 0.2)
+              : Colors.white.withValues(alpha: 0.02),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: sel ? AppColors.gold : Colors.white10),
         ),
@@ -1170,7 +1334,9 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: sel ? AppColors.gold.withOpacity(0.2) : Colors.white.withOpacity(0.02),
+          color: sel
+              ? AppColors.gold.withValues(alpha: 0.2)
+              : Colors.white.withValues(alpha: 0.02),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: sel ? AppColors.gold : Colors.white10),
         ),
@@ -1190,7 +1356,8 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
     // Generate all pannas, filter by current subtype and selected ending Ank
     final pannas = getAllPannas().where((p) {
       if (p.type != _pannaSubtype) return false;
-      if (_pannaSubtype == 'triple_panna') return true; // Triple has 1 Panna per Ank, show all at once
+      if (_pannaSubtype == 'triple_panna')
+        return true; // Triple has 1 Panna per Ank, show all at once
       return p.ank == _selectedPannaAnk;
     }).toList();
 
@@ -1215,9 +1382,11 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 150),
             decoration: BoxDecoration(
-              color: sel ? AppColors.gold : Colors.white.withOpacity(0.03),
+              color:
+                  sel ? AppColors.gold : Colors.white.withValues(alpha: 0.03),
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: sel ? Colors.transparent : Colors.white10),
+              border:
+                  Border.all(color: sel ? Colors.transparent : Colors.white10),
             ),
             child: Center(
               child: Text(
@@ -1241,7 +1410,8 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Select Open Panna Ending Ank', style: TextStyle(color: Colors.white60, fontSize: 9)),
+          const Text('Select Open Panna Ending Ank',
+              style: TextStyle(color: Colors.white60, fontSize: 9)),
           const SizedBox(height: 4),
           _buildRowSelector(_sangamOpenPannaAnk.toString(), (val) {
             setState(() {
@@ -1251,7 +1421,8 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
             });
           }),
           const SizedBox(height: 8),
-          const Text('Select Open Panna', style: TextStyle(color: Colors.white60, fontSize: 9)),
+          const Text('Select Open Panna',
+              style: TextStyle(color: Colors.white60, fontSize: 9)),
           const SizedBox(height: 4),
           _buildPannaRowSelector(_sangamOpenPanna, (p) {
             setState(() {
@@ -1260,7 +1431,11 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
             });
           }, _sangamOpenPannaAnk),
           const SizedBox(height: 8),
-          const Text('Select Close Ank', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
+          const Text('Select Close Ank',
+              style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
           _buildRowSelector(_sangamCloseAnk.toString(), (val) {
             setState(() {
@@ -1279,7 +1454,11 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Select Open Ank', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
+          const Text('Select Open Ank',
+              style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
           _buildRowSelector(_sangamOpenAnk.toString(), (val) {
             setState(() {
@@ -1290,7 +1469,8 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
             });
           }),
           const SizedBox(height: 8),
-          const Text('Select Close Panna Ending Ank', style: TextStyle(color: Colors.white60, fontSize: 9)),
+          const Text('Select Close Panna Ending Ank',
+              style: TextStyle(color: Colors.white60, fontSize: 9)),
           const SizedBox(height: 4),
           _buildRowSelector(_sangamClosePannaAnk.toString(), (val) {
             setState(() {
@@ -1300,7 +1480,8 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
             });
           }),
           const SizedBox(height: 8),
-          const Text('Select Close Panna', style: TextStyle(color: Colors.white60, fontSize: 9)),
+          const Text('Select Close Panna',
+              style: TextStyle(color: Colors.white60, fontSize: 9)),
           const SizedBox(height: 4),
           _buildPannaRowSelector(_sangamClosePanna, (p) {
             setState(() {
@@ -1317,7 +1498,8 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Select Open Panna Ending Ank', style: TextStyle(color: Colors.white60, fontSize: 9)),
+          const Text('Select Open Panna Ending Ank',
+              style: TextStyle(color: Colors.white60, fontSize: 9)),
           const SizedBox(height: 4),
           _buildRowSelector(_sangamOpenPannaAnk.toString(), (val) {
             setState(() {
@@ -1336,7 +1518,8 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
             });
           }, _sangamOpenPannaAnk),
           const Divider(color: Colors.white10, height: 16),
-          const Text('Select Close Panna Ending Ank', style: TextStyle(color: Colors.white60, fontSize: 9)),
+          const Text('Select Close Panna Ending Ank',
+              style: TextStyle(color: Colors.white60, fontSize: 9)),
           const SizedBox(height: 4),
           _buildRowSelector(_sangamClosePannaAnk.toString(), (val) {
             setState(() {
@@ -1360,9 +1543,12 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
     return const SizedBox();
   }
 
-  Widget _buildPannaRowSelector(String currentPanna, Function(String) onSelect, int ank) {
+  Widget _buildPannaRowSelector(
+      String currentPanna, Function(String) onSelect, int ank) {
     // Show only SP/DP Pannas for this Ank horizontally
-    final list = getAllPannas().where((p) => p.ank == ank && p.type != 'triple_panna').toList();
+    final list = getAllPannas()
+        .where((p) => p.ank == ank && p.type != 'triple_panna')
+        .toList();
     return SizedBox(
       height: 30,
       child: ListView.builder(
@@ -1382,9 +1568,12 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
                 duration: const Duration(milliseconds: 150),
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 decoration: BoxDecoration(
-                  color: sel ? AppColors.gold : Colors.white.withOpacity(0.04),
+                  color: sel
+                      ? AppColors.gold
+                      : Colors.white.withValues(alpha: 0.04),
                   borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: sel ? Colors.transparent : Colors.white10),
+                  border: Border.all(
+                      color: sel ? Colors.transparent : Colors.white10),
                 ),
                 child: Center(
                   child: Text(
@@ -1413,9 +1602,10 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         decoration: BoxDecoration(
-          color: sel ? AppColors.gold : Colors.white.withOpacity(0.03),
+          color: sel ? AppColors.gold : Colors.white.withValues(alpha: 0.03),
           shape: BoxShape.circle,
-          border: Border.all(color: sel ? Colors.transparent : Colors.white10, width: 1),
+          border: Border.all(
+              color: sel ? Colors.transparent : Colors.white10, width: 1),
         ),
         child: Center(
           child: Text(
@@ -1436,9 +1626,9 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: AppColors.gold.withOpacity(0.06),
+        color: AppColors.gold.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.gold.withOpacity(0.2)),
+        border: Border.all(color: AppColors.gold.withValues(alpha: 0.2)),
       ),
       child: Row(
         children: [
@@ -1447,7 +1637,9 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
           Text(
             'Potential payout: ₹${(_amount * (double.tryParse(mult) ?? 0)).toStringAsFixed(0)} (${mult}x)',
             style: const TextStyle(
-                color: AppColors.goldLight, fontWeight: FontWeight.w900, fontSize: 11),
+                color: AppColors.goldLight,
+                fontWeight: FontWeight.w900,
+                fontSize: 11),
           ),
         ],
       ),
@@ -1456,12 +1648,12 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
 
   Widget _buildPokerChip(double v) {
     final sel = _amount == v;
-    final color = v == 10 
-        ? const Color(0xFF1E88E5) 
-        : v == 50 
-            ? const Color(0xFF43A047) 
-            : v == 100 
-                ? const Color(0xFFE53935) 
+    final color = v == 10
+        ? const Color(0xFF1E88E5)
+        : v == 50
+            ? const Color(0xFF43A047)
+            : v == 100
+                ? const Color(0xFFE53935)
                 : const Color(0xFF8E24AA);
 
     return GestureDetector(
@@ -1477,10 +1669,10 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
           shape: BoxShape.circle,
           gradient: RadialGradient(
             colors: [
-              Colors.white.withOpacity(0.2),
+              Colors.white.withValues(alpha: 0.2),
               color,
-              color.withOpacity(0.85),
-              Colors.black.withOpacity(0.45),
+              color.withValues(alpha: 0.85),
+              Colors.black.withValues(alpha: 0.45),
             ],
             stops: const [0.0, 0.25, 0.75, 1.0],
             center: const Alignment(-0.2, -0.2),
@@ -1491,13 +1683,13 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.45),
+              color: Colors.black.withValues(alpha: 0.45),
               blurRadius: 4,
               offset: const Offset(1.5, 3),
             ),
             if (sel)
               BoxShadow(
-                color: color.withOpacity(0.55),
+                color: color.withValues(alpha: 0.55),
                 blurRadius: 8,
                 spreadRadius: 1.0,
               ),
@@ -1515,11 +1707,15 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
               child: Text(
                 '₹${v.toInt()}',
                 style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 10,
-                  shadows: [Shadow(color: Colors.black54, blurRadius: 2, offset: Offset(0, 1))]
-                ),
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 10,
+                    shadows: [
+                      Shadow(
+                          color: Colors.black54,
+                          blurRadius: 2,
+                          offset: Offset(0, 1))
+                    ]),
               ),
             ),
           ),

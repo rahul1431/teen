@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Table, Button, Tag, Space, Modal, Form, Input, Select, DatePicker, Popconfirm,
-  message, Empty, Drawer, Descriptions, List, Avatar, Alert, Switch, Segmented,
+  message, Empty, Drawer, Descriptions, List, Avatar, Alert, Switch, Segmented, Grid
 } from 'antd'
 import {
   PlusOutlined, DeleteOutlined, WarningOutlined, UserOutlined,
@@ -47,6 +47,8 @@ function DueDate({ date, status }: { date: string | null; status: string }) {
 }
 
 export default function Tasks() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const { admin } = useAuthStore()
   const isSuperadmin = admin?.role === 'superadmin'
 
@@ -177,6 +179,7 @@ export default function Tasks() {
         size="small"
         locale={{ emptyText: <Empty description="No tasks" /> }}
         onRow={(r) => ({ onClick: () => openTask(r), style: { cursor: 'pointer' } })}
+        scroll={{ x: 'max-content' }}
         columns={[
           {
             title: 'Title',
@@ -249,7 +252,7 @@ export default function Tasks() {
         title={activeTask?.title}
         open={!!activeTask}
         onClose={() => setActiveTask(null)}
-        width={480}
+        width={isMobile ? '100%' : 480}
       >
         {activeTask && (
           <>

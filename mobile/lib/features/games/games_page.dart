@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../shared/theme/app_theme.dart';
+import '../../core/services/locale_service.dart';
 
 /// Games tab — every game on the platform in one grid.
 class GamesPage extends StatelessWidget {
@@ -9,12 +10,23 @@ class GamesPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final games = [
-      _Game('Teen Patti', '🃏', 'Classic 3-card showdown', AppColors.teenPattiGrad, const Color(0xFFFF6B6B), '/games/teen-patti'),
-      _Game('Aviator', '✈️', 'Cash out before the crash', AppColors.aviatorGrad, const Color(0xFF60A5FA), '/games/aviator'),
-      _Game('Ludo', '🎲', 'Race your tokens home', AppColors.ludoGrad, const Color(0xFFCE93D8), '/games/ludo'),
-      _Game('Cricket', '🏏', 'Bet on live matches', AppColors.cricketGrad, const Color(0xFF86EFAC), '/games/cricket'),
-      _Game('Matka', '🏺', 'Pick your lucky numbers', AppColors.matkaGrad, AppColors.orange, '/games/matka'),
-      _Game('Lottery', '🎰', 'Jackpot up to ₹10 CR', AppColors.lotteryGrad, const Color(0xFF2DD4BF), '/games/lottery'),
+      _Game(
+          locale.t('teen_patti'),
+          '🃏',
+          'Classic 3-card showdown',
+          AppColors.teenPattiGrad,
+          const Color(0xFFFF6B6B),
+          '/games/teen-patti'),
+      _Game(locale.t('aviator'), '✈️', 'Cash out before the crash', AppColors.aviatorGrad,
+          const Color(0xFF60A5FA), '/games/aviator'),
+      _Game(locale.t('ludo'), '🎲', 'Race your tokens home', AppColors.ludoGrad,
+          const Color(0xFFCE93D8), '/games/ludo'),
+      _Game(locale.t('cricket'), '🏏', 'Bet on live matches', AppColors.cricketGrad,
+          const Color(0xFF86EFAC), '/games/cricket'),
+      _Game(locale.t('matka'), '🏺', 'Pick your lucky numbers', AppColors.matkaGrad,
+          AppColors.orange, '/games/matka'),
+      _Game(locale.t('lottery'), '🎰', 'Jackpot up to ₹10 CR', AppColors.lotteryGrad,
+          const Color(0xFF2DD4BF), '/games/lottery'),
     ];
 
     return Scaffold(
@@ -41,7 +53,8 @@ class _Game {
   final List<Color> gradient;
   final Color accent;
   final String route;
-  const _Game(this.title, this.emoji, this.subtitle, this.gradient, this.accent, this.route);
+  const _Game(this.title, this.emoji, this.subtitle, this.gradient, this.accent,
+      this.route);
 }
 
 class _GameCard extends StatelessWidget {
@@ -60,10 +73,11 @@ class _GameCard extends StatelessWidget {
             colors: game.gradient,
           ),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: game.accent.withOpacity(0.3), width: 1.5),
+          border:
+              Border.all(color: game.accent.withValues(alpha: 0.3), width: 1.5),
           boxShadow: [
             BoxShadow(
-              color: game.gradient.first.withOpacity(0.4),
+              color: game.gradient.first.withValues(alpha: 0.4),
               blurRadius: 16,
               offset: const Offset(0, 5),
             ),
@@ -85,15 +99,18 @@ class _GameCard extends StatelessWidget {
                   )),
               const SizedBox(height: 3),
               Text(game.subtitle,
-                  style: TextStyle(color: game.accent, fontSize: 10.5, fontWeight: FontWeight.w600)),
+                  style: TextStyle(
+                      color: game.accent,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600)),
               const SizedBox(height: 10),
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 7),
                 decoration: BoxDecoration(
-                  color: game.accent.withOpacity(0.2),
+                  color: game.accent.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: game.accent.withOpacity(0.5)),
+                  border: Border.all(color: game.accent.withValues(alpha: 0.5)),
                 ),
                 child: Text('Play Now',
                     textAlign: TextAlign.center,

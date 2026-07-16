@@ -14,7 +14,7 @@ import crypto from 'crypto'
 //    star squares (8,21,34,47), all in absolute-cell terms.
 
 export const MAIN_TRACK = 52
-export const HOME_PROGRESS = 57
+export const HOME_PROGRESS = 56
 export const TOKENS_PER_PLAYER = 4
 export const START_OFFSETS = [0, 13, 26, 39]
 export const SAFE_CELLS = new Set([0, 8, 13, 21, 26, 34, 39, 47])

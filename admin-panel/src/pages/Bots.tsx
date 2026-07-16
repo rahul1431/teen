@@ -315,6 +315,7 @@ export default function Bots() {
               rowKey="id"
               dataSource={bots}
               loading={loading}
+              scroll={{ x: 'max-content' }}
               pagination={{
                 current: page,
                 pageSize,

@@ -57,8 +57,10 @@ class _WalletPageState extends State<WalletPage> {
         _api.dio.get('/api/wallet/balance'),
         _api.dio.get('/api/wallet/transactions?limit=20'),
       ]);
-      final real = double.parse(balRes.data['real_balance'].toString()).toStringAsFixed(2);
-      final bonus = double.parse(balRes.data['bonus_balance'].toString()).toStringAsFixed(2);
+      final real = double.parse(balRes.data['real_balance'].toString())
+          .toStringAsFixed(2);
+      final bonus = double.parse(balRes.data['bonus_balance'].toString())
+          .toStringAsFixed(2);
       setState(() {
         _realBalance = real;
         _bonusBalance = bonus;
@@ -74,15 +76,21 @@ class _WalletPageState extends State<WalletPage> {
         box.put('bonus_balance', bonus);
       } catch (_) {}
     } catch (_) {
-      if (mounted) AppSnackBar.show(context, 'Could not load wallet data', error: true);
+      if (mounted)
+        AppSnackBar.show(context, 'Could not load wallet data', error: true);
     }
   }
 
   void _showError(String msg) => AppSnackBar.show(context, msg, error: true);
-  void _showSuccess(String msg) => AppSnackBar.show(context, msg, success: true);
+  void _showSuccess(String msg) =>
+      AppSnackBar.show(context, msg, success: true);
 
   Color _txnColor(String type) {
-    if (type.contains('credit') || type == 'deposit' || type == 'game_credit' || type == 'bonus' || type == 'referral') return AppColors.green;
+    if (type.contains('credit') ||
+        type == 'deposit' ||
+        type == 'game_credit' ||
+        type == 'bonus' ||
+        type == 'referral') return AppColors.green;
     return AppColors.red;
   }
 
@@ -108,9 +116,9 @@ class _WalletPageState extends State<WalletPage> {
       margin: const EdgeInsets.only(left: 6),
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: color.withOpacity(0.5), width: 0.5),
+        border: Border.all(color: color.withValues(alpha: 0.5), width: 0.5),
       ),
       child: Text(
         label,
@@ -128,11 +136,13 @@ class _WalletPageState extends State<WalletPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.background,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => _DepositSheet(api: _api),
     );
     if (ok == true) {
-      _showSuccess('Deposit submitted for review. Balance updates after admin approval.');
+      _showSuccess(
+          'Deposit submitted for review. Balance updates after admin approval.');
       _loadData();
     }
   }
@@ -142,7 +152,8 @@ class _WalletPageState extends State<WalletPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.background,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => _WithdrawSheet(api: _api, balance: _realBalance),
     );
     if (ok == true) {
@@ -163,17 +174,23 @@ class _WalletPageState extends State<WalletPage> {
             Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [AppColors.cardBg, AppColors.surface]),
+                gradient: LinearGradient(
+                    colors: [AppColors.cardBg, AppColors.surface]),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.gold.withOpacity(0.3)),
+                border:
+                    Border.all(color: AppColors.gold.withValues(alpha: 0.3)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Total Balance', style: TextStyle(color: AppColors.textSecondary)),
+                  const Text('Total Balance',
+                      style: TextStyle(color: AppColors.textSecondary)),
                   Text(
                     '₹${((double.tryParse(_realBalance) ?? 0) + (double.tryParse(_bonusBalance) ?? 0)).toStringAsFixed(2)}',
-                    style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: AppColors.gold),
+                    style: const TextStyle(
+                        fontSize: 36,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.gold),
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -182,10 +199,16 @@ class _WalletPageState extends State<WalletPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('Withdrawable', style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+                            const Text('Withdrawable',
+                                style: TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 11)),
                             const SizedBox(height: 2),
                             Text('₹$_realBalance',
-                                style: const TextStyle(color: AppColors.green, fontWeight: FontWeight.w700, fontSize: 15)),
+                                style: const TextStyle(
+                                    color: AppColors.green,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15)),
                           ],
                         ),
                       ),
@@ -193,10 +216,16 @@ class _WalletPageState extends State<WalletPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('Bonus · not withdrawable', style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+                            const Text('Bonus · not withdrawable',
+                                style: TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 11)),
                             const SizedBox(height: 2),
                             Text('₹$_bonusBalance',
-                                style: const TextStyle(color: AppColors.orange, fontWeight: FontWeight.w700, fontSize: 15)),
+                                style: const TextStyle(
+                                    color: AppColors.orange,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15)),
                           ],
                         ),
                       ),
@@ -230,29 +259,50 @@ class _WalletPageState extends State<WalletPage> {
             const SizedBox(height: 24),
 
             // Transaction history
-            const Text('Recent Transactions', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const Text('Recent Transactions',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             if (_transactions.isEmpty)
-              const Center(child: Text('No transactions yet', style: TextStyle(color: AppColors.textSecondary)))
+              const Center(
+                  child: Text('No transactions yet',
+                      style: TextStyle(color: AppColors.textSecondary)))
             else
               ..._transactions.map((txn) => ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 4),
-                leading: CircleAvatar(
-                  backgroundColor: _txnColor(txn['type']).withOpacity(0.15),
-                  child: Icon(txn['type'].contains('credit') || txn['type'] == 'deposit' ? Icons.add : Icons.remove, color: _txnColor(txn['type'])),
-                ),
-                title: Row(
-                  children: [
-                    Text(txn['type'].toString().replaceAll('_', ' ').toUpperCase(), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                    _buildStatusBadge(txn['status']?.toString()),
-                  ],
-                ),
-                subtitle: Text(DateTime.parse(txn['created_at']).toLocal().toString().substring(0, 16)),
-                trailing: Text(
-                  '${_txnColor(txn['type']) == AppColors.green ? '+' : '-'}₹${double.parse(txn['amount'].toString()).toStringAsFixed(2)}',
-                  style: TextStyle(color: _txnColor(txn['type']), fontWeight: FontWeight.bold),
-                ),
-              )),
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 0, vertical: 4),
+                    leading: CircleAvatar(
+                      backgroundColor:
+                          _txnColor(txn['type']).withValues(alpha: 0.15),
+                      child: Icon(
+                          txn['type'].contains('credit') ||
+                                  txn['type'] == 'deposit'
+                              ? Icons.add
+                              : Icons.remove,
+                          color: _txnColor(txn['type'])),
+                    ),
+                    title: Row(
+                      children: [
+                        Text(
+                            txn['type']
+                                .toString()
+                                .replaceAll('_', ' ')
+                                .toUpperCase(),
+                            style: const TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w600)),
+                        _buildStatusBadge(txn['status']?.toString()),
+                      ],
+                    ),
+                    subtitle: Text(DateTime.parse(txn['created_at'])
+                        .toLocal()
+                        .toString()
+                        .substring(0, 16)),
+                    trailing: Text(
+                      '${_txnColor(txn['type']) == AppColors.green ? '+' : '-'}₹${double.parse(txn['amount'].toString()).toStringAsFixed(2)}',
+                      style: TextStyle(
+                          color: _txnColor(txn['type']),
+                          fontWeight: FontWeight.bold),
+                    ),
+                  )),
           ],
         ),
       ),
@@ -291,7 +341,8 @@ class _DepositSheetState extends State<_DepositSheet> {
       final res = await widget.api.dio.get('/api/wallet/deposit/methods');
       setState(() {
         _methods = res.data as List;
-        if (_methods.isNotEmpty) _selected = Map<String, dynamic>.from(_methods.first);
+        if (_methods.isNotEmpty)
+          _selected = Map<String, dynamic>.from(_methods.first);
         _loading = false;
       });
     } catch (_) {
@@ -300,26 +351,35 @@ class _DepositSheetState extends State<_DepositSheet> {
   }
 
   Future<void> _pickScreenshot() async {
-    final img = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 70);
+    final img = await ImagePicker()
+        .pickImage(source: ImageSource.gallery, imageQuality: 70);
     if (img != null) setState(() => _screenshot = img);
   }
 
-  void _snack(String msg, Color c) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: c));
+  void _snack(String msg, Color c) => ScaffoldMessenger.of(context)
+      .showSnackBar(SnackBar(content: Text(msg), backgroundColor: c));
 
   Future<void> _validatePromo() async {
     final code = _promoCtrl.text.trim().toUpperCase();
     if (code.isEmpty) return;
     final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0;
-    if (amount < 1) { _snack('Enter amount first', AppColors.orange); return; }
+    if (amount < 1) {
+      _snack('Enter amount first', AppColors.orange);
+      return;
+    }
     setState(() => _validatingPromo = true);
     try {
       final res = await widget.api.dio.post('/api/wallet/promo/validate',
-        data: {'code': code, 'amount': amount});
+          data: {'code': code, 'amount': amount});
       setState(() => _promoResult = res.data as Map<String, dynamic>);
-      _snack('Promo applied! ₹${(_promoResult!['discount_amount'] as num).toStringAsFixed(2)} bonus', AppColors.green);
+      _snack(
+          'Promo applied! ₹${(_promoResult!['discount_amount'] as num).toStringAsFixed(2)} bonus',
+          AppColors.green);
     } catch (e) {
       setState(() => _promoResult = null);
-      final msg = e is DioException ? (e.response?.data?['error']?.toString() ?? 'Invalid code') : 'Invalid code';
+      final msg = e is DioException
+          ? (e.response?.data?['error']?.toString() ?? 'Invalid code')
+          : 'Invalid code';
       _snack(msg, AppColors.red);
     } finally {
       if (mounted) setState(() => _validatingPromo = false);
@@ -328,9 +388,18 @@ class _DepositSheetState extends State<_DepositSheet> {
 
   Future<void> _submit() async {
     final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0;
-    if (amount < 1) { _snack('Enter a valid amount', AppColors.red); return; }
-    if (_refCtrl.text.trim().isEmpty) { _snack('Enter the UPI/UTR reference number', AppColors.red); return; }
-    if (_screenshot == null) { _snack('Attach a payment screenshot', AppColors.red); return; }
+    if (amount < 1) {
+      _snack('Enter a valid amount', AppColors.red);
+      return;
+    }
+    if (_refCtrl.text.trim().isEmpty) {
+      _snack('Enter the UPI/UTR reference number', AppColors.red);
+      return;
+    }
+    if (_screenshot == null) {
+      _snack('Attach a payment screenshot', AppColors.red);
+      return;
+    }
 
     setState(() => _submitting = true);
     try {
@@ -338,15 +407,20 @@ class _DepositSheetState extends State<_DepositSheet> {
         'amount': amount,
         if (_selected != null) 'payment_method_id': _selected!['id'],
         'reference_number': _refCtrl.text.trim(),
-        'screenshot': await MultipartFile.fromFile(_screenshot!.path, filename: _screenshot!.name),
-        if (_promoCtrl.text.trim().isNotEmpty) 'promo_code': _promoCtrl.text.trim().toUpperCase(),
+        'screenshot': await MultipartFile.fromFile(_screenshot!.path,
+            filename: _screenshot!.name),
+        if (_promoCtrl.text.trim().isNotEmpty)
+          'promo_code': _promoCtrl.text.trim().toUpperCase(),
       });
-      final res = await widget.api.dio.post('/api/wallet/deposit/submit', data: form);
+      final res =
+          await widget.api.dio.post('/api/wallet/deposit/submit', data: form);
       final msg = res.data?['message'] as String? ?? 'Deposit submitted!';
       if (mounted) Navigator.pop(context, true);
       _snack(msg, AppColors.green);
     } catch (e) {
-      final msg = e is DioException ? (e.response?.data?['error']?.toString() ?? 'Submit failed') : 'Submit failed';
+      final msg = e is DioException
+          ? (e.response?.data?['error']?.toString() ?? 'Submit failed')
+          : 'Submit failed';
       _snack(msg, AppColors.red);
     } finally {
       if (mounted) setState(() => _submitting = false);
@@ -358,19 +432,31 @@ class _DepositSheetState extends State<_DepositSheet> {
   // upi:// chooser when the specific app isn't installed.
   Future<void> _payViaUpiApp(String appScheme) async {
     final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0;
-    if (amount < 1) { _snack('Enter the amount first', AppColors.orange); return; }
+    if (amount < 1) {
+      _snack('Enter the amount first', AppColors.orange);
+      return;
+    }
     final upiId = _selected?['upi_id']?.toString() ?? '';
-    if (upiId.isEmpty) { _snack('No UPI ID configured', AppColors.red); return; }
-    final payeeName = (_selected?['account_name'] ?? _selected?['label'] ?? 'Add Money').toString();
+    if (upiId.isEmpty) {
+      _snack('No UPI ID configured', AppColors.red);
+      return;
+    }
+    final payeeName =
+        (_selected?['account_name'] ?? _selected?['label'] ?? 'Add Money')
+            .toString();
     final params = 'pa=${Uri.encodeComponent(upiId)}'
         '&pn=${Uri.encodeComponent(payeeName)}'
         '&am=${amount.toStringAsFixed(2)}'
         '&cu=INR'
         '&tn=${Uri.encodeComponent('Add Money')}';
-    for (final uri in [Uri.parse('$appScheme?$params'), Uri.parse('upi://pay?$params')]) {
+    for (final uri in [
+      Uri.parse('$appScheme?$params'),
+      Uri.parse('upi://pay?$params')
+    ]) {
       try {
-        if (await launchUrl(uri, mode: LaunchMode.externalNonBrowserApplication)) return;
-      } catch (_) { /* try the next scheme */ }
+        if (await launchUrl(uri,
+            mode: LaunchMode.externalNonBrowserApplication)) return;
+      } catch (_) {/* try the next scheme */}
     }
     _snack('UPI app not installed', AppColors.red);
   }
@@ -385,11 +471,13 @@ class _DepositSheetState extends State<_DepositSheet> {
             backgroundColor: color,
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(vertical: 10),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
           child: Text(label,
               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
         ),
       ),
     );
@@ -400,11 +488,20 @@ class _DepositSheetState extends State<_DepositSheet> {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          SizedBox(width: 110, child: Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 13))),
-          Expanded(child: Text(value, style: const TextStyle(fontWeight: FontWeight.w600))),
+          SizedBox(
+              width: 110,
+              child: Text(label,
+                  style: const TextStyle(
+                      color: AppColors.textSecondary, fontSize: 13))),
+          Expanded(
+              child: Text(value,
+                  style: const TextStyle(fontWeight: FontWeight.w600))),
           IconButton(
             icon: const Icon(Icons.copy, size: 16),
-            onPressed: () { Clipboard.setData(ClipboardData(text: value)); _snack('Copied', AppColors.green); },
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: value));
+              _snack('Copied', AppColors.green);
+            },
           ),
         ],
       ),
@@ -425,29 +522,36 @@ class _DepositSheetState extends State<_DepositSheet> {
           const SizedBox(height: 8),
           Row(children: [
             _upiAppButton('PhonePe', const Color(0xFF5F259F), 'phonepe://pay'),
-            _upiAppButton('Google Pay', const Color(0xFF1A73E8), 'tez://upi/pay'),
+            _upiAppButton(
+                'Google Pay', const Color(0xFF1A73E8), 'tez://upi/pay'),
             _upiAppButton('Paytm', const Color(0xFF00B9F1), 'paytmmp://pay'),
           ]),
           if (m['qr_image_url'] != null) ...[
             const SizedBox(height: 12),
-            const Text('Or scan to pay:', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+            const Text('Or scan to pay:',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
             const SizedBox(height: 6),
-            Image.network(_resolveUrl(m['qr_image_url']?.toString()), height: 180,
+            Image.network(_resolveUrl(m['qr_image_url']?.toString()),
+                height: 180,
                 errorBuilder: (_, __, ___) => const SizedBox.shrink()),
           ],
         ]);
       case 'bank':
         return Column(children: [
-          if (m['account_name'] != null) _detailRow('Name', m['account_name'].toString()),
+          if (m['account_name'] != null)
+            _detailRow('Name', m['account_name'].toString()),
           _detailRow('A/c Number', m['account_number']?.toString() ?? '-'),
           _detailRow('IFSC', m['ifsc']?.toString() ?? '-'),
-          if (m['bank_name'] != null) _detailRow('Bank', m['bank_name'].toString()),
+          if (m['bank_name'] != null)
+            _detailRow('Bank', m['bank_name'].toString()),
         ]);
       case 'qr':
         return Center(
           child: m['qr_image_url'] != null
-              ? Image.network(_resolveUrl(m['qr_image_url']?.toString()), height: 200,
-                  errorBuilder: (_, __, ___) => const Text('QR image unavailable'))
+              ? Image.network(_resolveUrl(m['qr_image_url']?.toString()),
+                  height: 200,
+                  errorBuilder: (_, __, ___) =>
+                      const Text('QR image unavailable'))
               : const Text('No QR configured'),
         );
       default:
@@ -459,17 +563,27 @@ class _DepositSheetState extends State<_DepositSheet> {
   Widget build(BuildContext context) {
     final bottom = MediaQuery.of(context).viewInsets.bottom;
     return Padding(
-      padding: EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 20 + bottom),
+      padding:
+          EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 20 + bottom),
       child: _loading
-          ? const SizedBox(height: 200, child: Center(child: CircularProgressIndicator()))
+          ? const SizedBox(
+              height: 200, child: Center(child: CircularProgressIndicator()))
           : _methods.isEmpty
-              ? const SizedBox(height: 160, child: Center(child: Text('No payment methods available.\nPlease contact support.', textAlign: TextAlign.center, style: TextStyle(color: AppColors.textSecondary))))
+              ? const SizedBox(
+                  height: 160,
+                  child: Center(
+                      child: Text(
+                          'No payment methods available.\nPlease contact support.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: AppColors.textSecondary))))
               : SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Add Money', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const Text('Add Money',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 16),
 
                       // Method selector
@@ -478,9 +592,11 @@ class _DepositSheetState extends State<_DepositSheet> {
                         children: _methods.map((m) {
                           final sel = _selected?['id'] == m['id'];
                           return ChoiceChip(
-                            label: Text(m['label']?.toString() ?? m['method_type'].toString().toUpperCase()),
+                            label: Text(m['label']?.toString() ??
+                                m['method_type'].toString().toUpperCase()),
                             selected: sel,
-                            onSelected: (_) => setState(() => _selected = Map<String, dynamic>.from(m)),
+                            onSelected: (_) => setState(
+                                () => _selected = Map<String, dynamic>.from(m)),
                           );
                         }).toList(),
                       ),
@@ -499,12 +615,17 @@ class _DepositSheetState extends State<_DepositSheet> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text('Pay to:', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                              const Text('Pay to:',
+                                  style: TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 12)),
                               const SizedBox(height: 6),
                               _methodDetails(_selected!),
                               if (_selected!['instructions'] != null) ...[
                                 const SizedBox(height: 8),
-                                Text(_selected!['instructions'].toString(), style: const TextStyle(color: AppColors.orange, fontSize: 12)),
+                                Text(_selected!['instructions'].toString(),
+                                    style: const TextStyle(
+                                        color: AppColors.orange, fontSize: 12)),
                               ],
                             ],
                           ),
@@ -514,13 +635,19 @@ class _DepositSheetState extends State<_DepositSheet> {
                       TextField(
                         controller: _amountCtrl,
                         keyboardType: TextInputType.number,
-                        onChanged: (_) { if (_promoResult != null) setState(() => _promoResult = null); },
-                        decoration: const InputDecoration(labelText: 'Amount (₹)', prefixText: '₹ '),
+                        onChanged: (_) {
+                          if (_promoResult != null)
+                            setState(() => _promoResult = null);
+                        },
+                        decoration: const InputDecoration(
+                            labelText: 'Amount (₹)', prefixText: '₹ '),
                       ),
                       const SizedBox(height: 12),
                       TextField(
                         controller: _refCtrl,
-                        decoration: const InputDecoration(labelText: 'UPI / UTR Reference Number', hintText: 'e.g. 4012XXXXXX'),
+                        decoration: const InputDecoration(
+                            labelText: 'UPI / UTR Reference Number',
+                            hintText: 'e.g. 4012XXXXXX'),
                       ),
                       const SizedBox(height: 12),
 
@@ -534,43 +661,61 @@ class _DepositSheetState extends State<_DepositSheet> {
                               decoration: InputDecoration(
                                 labelText: 'Promo Code (Optional)',
                                 hintText: 'e.g. WELCOME50',
-                                prefixIcon: const Icon(Icons.local_offer_outlined, size: 18),
+                                prefixIcon: const Icon(
+                                    Icons.local_offer_outlined,
+                                    size: 18),
                                 suffixIcon: _promoResult != null
-                                  ? const Icon(Icons.check_circle, color: Color(0xFF00C853), size: 20)
-                                  : null,
+                                    ? const Icon(Icons.check_circle,
+                                        color: Color(0xFF00C853), size: 20)
+                                    : null,
                               ),
                             ),
                           ),
                           const SizedBox(width: 8),
                           _validatingPromo
-                            ? const SizedBox(width: 44, height: 44, child: CircularProgressIndicator(strokeWidth: 2))
-                            : OutlinedButton(
-                                onPressed: _validatePromo,
-                                style: OutlinedButton.styleFrom(
-                                  minimumSize: const Size(64, 50),
-                                  side: const BorderSide(color: AppColors.gold),
+                              ? const SizedBox(
+                                  width: 44,
+                                  height: 44,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
+                              : OutlinedButton(
+                                  onPressed: _validatePromo,
+                                  style: OutlinedButton.styleFrom(
+                                    minimumSize: const Size(64, 50),
+                                    side:
+                                        const BorderSide(color: AppColors.gold),
+                                  ),
+                                  child: const Text('Apply',
+                                      style: TextStyle(
+                                          color: AppColors.gold, fontSize: 13)),
                                 ),
-                                child: const Text('Apply', style: TextStyle(color: AppColors.gold, fontSize: 13)),
-                              ),
                         ],
                       ),
                       if (_promoResult != null) ...[
                         const SizedBox(height: 8),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF00C853).withOpacity(0.08),
+                            color:
+                                const Color(0xFF00C853).withValues(alpha: 0.08),
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: const Color(0xFF00C853).withOpacity(0.3)),
+                            border: Border.all(
+                                color: const Color(0xFF00C853)
+                                    .withValues(alpha: 0.3)),
                           ),
                           child: Row(
                             children: [
-                              const Icon(Icons.celebration_outlined, color: Color(0xFF00C853), size: 16),
+                              const Icon(Icons.celebration_outlined,
+                                  color: Color(0xFF00C853), size: 16),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
                                   '${_promoResult!['code']} — ₹${(_promoResult!['discount_amount'] as num).toStringAsFixed(0)} bonus on approval!',
-                                  style: const TextStyle(color: Color(0xFF00C853), fontSize: 12, fontWeight: FontWeight.w600),
+                                  style: const TextStyle(
+                                      color: Color(0xFF00C853),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600),
                                 ),
                               ),
                             ],
@@ -582,15 +727,20 @@ class _DepositSheetState extends State<_DepositSheet> {
                       OutlinedButton.icon(
                         onPressed: _pickScreenshot,
                         icon: const Icon(Icons.image),
-                        label: Text(_screenshot == null ? 'Attach Payment Screenshot' : 'Screenshot attached ✓'),
+                        label: Text(_screenshot == null
+                            ? 'Attach Payment Screenshot'
+                            : 'Screenshot attached ✓'),
                       ),
                       if (_screenshot != null)
                         Padding(
                           padding: const EdgeInsets.only(top: 10),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(8),
-                            child: Image.file(File(_screenshot!.path), height: 120, fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+                            child: Image.file(File(_screenshot!.path),
+                                height: 120,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    const SizedBox.shrink()),
                           ),
                         ),
                       const SizedBox(height: 20),
@@ -600,7 +750,11 @@ class _DepositSheetState extends State<_DepositSheet> {
                         child: ElevatedButton(
                           onPressed: _submitting ? null : _submit,
                           child: _submitting
-                              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                              ? const SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.black))
                               : const Text('Submit for Approval'),
                         ),
                       ),
@@ -632,7 +786,8 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
     return h >= 10 && h < 21;
   }
 
-  void _snack(String msg, Color c) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: c));
+  void _snack(String msg, Color c) => ScaffoldMessenger.of(context)
+      .showSnackBar(SnackBar(content: Text(msg), backgroundColor: c));
 
   void _showKycRequiredDialog() {
     showDialog(
@@ -642,34 +797,41 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Row(
           children: [
-            Icon(Icons.verified_user_rounded, color: AppColors.orange, size: 22),
+            Icon(Icons.verified_user_rounded,
+                color: AppColors.orange, size: 22),
             SizedBox(width: 8),
-            Expanded(child: Text('KYC Required for Withdrawal', style: TextStyle(fontSize: 17))),
+            Expanded(
+                child: Text('KYC Required for Withdrawal',
+                    style: TextStyle(fontSize: 17))),
           ],
         ),
         content: const Text(
           'To withdraw money you must complete KYC verification first. '
           'Submit your documents and our team will verify them shortly.',
-          style: TextStyle(color: AppColors.textSecondary, fontSize: 13.5, height: 1.4),
+          style: TextStyle(
+              color: AppColors.textSecondary, fontSize: 13.5, height: 1.4),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogCtx),
-            child: const Text('Later', style: TextStyle(color: AppColors.textSecondary)),
+            child: const Text('Later',
+                style: TextStyle(color: AppColors.textSecondary)),
           ),
           ElevatedButton(
             onPressed: () {
               final nav = Navigator.of(context, rootNavigator: true);
-              Navigator.pop(dialogCtx);           // close dialog
-              Navigator.pop(context);              // close withdraw sheet
+              Navigator.pop(dialogCtx); // close dialog
+              Navigator.pop(context); // close withdraw sheet
               nav.push(MaterialPageRoute(builder: (_) => const KycPage()));
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.gold,
               foregroundColor: Colors.black,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
             ),
-            child: const Text('Complete KYC', style: TextStyle(fontWeight: FontWeight.w800)),
+            child: const Text('Complete KYC',
+                style: TextStyle(fontWeight: FontWeight.w800)),
           ),
         ],
       ),
@@ -678,23 +840,32 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
 
   Future<void> _submit() async {
     final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0;
-    if (amount < 100) { _snack('Minimum withdrawal is ₹100', AppColors.red); return; }
+    if (amount < 100) {
+      _snack('Minimum withdrawal is ₹100', AppColors.red);
+      return;
+    }
     if (_upiCtrl.text.trim().isEmpty && _bankCtrl.text.trim().isEmpty) {
-      _snack('Enter your UPI ID or bank account', AppColors.red); return;
+      _snack('Enter your UPI ID or bank account', AppColors.red);
+      return;
     }
     setState(() => _submitting = true);
     try {
       await widget.api.dio.post('/api/wallet/withdraw/request', data: {
         'amount': amount,
         if (_upiCtrl.text.trim().isNotEmpty) 'upi_id': _upiCtrl.text.trim(),
-        if (_bankCtrl.text.trim().isNotEmpty) 'bank_account': _bankCtrl.text.trim(),
+        if (_bankCtrl.text.trim().isNotEmpty)
+          'bank_account': _bankCtrl.text.trim(),
       });
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
-      final msg = e is DioException ? (e.response?.data?['error']?.toString() ?? 'Request failed') : 'Request failed';
+      final msg = e is DioException
+          ? (e.response?.data?['error']?.toString() ?? 'Request failed')
+          : 'Request failed';
       // KYC gate: server rejects withdrawals until KYC is approved — show a
       // clear dialog with a shortcut to complete KYC instead of a plain snack.
-      if (e is DioException && e.response?.statusCode == 403 && msg.toLowerCase().contains('kyc')) {
+      if (e is DioException &&
+          e.response?.statusCode == 403 &&
+          msg.toLowerCase().contains('kyc')) {
         if (mounted) _showKycRequiredDialog();
       } else {
         _snack(msg, AppColors.red);
@@ -708,30 +879,36 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
   Widget build(BuildContext context) {
     final bottom = MediaQuery.of(context).viewInsets.bottom;
     return Padding(
-      padding: EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 20 + bottom),
+      padding:
+          EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 20 + bottom),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Withdraw', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text('Withdraw',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          Text('Available: ₹${widget.balance}', style: const TextStyle(color: AppColors.textSecondary)),
+          Text('Available: ₹${widget.balance}',
+              style: const TextStyle(color: AppColors.textSecondary)),
           if (!_withdrawOpen) ...[
             const SizedBox(height: 12),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
-                color: AppColors.orange.withOpacity(0.12),
+                color: AppColors.orange.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppColors.orange.withOpacity(0.4)),
+                border:
+                    Border.all(color: AppColors.orange.withValues(alpha: 0.4)),
               ),
               child: const Row(children: [
                 Icon(Icons.schedule, color: AppColors.orange, size: 18),
                 SizedBox(width: 8),
                 Expanded(
-                  child: Text('Withdrawals are open 10 AM to 9 PM. Please come back later.',
-                      style: TextStyle(color: AppColors.orange, fontSize: 12.5)),
+                  child: Text(
+                      'Withdrawals are open 10 AM to 9 PM. Please come back later.',
+                      style:
+                          TextStyle(color: AppColors.orange, fontSize: 12.5)),
                 ),
               ]),
             ),
@@ -741,21 +918,36 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
             controller: _amountCtrl,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(
-                labelText: 'Amount (₹)', prefixText: '₹ ',
-                helperText: 'Min ₹100 · KYC required · Withdrawals 10 AM – 9 PM'),
+                labelText: 'Amount (₹)',
+                prefixText: '₹ ',
+                helperText:
+                    'Min ₹100 · KYC required · Withdrawals 10 AM – 9 PM'),
           ),
           const SizedBox(height: 12),
-          TextField(controller: _upiCtrl, decoration: const InputDecoration(labelText: 'Your UPI ID (optional)', hintText: 'name@bank')),
+          TextField(
+              controller: _upiCtrl,
+              decoration: const InputDecoration(
+                  labelText: 'Your UPI ID (optional)', hintText: 'name@bank')),
           const SizedBox(height: 12),
-          TextField(controller: _bankCtrl, decoration: const InputDecoration(labelText: 'Your Bank A/c + IFSC (optional)', hintText: 'A/c · IFSC')),
+          TextField(
+              controller: _bankCtrl,
+              decoration: const InputDecoration(
+                  labelText: 'Your Bank A/c + IFSC (optional)',
+                  hintText: 'A/c · IFSC')),
           const SizedBox(height: 20),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
               onPressed: (_submitting || !_withdrawOpen) ? null : _submit,
               child: _submitting
-                  ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
-                  : Text(_withdrawOpen ? 'Request Withdrawal' : 'Available 10 AM – 9 PM'),
+                  ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.black))
+                  : Text(_withdrawOpen
+                      ? 'Request Withdrawal'
+                      : 'Available 10 AM – 9 PM'),
             ),
           ),
         ],

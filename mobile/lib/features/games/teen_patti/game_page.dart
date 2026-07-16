@@ -11,7 +11,6 @@ import '../../../core/storage/secure_storage.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/monitor/monitor_service.dart';
 import '../../../shared/theme/app_theme.dart';
-import 'practice_engine.dart';
 import 'coin_rain.dart';
 import '../../../core/constants/app_config.dart';
 import 'package:share_plus/share_plus.dart';
@@ -38,10 +37,9 @@ import 'package:lottie/lottie.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 class TeenPattiGamePage extends StatefulWidget {
   final String roomId;
-  final bool demo;
   final Map<String, dynamic>? initialData;
   const TeenPattiGamePage(
-      {super.key, required this.roomId, this.demo = false, this.initialData});
+      {super.key, required this.roomId, this.initialData});
   @override
   State<TeenPattiGamePage> createState() => _TeenPattiGamePageState();
 }
@@ -50,7 +48,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     with TickerProviderStateMixin {
   final _socket = SocketService();
   final _api = ApiClient();
-  PracticeEngine? _practice;
 
   // Friends "Same Table" rematch flips us to a brand-new game page via
   // pushReplacement. The new page's initState re-locks landscape, but the OLD
@@ -158,7 +155,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     SystemChrome.setPreferredOrientations(
         [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    widget.demo ? _initDemo() : _init();
+    _init();
     SoundService.instance.loopAmbience('casino_bgm.mp3');
   }
 
@@ -196,7 +193,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _sideshowResultSub?.cancel();
     _sideshowPromptTimer?.cancel();
     _turnTimer?.cancel();
-    _practice?.dispose();
     for (final n in [
       _gsNotifier,
       _myTurnNotifier,
@@ -222,54 +218,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
     super.dispose();
-  }
-
-  // ── Demo init ─────────────────────────────────────────────────────────────
-  void _initDemo() {
-    _myUserId = 'me';
-    _isSeen = true;
-    _practice = PracticeEngine(
-      onChanged: () {
-        if (!mounted) return;
-        final gs = _practice!.state;
-        _gsNotifier.value = gs;
-        _myTurnNotifier.value = _practice!.isMyTurn;
-
-        final players = gs['players'] as List? ?? [];
-        final me = players.firstWhere(
-            (p) => (p['userId'] ?? p['user_id']) == _myUserId,
-            orElse: () => null);
-        if (me != null && me['cards'] != null) {
-          _myCardsNotifier.value = List<Map<String, dynamic>>.from(me['cards']);
-        }
-
-        if (!_practice!.handOver) {
-          _resultNotifier.value = null;
-          // Trigger card dealing animation in demo mode
-          _triggerCardDealingAnimation(gs);
-        }
-        _practice!.isMyTurn ? _startTurnTimer() : _turnTimer?.cancel();
-      },
-      onResult: (msg, won) {
-        if (!mounted) return;
-        _turnTimer?.cancel();
-        _resultNotifier.value = msg;
-        _myTurnNotifier.value = false;
-        if (won) {
-          HapticFeedback.heavyImpact();
-          Timer(140.ms, HapticFeedback.heavyImpact);
-          Timer(280.ms, HapticFeedback.heavyImpact);
-          SystemSound.play(SystemSoundType.alert);
-        } else {
-          HapticFeedback.mediumImpact();
-        }
-      },
-      onChat: (uid, name, text) {},
-    );
-    _ready = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _practice!.startHand();
-    });
   }
 
   // ── Live init ─────────────────────────────────────────────────────────────
@@ -714,7 +662,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   /// server would reject it and freeze the turn, so warn first and offer Pack.
   void _guardedAction(String action, {double? amount}) {
     final cost = _actionCost(action, amount: amount);
-    if (!widget.demo && cost > 0 && _myBalance < cost) {
+    if (cost > 0 && _myBalance < cost) {
       HapticFeedback.mediumImpact();
       _showLowBalanceDialog(cost);
       return;
@@ -793,11 +741,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     SoundService.instance.play(action == 'fold' ? Sfx.buttonTap : Sfx.chipBet);
     MonitorService.instance.game('tp_action',
         properties: {'action': action, if (amount != null) 'amount': amount});
-    if (widget.demo) {
-      HapticFeedback.mediumImpact();
-      _practice?.playerAction(action, amount);
-      return;
-    }
 
     // Optimistically deduct bet from displayed balance so it updates immediately.
     // 'see' (look at cards) and sideshow accept/reject have no wallet cost —
@@ -851,7 +794,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _reactionsNotifier.value = [..._reactionsNotifier.value, r];
     if (userId != _myUserId)
       SoundService.instance.play(Sfx.buttonTap, volume: 0.5);
-    Timer(2600.ms, () {
+    Timer(7600.ms, () {
       if (!mounted) return;
       _reactionsNotifier.value =
           _reactionsNotifier.value.where((x) => x.id != r.id).toList();
@@ -886,7 +829,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   }
 
   void _doExit() {
-    if (!widget.demo) _socket.emit('leave_room', {'room_id': widget.roomId});
+    _socket.emit('leave_room', {'room_id': widget.roomId});
     Navigator.pop(context);
   }
 
@@ -1195,10 +1138,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     // ⑪ Reconnect banner
                     ValueListenableBuilder<String>(
                       valueListenable: _socket.status,
-                      builder: (_, sv, __) =>
-                          (!widget.demo && _isReconnecting(sv))
-                              ? _buildReconnectBanner(sv)
-                              : const SizedBox.shrink(),
+                      builder: (_, sv, __) => _isReconnecting(sv)
+                          ? _buildReconnectBanner(sv)
+                          : const SizedBox.shrink(),
                     ),
 
                     // ⑫ Action bar
@@ -2826,29 +2768,6 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     label: const Text('Back to Lobby',
                         style: TextStyle(fontWeight: FontWeight.w900)),
                   ),
-                if (widget.demo) ...[
-                  const SizedBox(width: 12),
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2ECC71),
-                      foregroundColor: Colors.white,
-                      shadowColor:
-                          const Color(0xFF2ECC71).withValues(alpha: 0.4),
-                      elevation: 8,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20)),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 12),
-                    ),
-                    onPressed: () {
-                      _resultNotifier.value = null;
-                      _practice?.startHand();
-                    },
-                    icon: const Icon(Icons.replay),
-                    label: const Text('Play Again',
-                        style: TextStyle(fontWeight: FontWeight.w900)),
-                  ),
-                ],
               ]),
             ]),
           ),
@@ -3296,7 +3215,7 @@ class _ReactionBubble extends StatefulWidget {
 class _ReactionBubbleState extends State<_ReactionBubble>
     with SingleTickerProviderStateMixin {
   late final AnimationController _c =
-      AnimationController(vsync: this, duration: 2400.ms)..forward();
+      AnimationController(vsync: this, duration: 7400.ms)..forward();
   @override
   void dispose() {
     _c.dispose();
@@ -3314,7 +3233,7 @@ class _ReactionBubbleState extends State<_ReactionBubble>
               opacity: (1 - t).clamp(0.0, 1.0),
               child: Transform.scale(
                 scale: widget.isTip ? 1.0 + t * 0.5 : 1.0,
-                child: _buildEmojiOrImage(widget.emoji, size: 28),
+                child: _buildEmojiOrImage(widget.emoji, size: 38),
               ),
             ),
           );

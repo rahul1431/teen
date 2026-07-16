@@ -22,7 +22,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
   Future<void> _load() async {
     try {
       final res = await ApiClient().dio.get('/api/notifications/me');
-      if (mounted) setState(() { _notifications = res.data as List; _loading = false; });
+      if (mounted)
+        setState(() {
+          _notifications = res.data as List;
+          _loading = false;
+        });
       NotificationService.instance.refresh();
     } catch (_) {
       if (mounted) setState(() => _loading = false);
@@ -34,7 +38,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
       await ApiClient().dio.put('/api/notifications/read/$id');
       if (mounted) {
         setState(() {
-          _notifications[index] = {...Map<String, dynamic>.from(_notifications[index]), 'read': true};
+          _notifications[index] = {
+            ...Map<String, dynamic>.from(_notifications[index]),
+            'read': true
+          };
         });
       }
       NotificationService.instance.refresh();
@@ -61,16 +68,19 @@ class _NotificationsPageState extends State<NotificationsPage> {
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
         title: const Text('Clear all notifications?'),
-        content: const Text('This will permanently delete all your notifications.',
+        content: const Text(
+            'This will permanently delete all your notifications.',
             style: TextStyle(color: AppColors.textSecondary)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppColors.textSecondary)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Clear All', style: TextStyle(color: AppColors.red)),
+            child:
+                const Text('Clear All', style: TextStyle(color: AppColors.red)),
           ),
         ],
       ),
@@ -106,7 +116,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
             children: [
               Center(
                 child: Container(
-                  width: 36, height: 4,
+                  width: 36,
+                  height: 4,
                   decoration: BoxDecoration(
                     color: AppColors.border,
                     borderRadius: BorderRadius.circular(2),
@@ -117,15 +128,19 @@ class _NotificationsPageState extends State<NotificationsPage> {
               Row(
                 children: [
                   Container(
-                    width: 44, height: 44,
-                    decoration: BoxDecoration(shape: BoxShape.circle, color: color.withOpacity(0.15)),
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: color.withValues(alpha: 0.15)),
                     child: Icon(_icon(type), color: color, size: 22),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       n['title'] as String? ?? '',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 16),
                     ),
                   ),
                 ],
@@ -133,12 +148,14 @@ class _NotificationsPageState extends State<NotificationsPage> {
               const SizedBox(height: 8),
               Text(
                 timeAgo(n['created_at'] as String? ?? ''),
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                style: const TextStyle(
+                    color: AppColors.textSecondary, fontSize: 12),
               ),
               const SizedBox(height: 16),
               Text(
                 n['body'] as String? ?? '',
-                style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, height: 1.5),
+                style: const TextStyle(
+                    color: AppColors.textPrimary, fontSize: 14, height: 1.5),
               ),
             ],
           ),
@@ -149,25 +166,39 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
   IconData _icon(String type) {
     switch (type) {
-      case 'win':        return Icons.emoji_events_rounded;
-      case 'deposit':    return Icons.account_balance_wallet_rounded;
-      case 'withdrawal': return Icons.payments_rounded;
-      case 'kyc':        return Icons.verified_user_rounded;
-      case 'bonus':      return Icons.card_giftcard_rounded;
-      case 'broadcast':  return Icons.campaign_rounded;
-      default:           return Icons.notifications_rounded;
+      case 'win':
+        return Icons.emoji_events_rounded;
+      case 'deposit':
+        return Icons.account_balance_wallet_rounded;
+      case 'withdrawal':
+        return Icons.payments_rounded;
+      case 'kyc':
+        return Icons.verified_user_rounded;
+      case 'bonus':
+        return Icons.card_giftcard_rounded;
+      case 'broadcast':
+        return Icons.campaign_rounded;
+      default:
+        return Icons.notifications_rounded;
     }
   }
 
   Color _iconColor(String type) {
     switch (type) {
-      case 'win':        return AppColors.gold;
-      case 'deposit':    return AppColors.green;
-      case 'withdrawal': return AppColors.orange;
-      case 'kyc':        return AppColors.blue;
-      case 'bonus':      return AppColors.gold;
-      case 'broadcast':  return AppColors.purple;
-      default:           return AppColors.textSecondary;
+      case 'win':
+        return AppColors.gold;
+      case 'deposit':
+        return AppColors.green;
+      case 'withdrawal':
+        return AppColors.orange;
+      case 'kyc':
+        return AppColors.blue;
+      case 'bonus':
+        return AppColors.gold;
+      case 'broadcast':
+        return AppColors.purple;
+      default:
+        return AppColors.textSecondary;
     }
   }
 
@@ -181,26 +212,33 @@ class _NotificationsPageState extends State<NotificationsPage> {
           if (hasUnread)
             TextButton(
               onPressed: _markAllRead,
-              child: const Text('Mark all read', style: TextStyle(color: AppColors.gold, fontSize: 13)),
+              child: const Text('Mark all read',
+                  style: TextStyle(color: AppColors.gold, fontSize: 13)),
             ),
           if (_notifications.isNotEmpty)
             IconButton(
               onPressed: _clearAll,
               tooltip: 'Clear all',
-              icon: const Icon(Icons.delete_sweep_rounded, color: AppColors.textSecondary, size: 22),
+              icon: const Icon(Icons.delete_sweep_rounded,
+                  color: AppColors.textSecondary, size: 22),
             ),
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.gold))
           : _notifications.isEmpty
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.notifications_none_rounded, size: 64, color: AppColors.textSecondary.withOpacity(0.4)),
+                      Icon(Icons.notifications_none_rounded,
+                          size: 64,
+                          color:
+                              AppColors.textSecondary.withValues(alpha: 0.4)),
                       const SizedBox(height: 12),
-                      const Text('No notifications yet', style: TextStyle(color: AppColors.textSecondary)),
+                      const Text('No notifications yet',
+                          style: TextStyle(color: AppColors.textSecondary)),
                     ],
                   ),
                 )
@@ -210,7 +248,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
                   backgroundColor: AppColors.surface,
                   child: ListView.separated(
                     itemCount: _notifications.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
+                    separatorBuilder: (_, __) =>
+                        const Divider(height: 1, color: AppColors.border),
                     itemBuilder: (_, i) => _buildItem(_notifications[i], i),
                   ),
                 ),
@@ -224,14 +263,18 @@ class _NotificationsPageState extends State<NotificationsPage> {
     return InkWell(
       onTap: () => _openDetail(n, i),
       child: Container(
-        color: isRead ? Colors.transparent : AppColors.gold.withOpacity(0.05),
+        color: isRead
+            ? Colors.transparent
+            : AppColors.gold.withValues(alpha: 0.05),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
-              width: 40, height: 40,
-              decoration: BoxDecoration(shape: BoxShape.circle, color: color.withOpacity(0.15)),
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                  shape: BoxShape.circle, color: color.withValues(alpha: 0.15)),
               child: Icon(_icon(type), color: color, size: 20),
             ),
             const SizedBox(width: 12),
@@ -244,13 +287,18 @@ class _NotificationsPageState extends State<NotificationsPage> {
                       Expanded(
                         child: Text(
                           n['title'] as String? ?? '',
-                          style: TextStyle(fontWeight: isRead ? FontWeight.normal : FontWeight.bold, fontSize: 14),
+                          style: TextStyle(
+                              fontWeight:
+                                  isRead ? FontWeight.normal : FontWeight.bold,
+                              fontSize: 14),
                         ),
                       ),
                       if (!isRead)
                         Container(
-                          width: 8, height: 8,
-                          decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.gold),
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                              shape: BoxShape.circle, color: AppColors.gold),
                         ),
                     ],
                   ),
@@ -258,11 +306,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
                   Text(n['body'] as String? ?? '',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                      style: const TextStyle(
+                          color: AppColors.textSecondary, fontSize: 13)),
                   const SizedBox(height: 4),
                   Text(
                     timeAgo(n['created_at'] as String? ?? ''),
-                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                    style: const TextStyle(
+                        color: AppColors.textSecondary, fontSize: 11),
                   ),
                 ],
               ),

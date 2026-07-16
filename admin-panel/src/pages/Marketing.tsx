@@ -168,7 +168,7 @@ function CampaignsTab() {
         </Button>
       </div>
 
-      <Table dataSource={campaigns} columns={columns} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 10 }} />
+      <Table dataSource={campaigns} columns={columns} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 10 }} scroll={{ x: 'max-content' }} />
 
       <Modal
         open={creating}
@@ -252,7 +252,7 @@ function ReferralsTab() {
         <span style={{ fontSize: 16, fontWeight: 600 }}>Top Referrers & Affiliates Leaderboard</span>
       </div>
 
-      <Table dataSource={referrers} columns={columns} rowKey="referrer_id" loading={loading} size="small" pagination={{ pageSize: 15 }} />
+      <Table dataSource={referrers} columns={columns} rowKey="referrer_id" loading={loading} size="small" pagination={{ pageSize: 15 }} scroll={{ x: 'max-content' }} />
     </>
   )
 }

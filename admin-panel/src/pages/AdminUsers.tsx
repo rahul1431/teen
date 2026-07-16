@@ -87,6 +87,7 @@ export default function AdminUsers() {
       </Space>
       <Table dataSource={rows} rowKey="id" loading={loading} size="small"
         locale={{ emptyText: <Empty description="No admin users" /> }}
+        scroll={{ x: 'max-content' }}
         columns={[
           { title: 'Username', dataIndex: 'username' },
           { title: 'Email', dataIndex: 'email' },

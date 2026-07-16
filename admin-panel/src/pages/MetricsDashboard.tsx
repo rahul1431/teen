@@ -313,6 +313,7 @@ export default function MetricsDashboard() {
               pagination={{ pageSize: 5 }}
               size="small"
               loading={loading}
+              scroll={{ x: 'max-content' }}
             />
           </Card>
         </Col>
@@ -324,6 +325,7 @@ export default function MetricsDashboard() {
               pagination={{ pageSize: 5 }}
               size="small"
               loading={loading}
+              scroll={{ x: 'max-content' }}
             />
           </Card>
         </Col>

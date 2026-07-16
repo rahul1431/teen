@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Divider, Popconfirm, Drawer, Statistic, Radio, Tabs
+  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Divider, Popconfirm, Drawer, Statistic, Radio, Tabs, Grid
 } from 'antd'
 import {
   ReloadOutlined, DeleteOutlined, TrophyOutlined, WalletOutlined,
@@ -10,41 +10,13 @@ import {
 import { adminApi } from '../../api/client'
 import dayjs from 'dayjs'
 import LotteryScratch from './LotteryScratch'
-import LotteryDailyDashboard from '../../components/LotteryDailyDashboard'
-import LotteryDailyTiers from '../../components/LotteryDailyTiers'
-import LotteryDailyDraws from '../../components/LotteryDailyDraws'
 
 const { Text, Title } = Typography
 
-function LotteryDaily() {
-  const [refreshKey, setRefreshKey] = useState(0)
-  const handleRefresh = () => setRefreshKey((k) => k + 1)
-
-  return (
-    <Tabs
-      defaultActiveKey="tiers"
-      items={[
-        {
-          key: 'tiers',
-          label: 'Tiers',
-          children: <LotteryDailyTiers key={refreshKey} onRefresh={handleRefresh} />,
-        },
-        {
-          key: 'draws',
-          label: 'Draws',
-          children: <LotteryDailyDraws key={refreshKey} onRefresh={handleRefresh} />,
-        },
-        {
-          key: 'dashboard',
-          label: 'Dashboard',
-          children: <LotteryDailyDashboard key={refreshKey} />,
-        },
-      ]}
-    />
-  )
-}
 
 export default function Lottery() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const [config, setConfig] = useState<any>(null)
   const [loadingConfig, setLoadingConfig] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
@@ -384,6 +356,7 @@ export default function Lottery() {
               size="small" 
               pagination={{ pageSize: 8 }}
               className="lottery-draws-table"
+              scroll={{ x: 'max-content' }}
               columns={[
                 { 
                   title: 'Draw Name', 
@@ -542,7 +515,7 @@ export default function Lottery() {
                         rules={[{ required: true, message: 'Missing multiplier' }]}
                         style={{ marginBottom: 0 }}
                       >
-                        <InputNumber min={1} placeholder="Multiplier" style={{ width: 140, borderRadius: '6px' }} formatter={(v) => `${v}x`} parser={(v) => v!.replace('x', '')} />
+                        <InputNumber min={1} placeholder="Multiplier" style={{ width: 140, borderRadius: '6px' }} formatter={(v) => `${v}x`} parser={(v: any) => v ? v.replace('x', '') : ''} />
                       </Form.Item>
                       {fields.length > 1 ? (
                         <Button danger onClick={() => remove(name)} style={{ borderRadius: '6px' }}>Remove</Button>
@@ -563,7 +536,7 @@ export default function Lottery() {
           </Form.Item>
           <Form.Item name="category" label="Category" rules={[{ required: true, message: 'Please select a category' }]} initialValue="weekly">
             <Radio.Group>
-              <Radio.Button value="daily" disabled>Daily 🔜</Radio.Button>
+              <Radio.Button value="daily">Daily</Radio.Button>
               <Radio.Button value="instant" disabled>Instant 🔜</Radio.Button>
               <Radio.Button value="weekly">Weekly</Radio.Button>
               <Radio.Button value="monthly">Monthly</Radio.Button>
@@ -640,7 +613,7 @@ export default function Lottery() {
           </div>
         }
         placement="right"
-        width={750}
+        width={isMobile ? '100%' : 750}
         onClose={() => { setTicketsOpen(false); setTickets([]); }}
         open={ticketsOpen}
         headerStyle={{ borderBottom: '1px solid #f0f0f0' }}
@@ -651,6 +624,7 @@ export default function Lottery() {
           dataSource={tickets}
           size="middle"
           pagination={{ pageSize: 12 }}
+          scroll={{ x: 'max-content' }}
           columns={[
             { 
               title: 'Ticket Number', 
@@ -691,11 +665,6 @@ export default function Lottery() {
           key: 'scratch',
           label: 'Instant Lottery',
           children: <LotteryScratch />,
-        },
-        {
-          key: 'daily',
-          label: 'Daily Lottery',
-          children: <LotteryDaily />,
         },
       ]}
     />

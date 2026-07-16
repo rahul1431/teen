@@ -8,32 +8,120 @@ import 'ludo_engine.dart';
 // ── Coordinate tables (UNCHANGED — game logic depends on these) ───────────────
 
 const List<List<int>> _track = [
-  [6, 13], [6, 12], [6, 11], [6, 10], [6, 9],
-  [5, 8], [4, 8], [3, 8], [2, 8], [1, 8], [0, 8],
-  [0, 7], [0, 6],
-  [1, 6], [2, 6], [3, 6], [4, 6], [5, 6],
-  [6, 5], [6, 4], [6, 3], [6, 2], [6, 1], [6, 0],
-  [7, 0], [8, 0],
-  [8, 1], [8, 2], [8, 3], [8, 4], [8, 5],
-  [9, 6], [10, 6], [11, 6], [12, 6], [13, 6], [14, 6],
-  [14, 7], [14, 8],
-  [13, 8], [12, 8], [11, 8], [10, 8], [9, 8],
-  [8, 9], [8, 10], [8, 11], [8, 12], [8, 13], [8, 14],
-  [7, 14], [6, 14],
+  [6, 13],
+  [6, 12],
+  [6, 11],
+  [6, 10],
+  [6, 9],
+  [5, 8],
+  [4, 8],
+  [3, 8],
+  [2, 8],
+  [1, 8],
+  [0, 8],
+  [0, 7],
+  [0, 6],
+  [1, 6],
+  [2, 6],
+  [3, 6],
+  [4, 6],
+  [5, 6],
+  [6, 5],
+  [6, 4],
+  [6, 3],
+  [6, 2],
+  [6, 1],
+  [6, 0],
+  [7, 0],
+  [8, 0],
+  [8, 1],
+  [8, 2],
+  [8, 3],
+  [8, 4],
+  [8, 5],
+  [9, 6],
+  [10, 6],
+  [11, 6],
+  [12, 6],
+  [13, 6],
+  [14, 6],
+  [14, 7],
+  [14, 8],
+  [13, 8],
+  [12, 8],
+  [11, 8],
+  [10, 8],
+  [9, 8],
+  [8, 9],
+  [8, 10],
+  [8, 11],
+  [8, 12],
+  [8, 13],
+  [8, 14],
+  [7, 14],
+  [6, 14],
 ];
 
 const List<List<List<int>>> _homeLanes = [
-  [[7, 13], [7, 12], [7, 11], [7, 10], [7, 9], [7, 8]],
-  [[1, 7], [2, 7], [3, 7], [4, 7], [5, 7], [6, 7]],
-  [[7, 1], [7, 2], [7, 3], [7, 4], [7, 5], [7, 6]],
-  [[13, 7], [12, 7], [11, 7], [10, 7], [9, 7], [8, 7]],
+  [
+    [7, 13],
+    [7, 12],
+    [7, 11],
+    [7, 10],
+    [7, 9],
+    [7, 8]
+  ],
+  [
+    [1, 7],
+    [2, 7],
+    [3, 7],
+    [4, 7],
+    [5, 7],
+    [6, 7]
+  ],
+  [
+    [7, 1],
+    [7, 2],
+    [7, 3],
+    [7, 4],
+    [7, 5],
+    [7, 6]
+  ],
+  [
+    [13, 7],
+    [12, 7],
+    [11, 7],
+    [10, 7],
+    [9, 7],
+    [8, 7]
+  ],
 ];
 
 const List<List<List<double>>> _baseDots = [
-  [[1.5, 10.5], [3.5, 10.5], [1.5, 12.5], [3.5, 12.5]],
-  [[1.5, 1.5],  [3.5, 1.5],  [1.5, 3.5],  [3.5, 3.5]],
-  [[10.5, 1.5], [12.5, 1.5], [10.5, 3.5], [12.5, 3.5]],
-  [[10.5, 10.5],[12.5, 10.5],[10.5, 12.5],[12.5, 12.5]],
+  [
+    [1.5, 10.5],
+    [3.5, 10.5],
+    [1.5, 12.5],
+    [3.5, 12.5]
+  ],
+  [
+    [1.5, 1.5],
+    [3.5, 1.5],
+    [1.5, 3.5],
+    [3.5, 3.5]
+  ],
+  [
+    [10.5, 1.5],
+    [12.5, 1.5],
+    [10.5, 3.5],
+    [12.5, 3.5]
+  ],
+  [
+    [10.5, 10.5],
+    [12.5, 10.5],
+    [10.5, 12.5],
+    [12.5, 12.5]
+  ],
 ];
 
 // Flat "Ludo King"–style seat colors, mapped so corners match the reference
@@ -134,7 +222,7 @@ class _LudoBoardState extends State<LudoBoard>
           border: Border.all(color: const Color(0xFF23233A), width: 2),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.35),
+              color: Colors.black.withValues(alpha: 0.35),
               blurRadius: 20,
               spreadRadius: 1,
               offset: const Offset(0, 8),
@@ -183,7 +271,7 @@ class _LudoBoardState extends State<LudoBoard>
       final seatIdx = (player.seat - 1).clamp(0, 3);
       for (var ti = 0; ti < player.tokens.length; ti++) {
         final prog = player.tokens[ti];
-        if (prog == -1 || prog >= 57) continue;
+        if (prog == -1 || prog >= kHomeProgress) continue;
 
         String cellKey;
         if (prog <= 50) {
@@ -214,7 +302,7 @@ class _LudoBoardState extends State<LudoBoard>
         Offset offset = Offset.zero;
         double scale = 1.0;
 
-        if (progress != -1 && progress < 57) {
+        if (progress != -1 && progress < kHomeProgress) {
           String cellKey;
           if (progress <= 50) {
             cellKey = 'track_${absoluteCell(seatIdx, progress)}';
@@ -284,7 +372,8 @@ class _LudoBoardState extends State<LudoBoard>
 // line between the two adjacent cells so a token visibly travels the path
 // cell-by-cell. Base (-1) and integer endpoints fall back to the exact
 // tokenPosition() coordinate.
-Offset _tokenPixel(int seat, int tokenIdx, double progress, double size, [int? mySeatIndex]) {
+Offset _tokenPixel(int seat, int tokenIdx, double progress, double size,
+    [int? mySeatIndex]) {
   Offset raw;
   if (progress <= 0) {
     raw = tokenPosition(seat, tokenIdx, progress.round(), size);
@@ -361,14 +450,14 @@ class _TokenSpriteState extends State<_TokenSprite>
   late double _display = widget.progress.toDouble();
 
   // Cell-to-cell travel.
-  late final AnimationController _move =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 300));
+  late final AnimationController _move = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 300));
   double _from = 0, _to = 0;
   int _lastTick = 0;
 
   // One-shot flourish: capture pop-in (sent home) and home-arrival bounce.
-  late final AnimationController _fx =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 520));
+  late final AnimationController _fx = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 520));
   bool _homeFlourish = false; // true = home bounce, false = capture pop
 
   @override
@@ -398,11 +487,11 @@ class _TokenSpriteState extends State<_TokenSprite>
     _from = from;
     _to = 0.0;
     _lastTick = from.floor();
-    
+
     // Slide back in ~750ms
     _move.duration = const Duration(milliseconds: 750);
     _move.reset();
-    
+
     late void Function(AnimationStatus) captureListener;
     captureListener = (st) {
       if (st == AnimationStatus.completed) {
@@ -424,8 +513,8 @@ class _TokenSpriteState extends State<_TokenSprite>
     _lastTick = from.floor();
     final steps = (to - from).abs();
     // ~150ms per cell, clamped, so a 6-step move reads clearly without dragging.
-    _move.duration = Duration(
-        milliseconds: (150 * steps).round().clamp(200, 1400));
+    _move.duration =
+        Duration(milliseconds: (150 * steps).round().clamp(200, 1400));
     _move
       ..reset()
       ..forward();
@@ -474,14 +563,15 @@ class _TokenSpriteState extends State<_TokenSprite>
 
   @override
   Widget build(BuildContext context) {
-    final rawPos = _tokenPixel(
-        widget.seatIndex, widget.tokenIndex, _display, widget.boardSize, widget.mySeatIndex);
+    final rawPos = _tokenPixel(widget.seatIndex, widget.tokenIndex, _display,
+        widget.boardSize, widget.mySeatIndex);
     final pos = rawPos + widget.positionOffset;
 
     // Hop arc while stepping: lifts the token between cells.
     final frac = _display - _display.floorToDouble();
     final moving = _move.isAnimating;
-    final hop = moving ? math.sin(frac * math.pi) * widget.tokenSize * 0.32 : 0.0;
+    final hop =
+        moving ? math.sin(frac * math.pi) * widget.tokenSize * 0.32 : 0.0;
 
     // A tight, token-sized Positioned (NOT a full-board overlay) so each token
     // only claims its own hit-box — full-board layers were swallowing taps for
@@ -576,7 +666,7 @@ class _Token extends StatelessWidget {
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: color.withOpacity(0.85),
+                        color: color.withValues(alpha: 0.85),
                         blurRadius: 14,
                         spreadRadius: 2,
                       ),
@@ -598,7 +688,8 @@ class _Token extends StatelessWidget {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: Colors.white,
-                  border: Border.all(color: color.withOpacity(0.55), width: 1),
+                  border: Border.all(
+                      color: color.withValues(alpha: 0.55), width: 1),
                 ),
                 alignment: Alignment.center,
                 child: Text(
@@ -668,7 +759,7 @@ class _PawnPainter extends CustomPainter {
     canvas.drawOval(
       shadowRect,
       Paint()
-        ..color = Colors.black.withOpacity(0.35)
+        ..color = Colors.black.withValues(alpha: 0.35)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.0),
     );
 
@@ -692,14 +783,14 @@ class _PawnPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.2
-        ..color = Colors.black.withOpacity(0.25),
+        ..color = Colors.black.withValues(alpha: 0.25),
     );
 
     // Small highlight streak for extra gloss.
     final highlightC = Offset(w * 0.40, h * 0.20);
     canvas.drawOval(
       Rect.fromCenter(center: highlightC, width: w * 0.18, height: h * 0.10),
-      Paint()..color = Colors.white.withOpacity(0.55),
+      Paint()..color = Colors.white.withValues(alpha: 0.55),
     );
   }
 
@@ -749,7 +840,10 @@ class _BoardPainter extends CustomPainter {
   final double breathing;
   final int? mySeatIndex;
 
-  _BoardPainter({required this.activeSeatIndex, required this.breathing, this.mySeatIndex});
+  _BoardPainter(
+      {required this.activeSeatIndex,
+      required this.breathing,
+      this.mySeatIndex});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -798,8 +892,8 @@ class _BoardPainter extends CustomPainter {
     // the arm (mid-edge), drawn in the seat colour — exactly like the reference.
     const entranceCells = <List<int>>[
       [7, 14], // seat0 red   – bottom, arrow up
-      [0, 7],  // seat1 green  – left,   arrow right
-      [7, 0],  // seat2 yellow – top,    arrow down
+      [0, 7], // seat1 green  – left,   arrow right
+      [7, 0], // seat2 yellow – top,    arrow down
       [14, 7], // seat3 blue   – right,  arrow left
     ];
     for (var seat = 0; seat < 4; seat++) {
@@ -813,7 +907,7 @@ class _BoardPainter extends CustomPainter {
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1.1
-            ..color = _cellLine.withOpacity(0.55),
+            ..color = _cellLine.withValues(alpha: 0.55),
         );
       }
 
@@ -859,9 +953,10 @@ class _BoardPainter extends CustomPainter {
         outer.deflate(2),
         Paint()
           ..style = PaintingStyle.stroke
-          ..color = Colors.white.withOpacity(0.35 + 0.5 * breathing)
+          ..color = Colors.white.withValues(alpha: 0.35 + 0.5 * breathing)
           ..strokeWidth = 3.0 + 3.0 * breathing
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 3.0 + 3.0 * breathing),
+          ..maskFilter =
+              MaskFilter.blur(BlurStyle.normal, 3.0 + 3.0 * breathing),
       );
     }
 
@@ -870,7 +965,7 @@ class _BoardPainter extends CustomPainter {
       outer,
       Paint()
         ..style = PaintingStyle.stroke
-        ..color = Colors.black.withOpacity(0.20)
+        ..color = Colors.black.withValues(alpha: 0.20)
         ..strokeWidth = 1.0,
     );
 
@@ -890,7 +985,8 @@ class _BoardPainter extends CustomPainter {
     // Empty token slots — larger double-ring design filling the base area cleanly.
     for (final d in _baseDots[seatIndex]) {
       final center = Offset(d[0] * s, d[1] * s);
-      canvas.drawCircle(center, s * 0.85, Paint()..color = color.withOpacity(0.18));
+      canvas.drawCircle(
+          center, s * 0.85, Paint()..color = color.withValues(alpha: 0.18));
       canvas.drawCircle(center, s * 0.70, Paint()..color = color);
       canvas.drawCircle(
         center,
@@ -915,10 +1011,10 @@ class _BoardPainter extends CustomPainter {
     // Triangle colours follow the home lane feeding each side:
     // top = yellow(seat2), right = blue(seat3), bottom = red(seat0), left = green(seat1).
     final tris = <List<dynamic>>[
-      [_seatColors[2], Offset(cx, cy), Offset(cx + cs, cy)],             // top
-      [_seatColors[3], Offset(cx + cs, cy), Offset(cx + cs, cy + cs)],   // right
-      [_seatColors[0], Offset(cx + cs, cy + cs), Offset(cx, cy + cs)],   // bottom
-      [_seatColors[1], Offset(cx, cy + cs), Offset(cx, cy)],             // left
+      [_seatColors[2], Offset(cx, cy), Offset(cx + cs, cy)], // top
+      [_seatColors[3], Offset(cx + cs, cy), Offset(cx + cs, cy + cs)], // right
+      [_seatColors[0], Offset(cx + cs, cy + cs), Offset(cx, cy + cs)], // bottom
+      [_seatColors[1], Offset(cx, cy + cs), Offset(cx, cy)], // left
     ];
     for (final t in tris) {
       final path = Path()
@@ -931,7 +1027,7 @@ class _BoardPainter extends CustomPainter {
         path,
         Paint()
           ..style = PaintingStyle.stroke
-          ..color = Colors.black.withOpacity(0.25)
+          ..color = Colors.black.withValues(alpha: 0.25)
           ..strokeWidth = 1.0,
       );
     }

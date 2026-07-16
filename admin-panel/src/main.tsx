@@ -39,6 +39,7 @@ const MetricsDashboard = React.lazy(() => import('./pages/MetricsDashboard'))
 const PlayerAnomaliesPage = React.lazy(() => import('./pages/PlayerAnomaliesPage'))
 const DevAdminPanel = React.lazy(() => import('./pages/DevAdminPanel'))
 const Tasks = React.lazy(() => import('./pages/Tasks'))
+const WebsiteSettings = React.lazy(() => import('./pages/WebsiteSettings'))
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token } = useAuthStore()
@@ -85,6 +86,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="player-anomalies" element={<PlayerAnomaliesPage />} />
             <Route path="dev-admin" element={<DevAdminPanel />} />
             <Route path="tasks" element={<Tasks />} />
+            <Route path="settings" element={<WebsiteSettings />} />
           </Route>
           <Route path="*" element={<Navigate to="/admin" replace />} />
         </Routes>

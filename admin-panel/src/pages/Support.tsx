@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import {
   Card, Tabs, Table, Tag, Button, Modal, Form, Input, Select, Space, message, Popconfirm,
-  Switch, InputNumber, Drawer, Typography, Divider, Badge, Empty,
+  Switch, InputNumber, Drawer, Typography, Divider, Badge, Empty, Grid,
 } from 'antd'
 import {
   MessageOutlined, PlusOutlined, BookOutlined, SearchOutlined, EditOutlined, DeleteOutlined,
@@ -19,6 +19,8 @@ const priorityColor: Record<string, string> = {
 }
 
 function TicketsTab() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const [tickets, setTickets] = useState<any[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -123,6 +125,7 @@ function TicketsTab() {
       <Table
         dataSource={tickets} columns={columns} rowKey="id" loading={loading} size="small"
         pagination={{ current: page, pageSize: 20, total, onChange: (p) => { setPage(p); load(p) } }}
+        scroll={{ x: 'max-content' }}
       />
 
       <Drawer
@@ -136,7 +139,7 @@ function TicketsTab() {
         }
         open={!!drawerTicket}
         onClose={() => setDrawerTicket(null)}
-        width={680}
+        width={isMobile ? '100%' : 680}
         extra={
           drawerTicket && (
             <Space>
@@ -316,6 +319,8 @@ function renderMarkdown(md: string) {
 }
 
 function KnowledgeBaseTab() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const { admin } = useAuthStore()
   const [articles, setArticles] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -412,7 +417,7 @@ function KnowledgeBaseTab() {
         </p>
       </div>
 
-      <div style={{ display: 'flex', gap: '24px', flexDirection: 'row', alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', gap: '24px', flexDirection: isMobile ? 'column' : 'row', alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: '24px' }}>
         {/* Left Side: Categories Box */}
         <div style={{
           flex: '0 0 280px',
@@ -628,7 +633,7 @@ function KnowledgeBaseTab() {
             )}
           </div>
         }
-        width={640}
+        width={isMobile ? '100%' : 640}
         open={!!viewerArticle}
         onClose={() => setViewerArticle(null)}
         extra={

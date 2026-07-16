@@ -60,20 +60,34 @@ async function start() {
 
   const redisSub = new Redis(process.env.REDIS_URL!, redisOpts)
   redisSub.on('error', (err) => console.error('[redis] sub error', err.message))
-  await redisSub.subscribe('gateway:broadcast')
+  await redisSub.subscribe('gateway:broadcast', 'config:updated')
   redisSub.on('message', (channel, message) => {
-    if (channel !== 'gateway:broadcast') return
-    try {
-      const msg = JSON.parse(message)
-      if (msg.sender === hub.processId) return
-      
-      if (msg.type === 'room') {
-        hub.sendToRoom(msg.target, msg.event, msg.data, msg.sender)
-      } else if (msg.type === 'user') {
-        hub.sendToUser(msg.target, msg.event, msg.data, msg.sender)
+    if (channel === 'gateway:broadcast') {
+      try {
+        const msg = JSON.parse(message)
+        if (msg.sender === hub.processId) return
+
+        if (msg.type === 'room') {
+          hub.sendToRoom(msg.target, msg.event, msg.data, msg.sender)
+        } else if (msg.type === 'user') {
+          hub.sendToUser(msg.target, msg.event, msg.data, msg.sender)
+        }
+      } catch (e) {
+        console.error('[redis-sub] Error processing cluster message', e)
       }
-    } catch (e) {
-      console.error('[redis-sub] Error processing cluster message', e)
+    } else if (channel === 'config:updated') {
+      try {
+        const event = JSON.parse(message)
+        console.log(`[config] Reload triggered for ${event.gameType}`)
+        const userMap = (hub as any)['byUser'] as Map<string, Set<any>>
+        for (const conns of userMap.values()) {
+          for (const conn of conns) {
+            hub.send(conn, 'config:reload', { gameType: event.gameType, reloadedAt: event.updatedAt })
+          }
+        }
+      } catch (e) {
+        console.error('[redis-sub] Error processing config:updated', e)
+      }
     }
   })
 
@@ -114,6 +128,7 @@ async function start() {
     const conn: Conn = { ws, userId, username, rooms: new Set(), isAlive: true }
     hub.add(conn)
     console.log(`[ws] connected: user=${userId}`)
+    hub.send(conn, 'config:version', { checkingAt: new Date().toISOString() })
 
     // Heartbeat — mark alive on pong; a sweep below culls dead links.
     ;(ws as any).isAlive = true
@@ -556,6 +571,15 @@ async function start() {
   async function handleLudoAction(conn: Conn, room_id: string, data: any): Promise<void> {
     const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
     try {
+      // Inbound version check: drop stale actions
+      if (data.version_id !== undefined) {
+        const currentState = await matchmaking.getRoomState(room_id)
+        const currentVersion = currentState?.version ?? currentState?.version_id ?? 0
+        if (data.version_id < currentVersion) {
+          return hub.send(conn, 'game:error', { message: 'Stale action discarded' })
+        }
+      }
+
       const res = await fetch(`${engineUrl}/action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -587,6 +611,8 @@ async function start() {
         // engine even when it auto-passed the turn (which clears newState.dice
         // back to null) — without it, rolls with no legal move show no toast.
         last_action: { user_id: conn.userId, action: data.action, dice: out.dice ?? newState.dice, token_index: data.token_index },
+        version_id: newState.version || Date.now(),
+        ts: Date.now(),
         result: out.result ?? null,
       })
       if (out.result) {
@@ -796,6 +822,8 @@ async function start() {
         room_id,
         state: { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) },
         last_action: { user_id: conn.userId, action, amount },
+        version_id: newState.version || Date.now(),
+        ts: Date.now(),
         result: data.result ?? null,
       })
 

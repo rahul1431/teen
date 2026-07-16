@@ -96,6 +96,7 @@ export default function LotteryScratch() {
           dataSource={products}
           size="small"
           pagination={{ pageSize: 8 }}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Name', dataIndex: 'name', render: (n) => <span style={{ fontWeight: 600, color: '#f9fafb' }}>{n}</span> },
             { title: 'Price', dataIndex: 'price', render: (v: any) => <span style={{ color: '#34d399', fontWeight: 600 }}>₹{Number(v).toFixed(0)}</span> },

@@ -1197,13 +1197,15 @@ async function start() {
        WHERE game_type=$10`,
       [body.is_active, body.rake_percent, body.bot_fill_enabled, body.bot_fill_delay_seconds, body.max_bot_ratio, body.bot_difficulty, JSON.stringify(specialRules), body.bot_fill_table_size ?? null, admin.sub, gameType]
     )
+    await redis.publish('config:updated', JSON.stringify({ gameType, updatedAt: new Date().toISOString() }))
     return reply.send({ success: true })
   })
 
   // POST /api/admin/notifications/broadcast
   app.post('/api/admin/notifications/broadcast', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const body = req.body as any
-    const res = await fetch(`${NOTIFICATION_URL}/internal/notifications/broadcast`, {
+    const CORE_API_URL = process.env.CORE_API_URL || 'http://127.0.0.1:3001'
+    const res = await fetch(`${CORE_API_URL}/internal/notifications/broadcast`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
       body: JSON.stringify(body),
@@ -1215,7 +1217,8 @@ async function start() {
   // POST /api/admin/notifications/send
   app.post('/api/admin/notifications/send', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const body = req.body as any
-    const res = await fetch(`${NOTIFICATION_URL}/internal/notifications/send`, {
+    const CORE_API_URL = process.env.CORE_API_URL || 'http://127.0.0.1:3001'
+    const res = await fetch(`${CORE_API_URL}/internal/notifications/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
       body: JSON.stringify(body),
@@ -1864,6 +1867,16 @@ async function start() {
     return reply.send({ draws: rows.rows })
   })
 
+  app.get('/api/admin/betting/matka/draws/:id/bets', { onRequest: [authenticate] }, async (req: any, reply) => {
+    const rows = await db.query(
+      `SELECT b.*, u.username, u.phone 
+       FROM matka_bets b 
+       JOIN users u ON u.id = b.user_id 
+       WHERE b.draw_id = $1 
+       ORDER BY b.created_at DESC LIMIT 500`, [req.params.id])
+    return reply.send({ bets: rows.rows })
+  })
+
   app.post('/api/admin/betting/matka/declare', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const r = await callBetting('/internal/matka/declare', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
@@ -2459,6 +2472,7 @@ async function start() {
     return reply.send(r.data)
   })
 
+
   // --- Bot Management ---
   app.get('/api/admin/bots/stats', { onRequest: [authenticate] }, async (_req, reply) => {
     const res = await db.query(`
@@ -2528,6 +2542,23 @@ async function start() {
     } finally {
       client.release()
     }
+  })
+
+
+  // --- Website Settings ---
+  app.get('/api/admin/settings', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query("SELECT key, value FROM system_settings")
+    const config: Record<string, string> = {}
+    for (const row of res.rows) config[row.key] = row.value
+    return reply.send({ success: true, data: config })
+  })
+
+  app.patch('/api/admin/settings', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const body = req.body as Record<string, string>
+    for (const [k, v] of Object.entries(body)) {
+      await db.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [k, String(v)])
+    }
+    return reply.send({ success: true })
   })
 
   // --- Leaderboard ---

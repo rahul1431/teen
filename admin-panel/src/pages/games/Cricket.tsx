@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert, Collapse, Avatar, Drawer, Upload, AutoComplete
+  Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert, Collapse, Avatar, Drawer, Upload, AutoComplete, Grid
 } from 'antd'
 import { ReloadOutlined, PlusOutlined, SyncOutlined, CloudDownloadOutlined, DeleteOutlined, TeamOutlined, TrophyOutlined, UserOutlined, UploadOutlined, EyeOutlined, EditOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
@@ -104,6 +104,8 @@ function PlayerAvatarUploadField({ form }: { form: any }) {
 }
 
 export default function Cricket() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const [config, setConfig] = useState<any>(null)
   const [loadingConfig, setLoadingConfig] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
@@ -1274,6 +1276,7 @@ export default function Cricket() {
           <Table
             rowKey="id"
             dataSource={players}
+            scroll={{ x: 'max-content' }}
             columns={[
               {
                 title: 'Player', render: (p: any) => (
@@ -1321,6 +1324,7 @@ export default function Cricket() {
           <Table
             rowKey="id"
             dataSource={countries}
+            scroll={{ x: 'max-content' }}
             columns={[
               { title: 'Flag', dataIndex: 'flag_url', render: (u: string) => <img src={u} alt="" style={{ width: 32, height: 22, objectFit: 'cover', border: '1px solid #eee' }} /> },
               { title: 'Code', dataIndex: 'id' },
@@ -1357,6 +1361,7 @@ export default function Cricket() {
           <Table
             rowKey="id"
             dataSource={contests}
+            scroll={{ x: 'max-content' }}
             pagination={{
               current: contestPage,
               pageSize: CONTEST_PAGE_SIZE,
@@ -1499,6 +1504,7 @@ export default function Cricket() {
           size="small"
           loading={searchingSeries}
           pagination={{ pageSize: 5 }}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Series Name', dataIndex: 'name', render: (n: string) => <b>{n}</b> },
             { title: 'Start Date', dataIndex: 'startDate', render: (d: string) => d ? new Date(d).toLocaleDateString() : '-' },
@@ -1599,7 +1605,7 @@ export default function Cricket() {
         title={contestDetail ? `${contestDetail.team_a} vs ${contestDetail.team_b} — ${contestDetail.name}` : 'Contest Detail'}
         open={contestDrawerOpen}
         onClose={() => setContestDrawerOpen(false)}
-        width={640}
+        width={isMobile ? '100%' : 640}
         loading={loadingContestDetail}
       >
         {contestDetail && (
@@ -1637,6 +1643,7 @@ export default function Cricket() {
               size="small"
               dataSource={contestEntries}
               pagination={{ pageSize: 10 }}
+              scroll={{ x: 'max-content' }}
               columns={[
                 { title: 'User', dataIndex: 'username' },
                 { title: 'Rank', dataIndex: 'final_rank', render: (r: number | null) => r ?? '-' },
@@ -1654,7 +1661,7 @@ export default function Cricket() {
         title={viewingPlayer ? viewingPlayer.name : 'Player Detail'}
         open={!!viewingPlayer}
         onClose={() => setViewingPlayer(null)}
-        width={520}
+        width={isMobile ? '100%' : 520}
         loading={loadingPlayerHistory}
       >
         {viewingPlayer && (
@@ -1680,6 +1687,7 @@ export default function Cricket() {
                 size="small"
                 dataSource={playerHistory}
                 pagination={{ pageSize: 10 }}
+                scroll={{ x: 'max-content' }}
                 columns={[
                   { title: 'Match', render: (r: any) => `${r.team_a} vs ${r.team_b}` },
                   { title: 'Runs', dataIndex: 'runs_scored' },
@@ -1717,6 +1725,7 @@ export default function Cricket() {
                     loading={loadingMappings}
                     dataSource={playerMappings}
                     pagination={false}
+                    scroll={{ x: 'max-content' }}
                     columns={[
                       { title: 'Match', render: (r: any) => `${r.team_a} vs ${r.team_b}` },
                       { title: 'Status', dataIndex: 'status', render: (s: string) => <Tag>{s}</Tag> },

@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag, Badge,
-  Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col
+  Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col, Grid
 } from 'antd'
 import { ReloadOutlined, EyeOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
 export default function Ludo() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const [config, setConfig] = useState<any>(null)
   const [loadingConfig, setLoadingConfig] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
@@ -134,12 +136,12 @@ export default function Ludo() {
               </Space>
             }
           >
-            <Table dataSource={rooms} columns={roomColumns} rowKey="id" loading={loadingRooms} size="small" />
+            <Table dataSource={rooms} columns={roomColumns} rowKey="id" loading={loadingRooms} size="small" scroll={{ x: 'max-content' }} />
           </Card>
         </Col>
       </Row>
 
-      <Drawer title="Room Details" open={!!selectedRoom} onClose={() => setSelectedRoom(null)} width={480}>
+      <Drawer title="Room Details" open={!!selectedRoom} onClose={() => setSelectedRoom(null)} width={isMobile ? '100%' : 480}>
         {selectedRoom && (
           <>
             <Descriptions column={2} size="small" bordered>

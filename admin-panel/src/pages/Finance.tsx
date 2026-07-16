@@ -68,6 +68,7 @@ function DealerTips() {
           size="small"
           loading={loading}
           pagination={{ pageSize: 15 }}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Time', dataIndex: 'created_at', width: 180, render: (v: string) => new Date(v).toLocaleString() },
             { title: 'Player', dataIndex: 'username', render: (u: string) => <Tag color="green">{u}</Tag> },
@@ -131,7 +132,7 @@ function Withdrawals() {
         </Select>
         <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
       </Space>
-      <Table dataSource={rows} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 20 }}
+      <Table dataSource={rows} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 20 }} scroll={{ x: 'max-content' }}
         columns={[
           { title: 'User', dataIndex: 'username' },
           { title: 'Amount (₹)', dataIndex: 'amount', align: 'right' as const, render: (v: any) => parseFloat(v).toFixed(2) },
@@ -266,6 +267,7 @@ function BankDetailsAdmin() {
         columns={columns}
         size="small"
         pagination={{ pageSize: 20 }}
+        scroll={{ x: 'max-content' }}
       />
     </>
   )
@@ -326,6 +328,7 @@ function Deposits() {
       </Space>
       <Table dataSource={rows} rowKey="id" loading={loading} size="small"
         pagination={{ pageSize: 20, total, current: page, onChange: setPage }}
+        scroll={{ x: 'max-content' }}
         columns={[
           { title: 'When', dataIndex: 'created_at', render: (d: string) => new Date(d).toLocaleString() },
           { title: 'User', dataIndex: 'username' },
@@ -433,6 +436,7 @@ function Ledger() {
       </Space>
       <Table dataSource={rows} rowKey="id" loading={loading} size="small"
         pagination={{ pageSize: 50, total, current: page, onChange: setPage }}
+        scroll={{ x: 'max-content' }}
         columns={[
           { title: 'When', dataIndex: 'created_at', render: (d: string) => new Date(d).toLocaleString() },
           { title: 'User', dataIndex: 'username' },
@@ -636,7 +640,7 @@ function Reconciliation() {
           <Row gutter={[24, 24]}>
             <Col xs={24} lg={12}>
               <Card title="Payment Orders by Day" size="small" style={{ borderRadius: 12 }}>
-                <Table size="small" pagination={false} dataSource={data.by_day} rowKey={(r: any) => `${r.day}-${r.type}-${r.status}`}
+                <Table size="small" pagination={false} dataSource={data.by_day} rowKey={(r: any) => `${r.day}-${r.type}-${r.status}`} scroll={{ x: 'max-content' }}
                   columns={[
                     { title: 'Day', dataIndex: 'day', render: (d: string) => new Date(d).toLocaleDateString() },
                     { title: 'Type', dataIndex: 'type', render: (t: string) => <Tag>{t}</Tag> },
@@ -648,7 +652,7 @@ function Reconciliation() {
             </Col>
             <Col xs={24} lg={12}>
               <Card title="Gross Gaming Revenue (Rake)" size="small" style={{ borderRadius: 12, marginBottom: 16 }}>
-                <Table size="small" pagination={false} dataSource={data.ggr} rowKey="day"
+                <Table size="small" pagination={false} dataSource={data.ggr} rowKey="day" scroll={{ x: 'max-content' }}
                   columns={[
                     { title: 'Day', dataIndex: 'day', render: (d: string) => new Date(d).toLocaleDateString() },
                     { title: 'Pot Volume (₹)', dataIndex: 'pot', align: 'right' as const, render: (v: string) => parseFloat(v).toFixed(2) },
@@ -657,7 +661,7 @@ function Reconciliation() {
                   ]} />
               </Card>
               <Card title="By Gateway" size="small" style={{ borderRadius: 12 }}>
-                <Table size="small" pagination={false} dataSource={data.by_gateway} rowKey={(r: any) => `${r.gateway}-${r.status}`}
+                <Table size="small" pagination={false} dataSource={data.by_gateway} rowKey={(r: any) => `${r.gateway}-${r.status}`} scroll={{ x: 'max-content' }}
                   columns={[
                     { title: 'Gateway', dataIndex: 'gateway' },
                     { title: 'Status', dataIndex: 'status' },
@@ -749,7 +753,7 @@ function PaymentMethods() {
         <Button type="primary" icon={<PlusOutlined />} onClick={openNew}>Add Method</Button>
         <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
       </Space>
-      <Table dataSource={rows} rowKey="id" loading={loading} size="small" pagination={false}
+      <Table dataSource={rows} rowKey="id" loading={loading} size="small" pagination={false} scroll={{ x: 'max-content' }}
         columns={[
           { title: 'Type', dataIndex: 'method_type', render: (t: string) => <Tag color={{ upi: 'blue', bank: 'green', qr: 'purple' }[t]}>{t?.toUpperCase()}</Tag> },
           { title: 'Label', dataIndex: 'label' },

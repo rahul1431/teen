@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
+import '../../../core/services/locale_service.dart';
 import '../../../shared/theme/app_theme.dart';
 
 /// Online Ludo matchmaking. Mirrors the Teen Patti lobby: pick a stake,
@@ -18,14 +19,14 @@ class LudoLobbyPage extends StatefulWidget {
 
 class _LudoLobbyPageState extends State<LudoLobbyPage> {
   final _socket = SocketService();
-  double _selectedStake = 10;
+  double _selectedStake = 50;
   // Chosen colour as a 1-based seat (1=red, 2=green, 3=yellow, 4=blue) matching
   // the board's seat→colour order. null = no preference (server's choice).
   int? _preferredSeat;
   bool _searching = false;
   String? _balance;
   double? _balanceValue;
-  final _stakes = [10.0, 50.0, 100.0, 500.0];
+  final _stakes = [50.0, 100.0, 500.0];
   StreamSubscription? _roomJoinedSub;
   StreamSubscription? _errorSub;
 
@@ -109,11 +110,11 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.cardBg,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(children: [
-          Icon(Icons.account_balance_wallet_rounded,
+        title: Row(children: [
+          const Icon(Icons.account_balance_wallet_rounded,
               color: AppColors.orange, size: 22),
-          SizedBox(width: 8),
-          Text('Low Balance', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(width: 8),
+          Text(locale.t('low_balance'), style: const TextStyle(fontWeight: FontWeight.bold)),
         ]),
         content: Text(
           'You need ₹${_selectedStake.toInt()} to join this table.\n'
@@ -123,15 +124,15 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel',
-                  style: TextStyle(color: AppColors.textSecondary))),
+              child: Text(locale.t('cancel'),
+                  style: const TextStyle(color: AppColors.textSecondary))),
           ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(ctx);
               context.push('/wallet');
             },
             icon: const Icon(Icons.add_rounded, size: 18),
-            label: const Text('Add Money'),
+            label: Text(locale.t('add_money')),
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold),
           ),
         ],
@@ -139,12 +140,16 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
     );
   }
 
+  static const List<Color> _ludoAccent = [Color(0xFF6B1FE8), Color(0xFF2A1A8E)];
+
   @override
   Widget build(BuildContext context) {
     final isPrivate = widget.privateMode != null;
     return Scaffold(
       appBar: AppBar(
-        title: Text(isPrivate ? 'Ludo · Friends' : 'Ludo · Quick Match'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        title: Text(locale.t('quick_match')),
         actions: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -155,7 +160,8 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
                 decoration: BoxDecoration(
                   color: AppColors.feltDark,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.gold.withOpacity(0.6)),
+                  border:
+                      Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
                 ),
                 child: Text('₹${_balance ?? '—'}',
                     style: const TextStyle(
@@ -167,134 +173,229 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (isPrivate && widget.privateCode != null)
-              Container(
-                width: double.infinity,
-                margin: const EdgeInsets.only(bottom: 16),
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                    color: AppColors.cardBg,
-                    borderRadius: BorderRadius.circular(12)),
-                child: Text('Room code: ${widget.privateCode}',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 16)),
-              ),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _searching ? null : _joinMatchmaking,
-                icon: const Icon(Icons.flash_on, color: Colors.black),
-                label: Text('Quick Match — ₹${_selectedStake.toInt()}',
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.gold,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
-              ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+        children: [
+          // Identity banner — mirrors the Ludo mode-select hero so Quick Match
+          // doesn't read as an unbranded generic form.
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                  begin: Alignment.topLeft, end: Alignment.bottomRight, colors: _ludoAccent),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: AppColors.gold.withValues(alpha: 0.6), width: 1.5),
+              boxShadow: [
+                BoxShadow(color: _ludoAccent.last.withValues(alpha: 0.5), blurRadius: 18, offset: const Offset(0, 8)),
+              ],
             ),
-            const SizedBox(height: 24),
-            const Text('Select Stake',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: _stakes.map((stake) {
-                final selected = _selectedStake == stake;
-                return GestureDetector(
-                  onTap: _searching
-                      ? null
-                      : () => setState(() => _selectedStake = stake),
-                  child: Container(
-                    width: 88,
-                    height: 50,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: selected
-                            ? AppColors.ludoGrad
-                            : const [Color(0xFF2A2440), Color(0xFF181426)],
-                      ),
-                      borderRadius: BorderRadius.circular(28),
-                      border: Border.all(
-                        color: selected
-                            ? AppColors.gold
-                            : AppColors.gold.withOpacity(0.35),
-                        width: selected ? 2.5 : 1.5,
-                      ),
-                    ),
-                    child: Text('₹${stake.toInt()}',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16)),
-                  ),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 28),
-            Row(
+            child: Row(
               children: [
-                const Text('Choose Your Colour',
-                    style:
-                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(width: 8),
-                Text(
-                  _preferredSeat == null ? '(optional)' : 'guaranteed',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: _preferredSeat == null
-                        ? AppColors.textSecondary
-                        : AppColors.ludoGreen,
+                Container(
+                  width: 54, height: 54,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(colors: [
+                      Colors.white.withValues(alpha: 0.22),
+                      Colors.white.withValues(alpha: 0.06),
+                    ]),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.35), width: 1.2),
+                  ),
+                  child: const Center(child: Text('🎲', style: TextStyle(fontSize: 26))),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(isPrivate ? 'Friends Table' : 'Ludo',
+                          style: const TextStyle(
+                              fontSize: 20, fontWeight: FontWeight.w900, color: Colors.white)),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.28),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+                        ),
+                        child: const Text('2-4 PLAYERS',
+                            style: TextStyle(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.6,
+                                color: Colors.white)),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                _colorSwatch(AppColors.ludoRed, 1),
-                _colorSwatch(AppColors.ludoGreen, 2),
-                _colorSwatch(AppColors.ludoYellow, 3),
-                _colorSwatch(AppColors.ludoBlue, 4),
-              ],
-            ),
-            const SizedBox(height: 32),
+          ),
+          const SizedBox(height: 20),
+          if (isPrivate && widget.privateCode != null)
             Container(
-              padding: const EdgeInsets.all(16),
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                   color: AppColors.cardBg,
-                  borderRadius: BorderRadius.circular(16)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Game Info',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  _infoRow('Players', '2-4'),
-                  _infoRow('Entry Fee', '₹${_selectedStake.toInt()}'),
-                  _infoRow('Pot Size', '₹${(_selectedStake * 4).toInt()} (max)'),
-                  _infoRow('Platform Fee', '5%'),
-                  _infoRow('Bots', 'Yes (if wait > 8s)'),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.gold.withValues(alpha: 0.4))),
+              child: Text('Room code: ${widget.privateCode}',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 16)),
+            ),
+          SizedBox(
+            width: double.infinity,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(color: AppColors.gold.withValues(alpha: 0.35), blurRadius: 14, offset: const Offset(0, 6)),
                 ],
               ),
+              child: ElevatedButton.icon(
+                onPressed: _searching ? null : _joinMatchmaking,
+                icon: const Icon(Icons.flash_on_rounded, color: Colors.black, size: 22),
+                label: Text('Quick Match  ·  ₹${_selectedStake.toInt()}',
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 0.3)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.gold,
+                  foregroundColor: Colors.black,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
             ),
-            const Spacer(),
-            if (_searching)
-              Column(
+          ),
+          const SizedBox(height: 26),
+          const Text('SELECT STAKE',
+              style: TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 1.2, color: AppColors.textSecondary)),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: _stakes.map((stake) {
+              final selected = _selectedStake == stake;
+              return GestureDetector(
+                onTap: _searching
+                    ? null
+                    : () => setState(() => _selectedStake = stake),
+                child: Container(
+                  width: 92,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: selected
+                          ? AppColors.ludoGrad
+                          : const [Color(0xFF2A2440), Color(0xFF181426)],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: selected
+                          ? AppColors.gold
+                          : AppColors.gold.withValues(alpha: 0.35),
+                      width: selected ? 2 : 1.2,
+                    ),
+                    boxShadow: selected
+                        ? [
+                            BoxShadow(
+                                color: _ludoAccent.last.withValues(alpha: 0.5),
+                                blurRadius: 12,
+                                spreadRadius: 1)
+                          ]
+                        : null,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('₹${stake.toInt()}',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16)),
+                      const SizedBox(height: 2),
+                      Text('pot ₹${(stake * 4).toInt()} max',
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.75),
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 26),
+          Row(
+            children: [
+              const Text('CHOOSE YOUR COLOUR',
+                  style: TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 1.2, color: AppColors.textSecondary)),
+              const SizedBox(width: 8),
+              Text(
+                _preferredSeat == null ? '(optional)' : 'guaranteed',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: _preferredSeat == null
+                      ? AppColors.textSecondary
+                      : AppColors.ludoGreen,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _colorSwatch(AppColors.ludoRed, 1),
+              _colorSwatch(AppColors.ludoGreen, 2),
+              _colorSwatch(AppColors.ludoYellow, 3),
+              _colorSwatch(AppColors.ludoBlue, 4),
+            ],
+          ),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(child: _statTile(Icons.groups_rounded, 'Players', '2-4')),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: _statTile(Icons.account_balance_wallet_rounded, locale.t('entry_fee'),
+                      '₹${_selectedStake.toInt()}')),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: _statTile(Icons.emoji_events_rounded, 'Pot Max',
+                      '₹${(_selectedStake * 4).toInt()}')),
+              const SizedBox(width: 10),
+              Expanded(child: _statTile(Icons.percent_rounded, 'Fee', '5%')),
+            ],
+          ),
+          if (_searching) ...[
+            const SizedBox(height: 28),
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+              decoration: BoxDecoration(
+                color: AppColors.cardBg,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: _ludoAccent.last.withValues(alpha: 0.5)),
+              ),
+              child: Column(
                 children: [
-                  const CircularProgressIndicator(color: AppColors.gold),
-                  const SizedBox(height: 16),
-                  const Text('Finding players...',
-                      style: TextStyle(color: AppColors.textSecondary)),
+                  const SizedBox(
+                    width: 30, height: 30,
+                    child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 3),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text('Finding players…',
+                      style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
                   const SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,
@@ -308,11 +409,33 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
                   ),
                 ],
               ),
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
+
+  Widget _statTile(IconData icon, String label, String value) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: BoxDecoration(
+          color: AppColors.cardBg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, size: 15, color: AppColors.gold),
+            const SizedBox(height: 6),
+            Text(value,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Colors.white)),
+            const SizedBox(height: 2),
+            Text(label,
+                style: const TextStyle(fontSize: 9, color: AppColors.textSecondary)),
+          ],
+        ),
+      );
 
   // Tappable colour disc → sets the preferred seat (colour). Tapping the
   // selected one again clears the choice (back to server's pick).
@@ -322,8 +445,7 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
       child: GestureDetector(
         onTap: _searching
             ? null
-            : () => setState(
-                () => _preferredSeat = selected ? null : seat),
+            : () => setState(() => _preferredSeat = selected ? null : seat),
         child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 6),
           height: 56,
@@ -335,7 +457,12 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
               width: 3,
             ),
             boxShadow: selected
-                ? [BoxShadow(color: color.withOpacity(0.7), blurRadius: 12, spreadRadius: 1)]
+                ? [
+                    BoxShadow(
+                        color: color.withValues(alpha: 0.7),
+                        blurRadius: 12,
+                        spreadRadius: 1)
+                  ]
                 : null,
           ),
           child: selected
@@ -345,17 +472,4 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
       ),
     );
   }
-
-  Widget _infoRow(String label, String value) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(children: [
-          Text(label,
-              style:
-                  const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-          const Spacer(),
-          Text(value,
-              style:
-                  const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-        ]),
-      );
 }

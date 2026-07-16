@@ -9,7 +9,8 @@ class LeaderboardPage extends StatefulWidget {
   State<LeaderboardPage> createState() => _LeaderboardPageState();
 }
 
-class _LeaderboardPageState extends State<LeaderboardPage> with SingleTickerProviderStateMixin {
+class _LeaderboardPageState extends State<LeaderboardPage>
+    with SingleTickerProviderStateMixin {
   late final TabController _tabCtrl;
   final _api = ApiClient();
   List<dynamic> _entries = [];
@@ -24,7 +25,8 @@ class _LeaderboardPageState extends State<LeaderboardPage> with SingleTickerProv
     _tabCtrl = TabController(length: 2, vsync: this);
     _tabCtrl.addListener(() {
       if (!_tabCtrl.indexIsChanging) {
-        setState(() => _gameType = _tabCtrl.index == 0 ? 'teen_patti' : 'aviator');
+        setState(
+            () => _gameType = _tabCtrl.index == 0 ? 'teen_patti' : 'aviator');
         _load();
       }
     });
@@ -32,15 +34,30 @@ class _LeaderboardPageState extends State<LeaderboardPage> with SingleTickerProv
   }
 
   @override
-  void dispose() { _tabCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    _tabCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _load() async {
-    setState(() { _loading = true; _hasError = false; });
+    setState(() {
+      _loading = true;
+      _hasError = false;
+    });
     try {
-      final res = await _api.dio.get('/api/leaderboard/$_gameType?period=$_period');
-      if (mounted) setState(() { _entries = res.data['entries'] as List; _loading = false; });
+      final res =
+          await _api.dio.get('/api/leaderboard/$_gameType?period=$_period');
+      if (mounted)
+        setState(() {
+          _entries = res.data['entries'] as List;
+          _loading = false;
+        });
     } catch (_) {
-      if (mounted) setState(() { _loading = false; _hasError = true; });
+      if (mounted)
+        setState(() {
+          _loading = false;
+          _hasError = true;
+        });
     }
   }
 
@@ -71,23 +88,32 @@ class _LeaderboardPageState extends State<LeaderboardPage> with SingleTickerProv
                 DropdownMenuItem(value: 'daily', child: Text('Daily')),
                 DropdownMenuItem(value: 'weekly', child: Text('Weekly')),
               ],
-              onChanged: (v) { setState(() => _period = v!); _load(); },
+              onChanged: (v) {
+                setState(() => _period = v!);
+                _load();
+              },
             ),
           ),
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.gold))
           : _hasError
-              ? ErrorRetry(message: 'Could not load leaderboard', onRetry: _load)
+              ? ErrorRetry(
+                  message: 'Could not load leaderboard', onRetry: _load)
               : _entries.isEmpty
                   ? Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.leaderboard_rounded, size: 64, color: AppColors.textSecondary.withOpacity(0.4)),
+                          Icon(Icons.leaderboard_rounded,
+                              size: 64,
+                              color: AppColors.textSecondary
+                                  .withValues(alpha: 0.4)),
                           const SizedBox(height: 12),
-                          const Text('No data yet', style: TextStyle(color: AppColors.textSecondary)),
+                          const Text('No data yet',
+                              style: TextStyle(color: AppColors.textSecondary)),
                         ],
                       ),
                     )
@@ -107,16 +133,22 @@ class _LeaderboardPageState extends State<LeaderboardPage> with SingleTickerProv
   Widget _buildRow(Map<String, dynamic> e, int i) {
     final rank = e['rank'] as int;
     final isTop3 = rank <= 3;
-    final medalColor = rank == 1 ? AppColors.gold
-        : rank == 2 ? const Color(0xFFB0BEC5)
-        : const Color(0xFFCD7F32);
+    final medalColor = rank == 1
+        ? AppColors.gold
+        : rank == 2
+            ? const Color(0xFFB0BEC5)
+            : const Color(0xFFCD7F32);
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: isTop3 ? AppColors.gold.withOpacity(0.07) : AppColors.cardBg,
+        color:
+            isTop3 ? AppColors.gold.withValues(alpha: 0.07) : AppColors.cardBg,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: isTop3 ? AppColors.gold.withOpacity(0.35) : AppColors.border),
+        border: Border.all(
+            color: isTop3
+                ? AppColors.gold.withValues(alpha: 0.35)
+                : AppColors.border),
       ),
       child: Row(
         children: [
@@ -124,21 +156,28 @@ class _LeaderboardPageState extends State<LeaderboardPage> with SingleTickerProv
             width: 36,
             child: isTop3
                 ? Icon(Icons.emoji_events_rounded, color: medalColor, size: 26)
-                : Text('#$rank', style: const TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.bold)),
+                : Text('#$rank',
+                    style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontWeight: FontWeight.bold)),
           ),
           const SizedBox(width: 10),
           CircleAvatar(
             radius: 18,
-            backgroundColor: AppColors.gold.withOpacity(0.2),
+            backgroundColor: AppColors.gold.withValues(alpha: 0.2),
             child: Text(
               (e['username'] as String)[0].toUpperCase(),
-              style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 14),
+              style: const TextStyle(
+                  color: AppColors.gold,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14),
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Text(e['username'] as String,
-                style: TextStyle(fontWeight: isTop3 ? FontWeight.w700 : FontWeight.normal)),
+                style: TextStyle(
+                    fontWeight: isTop3 ? FontWeight.w700 : FontWeight.normal)),
           ),
           Text(
             formatCurrency(e['score']),

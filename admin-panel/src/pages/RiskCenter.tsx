@@ -98,7 +98,7 @@ export default function RiskCenter() {
   ]
 
   const deviceExpanded = (record: any) => (
-    <Table size="small" dataSource={record.accounts} rowKey="id" pagination={false}
+    <Table size="small" dataSource={record.accounts} rowKey="id" pagination={false} scroll={{ x: 'max-content' }}
       columns={[
         { title: 'Username', dataIndex: 'username', render: (v: string, r: any) =>
           <Button type="link" size="small" onClick={() => navigate(`/admin/users?id=${r.id}`)}>{v}</Button> },
@@ -185,6 +185,7 @@ export default function RiskCenter() {
             onChange: (p) => { setFlaggedPage(p); loadFlagged(p) },
           }}
           size="small"
+          scroll={{ x: 'max-content' }}
         />
       ),
     },
@@ -199,6 +200,7 @@ export default function RiskCenter() {
           expandable={{ expandedRowRender: deviceExpanded }}
           size="small"
           pagination={{ pageSize: 20 }}
+          scroll={{ x: 'max-content' }}
         />
       ),
     },
@@ -213,6 +215,7 @@ export default function RiskCenter() {
           rowClassName={(r: any) => parseFloat(r.win_rate) > 2 ? 'ant-table-row-danger' : ''}
           size="small"
           pagination={{ pageSize: 20 }}
+          scroll={{ x: 'max-content' }}
         />
       ),
     },
@@ -226,6 +229,7 @@ export default function RiskCenter() {
           rowKey={(r: any) => `${r.user_a_id}-${r.user_b_id}`}
           size="small"
           pagination={{ pageSize: 20 }}
+          scroll={{ x: 'max-content' }}
         />
       ),
     },

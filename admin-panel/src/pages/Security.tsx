@@ -109,6 +109,7 @@ export default function Security() {
           dataSource={logs}
           columns={columns}
           rowKey="id"
+          scroll={{ x: 'max-content' }}
           pagination={{
             current: page,
             pageSize: pageSize,

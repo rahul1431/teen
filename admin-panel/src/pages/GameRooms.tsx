@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Badge, Card, Space, Select, Button, Drawer, Descriptions, List, Avatar, message, Divider, Popconfirm } from 'antd'
+import { Table, Tag, Badge, Card, Space, Select, Button, Drawer, Descriptions, List, Avatar, message, Divider, Popconfirm, Grid } from 'antd'
 import { ReloadOutlined, EyeOutlined } from '@ant-design/icons'
 import { adminApi } from '../api/client'
 
 export default function GameRooms() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const [rooms, setRooms] = useState([])
   const [loading, setLoading] = useState(false)
   const [statusFilter, setStatusFilter] = useState('active')
@@ -135,9 +137,9 @@ export default function GameRooms() {
         <Button icon={<ReloadOutlined />} onClick={fetchRooms}>Refresh</Button>
       </Space>
 
-      <Table dataSource={rooms} columns={columns} rowKey="id" loading={loading} size="small" />
+      <Table dataSource={rooms} columns={columns} rowKey="id" loading={loading} size="small" scroll={{ x: 'max-content' }} />
 
-      <Drawer title="Room Details & Controls" open={!!selectedRoom} onClose={() => setSelectedRoom(null)} width={550}>
+      <Drawer title="Room Details & Controls" open={!!selectedRoom} onClose={() => setSelectedRoom(null)} width={isMobile ? '100%' : 550}>
         {selectedRoom && (
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <Descriptions column={2} size="small" bordered title="Database Record">

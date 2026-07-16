@@ -234,6 +234,7 @@ export default function PromoCodes() {
           loading={loading}
           pagination={{ pageSize: 20 }}
           size="small"
+          scroll={{ x: 'max-content' }}
         />
       </Card>
 

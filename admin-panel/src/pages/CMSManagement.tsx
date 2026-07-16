@@ -67,7 +67,7 @@ function PagesTab() {
     <>
       <Button type="primary" icon={<PlusOutlined />} style={{ marginBottom: 12 }}
         onClick={() => { setCreating(true); setEditing({}); form.resetFields() }}>New Page</Button>
-      <Table dataSource={pages} columns={columns} rowKey="slug" size="small" pagination={false} />
+      <Table dataSource={pages} columns={columns} rowKey="slug" size="small" pagination={false} scroll={{ x: 'max-content' }} />
 
       <Modal
         open={!!editing} onCancel={() => { setEditing(null); setCreating(false); form.resetFields() }}
@@ -193,7 +193,7 @@ function BannersTab() {
     <>
       <Button type="primary" icon={<PlusOutlined />} style={{ marginBottom: 12 }}
         onClick={() => { setCreating(true); setEditing({}); form.resetFields() }}>New Banner</Button>
-      <Table dataSource={banners} columns={columns} rowKey="id" size="small" pagination={{ pageSize: 20 }} />
+      <Table dataSource={banners} columns={columns} rowKey="id" size="small" pagination={{ pageSize: 20 }} scroll={{ x: 'max-content' }} />
 
       <Modal
         open={!!editing} onCancel={() => { setEditing(null); setCreating(false); form.resetFields() }}
