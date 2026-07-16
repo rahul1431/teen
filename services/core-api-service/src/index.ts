@@ -72,7 +72,7 @@ async function start() {
   await app.register(authPlugin(db, redis))
   await app.register(usersPlugin(db))
   await app.register(leaderboardPlugin(db, redis))
-  await app.register(notificationsPlugin(db))
+  await app.register(notificationsPlugin(db, redis))
   await app.register(supportPlugin(db))
   await app.register(seoMarketingPlugin(db))
   await app.register(bettingPlugin(bettingDb))   // isolated pool — heavy queries don't starve auth
