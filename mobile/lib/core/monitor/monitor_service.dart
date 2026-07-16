@@ -16,6 +16,7 @@ class MonitorService {
 
   final List<Map<String, dynamic>> _queue = [];
   Timer? _flushTimer;
+  Timer? _heartbeatTimer;
   Dio? _monitorDio;
 
   String? _sessionId;
@@ -81,6 +82,13 @@ class MonitorService {
       }
 
       _flushTimer = Timer.periodic(const Duration(seconds: 10), (_) => _flush());
+
+      // Keeps last_seen_at fresh for idle-but-connected sessions (server live
+      // window is 90s) — without this, a player who isn't tapping/navigating
+      // silently drops off "Live Players" even though the app is open.
+      _heartbeatTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+        enqueue({'event_type': 'lifecycle', 'properties': {'state': 'foreground'}});
+      });
     } catch (_) {
       // MonitorService must never crash the app
     }
@@ -183,6 +191,7 @@ class MonitorService {
   /// Best-effort flush before the app closes. Call from lifecycle observer.
   void dispose() {
     _flushTimer?.cancel();
+    _heartbeatTimer?.cancel();
     _flush(); // fire-and-forget
   }
 }
