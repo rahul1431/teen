@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { Pool } from 'pg'
+import Redis from 'ioredis'
 import * as admin from 'firebase-admin'
 
 let firebaseInitialized = false
@@ -18,9 +19,59 @@ async function sendPushNotification(fcmToken: string, title: string, body: strin
   await admin.messaging().send({ token: fcmToken, notification: { title, body }, data, android: { priority: 'high' }, apns: { payload: { aps: { sound: 'default' } } } })
 }
 
-export function notificationsPlugin(db: Pool) {
+export function notificationsPlugin(db: Pool, redis?: Redis) {
   return async function (app: FastifyInstance) {
     initFirebase()
+
+    // Listen for wallet updates from admin/system credits via Redis Pub/Sub
+    if (redis) {
+      const walletUpdateSub = redis.duplicate()
+      console.log('[notifications] Setting up wallet:updated Redis subscriber...')
+      walletUpdateSub.subscribe('wallet:updated', async (err) => {
+        if (err) console.error('[wallet:updated subscriber] subscription error:', err)
+        else console.log('[wallet:updated subscriber] subscribed successfully')
+      })
+
+      walletUpdateSub.on('message', async (channel, message) => {
+        if (channel !== 'wallet:updated') return
+        console.log('[wallet:updated handler] received message:', message)
+        try {
+          const event = JSON.parse(message)
+          const { userId, type, amount, walletType } = event
+
+          // Fetch FCM token for this user
+          const tokenRes = await db.query('SELECT fcm_token FROM users WHERE id = $1', [userId])
+          if (!tokenRes.rows.length || !tokenRes.rows[0].fcm_token) return
+
+          const fcmToken = tokenRes.rows[0].fcm_token
+          let title = 'Wallet Updated'
+          let body = `₹${amount} added to your ${walletType} balance`
+          const data = { walletUpdated: 'true', amount: String(amount), type }
+
+          if (type === 'manual_credit') {
+            title = 'Bonus Added ✨'
+            body = `₹${amount} bonus has been credited to your account`
+          } else if (type === 'deposit') {
+            title = 'Deposit Confirmed ✅'
+            body = `Your deposit of ₹${amount} has been credited`
+          } else if (type === 'referral') {
+            title = 'Referral Reward Earned 🎁'
+            body = `₹${amount} referral bonus has been added`
+          } else if (type === 'game_credit') {
+            title = 'Winnings Credited 🎉'
+            body = `You won ₹${amount}!`
+          }
+
+          await sendPushNotification(fcmToken, title, body, data)
+        } catch (err) {
+          console.error('[wallet:updated handler] error:', err)
+        }
+      })
+
+      walletUpdateSub.on('error', (err) => {
+        console.error('[wallet:updated subscriber] error:', err)
+      })
+    }
 
     const internal = async (req: any, reply: any) => {
       const key = process.env.INTERNAL_SERVICE_KEY
