@@ -5,10 +5,13 @@ import { Pool } from 'pg'
 import Redis from 'ioredis'
 import pino from 'pino'
 import os from 'os'
-import { execSync } from 'child_process'
+import { exec } from 'child_process'
+import { promisify } from 'util'
 import { MonitorIngestor } from './monitor-ingestor'
 import { AlertEngine } from './alerts'
 import { parseClientIp, GeoLookup } from './geo'
+
+const execAsync = promisify(exec)
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' })
 
@@ -208,25 +211,29 @@ app.get<{ Querystring: { hours?: string } }>(
 
 app.get('/api/monitor/server-health', async (_req, reply) => {
   try {
-    // PM2 process list
+    // PM2 process list + Docker containers — run concurrently, non-blocking
+    const [pmResult, dockerResult] = await Promise.all([
+      execAsync('pm2 jlist 2>/dev/null', { timeout: 5000, encoding: 'utf-8' }).catch(pmErr => {
+        // PM2 not available in this env (Docker, K8s, dev) — log but don't crash
+        logger.warn('PM2 jlist unavailable', pmErr instanceof Error ? pmErr.message : String(pmErr))
+        return null
+      }),
+      execAsync('docker ps --format "{{.Names}}|{{.Status}}|{{.State}}" 2>/dev/null', { timeout: 5000 }).catch(() => null),
+    ])
+
     let processes: object[] = []
-    try {
-      const raw = execSync('pm2 jlist 2>/dev/null', { timeout: 5000, encoding: 'utf-8' }).toString()
-      if (raw && raw.trim()) {
-        const list: any[] = JSON.parse(raw)
-        processes = list.map(p => ({
-          name:        p.name,
-          status:      p.pm2_env?.status ?? 'unknown',
-          memory_mb:   Math.round((p.monit?.memory ?? 0) / 1024 / 1024),
-          cpu_pct:     p.monit?.cpu ?? 0,
-          restarts:    p.pm2_env?.restart_time ?? 0,
-          uptime_ms:   p.pm2_env?.pm_uptime ? (Date.now() - p.pm2_env.pm_uptime) : 0,
-          pid:         p.pid ?? null,
-        }))
-      }
-    } catch (pmErr) {
-      // PM2 not available in this env (Docker, K8s, dev) — log but don't crash
-      logger.warn('PM2 jlist unavailable', pmErr instanceof Error ? pmErr.message : String(pmErr))
+    const raw = pmResult?.stdout?.toString()
+    if (raw && raw.trim()) {
+      const list: any[] = JSON.parse(raw)
+      processes = list.map(p => ({
+        name:        p.name,
+        status:      p.pm2_env?.status ?? 'unknown',
+        memory_mb:   Math.round((p.monit?.memory ?? 0) / 1024 / 1024),
+        cpu_pct:     p.monit?.cpu ?? 0,
+        restarts:    p.pm2_env?.restart_time ?? 0,
+        uptime_ms:   p.pm2_env?.pm_uptime ? (Date.now() - p.pm2_env.pm_uptime) : 0,
+        pid:         p.pid ?? null,
+      }))
     }
 
     // System memory via OS module
@@ -237,20 +244,16 @@ app.get('/api/monitor/server-health', async (_req, reply) => {
 
     // Docker containers
     let containers: object[] = []
-    try {
-      const raw = execSync(
-        'docker ps --format "{{.Names}}|{{.Status}}|{{.State}}" 2>/dev/null', { timeout: 5000 }
-      ).toString().trim()
-      if (raw) {
-        containers = raw.split('\n').map(line => {
-          const [name, status, state] = line.split('|')
-          const healthy = status?.includes('(healthy)') ? 'healthy'
-            : status?.includes('(unhealthy)') ? 'unhealthy'
-            : 'no-healthcheck'
-          return { name, state, health: healthy }
-        })
-      }
-    } catch { /* Docker not available */ }
+    const dockerRaw = dockerResult?.stdout?.toString().trim()
+    if (dockerRaw) {
+      containers = dockerRaw.split('\n').map(line => {
+        const [name, status, state] = line.split('|')
+        const healthy = status?.includes('(healthy)') ? 'healthy'
+          : status?.includes('(unhealthy)') ? 'unhealthy'
+          : 'no-healthcheck'
+        return { name, state, health: healthy }
+      })
+    }
 
     return reply.send({
       success: true,

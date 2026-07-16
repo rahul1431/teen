@@ -38,12 +38,22 @@ export class GameWatchdog {
     for (const room of rooms.rows) {
       const last = await this.redis.get(`game:lastaction:${room.id}`)
       if (last && Date.now() - Number(last) < GameWatchdog.IDLE_MS) continue
-      await this.reap(room.id, room.game_type)
+      await this.reap(room.id, room.game_type, last)
     }
   }
 
-  private async reap(roomId: string, gameType: string): Promise<void> {
+  private async reap(roomId: string, gameType: string, lastActionAtSweep: string | null): Promise<void> {
     console.log(`[watchdog] reaping idle room=${roomId} (${gameType})`)
+
+    // Re-check liveness before doing anything irreversible — a player may have
+    // acted (and refreshed game:lastaction) between sweep() reading it and now.
+    // Abort here means zero wallet calls and zero DB writes for this room.
+    const lastActionNow = await this.redis.get(`game:lastaction:${roomId}`)
+    if (lastActionNow !== lastActionAtSweep) {
+      console.log(`[watchdog] intercepted reap for room=${roomId}: lastaction changed since sweep, room is live — aborting`)
+      return
+    }
+
     const refunds: Array<{ user_id: string; username: string; is_bot: boolean; amount: number }> = []
     const parts = await this.db.query(
       `SELECT gp.user_id, gp.entry_fee_deducted, gp.is_bot, u.username
