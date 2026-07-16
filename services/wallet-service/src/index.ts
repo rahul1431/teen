@@ -11,6 +11,7 @@ import { z } from 'zod'
 import fs from 'fs'
 import path from 'path'
 import { pipeline } from 'stream/promises'
+import Redis from 'ioredis'
 import { WalletService } from './wallet.service'
 
 // Where uploaded deposit screenshots are stored (served by nginx at /uploads/).
@@ -87,7 +88,8 @@ async function tryTriggerReferralReward(userId: string, db: Pool, walletSvc: any
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
-const walletSvc = new WalletService(db)
+const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : undefined
+const walletSvc = new WalletService(db, redis)
 
 // Razorpay is optional — manual UPI/bank deposits are the primary flow.
 // Only construct the client when keys are configured so the service boots
