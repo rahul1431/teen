@@ -860,19 +860,29 @@ async function start() {
       if (row.rows[0].status === 'paid') {
         return reply.code(400).send({ error: 'Already paid' })
       }
-      await db.query(`UPDATE payment_orders SET status='paid', metadata=$1, updated_at=NOW() WHERE id=$2`,
-        [JSON.stringify(meta), id])
-      // Credit the user's wallet
-      await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/deposit/manual`, {
+      // Credit the wallet BEFORE marking the order paid — if this call fails,
+      // the order must stay unpaid rather than be recorded as paid with no
+      // funds actually credited. request_id is the stable order id (not a
+      // fresh UUID) so retrying this same approval after a failure is
+      // idempotent on the wallet-service side instead of double-crediting.
+      const creditRes = await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/deposit/manual`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
         body: JSON.stringify({
           user_id: row.rows[0].user_id,
           amount: parseFloat(row.rows[0].amount),
-          request_id: crypto.randomUUID(),
+          request_id: id,
           description: `Manual deposit reconciliation${reference ? ` (ref: ${reference})` : ''}`,
         }),
+      }).catch((e: any) => {
+        throw new Error(`Wallet credit request failed: ${e?.message || e}`)
       })
+      if (!creditRes.ok) {
+        const msg = await creditRes.text().catch(() => '')
+        return reply.code(502).send({ error: `Failed to credit wallet — deposit not marked paid: ${msg}` })
+      }
+      await db.query(`UPDATE payment_orders SET status='paid', metadata=$1, updated_at=NOW() WHERE id=$2`,
+        [JSON.stringify(meta), id])
       // Credit the promo-code bonus recorded at submit time (non-withdrawable
       // bonus wallet). Idempotency key is tied to the order so retries are safe.
       const promoBonus = parseFloat(meta.promo_bonus || '0')
