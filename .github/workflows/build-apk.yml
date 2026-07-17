@@ -74,7 +74,9 @@ jobs:
 
       - name: Build release APK
         working-directory: mobile
-        run: flutter build apk --release --split-per-abi
+        env:
+          MONITOR_SECRET_KEY: ${{ secrets.MONITOR_SECRET_KEY }}
+        run: flutter build apk --release --split-per-abi --dart-define=MONITOR_SECRET_KEY=$MONITOR_SECRET_KEY
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4

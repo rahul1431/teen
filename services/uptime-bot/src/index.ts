@@ -7,6 +7,7 @@ import { Pool } from 'pg'
 import Redis from 'ioredis'
 import * as net from 'net'
 import * as https from 'https'
+import * as crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 
@@ -59,7 +60,9 @@ async function testRedis(redis: Redis): Promise<ServiceStatus> {
   }
 }
 
-// Test WebSocket handshake to public URL
+// Test WebSocket handshake to public URL. A plain HTTPS GET never upgrades
+// (nginx returns 404/400 for a WS-only route with no Upgrade header), so this
+// sends the actual WebSocket handshake headers and looks for 101.
 async function testWebSocketHandshake(wsUrl: string): Promise<ServiceStatus> {
   return new Promise((resolve) => {
     const start = Date.now()
@@ -68,16 +71,29 @@ async function testWebSocketHandshake(wsUrl: string): Promise<ServiceStatus> {
     }, 5000)
 
     try {
-      // Convert wss:// to https:// for WebSocket upgrade test via HTTP
       const httpsUrl = new URL(wsUrl)
       httpsUrl.protocol = 'https:'
 
-      const req = https.get(httpsUrl, { timeout: 5000 }, (res) => {
+      const req = https.request(httpsUrl, {
+        timeout: 5000,
+        headers: {
+          Connection: 'Upgrade',
+          Upgrade: 'websocket',
+          'Sec-WebSocket-Key': crypto.randomBytes(16).toString('base64'),
+          'Sec-WebSocket-Version': '13',
+        },
+      })
+
+      req.on('upgrade', (res) => {
         clearTimeout(timeout)
-        // WebSocket upgrade should return 101 Switching Protocols
-        const isUp = res.statusCode === 101 || res.statusCode === 200
+        resolve({ up: res.statusCode === 101, latency: Date.now() - start })
+      })
+
+      req.on('response', (res) => {
+        clearTimeout(timeout)
+        // Server responded without upgrading — not up as a WebSocket endpoint
         res.destroy()
-        resolve({ up: isUp, latency: Date.now() - start })
+        resolve({ up: false, latency: Date.now() - start })
       })
 
       req.on('error', () => {
@@ -90,6 +106,8 @@ async function testWebSocketHandshake(wsUrl: string): Promise<ServiceStatus> {
         req.destroy()
         resolve({ up: false, latency: 0 })
       })
+
+      req.end()
     } catch (err) {
       clearTimeout(timeout)
       resolve({ up: false, latency: 0 })
