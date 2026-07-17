@@ -34,7 +34,6 @@ import { registerBotLearningRoutes } from './bot-learning-routes'
 import { registerMonitorRoutes } from './monitor-routes'
 import { registerMetricsRoutes } from './metrics-routes'
 import { registerPlayerAnomaliesRoutes } from './player-anomalies-routes'
-import { registerDeploymentRoutes } from './deployment-routes'
 import { registerTaskRoutes } from './task-routes'
 import { createRateLimiter } from './middleware/rate-limiter'
 
@@ -55,9 +54,9 @@ const totp = {
 }
 
 // RBAC: role hierarchy. Higher index = more privileged.
-const ROLES = ['readonly', 'employee', 'support', 'finance', 'DevAdmin', 'superadmin'] as const
+const ROLES = ['readonly', 'employee', 'support', 'finance', 'superadmin'] as const
 type Role = typeof ROLES[number]
-const ROLE_INDEX: Record<Role, number> = { readonly: 0, employee: 1, support: 2, finance: 3, DevAdmin: 4, superadmin: 5 }
+const ROLE_INDEX: Record<Role, number> = { readonly: 0, employee: 1, support: 2, finance: 3, superadmin: 4 }
 function hasRole(actual: string | undefined, required: Role): boolean {
   if (!actual || !(actual in ROLE_INDEX)) return false
   return ROLE_INDEX[actual as Role] >= ROLE_INDEX[required]
@@ -96,56 +95,8 @@ async function start() {
     if (!hasRole(r, role)) return reply.code(403).send({ error: `Forbidden â€” requires ${role} role` })
   }
 
-  // DevAdmin-specific middleware for deployment access control
-  const requireDevAdmin = async (req: any, reply: any) => {
-    const user = req.user as any
-    const userRole = user?.role
-    const adminId = user?.sub
-
-    // Only DevAdmin and SuperAdmin can deploy
-    if (userRole !== 'DevAdmin' && userRole !== 'superadmin') {
-      // Log failed access attempt
-      try {
-        await db.query(
-          `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details)
-           VALUES ($1, 'deployment_access_denied', 'deployment', $2, $3)`,
-          [adminId, null, JSON.stringify({ reason: 'insufficient_role', user_role: userRole })]
-        )
-      } catch (e) {
-        app.log.error(e, 'Failed to log deployment access denial')
-      }
-
-      // Check for repeated failed attempts (brute force protection)
-      try {
-        const failedAttempts = await redis.incr(`deployment_access_denied:${adminId}`)
-        await redis.expire(`deployment_access_denied:${adminId}`, 600) // 10 min window
-
-        if (failedAttempts >= 3) {
-          app.log.warn(`Multiple failed deployment access attempts from admin ${adminId} (role: ${userRole})`)
-          // Could trigger alerting here if needed
-        }
-      } catch (e) {
-        app.log.error(e, 'Failed to track deployment access attempts')
-      }
-
-      return reply.code(403).send({
-        error: 'You do not have permission to deploy. Only DevAdmin and SuperAdmin can deploy.',
-        access_level: userRole || 'unknown',
-        required_role: 'DevAdmin',
-      })
-    }
-
-    // Reset failed attempts on successful access
-    try {
-      await redis.del(`deployment_access_denied:${adminId}`)
-    } catch (e) {
-      app.log.error(e, 'Failed to reset deployment access attempts counter')
-    }
-  }
-
   app.decorate('authenticate', authenticate)
   app.decorate('requireRole', requireRole)
-  app.decorate('requireDevAdmin', requireDevAdmin)
 
   // Initialize rate limiter
   const rateLimiter = createRateLimiter(redis)
@@ -178,9 +129,6 @@ async function start() {
 
   // Register Player Anomalies Dashboard routes
   await registerPlayerAnomaliesRoutes(app, db, authenticate, requireRole)
-
-  // Register Deployment routes
-  await registerDeploymentRoutes(app, db, authenticate, requireRole, requireDevAdmin)
 
   // Register Task Management routes
   await registerTaskRoutes(app, db, authenticate, requireRole)
@@ -286,7 +234,7 @@ async function start() {
       username: z.string().min(3).max(50),
       email: z.string().email(),
       password: z.string().min(10),
-      role: z.enum(['readonly', 'employee', 'support', 'finance', 'DevAdmin', 'superadmin']),
+      role: z.enum(['readonly', 'employee', 'support', 'finance', 'superadmin']),
     }).parse(req.body)
     const hash = await bcrypt.hash(body.password, 12)
     try {
@@ -309,7 +257,7 @@ async function start() {
     const me = req.user as any
     const { id } = req.params as any
     const body = z.object({
-      role: z.enum(['readonly', 'employee', 'support', 'finance', 'DevAdmin', 'superadmin']).optional(),
+      role: z.enum(['readonly', 'employee', 'support', 'finance', 'superadmin']).optional(),
       is_active: z.boolean().optional(),
     }).parse(req.body)
     if (id === me.sub && body.is_active === false) {
