@@ -1070,7 +1070,16 @@ async function start() {
   app.delete('/api/admin/payment-methods/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
-    await db.query(`DELETE FROM payment_methods WHERE id = $1`, [id])
+    try {
+      await db.query(`DELETE FROM payment_methods WHERE id = $1`, [id])
+    } catch (err: any) {
+      // 23503 = foreign key violation — this method has payment_orders history,
+      // which we must keep for the audit trail, so it can't be hard-deleted.
+      if (err?.code === '23503') {
+        return reply.code(400).send({ error: 'This payment method has existing orders and cannot be deleted. Set it to inactive instead.' })
+      }
+      throw err
+    }
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'payment_method_delete', 'payment_method', $2)`,
       [admin.sub, id])
     return reply.send({ success: true })
