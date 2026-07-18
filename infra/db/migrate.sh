@@ -6,7 +6,7 @@
 # Usage: bash /opt/teen/infra/db/migrate.sh
 
 set -e
-BASE=/opt/teen
+BASE=/opt/teen-prod
 
 echo "==> Ensuring schema_migrations table exists..."
 docker exec -i teen_postgres psql -U teen -d teen_db << 'SQL'
