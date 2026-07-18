@@ -11,6 +11,7 @@ function wsUrl(token: string): string {
 
 export function useAdminNotifications() {
   const token = useAuthStore((s) => s.token)
+  const adminId = useAuthStore((s) => s.admin?.id)
   const addNotification = useNotificationStore((s) => s.addNotification)
   const setInitial = useNotificationStore((s) => s.setInitial)
   const muted = useNotificationStore((s) => s.muted)
@@ -30,7 +31,10 @@ export function useAdminNotifications() {
       try {
         const res = await adminApi.get('/notifications', { params: { limit: 50 } })
         if (cancelled) return
-        const items: AdminNotification[] = res.data.notifications.map((n: any) => ({ ...n, read: false }))
+        const items: AdminNotification[] = res.data.notifications.map((n: any) => ({
+          ...n,
+          read: Array.isArray(n.read_by) && adminId ? n.read_by.includes(adminId) : false,
+        }))
         setInitial(items, res.data.unread_count)
       } catch {
         // history fetch failed — WS/poll will still deliver new events live
@@ -70,5 +74,5 @@ export function useAdminNotifications() {
       if (pollRef.current) clearInterval(pollRef.current)
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
     }
-  }, [token, addNotification, setInitial])
+  }, [token, adminId, addNotification, setInitial])
 }

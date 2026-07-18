@@ -12,6 +12,7 @@ const Users = React.lazy(() => import('./pages/Users'))
 const Bots = React.lazy(() => import('./pages/Bots'))
 const Finance = React.lazy(() => import('./pages/Finance'))
 const Notifications = React.lazy(() => import('./pages/Notifications'))
+const NotificationsHistory = React.lazy(() => import('./pages/NotificationsHistory'))
 const AdminUsers = React.lazy(() => import('./pages/AdminUsers'))
 const Profile = React.lazy(() => import('./pages/Profile'))
 const RiskCenter = React.lazy(() => import('./pages/RiskCenter'))
@@ -58,6 +59,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="bots" element={<Bots />} />
             <Route path="finance" element={<Finance />} />
             <Route path="notifications" element={<Notifications />} />
+            <Route path="notifications-history" element={<NotificationsHistory />} />
             <Route path="games/teen-patti" element={<TeenPatti />} />
             <Route path="games/ludo" element={<Ludo />} />
             <Route path="games/aviator" element={<Aviator />} />

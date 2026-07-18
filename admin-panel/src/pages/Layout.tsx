@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
+import NotificationBell from '../components/NotificationBell'
 
 const { Sider, Header, Content } = Layout
 
@@ -151,6 +152,7 @@ export default function AdminLayout() {
             <span />
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <NotificationBell />
             <Dropdown menu={{ items: [
               { key: 'profile', icon: <ProfileOutlined />, label: 'Profile & 2FA', onClick: () => navigate('/admin/profile') },
               { type: 'divider' },
