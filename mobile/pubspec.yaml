@@ -1,6 +1,6 @@
 name: myonlinejoker
 description: MyOnlineJoker Gaming Platform
-version: 1.2.0+4
+version: 1.2.3+8
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -71,6 +71,10 @@ dependencies:
 
   # Biometric authentication
   local_auth: ^2.3.0
+
+  # QR code generation (manual UPI payment gateway)
+  qr_flutter: ^4.1.0
+  open_file: ^4.0.0
 
 dev_dependencies:
   flutter_test:
