@@ -34,7 +34,7 @@ class _AboutUsPageState extends State<AboutUsPage> {
     _localCode = int.tryParse(info.buildNumber) ?? 0;
     if (!mounted) return;
     setState(() {
-      _installedVersion = '${info.version} (${info.buildNumber})';
+      _installedVersion = 'v${info.version} (${info.buildNumber})';
     });
     _checkForUpdate();
   }
