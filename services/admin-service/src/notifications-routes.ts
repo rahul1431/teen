@@ -37,7 +37,7 @@ export function registerNotificationRoutes(app: FastifyInstance, db: Pool, authe
     const rows = await db.query(sql, params)
     const unreadCount = await db.query(
       `SELECT COUNT(*)::int AS c FROM admin_notifications WHERE target_role = ANY($1) AND NOT (read_by @> $2::jsonb)`,
-      [satisfiedRoles, JSON.stringify([me.id])]
+      [satisfiedRoles, JSON.stringify([me.sub])]
     )
     return reply.send({ notifications: rows.rows, unread_count: unreadCount.rows[0].c })
   })
@@ -51,7 +51,7 @@ export function registerNotificationRoutes(app: FastifyInstance, db: Pool, authe
     await db.query(
       `UPDATE admin_notifications SET read_by = read_by || $3::jsonb
        WHERE id = $1 AND target_role = ANY($2) AND NOT (read_by @> $3::jsonb)`,
-      [id, satisfiedRoles, JSON.stringify([me.id])]
+      [id, satisfiedRoles, JSON.stringify([me.sub])]
     )
     return reply.send({ success: true })
   })
@@ -64,7 +64,7 @@ export function registerNotificationRoutes(app: FastifyInstance, db: Pool, authe
     await db.query(
       `UPDATE admin_notifications SET read_by = read_by || $2::jsonb
        WHERE target_role = ANY($1) AND NOT (read_by @> $2::jsonb)`,
-      [satisfiedRoles, JSON.stringify([me.id])]
+      [satisfiedRoles, JSON.stringify([me.sub])]
     )
     return reply.send({ success: true })
   })
