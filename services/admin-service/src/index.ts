@@ -4,6 +4,7 @@ import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import jwt from '@fastify/jwt'
 import multipart from '@fastify/multipart'
+import websocket from '@fastify/websocket'
 import { Pool } from 'pg'
 import Redis from 'ioredis'
 import bcrypt from 'bcryptjs'
@@ -75,6 +76,7 @@ async function start() {
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.ADMIN_JWT_SECRET! })
   await app.register(multipart, { limits: { fileSize: 150 * 1024 * 1024 } }) // 150MB (APK uploads)
+  await app.register(websocket)
   if (redis.status === 'wait') await redis.connect()
   fs.mkdirSync(QR_UPLOAD_DIR, { recursive: true })
   fs.mkdirSync(CRICKET_AVATAR_UPLOAD_DIR, { recursive: true })

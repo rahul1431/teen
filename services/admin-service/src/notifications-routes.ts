@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { Pool } from 'pg'
+import { Client } from 'pg'
+import jwt from 'jsonwebtoken'
 
 const ROLE_INDEX: Record<string, number> = { readonly: 0, employee: 1, support: 2, finance: 3, superadmin: 4 }
 
@@ -66,4 +68,71 @@ export function registerNotificationRoutes(app: FastifyInstance, db: Pool, authe
     )
     return reply.send({ success: true })
   })
+
+  // WebSocket push: one client per browser tab, filtered by role
+  const wsClients = new Set<{ socket: any; role: string }>()
+
+  app.get('/ws/admin/notifications', { websocket: true }, (socket: any, req: any) => {
+    const token = (req.query as any)?.token
+    let role: string | undefined
+    try {
+      const payload = jwt.verify(token, process.env.ADMIN_JWT_SECRET!) as any
+      role = payload.role
+    } catch {
+      socket.close(4001, 'Unauthorized')
+      return
+    }
+    const entry = { socket, role: role! }
+    wsClients.add(entry)
+    socket.on('close', () => wsClients.delete(entry))
+    socket.on('error', () => wsClients.delete(entry))
+  })
+
+  // Dedicated LISTEN connection — separate from the pooled `db` since LISTEN
+  // must stay bound to one held connection for the process lifetime.
+  let reconnecting = false
+  function scheduleReconnect(err: unknown) {
+    app.log.error(err, 'admin_events LISTEN connection error, reconnecting in 5s')
+    if (reconnecting) return
+    reconnecting = true
+    setTimeout(() => {
+      reconnecting = false
+      startListener()
+    }, 5000)
+  }
+
+  async function startListener() {
+    try {
+      const listenClient = new Client({ connectionString: process.env.DATABASE_URL })
+      listenClient.on('error', (err) => {
+        scheduleReconnect(err)
+      })
+      await listenClient.connect()
+      await listenClient.query('LISTEN admin_events')
+      listenClient.on('notification', async (msg) => {
+        try {
+          const notifId = msg.payload
+          if (!notifId) return
+          const row = await db.query(
+            `SELECT id, type, title, body, severity, target_role, ref_table, ref_id, created_at
+             FROM admin_notifications WHERE id = $1`,
+            [notifId]
+          )
+          if (row.rows.length === 0) return
+          const notif = row.rows[0]
+          for (const client of wsClients) {
+            if (hasRoleAtLeast(client.role, notif.target_role) && client.socket.readyState === 1) {
+              client.socket.send(JSON.stringify(notif))
+            }
+          }
+        } catch (err) {
+          app.log.error(err, 'Failed to process admin_events notification')
+        }
+      })
+      app.log.info('Listening for admin_events notifications')
+    } catch (err) {
+      scheduleReconnect(err)
+    }
+  }
+  startListener().catch(err => app.log.error(err, 'Failed to start admin_events listener'))
 }
