@@ -1176,6 +1176,55 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // GET /api/admin/aviator/pnl — house PnL (staked − paid out) for
+  // Today / This Week / This Month / All-Time, from aviator_bets.
+  app.get('/api/admin/aviator/pnl', { onRequest: [authenticate, requireRole('finance')] }, async (_req, reply) => {
+    const periodQuery = (whereClause: string) => db.query(
+      `SELECT
+         COUNT(*)::int AS bets,
+         COUNT(DISTINCT round_id)::int AS rounds,
+         COALESCE(SUM(amount), 0)::float AS staked,
+         COALESCE(SUM(payout), 0)::float AS paid_out,
+         COALESCE(SUM(amount - payout), 0)::float AS pnl
+       FROM aviator_bets
+       ${whereClause}`
+    )
+    const [daily, weekly, monthly, allTime] = await Promise.all([
+      periodQuery(`WHERE created_at >= date_trunc('day', NOW())`),
+      periodQuery(`WHERE created_at >= date_trunc('week', NOW())`),
+      periodQuery(`WHERE created_at >= date_trunc('month', NOW())`),
+      periodQuery(''),
+    ])
+    return reply.send({
+      daily: daily.rows[0],
+      weekly: weekly.rows[0],
+      monthly: monthly.rows[0],
+      all_time: allTime.rows[0],
+    })
+  })
+
+  // GET /api/admin/aviator/history — round-by-round game history, paginated.
+  app.get('/api/admin/aviator/history', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { page = '1', limit = '20' } = req.query as any
+    const offset = (parseInt(page) - 1) * parseInt(limit)
+    const [rows, countRes] = await Promise.all([
+      db.query(
+        `SELECT round_id, MAX(crash_at) AS crash_at, MIN(created_at) AS started_at,
+                COUNT(*)::int AS bets,
+                COALESCE(SUM(amount), 0)::float AS staked,
+                COALESCE(SUM(payout), 0)::float AS paid_out,
+                COALESCE(SUM(amount - payout), 0)::float AS pnl
+         FROM aviator_bets
+         GROUP BY round_id
+         ORDER BY MIN(created_at) DESC
+         LIMIT $1 OFFSET $2`,
+        [parseInt(limit), offset]
+      ),
+      db.query(`SELECT COUNT(DISTINCT round_id) FROM aviator_bets`),
+    ])
+    return reply.send({ rounds: rows.rows, total: parseInt(countRes.rows[0].count) })
+  })
+
   // POST /api/admin/notifications/broadcast
   app.post('/api/admin/notifications/broadcast', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const body = req.body as any

@@ -1,8 +1,86 @@
 import { useEffect, useState } from 'react'
 import {
-  Card, Form, Switch, InputNumber, Select, Button, message, Divider, Row, Col, Tag
+  Card, Form, Switch, InputNumber, Select, Button, message, Divider, Row, Col, Tag,
+  Statistic, Table
 } from 'antd'
 import { adminApi } from '../../api/client'
+
+function AviatorPnl() {
+  const [pnl, setPnl] = useState<any>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    adminApi.get('/aviator/pnl').then(r => setPnl(r.data)).finally(() => setLoading(false))
+  }, [])
+
+  const card = (title: string, data: any) => (
+    <Col xs={24} sm={12} lg={6}>
+      <Card size="small" loading={loading}>
+        <Statistic
+          title={title}
+          value={data?.pnl ?? 0}
+          precision={2}
+          prefix="₹"
+          valueStyle={{ color: (data?.pnl ?? 0) >= 0 ? '#52c41a' : '#f5222d' }}
+        />
+        <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+          Staked ₹{(data?.staked ?? 0).toLocaleString()} · Paid ₹{(data?.paid_out ?? 0).toLocaleString()} · {data?.bets ?? 0} bets / {data?.rounds ?? 0} rounds
+        </div>
+      </Card>
+    </Col>
+  )
+
+  return (
+    <Row gutter={[16, 16]}>
+      {card('Today', pnl?.daily)}
+      {card('This Week', pnl?.weekly)}
+      {card('This Month', pnl?.monthly)}
+      {card('All Time', pnl?.all_time)}
+    </Row>
+  )
+}
+
+function AviatorHistory() {
+  const [rows, setRows] = useState<any[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [loading, setLoading] = useState(false)
+  const limit = 20
+
+  const load = (p: number) => {
+    setLoading(true)
+    adminApi.get('/aviator/history', { params: { page: p, limit } })
+      .then(r => { setRows(r.data.rounds); setTotal(r.data.total) })
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { load(page) }, [page])
+
+  return (
+    <Table
+      dataSource={rows}
+      rowKey="round_id"
+      loading={loading}
+      size="small"
+      pagination={{ current: page, pageSize: limit, total, onChange: setPage }}
+      columns={[
+        { title: 'Round Started', dataIndex: 'started_at', render: (v: string) => new Date(v).toLocaleString() },
+        { title: 'Crash', dataIndex: 'crash_at', render: (v: string) => `${parseFloat(v).toFixed(2)}x` },
+        { title: 'Bets', dataIndex: 'bets' },
+        { title: 'Staked (₹)', dataIndex: 'staked', render: (v: number) => v.toLocaleString() },
+        { title: 'Paid Out (₹)', dataIndex: 'paid_out', render: (v: number) => v.toLocaleString() },
+        {
+          title: 'PnL (₹)', dataIndex: 'pnl', render: (v: number) => (
+            <span style={{ color: v >= 0 ? '#52c41a' : '#f5222d', fontWeight: 'bold' }}>
+              {v >= 0 ? '+' : ''}{v.toLocaleString()}
+            </span>
+          )
+        },
+      ]}
+    />
+  )
+}
 
 export default function Aviator() {
   const [config, setConfig] = useState<any>(null)
@@ -124,6 +202,14 @@ export default function Aviator() {
           </Card>
         </Col>
       </Row>
+
+      <Divider>PnL</Divider>
+      <AviatorPnl />
+
+      <Divider>Game History</Divider>
+      <Card>
+        <AviatorHistory />
+      </Card>
     </div>
   )
 }
