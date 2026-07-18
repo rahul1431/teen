@@ -1,16 +1,19 @@
-import { useEffect, useState } from 'react'
-import { Card, Table, Tag, Button, Typography, message } from 'antd'
+import { useEffect, useMemo, useState } from 'react'
+import { Card, Table, Tag, Button, Typography, message, DatePicker } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
+import type { Dayjs } from 'dayjs'
 import { adminApi } from '../api/client'
 import { useAuthStore } from '../store/auth'
 import { useNotificationStore, type AdminNotification } from '../store/notifications'
 
 const { Title } = Typography
+const { RangePicker } = DatePicker
 
 export default function NotificationsHistory() {
   const { items, setInitial, markAllRead } = useNotificationStore()
   const admin = useAuthStore((s) => s.admin)
   const [loading, setLoading] = useState(false)
+  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null)
 
   useEffect(() => {
     fetchHistory()
@@ -43,8 +46,30 @@ export default function NotificationsHistory() {
     }
   }
 
+  const typeFilters = useMemo(
+    () =>
+      Array.from(new Set(items.map((i) => i.type))).map((t) => ({ text: t, value: t })),
+    [items],
+  )
+
+  const filteredItems = useMemo(() => {
+    if (!dateRange || !dateRange[0] || !dateRange[1]) return items
+    const start = dateRange[0].startOf('day').valueOf()
+    const end = dateRange[1].endOf('day').valueOf()
+    return items.filter((i) => {
+      const t = new Date(i.created_at).getTime()
+      return t >= start && t <= end
+    })
+  }, [items, dateRange])
+
   const columns: ColumnsType<AdminNotification> = [
-    { title: 'Type', dataIndex: 'type', render: (v) => <Tag>{v}</Tag> },
+    {
+      title: 'Type',
+      dataIndex: 'type',
+      filters: typeFilters,
+      onFilter: (value, record) => record.type === value,
+      render: (v) => <Tag>{v}</Tag>,
+    },
     { title: 'Title', dataIndex: 'title' },
     { title: 'Details', dataIndex: 'body' },
     { title: 'Severity', dataIndex: 'severity', render: (v) => <Tag color={v === 'warning' ? 'orange' : 'blue'}>{v}</Tag> },
@@ -58,7 +83,14 @@ export default function NotificationsHistory() {
         <Button onClick={onMarkAllRead}>Mark All Read</Button>
       </div>
       <Card>
-        <Table dataSource={items} columns={columns} rowKey="id" loading={loading} pagination={{ pageSize: 20 }} />
+        <div style={{ marginBottom: 16 }}>
+          <RangePicker
+            value={dateRange as any}
+            onChange={(range) => setDateRange(range as [Dayjs | null, Dayjs | null] | null)}
+            allowClear
+          />
+        </div>
+        <Table dataSource={filteredItems} columns={columns} rowKey="id" loading={loading} pagination={{ pageSize: 20 }} />
       </Card>
     </div>
   )
