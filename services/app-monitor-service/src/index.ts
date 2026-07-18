@@ -78,11 +78,11 @@ app.post<{ Body: Record<string, unknown> }>('/api/monitor/events', async (req, r
   try {
     const payload = req.body as any
     if (!payload.session_id || !payload.device_id || !Array.isArray(payload.events)) {
-      logger.warn('Invalid ingest payload', { session_id: !!payload.session_id, device_id: !!payload.device_id, events: !!Array.isArray(payload.events) })
+      logger.warn({ session_id: !!payload.session_id, device_id: !!payload.device_id, events: !!Array.isArray(payload.events) }, 'Invalid ingest payload')
       return reply.code(400).send({ success: false, error: 'Missing required fields: session_id, device_id, events' })
     }
     if (payload.events.length > 100) {
-      logger.warn('Batch too large', { event_count: payload.events.length })
+      logger.warn({ event_count: payload.events.length }, 'Batch too large')
       return reply.code(400).send({ success: false, error: 'Batch too large: max 100 events' })
     }
     // Validate shared secret (skip check when env var not configured — dev only)
@@ -90,7 +90,11 @@ app.post<{ Body: Record<string, unknown> }>('/api/monitor/events', async (req, r
     if (expectedKey) {
       const providedKey = req.headers['x-monitor-key']
       if (providedKey !== expectedKey) {
-        logger.warn('Invalid auth key', { provided: !!providedKey, expected: !!expectedKey })
+        logger.warn({
+          providedLen: String(providedKey ?? '').length,
+          expectedLen: expectedKey.length,
+          providedPrefix: String(providedKey ?? '').slice(0, 6),
+        }, 'Invalid auth key')
         return reply.code(401).send({ success: false, error: 'Unauthorized' })
       }
     } else {
@@ -215,7 +219,7 @@ app.get('/api/monitor/server-health', async (_req, reply) => {
     const [pmResult, dockerResult] = await Promise.all([
       execAsync('pm2 jlist 2>/dev/null', { timeout: 5000, encoding: 'utf-8' }).catch(pmErr => {
         // PM2 not available in this env (Docker, K8s, dev) — log but don't crash
-        logger.warn('PM2 jlist unavailable', pmErr instanceof Error ? pmErr.message : String(pmErr))
+        logger.warn({ err: pmErr instanceof Error ? pmErr.message : String(pmErr) }, 'PM2 jlist unavailable')
         return null
       }),
       execAsync('docker ps --format "{{.Names}}|{{.Status}}|{{.State}}" 2>/dev/null', { timeout: 5000 }).catch(() => null),
