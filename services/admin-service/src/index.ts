@@ -39,12 +39,14 @@ import { registerTaskRoutes } from './task-routes'
 import { registerNotificationRoutes } from './notifications-routes'
 import { createRateLimiter } from './middleware/rate-limiter'
 
-// QR images for payment methods are stored here, served by nginx at /uploads/qr/.
-const QR_UPLOAD_DIR = process.env.QR_UPLOAD_DIR || '/opt/teen-prod/uploads/qr'
+// QR images for payment methods are stored here. nginx's /uploads/ alias points at
+// /opt/teen/uploads/ (not /opt/teen-prod), even though services now run from /opt/teen-prod —
+// keep uploads writing to the legacy path so nginx can actually serve them.
+const QR_UPLOAD_DIR = process.env.QR_UPLOAD_DIR || '/opt/teen/uploads/qr'
 
 // Cricket fantasy player avatars and country flag icons, served by nginx at /uploads/cricket-avatars/ and /uploads/cricket-flags/.
-const CRICKET_AVATAR_UPLOAD_DIR = process.env.CRICKET_AVATAR_UPLOAD_DIR || '/opt/teen-prod/uploads/cricket-avatars'
-const CRICKET_FLAG_UPLOAD_DIR = process.env.CRICKET_FLAG_UPLOAD_DIR || '/opt/teen-prod/uploads/cricket-flags'
+const CRICKET_AVATAR_UPLOAD_DIR = process.env.CRICKET_AVATAR_UPLOAD_DIR || '/opt/teen/uploads/cricket-avatars'
+const CRICKET_FLAG_UPLOAD_DIR = process.env.CRICKET_FLAG_UPLOAD_DIR || '/opt/teen/uploads/cricket-flags'
 
 // Thin wrapper to keep the call sites readable (matches the old `authenticator` API)
 const totp = {
@@ -75,7 +77,7 @@ async function start() {
   await app.register(helmet, { crossOriginResourcePolicy: false })
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.ADMIN_JWT_SECRET! })
-  await app.register(multipart, { limits: { fileSize: 150 * 1024 * 1024 } }) // 150MB (APK uploads)
+  await app.register(multipart, { limits: { fileSize: 300 * 1024 * 1024 } }) // 300MB (APK uploads)
   await app.register(websocket)
   if (redis.status === 'wait') await redis.connect()
   fs.mkdirSync(QR_UPLOAD_DIR, { recursive: true })
@@ -949,7 +951,7 @@ async function start() {
     if (!file) return reply.code(400).send({ error: 'No file uploaded' })
     const ext = path.extname(file.filename || '').toLowerCase().slice(0, 8) || '.gif'
     const fname = `emoji_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`
-    const EMOJI_UPLOAD_DIR = process.env.EMOJI_UPLOAD_DIR || '/opt/teen-prod/uploads/emojis'
+    const EMOJI_UPLOAD_DIR = process.env.EMOJI_UPLOAD_DIR || '/opt/teen/uploads/emojis'
     fs.mkdirSync(EMOJI_UPLOAD_DIR, { recursive: true })
     await pipeline(file.file, fs.createWriteStream(path.join(EMOJI_UPLOAD_DIR, fname)))
     return reply.send({ url: `/uploads/emojis/${fname}` })
@@ -1005,17 +1007,17 @@ async function start() {
     const b = z.object({
       method_type: z.enum(['upi', 'bank', 'qr']),
       label: z.string().min(1),
-      upi_id: z.string().optional(),
-      account_name: z.string().optional(),
-      account_number: z.string().optional(),
-      ifsc: z.string().optional(),
-      bank_name: z.string().optional(),
-      qr_image_url: z.string().optional(),
-      instructions: z.string().optional(),
-      min_amount: z.number().optional(),
-      max_amount: z.number().optional(),
+      upi_id: z.string().nullable().optional(),
+      account_name: z.string().nullable().optional(),
+      account_number: z.string().nullable().optional(),
+      ifsc: z.string().nullable().optional(),
+      bank_name: z.string().nullable().optional(),
+      qr_image_url: z.string().nullable().optional(),
+      instructions: z.string().nullable().optional(),
+      min_amount: z.coerce.number().optional(),
+      max_amount: z.coerce.number().optional(),
       is_active: z.boolean().optional(),
-      sort_order: z.number().optional(),
+      sort_order: z.coerce.number().optional(),
     }).parse(req.body)
     const res = await db.query(
       `INSERT INTO payment_methods
@@ -1037,17 +1039,17 @@ async function start() {
     const { id } = req.params as any
     const b = z.object({
       label: z.string().optional(),
-      upi_id: z.string().optional(),
-      account_name: z.string().optional(),
-      account_number: z.string().optional(),
-      ifsc: z.string().optional(),
-      bank_name: z.string().optional(),
-      qr_image_url: z.string().optional(),
-      instructions: z.string().optional(),
-      min_amount: z.number().optional(),
-      max_amount: z.number().optional(),
+      upi_id: z.string().nullable().optional(),
+      account_name: z.string().nullable().optional(),
+      account_number: z.string().nullable().optional(),
+      ifsc: z.string().nullable().optional(),
+      bank_name: z.string().nullable().optional(),
+      qr_image_url: z.string().nullable().optional(),
+      instructions: z.string().nullable().optional(),
+      min_amount: z.coerce.number().optional(),
+      max_amount: z.coerce.number().optional(),
       is_active: z.boolean().optional(),
-      sort_order: z.number().optional(),
+      sort_order: z.coerce.number().optional(),
     }).parse(req.body)
     const updates: string[] = []
     const params: any[] = []
@@ -3158,7 +3160,7 @@ async function start() {
   })
 
   // ── Home Banners ──────────────────────────────────────────────────────────────
-  const BANNER_UPLOAD_DIR = process.env.BANNER_UPLOAD_DIR || '/opt/teen-prod/uploads/banners'
+  const BANNER_UPLOAD_DIR = process.env.BANNER_UPLOAD_DIR || '/opt/teen/uploads/banners'
   fs.mkdirSync(BANNER_UPLOAD_DIR, { recursive: true })
 
   app.get('/api/admin/banners', { onRequest: [app.authenticate] }, async (_req, reply) => {
@@ -3379,31 +3381,44 @@ async function start() {
   // Admin: POST /api/admin/app/upload — upload APK and set new version info
   app.post('/api/admin/app/upload', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const parts = (req as any).parts()
+    const dest = path.join(APK_DIR, APK_FILENAME)
+    const tmpDest = path.join(APK_DIR, `.${APK_FILENAME}.uploading-${Date.now()}`)
     let versionName = '', versionCode = 0, releaseNotes = '', forceUpdate = false, fileWritten = false
 
-    for await (const part of parts) {
-      if (part.type === 'file' && part.fieldname === 'apk') {
-        const dest = path.join(APK_DIR, APK_FILENAME)
-        await pipeline(part.file, fs.createWriteStream(dest))
-        fileWritten = true
-      } else if (part.type === 'field') {
-        if (part.fieldname === 'version_name') versionName = String(part.value)
-        if (part.fieldname === 'version_code') versionCode = parseInt(String(part.value)) || 0
-        if (part.fieldname === 'release_notes') releaseNotes = String(part.value)
-        if (part.fieldname === 'force_update') forceUpdate = String(part.value) === 'true'
+    try {
+      for await (const part of parts) {
+        if (part.type === 'file' && part.fieldname === 'apk') {
+          // Stream to a temp file first — never touch the live APK until the
+          // whole upload has succeeded and validation has passed, so a
+          // truncated/oversized/invalid upload can't corrupt production.
+          await pipeline(part.file, fs.createWriteStream(tmpDest))
+          if (part.file.truncated) throw Object.assign(new Error('File exceeds size limit'), { statusCode: 413 })
+          fileWritten = true
+        } else if (part.type === 'field') {
+          if (part.fieldname === 'version_name') versionName = String(part.value)
+          if (part.fieldname === 'version_code') versionCode = parseInt(String(part.value)) || 0
+          if (part.fieldname === 'release_notes') releaseNotes = String(part.value)
+          if (part.fieldname === 'force_update') forceUpdate = String(part.value) === 'true'
+        }
       }
+
+      if (!fileWritten) return reply.code(400).send({ error: 'No APK file provided' })
+      if (!versionName || versionCode < 1) return reply.code(400).send({ error: 'version_name and version_code are required' })
+
+      await db.query(
+        `INSERT INTO app_versions (version_name, version_code, download_url, release_notes, force_update)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (version_code) DO UPDATE SET version_name=$1, download_url=$3, release_notes=$4, force_update=$5, created_at=NOW()`,
+        [versionName, versionCode, APK_PUBLIC_URL, releaseNotes || null, forceUpdate]
+      )
+      // Only now — after the DB write succeeded — promote the temp file to the live path.
+      await fs.promises.rename(tmpDest, dest)
+      return reply.send({ success: true, version_name: versionName, version_code: versionCode, download_url: APK_PUBLIC_URL })
+    } catch (err: any) {
+      await fs.promises.unlink(tmpDest).catch(() => {})
+      const statusCode = err?.statusCode === 413 ? 413 : 500
+      return reply.code(statusCode).send({ error: statusCode === 413 ? 'APK file exceeds the upload size limit' : 'Upload failed' })
     }
-
-    if (!fileWritten) return reply.code(400).send({ error: 'No APK file provided' })
-    if (!versionName || versionCode < 1) return reply.code(400).send({ error: 'version_name and version_code are required' })
-
-    await db.query(
-      `INSERT INTO app_versions (version_name, version_code, download_url, release_notes, force_update)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (version_code) DO UPDATE SET version_name=$1, download_url=$3, release_notes=$4, force_update=$5, created_at=NOW()`,
-      [versionName, versionCode, APK_PUBLIC_URL, releaseNotes || null, forceUpdate]
-    )
-    return reply.send({ success: true, version_name: versionName, version_code: versionCode, download_url: APK_PUBLIC_URL })
   })
 
   // Admin: GET /api/admin/app/versions — list all uploaded versions
