@@ -444,9 +444,9 @@ class _DepositSheetState extends State<_DepositSheet> {
     return 'upi://pay?$params';
   }
 
-  // Render the same UPI QR to a PNG and save it directly to the device's
-  // gallery, so the user can scan it later or send it on from their own
-  // gallery/Photos app.
+  // Save the QR shown on screen to the device's gallery: the admin-uploaded
+  // QR image when one is configured for this method, otherwise the
+  // generated UPI QR.
   Future<void> _downloadQr(Map<String, dynamic> m) async {
     try {
       final hasAccess = await Gal.hasAccess();
@@ -457,17 +457,23 @@ class _DepositSheetState extends State<_DepositSheet> {
           return;
         }
       }
-      final painter = QrPainter(
-        data: _upiUri(m),
-        version: QrVersions.auto,
-        gapless: true,
-      );
-      final imageData = await painter.toImageData(600);
-      if (imageData == null) throw Exception('No image data');
-      final file = File(
-          '${Directory.systemTemp.path}/upi_qr_${DateTime.now().millisecondsSinceEpoch}.png');
-      await file.writeAsBytes(imageData.buffer.asUint8List());
-      await Gal.putImage(file.path, album: 'MyOnlineJoker');
+      final qrImageUrl = m['qr_image_url']?.toString();
+      if (qrImageUrl != null && qrImageUrl.isNotEmpty) {
+        final res = await Dio().get<List<int>>(_resolveUrl(qrImageUrl),
+            options: Options(responseType: ResponseType.bytes));
+        await Gal.putImageBytes(Uint8List.fromList(res.data!),
+            album: 'MyOnlineJoker');
+      } else {
+        final painter = QrPainter(
+          data: _upiUri(m),
+          version: QrVersions.auto,
+          gapless: true,
+        );
+        final imageData = await painter.toImageData(600);
+        if (imageData == null) throw Exception('No image data');
+        await Gal.putImageBytes(imageData.buffer.asUint8List(),
+            album: 'MyOnlineJoker');
+      }
       _snack('QR code saved to gallery', AppColors.green);
     } catch (e) {
       _snack('Could not save QR code', AppColors.red);
@@ -532,6 +538,8 @@ class _DepositSheetState extends State<_DepositSheet> {
   Widget _methodDetails(Map<String, dynamic> m) {
     switch (m['method_type']) {
       case 'upi':
+        final uploadedQrUrl = m['qr_image_url']?.toString();
+        final hasUploadedQr = uploadedQrUrl != null && uploadedQrUrl.isNotEmpty;
         return Column(children: [
           Center(
             child: Container(
@@ -540,11 +548,20 @@ class _DepositSheetState extends State<_DepositSheet> {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: QrImageView(
-                data: _upiUri(m),
-                size: 190,
-                backgroundColor: Colors.white,
-              ),
+              child: hasUploadedQr
+                  ? Image.network(_resolveUrl(uploadedQrUrl),
+                      height: 190,
+                      width: 190,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const SizedBox(
+                          height: 190,
+                          width: 190,
+                          child: Center(child: Text('QR image unavailable'))))
+                  : QrImageView(
+                      data: _upiUri(m),
+                      size: 190,
+                      backgroundColor: Colors.white,
+                    ),
             ),
           ),
           const SizedBox(height: 6),
@@ -568,7 +585,11 @@ class _DepositSheetState extends State<_DepositSheet> {
                     color: AppColors.textPrimary)),
           ),
           const SizedBox(height: 6),
-          _payStep(1, 'Enter the amount below (the QR updates automatically).'),
+          _payStep(
+              1,
+              hasUploadedQr
+                  ? 'Enter the amount below.'
+                  : 'Enter the amount below (the QR updates automatically).'),
           _payStep(2, 'Open any UPI app (PhonePe, GPay, Paytm) and scan the QR — or tap "Download QR Code" to save it to your gallery and scan later.'),
           _payStep(3, 'Complete the payment in your UPI app.'),
           _payStep(4, 'Copy the UPI reference/UTR number from your payment app.'),
