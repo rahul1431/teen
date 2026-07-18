@@ -106,6 +106,21 @@ CREATE TRIGGER trg_kyc_documents_new
   AFTER INSERT ON kyc_documents
   FOR EACH ROW EXECUTE FUNCTION trg_notify_new_kyc();
 
+-- Resubmissions after a rejection go through the submission endpoint's
+-- INSERT ... ON CONFLICT (user_id) DO UPDATE SET status = 'under_review'
+-- (kyc_documents.user_id is UNIQUE), which never fires an AFTER INSERT
+-- trigger. Add an AFTER UPDATE OF status trigger, reusing the same
+-- function (it only reads NEW.status/NEW.doc_type/NEW.id, all present on
+-- UPDATE too), so admins are also notified when a row transitions INTO
+-- 'under_review'. The OLD IS DISTINCT FROM NEW guard prevents firing on
+-- unrelated column updates or no-op status writes.
+DROP TRIGGER IF EXISTS trg_kyc_documents_resubmit ON kyc_documents;
+CREATE TRIGGER trg_kyc_documents_resubmit
+  AFTER UPDATE OF status ON kyc_documents
+  FOR EACH ROW
+  WHEN (NEW.status = 'under_review' AND OLD.status IS DISTINCT FROM NEW.status)
+  EXECUTE FUNCTION trg_notify_new_kyc();
+
 -- Large wins: wallet_transactions.type has no 'win' value in txn_type_enum
 -- (values are deposit/withdrawal/game_credit/game_debit/bonus/referral/
 -- transfer/manual_credit/manual_debit/tip_dealer). Wins are credited to the
