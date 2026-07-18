@@ -8,6 +8,11 @@ export function hasRoleAtLeast(actual: string | undefined, required: string): bo
   return ROLE_INDEX[actual] >= ROLE_INDEX[required]
 }
 
+// Every role the caller's role satisfies (e.g. superadmin satisfies target_role in ['readonly','employee','support','finance','superadmin'])
+export function satisfiedRolesFor(role: string): string[] {
+  return Object.keys(ROLE_INDEX).filter(r => hasRoleAtLeast(role, r))
+}
+
 export function registerNotificationRoutes(app: FastifyInstance, db: Pool, authenticate: any) {
   // GET /api/admin/notifications?since=<iso>&limit=<n> — role-scoped history + unread count
   app.get('/api/admin/notifications', { onRequest: [authenticate] }, async (req: any, reply) => {
@@ -16,8 +21,7 @@ export function registerNotificationRoutes(app: FastifyInstance, db: Pool, authe
     const q = req.query as { since?: string; limit?: string }
     const limit = Math.min(parseInt(q.limit || '50', 10) || 50, 200)
 
-    // Every role the caller's role satisfies (e.g. superadmin satisfies target_role in ['readonly','employee','support','finance','superadmin'])
-    const satisfiedRoles = Object.keys(ROLE_INDEX).filter(r => hasRoleAtLeast(role, r))
+    const satisfiedRoles = satisfiedRolesFor(role)
 
     const params: any[] = [satisfiedRoles, limit]
     let sql = `SELECT id, type, title, body, severity, target_role, ref_table, ref_id, read_by, created_at
@@ -39,10 +43,13 @@ export function registerNotificationRoutes(app: FastifyInstance, db: Pool, authe
   // PATCH /api/admin/notifications/:id/read — mark one notification read by this admin
   app.patch('/api/admin/notifications/:id/read', { onRequest: [authenticate] }, async (req: any, reply) => {
     const me = req.user as any
+    const role = me?.role as string
     const { id } = req.params as { id: string }
+    const satisfiedRoles = satisfiedRolesFor(role)
     await db.query(
-      `UPDATE admin_notifications SET read_by = read_by || $2::jsonb WHERE id = $1 AND NOT (read_by @> $2::jsonb)`,
-      [id, JSON.stringify([me.id])]
+      `UPDATE admin_notifications SET read_by = read_by || $3::jsonb
+       WHERE id = $1 AND target_role = ANY($2) AND NOT (read_by @> $3::jsonb)`,
+      [id, satisfiedRoles, JSON.stringify([me.id])]
     )
     return reply.send({ success: true })
   })
@@ -51,7 +58,7 @@ export function registerNotificationRoutes(app: FastifyInstance, db: Pool, authe
   app.patch('/api/admin/notifications/read-all', { onRequest: [authenticate] }, async (req: any, reply) => {
     const me = req.user as any
     const role = me?.role as string
-    const satisfiedRoles = Object.keys(ROLE_INDEX).filter(r => hasRoleAtLeast(role, r))
+    const satisfiedRoles = satisfiedRolesFor(role)
     await db.query(
       `UPDATE admin_notifications SET read_by = read_by || $2::jsonb
        WHERE target_role = ANY($1) AND NOT (read_by @> $2::jsonb)`,
