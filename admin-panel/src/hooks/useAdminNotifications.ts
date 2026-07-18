@@ -18,6 +18,7 @@ export function useAdminNotifications() {
   mutedRef.current = muted
   const wsRef = useRef<WebSocket | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (!token) return
@@ -56,7 +57,7 @@ export function useAdminNotifications() {
         if (!pollRef.current) {
           pollRef.current = setInterval(backfill, 15000)
         }
-        setTimeout(connect, reconnectDelay)
+        reconnectTimeoutRef.current = setTimeout(connect, reconnectDelay)
         reconnectDelay = Math.min(reconnectDelay * 2, 30000)
       }
       ws.onerror = () => ws.close()
@@ -67,6 +68,7 @@ export function useAdminNotifications() {
       cancelled = true
       wsRef.current?.close()
       if (pollRef.current) clearInterval(pollRef.current)
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
     }
   }, [token, addNotification, setInitial])
 }
