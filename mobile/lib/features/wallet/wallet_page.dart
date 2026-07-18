@@ -4,7 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:hive/hive.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:gal/gal.dart';
 import '../../core/network/api_client.dart';
 import '../../core/constants/app_config.dart';
 import '../../core/services/balance_service.dart';
@@ -414,9 +415,7 @@ class _DepositSheetState extends State<_DepositSheet> {
       });
       final res =
           await widget.api.dio.post('/api/wallet/deposit/submit', data: form);
-      final msg = res.data?['message'] as String? ?? 'Deposit submitted!';
       if (mounted) Navigator.pop(context, true);
-      _snack(msg, AppColors.green);
     } catch (e) {
       final msg = e is DioException
           ? (e.response?.data?['error']?.toString() ?? 'Submit failed')
@@ -427,60 +426,52 @@ class _DepositSheetState extends State<_DepositSheet> {
     }
   }
 
-  // Launch a UPI app with the admin-configured UPI ID and typed amount
-  // prefilled so the payer only has to confirm. Falls back to the generic
-  // upi:// chooser when the specific app isn't installed.
-  Future<void> _payViaUpiApp(String appScheme) async {
+  // Build a standard UPI payment URI from the admin-configured VPA, embedding
+  // the amount currently typed in so the payer's UPI app opens pre-filled.
+  // Rendered as a QR (scanned, not launched as an app intent) because intent
+  // links (upi://pay opened via launchUrl) get blocked by UPI apps' fraud
+  // heuristics for collect requests to VPAs with no prior payer history —
+  // a plain QR scan doesn't trip that check.
+  String _upiUri(Map<String, dynamic> m) {
+    final upiId = m['upi_id']?.toString() ?? '';
     final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0;
-    if (amount < 1) {
-      _snack('Enter the amount first', AppColors.orange);
-      return;
-    }
-    final upiId = _selected?['upi_id']?.toString() ?? '';
-    if (upiId.isEmpty) {
-      _snack('No UPI ID configured', AppColors.red);
-      return;
-    }
-    final payeeName =
-        (_selected?['account_name'] ?? _selected?['label'] ?? 'Add Money')
-            .toString();
-    final params = 'pa=${Uri.encodeComponent(upiId)}'
+    final payeeName = (m['account_name'] ?? m['label'] ?? 'Add Money').toString();
+    final params = StringBuffer('pa=${Uri.encodeComponent(upiId)}'
         '&pn=${Uri.encodeComponent(payeeName)}'
-        '&am=${amount.toStringAsFixed(2)}'
         '&cu=INR'
-        '&tn=${Uri.encodeComponent('Add Money')}';
-    for (final uri in [
-      Uri.parse('$appScheme?$params'),
-      Uri.parse('upi://pay?$params')
-    ]) {
-      try {
-        if (await launchUrl(uri,
-            mode: LaunchMode.externalNonBrowserApplication)) return;
-      } catch (_) {/* try the next scheme */}
-    }
-    _snack('UPI app not installed', AppColors.red);
+        '&tn=${Uri.encodeComponent('Add Money')}');
+    if (amount >= 1) params.write('&am=${amount.toStringAsFixed(2)}');
+    return 'upi://pay?$params';
   }
 
-  Widget _upiAppButton(String label, Color color, String scheme) {
-    return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 3),
-        child: ElevatedButton(
-          onPressed: () => _payViaUpiApp(scheme),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: color,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-          child: Text(label,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis),
-        ),
-      ),
-    );
+  // Render the same UPI QR to a PNG and save it directly to the device's
+  // gallery, so the user can scan it later or send it on from their own
+  // gallery/Photos app.
+  Future<void> _downloadQr(Map<String, dynamic> m) async {
+    try {
+      final hasAccess = await Gal.hasAccess();
+      if (!hasAccess) {
+        final granted = await Gal.requestAccess();
+        if (!granted) {
+          _snack('Gallery permission denied', AppColors.red);
+          return;
+        }
+      }
+      final painter = QrPainter(
+        data: _upiUri(m),
+        version: QrVersions.auto,
+        gapless: true,
+      );
+      final imageData = await painter.toImageData(600);
+      if (imageData == null) throw Exception('No image data');
+      final file = File(
+          '${Directory.systemTemp.path}/upi_qr_${DateTime.now().millisecondsSinceEpoch}.png');
+      await file.writeAsBytes(imageData.buffer.asUint8List());
+      await Gal.putImage(file.path, album: 'MyOnlineJoker');
+      _snack('QR code saved to gallery', AppColors.green);
+    } catch (e) {
+      _snack('Could not save QR code', AppColors.red);
+    }
   }
 
   Widget _detailRow(String label, String value) {
@@ -508,33 +499,80 @@ class _DepositSheetState extends State<_DepositSheet> {
     );
   }
 
+  Widget _payStep(int n, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 18,
+            height: 18,
+            margin: const EdgeInsets.only(top: 1),
+            decoration: const BoxDecoration(
+                color: AppColors.gold, shape: BoxShape.circle),
+            child: Center(
+                child: Text('$n',
+                    style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black))),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text,
+                style: const TextStyle(
+                    color: AppColors.textSecondary, fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _methodDetails(Map<String, dynamic> m) {
     switch (m['method_type']) {
       case 'upi':
         return Column(children: [
+          Center(
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: QrImageView(
+                data: _upiUri(m),
+                size: 190,
+                backgroundColor: Colors.white,
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text('Scan with any UPI app',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+          const SizedBox(height: 10),
+          TextButton.icon(
+            onPressed: () => _downloadQr(m),
+            icon: const Icon(Icons.download, size: 16),
+            label: const Text('Download QR Code'),
+          ),
+          const SizedBox(height: 4),
           _detailRow('UPI ID', m['upi_id']?.toString() ?? '-'),
           const SizedBox(height: 10),
-          const Align(
+          Align(
             alignment: Alignment.centerLeft,
-            child: Text('Pay with (enter amount below first):',
-                style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+            child: Text('How to pay',
+                style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                    color: AppColors.textPrimary)),
           ),
-          const SizedBox(height: 8),
-          Row(children: [
-            _upiAppButton('PhonePe', const Color(0xFF5F259F), 'phonepe://pay'),
-            _upiAppButton(
-                'Google Pay', const Color(0xFF1A73E8), 'tez://upi/pay'),
-            _upiAppButton('Paytm', const Color(0xFF00B9F1), 'paytmmp://pay'),
-          ]),
-          if (m['qr_image_url'] != null) ...[
-            const SizedBox(height: 12),
-            const Text('Or scan to pay:',
-                style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-            const SizedBox(height: 6),
-            Image.network(_resolveUrl(m['qr_image_url']?.toString()),
-                height: 180,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink()),
-          ],
+          const SizedBox(height: 6),
+          _payStep(1, 'Enter the amount below (the QR updates automatically).'),
+          _payStep(2, 'Open any UPI app (PhonePe, GPay, Paytm) and scan the QR — or tap "Download QR Code" to save it to your gallery and scan later.'),
+          _payStep(3, 'Complete the payment in your UPI app.'),
+          _payStep(4, 'Copy the UPI reference/UTR number from your payment app.'),
+          _payStep(5, 'Paste it below, attach a screenshot, and submit.'),
         ]);
       case 'bank':
         return Column(children: [
@@ -636,8 +674,9 @@ class _DepositSheetState extends State<_DepositSheet> {
                         controller: _amountCtrl,
                         keyboardType: TextInputType.number,
                         onChanged: (_) {
-                          if (_promoResult != null)
-                            setState(() => _promoResult = null);
+                          setState(() {
+                            if (_promoResult != null) _promoResult = null;
+                          });
                         },
                         decoration: const InputDecoration(
                             labelText: 'Amount (₹)', prefixText: '₹ '),
