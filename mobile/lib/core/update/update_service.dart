@@ -38,7 +38,7 @@ class UpdateService {
         barrierDismissible: !forceUpdate,
         builder: (ctx) => PopScope(
           canPop: !forceUpdate,
-          child: _UpdateDialog(
+          child: UpdateDialog(
             serverName: serverName,
             notes: notes,
             forceUpdate: forceUpdate,
@@ -52,13 +52,14 @@ class UpdateService {
   }
 }
 
-class _UpdateDialog extends StatefulWidget {
+class UpdateDialog extends StatefulWidget {
   final String serverName;
   final String? notes;
   final bool forceUpdate;
   final String downloadUrl;
 
-  const _UpdateDialog({
+  const UpdateDialog({
+    super.key,
     required this.serverName,
     required this.notes,
     required this.forceUpdate,
@@ -66,10 +67,10 @@ class _UpdateDialog extends StatefulWidget {
   });
 
   @override
-  State<_UpdateDialog> createState() => _UpdateDialogState();
+  State<UpdateDialog> createState() => UpdateDialogState();
 }
 
-class _UpdateDialogState extends State<_UpdateDialog> {
+class UpdateDialogState extends State<UpdateDialog> {
   bool _downloading = false;
   bool _downloaded = false;
   double _progress = 0;
