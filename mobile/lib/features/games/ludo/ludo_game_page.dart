@@ -1011,20 +1011,19 @@ class _LudoGamePageState extends State<LudoGamePage>
   }
 
   void _confirmExit() {
-    if (widget.offline) {
-      Navigator.of(context).pop();
-      return;
-    }
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1A1A2E),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Leave Match?',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        content: const Text(
-            "You'll forfeit your stake and lose your progress in this game.",
-            style: TextStyle(color: Colors.white70, fontSize: 14)),
+        title: Text(widget.offline ? 'Exit Practice Game?' : 'Leave Match?',
+            style: const TextStyle(
+                color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Text(
+            widget.offline
+                ? "Your progress in this game won't be saved."
+                : "You'll forfeit your stake and lose your progress in this game.",
+            style: const TextStyle(color: Colors.white70, fontSize: 14)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -1041,8 +1040,8 @@ class _LudoGamePageState extends State<LudoGamePage>
               Navigator.pop(ctx);
               _doExit();
             },
-            child: const Text('Leave',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            child: Text(widget.offline ? 'Exit' : 'Leave',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -1054,10 +1053,37 @@ class _LudoGamePageState extends State<LudoGamePage>
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: Row(
         children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-            onPressed: _confirmExit,
-          ),
+          if (widget.offline)
+            InkWell(
+              onTap: _confirmExit,
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.close_rounded, color: Colors.white, size: 16),
+                    SizedBox(width: 4),
+                    Text('Exit',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              ),
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+              onPressed: _confirmExit,
+            ),
           const SizedBox(width: 4),
           Text(
             widget.offline ? 'LUDO · PRACTICE' : 'LUDO LIVE',
