@@ -16,6 +16,7 @@ import '../support/support_page.dart';
 import '../wallet/transaction_history_page.dart';
 import 'bank_details_page.dart';
 import 'kyc_page.dart';
+import 'about_us_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -278,6 +279,17 @@ class _ProfilePageState extends State<ProfilePage> {
                           value: _biometricEnabled,
                           onChanged: _toggleBiometric,
                         ),
+                      ]),
+                      const SizedBox(height: 12),
+
+                      _sectionLabel('About'),
+                      _menuCard([
+                        _menuItem(Icons.info_outline_rounded, 'About Us',
+                            subtitle: 'Version, updates & more',
+                            onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) => const AboutUsPage()))),
                       ]),
                       const SizedBox(height: 20),
 
