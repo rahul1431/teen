@@ -35,6 +35,7 @@ import { registerMonitorRoutes } from './monitor-routes'
 import { registerMetricsRoutes } from './metrics-routes'
 import { registerPlayerAnomaliesRoutes } from './player-anomalies-routes'
 import { registerTaskRoutes } from './task-routes'
+import { registerNotificationRoutes } from './notifications-routes'
 import { createRateLimiter } from './middleware/rate-limiter'
 
 // QR images for payment methods are stored here, served by nginx at /uploads/qr/.
@@ -132,6 +133,9 @@ async function start() {
 
   // Register Task Management routes
   await registerTaskRoutes(app, db, authenticate, requireRole)
+
+  // Register Notification routes
+  registerNotificationRoutes(app, db, authenticate)
 
   // POST /api/admin/auth/login
   // If the admin has 2FA enabled, the call must include `totp_code`. If it's
