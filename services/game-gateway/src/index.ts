@@ -71,6 +71,8 @@ async function start() {
           hub.sendToRoom(msg.target, msg.event, msg.data, msg.sender)
         } else if (msg.type === 'user') {
           hub.sendToUser(msg.target, msg.event, msg.data, msg.sender)
+        } else if (msg.type === 'joinRoom') {
+          hub.joinRoomLocal(msg.userId, msg.target)
         }
       } catch (e) {
         console.error('[redis-sub] Error processing cluster message', e)
@@ -185,6 +187,21 @@ async function start() {
           console.warn(`[matchmaking] game not available: ${game_type} (rows=${configRes.rows.length})`)
           return hub.send(conn, 'error', { message: 'Game not available' })
         }
+
+        // Ludo only: don't let a user queue into a second table while still
+        // a live participant of one — see findActiveLudoRoomForUser for why.
+        if (game_type === 'ludo') {
+          const activeRoomId = await matchmaking.findActiveLudoRoomForUser(conn.userId)
+          if (activeRoomId) {
+            const rejoined = await matchmaking.rejoinActiveLudoRoom(conn.userId, activeRoomId)
+            if (rejoined) {
+              console.log(`[matchmaking] ${conn.userId} already in active ludo room=${activeRoomId} — resumed instead of re-queueing`)
+              return
+            }
+            // Postgres row was stale (room already finished) — fall through and queue normally.
+          }
+        }
+
         try {
           await matchmaking.joinQueue(game_type, stake, { userId: conn.userId, username: conn.username, preferredSeat }, variation)
           hub.send(conn, 'matchmaking:joined', { game_type, stake, variation })
@@ -571,14 +588,33 @@ async function start() {
   async function handleLudoAction(conn: Conn, room_id: string, data: any): Promise<void> {
     const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
     try {
+      const currentState = await matchmaking.getRoomState(room_id)
+
       // Inbound version check: drop stale actions
       if (data.version_id !== undefined) {
-        const currentState = await matchmaking.getRoomState(room_id)
         const currentVersion = currentState?.version ?? currentState?.version_id ?? 0
         if (data.version_id < currentVersion) {
           return hub.send(conn, 'game:error', { message: 'Stale action discarded' })
         }
       }
+
+      // Cancel this room's pending AFK backstop the instant a real action is
+      // RECEIVED — before the engine round trip below. Otherwise the timer
+      // armed for this turn keeps running for the whole duration of that
+      // round trip (and stays live on any OTHER gateway instance that never
+      // saw this action at all), and can auto-play concurrently with this
+      // very action. driveLudoBots re-arms a fresh one once the new turn
+      // state is known.
+      matchmaking.clearLudoAfkTimer(room_id)
+      // Claim this turn immediately so the AFK auto-play backstop — which may
+      // already be mid-flight (its own redis-deadline recheck ran a moment
+      // before this action was received) — sees the claim and backs off
+      // instead of also calling the engine for the same turn. Without this,
+      // both requests could reach the engine's per-room lock, the loser gets
+      // rejected with 409 "Move not expected"/"Roll not expected", and that
+      // loser can be the player's own genuine tap. See claimLudoTurn.
+      const currentTurnIdx = currentState?.current_turn ?? currentState?.currentTurn ?? 0
+      void matchmaking.claimLudoTurn(room_id, currentTurnIdx)
 
       const res = await fetch(`${engineUrl}/action`, {
         method: 'POST',
@@ -633,6 +669,7 @@ async function start() {
   async function handleLudoLeave(conn: Conn, room_id: string): Promise<void> {
     const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
     try {
+      matchmaking.clearLudoAfkTimer(room_id)
       const res = await fetch(`${engineUrl}/leave`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -831,8 +868,15 @@ async function start() {
 
       const realPlayers = (newState.players ?? []).filter((p: any) => !(p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
 
-      if (newState.status === 'completed' && data.result) {
-        await matchmaking.handleGameEnd(room_id, data.result, realPlayers, newState)
+      if (newState.status === 'completed') {
+        if (data.result) {
+          await matchmaking.handleGameEnd(room_id, data.result, realPlayers, newState)
+        } else {
+          // Defensive: game completed but result is missing — log and still notify players
+          console.warn(`[gateway] Game completed for room=${room_id} but result is missing from engine response`)
+          const fallbackResult = { winner_id: null, prize: 0, hand_rank: 'High Card', all_hands: [] }
+          await matchmaking.handleGameEnd(room_id, fallbackResult, realPlayers, newState)
+        }
       } else {
         const bots = (newState.players ?? []).filter((p: any) => (p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
         matchmaking.scheduleBotTurn(room_id, newState, realPlayers, bots)

@@ -9,6 +9,7 @@ import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/services/balance_service.dart';
 import '../../../core/monitor/monitor_service.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'coin_rain.dart';
@@ -295,6 +296,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       final val =
           double.tryParse(res.data['real_balance']?.toString() ?? '0') ?? 0;
       setState(() => _myBalance = val);
+      BalanceService.instance.set(realBalance: val);
     } catch (_) {/* leave at 0 if wallet unreachable */}
   }
 
@@ -375,29 +377,38 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
     _gameResultSub = _socket.on(SocketEvents.gameResult).listen((data) {
       if (!mounted) return;
-      _turnTimer?.cancel();
-      final won = data['winner_id'] == _myUserId;
-      MonitorService.instance.game('tp_result', properties: {
-        'won': won,
-        'prize': data['prize']?.toString() ?? '0',
-        'room_id': widget.roomId,
-      });
-      _resultNotifier.value = won
-          ? '🎉 You Won ₹${(double.tryParse(data['prize']?.toString() ?? '0') ?? 0.0).toStringAsFixed(2)}!'
-          : '😔 You Lost. Winner: ${data['winner_username'] ?? 'Unknown'}';
-      _myTurnNotifier.value = false;
-      if (won) {
-        HapticFeedback.heavyImpact();
-        Timer(140.ms, HapticFeedback.heavyImpact);
-        Timer(280.ms, HapticFeedback.heavyImpact);
-        SoundService.instance.play(Sfx.win);
-      } else {
-        HapticFeedback.mediumImpact();
-        SoundService.instance.play(Sfx.lose);
+      try {
+        _turnTimer?.cancel();
+        final won = data['winner_id'] == _myUserId;
+        MonitorService.instance.game('tp_result', properties: {
+          'won': won,
+          'prize': data['prize']?.toString() ?? '0',
+          'room_id': widget.roomId,
+        });
+        final prizeAmount = double.tryParse(data['prize']?.toString() ?? '0') ?? 0.0;
+        final winnerName = data['winner_username']?.toString() ?? 'Unknown';
+        _resultNotifier.value = won
+            ? '🎉 You Won ₹${prizeAmount.toStringAsFixed(2)}!'
+            : '😔 You Lost. Winner: $winnerName';
+        _myTurnNotifier.value = false;
+        if (won) {
+          HapticFeedback.heavyImpact();
+          Timer(140.ms, HapticFeedback.heavyImpact);
+          Timer(280.ms, HapticFeedback.heavyImpact);
+          SoundService.instance.play(Sfx.win);
+        } else {
+          HapticFeedback.mediumImpact();
+          SoundService.instance.play(Sfx.lose);
+        }
+        // Refresh wallet balance after settlement completes on the server.
+        Timer(const Duration(milliseconds: 1200), _fetchBalance);
+        if (_privateCode != null) _startRematchCountdown();
+      } catch (e) {
+        print('[TeenPattiGamePage] Error processing game:result: $e');
+        if (mounted) {
+          AppSnackBar.show(context, 'Game ended but failed to display result', error: true);
+        }
       }
-      // Refresh wallet balance after settlement completes on the server.
-      Timer(const Duration(milliseconds: 1200), _fetchBalance);
-      if (_privateCode != null) _startRematchCountdown();
     });
 
     _roomChatSub = _socket.on(SocketEvents.roomChatMsg).listen((data) {

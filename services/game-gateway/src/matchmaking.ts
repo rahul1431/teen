@@ -15,6 +15,10 @@ export interface MatchmakingEntry {
   // 4=blue), matching the client board's seat→colour order. Optional — other
   // games (and players who don't pick) leave it undefined and keep join order.
   preferredSeat?: number
+  // Set once a "waiting for more players" notice has been sent for this queue
+  // stint, so high-stake (humans-only) tables with no partner don't re-fire
+  // the same error toast every bot_fill_delay_seconds forever.
+  waitNotified?: boolean
 }
 
 // Teen Patti seat floor: low-stake tables top up with bots to this many seats.
@@ -56,13 +60,12 @@ export class MatchmakingService {
   private ludoAfkTimers = new Map<string, NodeJS.Timeout>()
   private static readonly LUDO_TURN_TIMEOUT_MS = 30000
   private teenPattiAfkTimers = new Map<string, NodeJS.Timeout>()
-  // 10s later than the client's own 30s self-fold countdown
-  // (mobile/lib/features/games/teen_patti/game_page.dart _startTurnTimer) — this
-  // is purely a backstop for when the client can't send that fold itself
-  // (dropped connection, backgrounded app, crash). Before this, a stalled human
-  // turn had no server-side path forward; the only safety net was the
-  // whole-room 15-minute GameWatchdog reaper.
-  private static readonly TEEN_PATTI_TURN_TIMEOUT_MS = 40000
+  // Match client's 30s self-fold countdown (mobile/lib/features/games/teen_patti/game_page.dart
+  // _startTurnTimer). The Redis-backed deadline (2026-07-19) prevents cross-instance
+  // phantom-folds from stale timers. This server-side timeout is purely a backstop
+  // for when the client can't send that fold itself (dropped connection, backgrounded
+  // app, crash). In normal cases, the client folds first and the server timeout never fires.
+  private static readonly TEEN_PATTI_TURN_TIMEOUT_MS = 30000
 
   constructor(
     private redis: Redis,
@@ -86,6 +89,56 @@ export class MatchmakingService {
     return variation === 'classic'
       ? `matchmaking:${gameType}:${stake}`
       : `matchmaking:${gameType}:${variation}:${stake}`
+  }
+
+  // Ludo-only guard: find a room this user is already a live participant of
+  // (status hasn't reached completed/cancelled yet). Nothing in this codebase
+  // ever sets game_participants.left_at — a disconnect-without-leave (crash,
+  // network drop, or an abandoned test client) leaves the row exactly as it
+  // was at join, still pointing at a room that keeps running server-side via
+  // bot-fill/AFK-autoplay. Without this check, join_matchmaking would happily
+  // queue the same user into a SECOND room while the first is still live —
+  // confirmed live: same user_id active in two Ludo rooms simultaneously,
+  // stake locked twice, one hand played entirely by auto-play with the human
+  // never seeing it. Scoped to game_type='ludo' only — other game types are
+  // under a separate lockdown and this shared handler must not change their
+  // behavior.
+  async findActiveLudoRoomForUser(userId: string): Promise<string | null> {
+    const res = await this.db.query(
+      `SELECT gp.room_id FROM game_participants gp
+       JOIN game_rooms gr ON gr.id = gp.room_id
+       WHERE gp.user_id = $1 AND gp.is_bot = false
+         AND gr.game_type = 'ludo' AND gr.status = 'active'
+       ORDER BY gp.joined_at DESC LIMIT 1`,
+      [userId],
+    )
+    return res.rows[0]?.room_id ?? null
+  }
+
+  // Re-send room:joined from already-live Redis state instead of starting a
+  // new room — lets a reconnecting player resume the game they're already
+  // in. Returns false (caller should fall through to normal queueing) if the
+  // Postgres row was stale — e.g. the room finished naturally between the
+  // DB query above and this call, self-healing instead of blocking the user.
+  async rejoinActiveLudoRoom(userId: string, roomId: string): Promise<boolean> {
+    const state = await this.getRoomState(roomId)
+    if (!state || state.status === 'completed' || state.status === 'cancelled') return false
+    const players = state.players || []
+    const me = players.find((p: any) => (p.user_id ?? p.userId) === userId)
+    if (!me) return false
+
+    this.hub.joinRoom(userId, roomId)
+    this.hub.sendToUser(userId, 'room:joined', {
+      room_id: roomId,
+      game_type: 'ludo',
+      stake: state.stake,
+      state,
+      players,
+      your_seat: me.seat,
+      current_turn: state.current_turn ?? state.currentTurn ?? 0,
+      pot: (state.stake ?? 0) * players.length,
+    })
+    return true
   }
 
   async joinQueue(gameType: string, stake: number, entry: MatchmakingEntry, variation = 'classic'): Promise<void> {
@@ -223,8 +276,12 @@ export class MatchmakingService {
       const maxPlayers = config.max_players || 6
       const requeue = async (players: MatchmakingEntry[], notify: boolean) => {
         for (const p of players) {
+          const alreadyNotified = p.waitNotified === true
+          if (notify && !alreadyNotified) p.waitNotified = true
           await this.redis.zadd(key, Date.now(), JSON.stringify(p))
-          if (notify) this.hub.sendToUser(p.userId, 'error', { message: 'Waiting for more players…' })
+          if (notify && !alreadyNotified) {
+            this.hub.sendToUser(p.userId, 'error', { message: 'Still searching for an opponent at this stake…' })
+          }
         }
         const timer = setTimeout(async () => {
           this.timers.delete(`${gameType}:${variation}:${stake}`)
@@ -710,14 +767,15 @@ export class MatchmakingService {
       // Connected human's turn — arm the AFK backstop timer (see
       // scheduleTeenPattiAfkTimer) instead of leaving the table with no
       // server-side path forward if their client can't self-fold.
-      this.scheduleTeenPattiAfkTimer(roomId)
+      void this.scheduleTeenPattiAfkTimer(roomId, currentIdx)
       return
     }
 
     // A bot's turn is being driven — any AFK timer from a previous human turn
-    // is stale now, clear it.
+    // is stale now, clear it (local + shared deadline).
     const staleAfkTimer = this.teenPattiAfkTimers.get(roomId)
     if (staleAfkTimer) { clearTimeout(staleAfkTimer); this.teenPattiAfkTimers.delete(roomId) }
+    this.redis.del(this.teenPattiAfkRedisKey(roomId)).catch(() => {})
 
     // Bot acts after a profile-driven delay
     const gameType = state.gameType ?? state.game_type ?? 'teen_patti'
@@ -868,19 +926,58 @@ export class MatchmakingService {
     const existing = this.teenPattiAfkTimers.get(roomId)
     if (existing) clearTimeout(existing)
     this.teenPattiAfkTimers.delete(roomId)
+    // Best-effort: also clear the shared deadline so a stale timer on another
+    // instance — mid-fire during this request's wallet-lock/engine round trip
+    // — sees a mismatch (or nothing) instead of a deadline that still matches
+    // and wrongly proceeds. scheduleBotTurn re-arms a fresh one once the new
+    // turn state is known, on whatever instance processes that response.
+    this.redis.del(this.teenPattiAfkRedisKey(roomId)).catch(() => {})
+  }
+
+  private teenPattiAfkRedisKey(roomId: string): string {
+    return `tp:afk:${roomId}`
   }
 
   // Arm a per-turn AFK backstop for a connected-but-idle Teen Patti player.
   // Re-arms on every call (each new turn/action clears and replaces the
   // previous room timer) — mirrors scheduleLudoAfkTimer below.
-  private scheduleTeenPattiAfkTimer(roomId: string): void {
+  //
+  // game-gateway runs as 3 separate PM2 processes behind nginx, and nginx
+  // hashes WebSocket connections by TOKEN (per-player), not per-room — so two
+  // players at the same table, or the same player across a reconnect, can
+  // easily land on different instances. This timer used to live only in this
+  // process's local `teenPattiAfkTimers` map: if a turn-holding action (e.g.
+  // 'see', which doesn't advance current_turn) got processed by a DIFFERENT
+  // instance than the one that armed the original timer, that instance had no
+  // way to know and never re-armed it — the stale original timer fired
+  // exactly 40s after the turn STARTED regardless of the player having acted
+  // in the meantime, wrongly auto-folding them. Confirmed live: a player who
+  // sent 'see' via one instance at T+20s and was about to 'call' via another
+  // instance at T+45s got folded at T+40.004s — the original instance's timer,
+  // completely blind to the 'see' it never saw.
+  //
+  // Fix: the deadline is now authoritative in Redis (shared across all
+  // instances, same pattern as GameWatchdog's liveness key). Every instance
+  // still runs its own local setTimeout as a wake-up mechanism, but the
+  // callback re-reads Redis and only acts if the deadline it's holding is
+  // still the one currently in force for this exact turn index.
+  private async scheduleTeenPattiAfkTimer(roomId: string, turnIdx: number): Promise<void> {
     const existing = this.teenPattiAfkTimers.get(roomId)
     if (existing) clearTimeout(existing)
     this.teenPattiAfkTimers.delete(roomId)
 
+    const deadline = Date.now() + MatchmakingService.TEEN_PATTI_TURN_TIMEOUT_MS
+    try {
+      await this.redis.setex(
+        this.teenPattiAfkRedisKey(roomId),
+        90,
+        JSON.stringify({ turnIdx, deadline }),
+      )
+    } catch { /* Redis hiccup — local timer below still provides a backstop */ }
+
     const timer = setTimeout(() => {
       this.teenPattiAfkTimers.delete(roomId)
-      void this.autoFoldIdleTeenPattiTurn(roomId)
+      void this.autoFoldIdleTeenPattiTurn(roomId, turnIdx, deadline)
     }, MatchmakingService.TEEN_PATTI_TURN_TIMEOUT_MS)
     this.teenPattiAfkTimers.set(roomId, timer)
   }
@@ -890,10 +987,27 @@ export class MatchmakingService {
   // and folds on their behalf — fold is always legal and free (no wallet call),
   // so this can never double-charge or move money without the action the
   // player would have taken anyway via their own client-side fold timer.
-  private async autoFoldIdleTeenPattiTurn(roomId: string): Promise<void> {
+  //
+  // expectedTurnIdx/expectedDeadline identify the specific arming that led to
+  // THIS local timer's firing. Before acting, re-check the authoritative
+  // Redis deadline: if another instance re-armed for the same turn index
+  // (e.g. the player sent a turn-holding action like 'see' through a
+  // different gateway process), the shared deadline will have moved past
+  // this timer's expectedDeadline — abort and let that instance's own timer
+  // fire at the correct time instead.
+  private async autoFoldIdleTeenPattiTurn(roomId: string, expectedTurnIdx: number, expectedDeadline: number): Promise<void> {
+    try {
+      const raw = await this.redis.get(this.teenPattiAfkRedisKey(roomId))
+      if (raw) {
+        const current = JSON.parse(raw) as { turnIdx: number; deadline: number }
+        if (current.turnIdx !== expectedTurnIdx || current.deadline !== expectedDeadline) return
+      }
+    } catch { /* Redis unreachable — fall through to the local-only check below */ }
+
     const state = await this.getRoomState(roomId)
     if (!state || state.status === 'completed') return
     const turnIdx = state.current_turn ?? state.CurrentTurn ?? 0
+    if (turnIdx !== expectedTurnIdx) return
     const cur = state.players?.[turnIdx]
     if (!cur) return
     if (cur.isBot || cur.is_bot) return // bot turns are driven elsewhere
@@ -912,6 +1026,7 @@ export class MatchmakingService {
       const newState = data.state ?? data
       const sanitized = { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) }
       await this.setRoomState(roomId, sanitized)
+      this.redis.del(this.teenPattiAfkRedisKey(roomId)).catch(() => {})
 
       this.hub.sendToUser(userId, 'error', {
         message: 'You took too long — you were folded automatically.',
@@ -950,7 +1065,7 @@ export class MatchmakingService {
         // It's a connected human's turn now — arm the per-turn AFK timer so a
         // stalling player doesn't tie up the whole table (previously only a
         // whole-room 15-minute idle watchdog existed; see GameWatchdog).
-        this.scheduleLudoAfkTimer(roomId)
+        void this.scheduleLudoAfkTimer(roomId, turnIdx)
         return
       }
 
@@ -980,35 +1095,113 @@ export class MatchmakingService {
     }
   }
 
+  // Cancel a room's pending AFK backstop without re-arming a new one. Called
+  // the instant a real Ludo action is RECEIVED — before the engine round
+  // trip. Mirrors clearTeenPattiAfkTimer: without this, a timer armed for
+  // this turn kept running for the whole duration of the engine call, and a
+  // stale timer on a DIFFERENT gateway instance (nginx hashes WS connections
+  // by player token, not by room) never saw the action at all, firing on
+  // schedule regardless. scheduleLudoAfkTimer re-arms a fresh one once the
+  // new turn state is known.
+  clearLudoAfkTimer(roomId: string): void {
+    const existing = this.ludoAfkTimers.get(roomId)
+    if (existing) clearTimeout(existing)
+    this.ludoAfkTimers.delete(roomId)
+    this.redis.del(this.ludoAfkRedisKey(roomId)).catch(() => {})
+  }
+
+  private ludoAfkRedisKey(roomId: string): string {
+    return `ludo:afk:${roomId}`
+  }
+
+  private ludoTurnClaimKey(roomId: string, turnIdx: number): string {
+    return `ludo:turnclaim:${roomId}:${turnIdx}`
+  }
+
+  // Marks "a real player action is in flight for this turn" so the AFK
+  // auto-play backstop (autoPlayIdleLudoTurn) can back off instead of racing
+  // it to the engine — see the call site in index.ts's handleLudoAction for
+  // the full race this closes. Best-effort: a missed claim just means the
+  // pre-existing (rarer) race window reopens for that one action, same as
+  // before this fix existed.
+  async claimLudoTurn(roomId: string, turnIdx: number): Promise<void> {
+    try {
+      await this.redis.set(this.ludoTurnClaimKey(roomId, turnIdx), '1', 'PX', 4000)
+    } catch { /* best effort */ }
+  }
+
+  private async isLudoTurnClaimed(roomId: string, turnIdx: number): Promise<boolean> {
+    try {
+      return (await this.redis.get(this.ludoTurnClaimKey(roomId, turnIdx))) !== null
+    } catch {
+      return false
+    }
+  }
+
   // Arm a per-turn timeout for a connected-but-idle human player. Only a
   // whole-room 15-min idle watchdog existed before (GameWatchdog), so a
   // player who stayed connected but simply never acted could stall a live,
   // real-money table for the full 15 minutes. Re-arms on every call (each new
   // turn/action clears and replaces the previous room timer).
-  private scheduleLudoAfkTimer(roomId: string): void {
+  //
+  // Same cross-instance hazard as Teen Patti's AFK timer (see
+  // scheduleTeenPattiAfkTimer for the full writeup): game-gateway runs as 3
+  // processes behind nginx, hashed by player token, not by room. A timer
+  // armed in this process's local map is invisible to whichever instance
+  // actually handles the player's next action, so the deadline is now
+  // authoritative in Redis (shared, same pattern as GameWatchdog) — every
+  // instance's local setTimeout is just a wake-up mechanism that re-checks
+  // Redis before acting.
+  private async scheduleLudoAfkTimer(roomId: string, turnIdx: number): Promise<void> {
     const existing = this.ludoAfkTimers.get(roomId)
     if (existing) clearTimeout(existing)
     this.ludoAfkTimers.delete(roomId)
 
+    const deadline = Date.now() + MatchmakingService.LUDO_TURN_TIMEOUT_MS
+    try {
+      await this.redis.setex(
+        this.ludoAfkRedisKey(roomId),
+        90,
+        JSON.stringify({ turnIdx, deadline }),
+      )
+    } catch { /* Redis hiccup — local timer below still provides a backstop */ }
+
     const timer = setTimeout(() => {
       this.ludoAfkTimers.delete(roomId)
-      void this.autoPlayIdleLudoTurn(roomId)
+      void this.autoPlayIdleLudoTurn(roomId, turnIdx, deadline)
     }, MatchmakingService.LUDO_TURN_TIMEOUT_MS)
     this.ludoAfkTimers.set(roomId, timer)
   }
 
-  // Fires when a human's turn has sat idle past the timeout. Re-checks state
-  // immediately before acting (the player may have acted in the last instant)
-  // and plays the minimum legal action on their behalf: roll if a roll is
-  // owed, or the first legal token if a move is owed (no strategy needed —
-  // this only exists to unstick the table, not to play well for them).
-  private async autoPlayIdleLudoTurn(roomId: string): Promise<void> {
+  // Fires when a human's turn has sat idle past the timeout. Re-checks the
+  // authoritative Redis deadline first — if another instance re-armed for
+  // this room (the player acted via a different gateway process), abort and
+  // let that instance's own timer fire at the correct time instead. Then
+  // re-checks state immediately before acting (the player may have acted in
+  // the last instant) and plays the minimum legal action on their behalf:
+  // roll if a roll is owed, or the first legal token if a move is owed (no
+  // strategy needed — this only exists to unstick the table, not to play
+  // well for them).
+  private async autoPlayIdleLudoTurn(roomId: string, expectedTurnIdx: number, expectedDeadline: number): Promise<void> {
+    try {
+      const raw = await this.redis.get(this.ludoAfkRedisKey(roomId))
+      if (raw) {
+        const current = JSON.parse(raw) as { turnIdx: number; deadline: number }
+        if (current.turnIdx !== expectedTurnIdx || current.deadline !== expectedDeadline) return
+      }
+    } catch { /* Redis unreachable — fall through to the local-only check below */ }
+
     const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
     const state = await this.getRoomState(roomId)
     if (!state || state.status === 'completed') return
     const turnIdx = state.current_turn ?? state.currentTurn ?? 0
     const cur = state.players?.[turnIdx]
     if (!cur || cur.is_bot) return // already handled elsewhere, or turn moved on
+
+    // A real action for this exact turn is already in flight (it claimed the
+    // instant the gateway received it — see handleLudoAction) — back off and
+    // let that action's own result stand instead of racing it to the engine.
+    if (await this.isLudoTurnClaimed(roomId, turnIdx)) return
 
     try {
       const awaiting = state.awaiting
@@ -1054,6 +1247,7 @@ export class MatchmakingService {
   async handleLudoEnd(roomId: string, result: any): Promise<void> {
     const afkTimer = this.ludoAfkTimers.get(roomId)
     if (afkTimer) { clearTimeout(afkTimer); this.ludoAfkTimers.delete(roomId) }
+    this.redis.del(this.ludoAfkRedisKey(roomId)).catch(() => {})
     try {
       const parts = await this.db.query(
         'SELECT user_id, entry_fee_deducted, is_bot FROM game_participants WHERE room_id = $1',
@@ -1147,6 +1341,7 @@ export class MatchmakingService {
     if (bt) { clearTimeout(bt.timer); this.botTimers.delete(roomId) }
     const afk = this.teenPattiAfkTimers.get(roomId)
     if (afk) { clearTimeout(afk); this.teenPattiAfkTimers.delete(roomId) }
+    this.redis.del(this.teenPattiAfkRedisKey(roomId)).catch(() => {})
 
     // Settle game via wallet service (consumes locked balance for all players, pays winner)
     try {
@@ -1197,16 +1392,23 @@ export class MatchmakingService {
     const winner = state.players?.find((p: any) => (p.userId ?? p.user_id ?? p.id) === result.winner_id)
     const winnerUsername = winner ? (winner.username ?? 'Player') : 'Unknown'
 
+    // Ensure hand_rank has a fallback value
+    const handRank = result.hand_rank || 'High Card'
+
     // Notify all real players of result
     for (const p of realPlayers) {
-      this.hub.sendToUser(p.userId, 'game:result', {
-        room_id: roomId,
-        winner_id: result.winner_id,
-        winner_username: winnerUsername,
-        prize: result.prize,
-        hand_rank: result.hand_rank,
-        all_hands: result.all_hands ?? [],
-      })
+      try {
+        this.hub.sendToUser(p.userId, 'game:result', {
+          room_id: roomId,
+          winner_id: result.winner_id,
+          winner_username: winnerUsername,
+          prize: result.prize,
+          hand_rank: handRank,
+          all_hands: result.all_hands ?? [],
+        })
+      } catch (e) {
+        console.error(`[gateway] Failed to send game:result to user ${p.userId} for room ${roomId}:`, e)
+      }
     }
 
     // Friends tables: re-open the private lobby / auto-start the next hand.

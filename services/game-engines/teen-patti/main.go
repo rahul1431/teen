@@ -673,6 +673,7 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 		// Determine winner
 		gameResult = s.determineWinner(&state)
 		state.Status = "completed"
+		log.Printf("[teen-patti] Game completed: room=%s winner=%s prize=%.2f action=%s", req.RoomID, gameResult.WinnerID, gameResult.Prize, req.Action)
 
 		// Save completed game to DB
 		go s.saveCompletedGame(req.RoomID, gameResult)
@@ -788,11 +789,15 @@ func (s *Server) determineWinner(state *GameState) *GameResult {
 		winnerID = bestPlayer.UserID
 	}
 
+	handRankName := handRankName(bestHand.Rank)
+	if handRankName == "" {
+		handRankName = "High Card"
+	}
 	return &GameResult{
 		WinnerID: winnerID,
 		Prize:    prize,
 		RakeFee:  rake,
-		HandRank: handRankName(bestHand.Rank),
+		HandRank: handRankName,
 		AllHands: allHands,
 	}
 }
