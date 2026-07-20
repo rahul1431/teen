@@ -102,7 +102,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   final _gsNotifier = ValueNotifier<Map<String, dynamic>?>(null);
   final _myTurnNotifier = ValueNotifier<bool>(false);
   final _timerNotifier = ValueNotifier<int>(30);
-  final _resultNotifier = ValueNotifier<String?>(null);
+  // Holds the structured showdown result once a hand ends: {won, winnerName,
+  // cards, handRank, prizeText}. null while the hand is still in progress.
+  final _resultNotifier = ValueNotifier<Map<String, dynamic>?>(null);
   final _myCardsNotifier = ValueNotifier<List<Map<String, dynamic>>>([]);
   final _reactionsNotifier = ValueNotifier<List<_Reaction>>([]);
   late final _betNotifier = ValueNotifier<double>(0);
@@ -387,9 +389,32 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         });
         final prizeAmount = double.tryParse(data['prize']?.toString() ?? '0') ?? 0.0;
         final winnerName = data['winner_username']?.toString() ?? 'Unknown';
-        _resultNotifier.value = won
-            ? '🎉 You Won ₹${prizeAmount.toStringAsFixed(2)}!'
-            : '😔 You Lost. Winner: $winnerName';
+
+        // Pull the winner's revealed cards + hand rank from the showdown
+        // payload (all_hands) so the popup can show what actually won.
+        final allHands = (data['all_hands'] as List?) ?? [];
+        Map<String, dynamic>? winnerHand;
+        for (final h in allHands) {
+          if (h is Map &&
+              h['user_id']?.toString() == data['winner_id']?.toString()) {
+            winnerHand = Map<String, dynamic>.from(h);
+            break;
+          }
+        }
+        final winnerCards = (winnerHand?['cards'] as List?)
+                ?.map((c) => Map<String, dynamic>.from(c as Map))
+                .toList() ??
+            <Map<String, dynamic>>[];
+        final handRank = (winnerHand?['hand_rank'] ?? data['hand_rank'])
+            ?.toString();
+
+        _resultNotifier.value = {
+          'won': won,
+          'winnerName': winnerName,
+          'cards': winnerCards,
+          'handRank': handRank,
+          'prizeText': '₹${prizeAmount.toStringAsFixed(2)}',
+        };
         _myTurnNotifier.value = false;
         if (won) {
           HapticFeedback.heavyImpact();
@@ -1158,7 +1183,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     ValueListenableBuilder<bool>(
                       valueListenable: _myTurnNotifier,
                       builder: (_, isMyTurn, __) =>
-                          ValueListenableBuilder<String?>(
+                          ValueListenableBuilder<Map<String, dynamic>?>(
                         valueListenable: _resultNotifier,
                         builder: (_, result, __) => (isMyTurn && result == null)
                             ? ValueListenableBuilder<Map<String, dynamic>?>(
@@ -1178,7 +1203,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
                     // ⑮ Result overlay
                     Positioned.fill(
-                      child: ValueListenableBuilder<String?>(
+                      child: ValueListenableBuilder<Map<String, dynamic>?>(
                         valueListenable: _resultNotifier,
                         builder: (_, result, __) => AnimatedSwitcher(
                           duration: const Duration(milliseconds: 420),
@@ -1186,7 +1211,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                             opacity: anim,
                             child: ScaleTransition(scale: anim, child: child),
                           ),
-                          child: (result != null && result.isNotEmpty)
+                          child: result != null
                               ? _buildResult(result)
                               : const SizedBox.shrink(),
                         ),
@@ -2635,8 +2660,16 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
   // ⑮ Result overlay (returned as plain Container — AnimatedSwitcher wraps
   //    it inside Positioned.fill, so ScaleTransition can't break StackParentData)
-  Widget _buildResult(String message) {
-    final won = message.contains('Won');
+  //    Shows, in order: title, winner name, winner's revealed cards + hand
+  //    rank, prize amount, then the lobby/rematch buttons.
+  Widget _buildResult(Map<String, dynamic> result) {
+    final won = result['won'] == true;
+    final winnerName = result['winnerName']?.toString() ?? 'Unknown';
+    final cards = ((result['cards'] as List?) ?? const [])
+        .map((c) => Map<String, dynamic>.from(c as Map))
+        .toList();
+    final handRank = result['handRank']?.toString();
+    final prizeText = result['prizeText']?.toString() ?? '';
     return Container(
       key: const ValueKey('result'),
       color: Colors.black.withValues(alpha: 0.82),
@@ -2694,12 +2727,46 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                   .scale(
                       begin: const Offset(0.6, 0.6), curve: Curves.elasticOut)
                   .fadeIn(),
-              const SizedBox(height: 16),
-              Text(message,
+              const SizedBox(height: 12),
+              // Winner name
+              Text(won ? 'You Won!' : 'Winner: $winnerName',
                   style: const TextStyle(
                       fontSize: 16,
                       color: Colors.white,
                       fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center),
+              if (cards.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: cards
+                      .map((c) => _buildCard(
+                            c['value']?.toString() ?? '',
+                            c['suit']?.toString() ?? '',
+                          ))
+                      .toList(),
+                ),
+                if (handRank != null && handRank.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(handRank,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: won
+                            ? const Color(0xFFFFD700)
+                            : Colors.white70,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      )),
+                ],
+              ],
+              const SizedBox(height: 16),
+              // Prize amount
+              Text(won ? 'You Won $prizeText' : 'Prize: $prizeText',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: won ? const Color(0xFFFFD700) : Colors.white,
+                  ),
                   textAlign: TextAlign.center),
               const SizedBox(height: 28),
               Row(mainAxisSize: MainAxisSize.min, children: [
