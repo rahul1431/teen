@@ -5,6 +5,25 @@ import { z } from 'zod'
 
 // Staff-facing dashboards + feature-flag CRUD. See
 // docs/superpowers/specs/2026-07-21-product-analytics-design.md
+
+const variantsSchema = z.array(z.object({ key: z.string(), weight: z.number().min(1) })).nullable().optional()
+
+// Input-validation gap found during Task 2 review: flag-evaluation's
+// variant assignment silently breaks (some variants become unreachable)
+// if weights don't sum to 100. Enforce it at both create (POST) and
+// edit (PATCH) time. Uses an epsilon tolerance since floating-point
+// weights (e.g. 33.34 + 33.33 + 33.33) may not hit exact equality.
+function validateVariantWeights(
+  variants: { key: string; weight: number }[] | null | undefined
+): { ok: true } | { ok: false; error: string } {
+  if (!variants || variants.length === 0) return { ok: true }
+  const totalWeight = variants.reduce((sum, v) => sum + v.weight, 0)
+  if (Math.abs(totalWeight - 100) > 0.01) {
+    return { ok: false, error: `Variant weights must sum to 100 (got ${totalWeight})` }
+  }
+  return { ok: true }
+}
+
 export async function registerAnalyticsRoutes(
   app: FastifyInstance,
   db: Pool,
@@ -104,17 +123,12 @@ export async function registerAnalyticsRoutes(
       enabled: z.boolean().default(false),
       rollout_percent: z.number().min(0).max(100).default(0),
       enabled_user_ids: z.array(z.string().uuid()).default([]),
-      variants: z.array(z.object({ key: z.string(), weight: z.number().min(1) })).nullable().optional(),
+      variants: variantsSchema,
     }).parse(req.body)
 
-    // Input-validation gap found during Task 2 review: flag-evaluation's
-    // variant assignment silently breaks (some variants become unreachable)
-    // if weights don't sum to 100. Enforce it here at flag-creation time.
-    if (body.variants && body.variants.length > 0) {
-      const totalWeight = body.variants.reduce((sum, v) => sum + v.weight, 0)
-      if (totalWeight !== 100) {
-        return reply.code(400).send({ error: `Variant weights must sum to 100 (got ${totalWeight})` })
-      }
+    const variantCheck = validateVariantWeights(body.variants)
+    if (!variantCheck.ok) {
+      return reply.code(400).send({ error: variantCheck.error })
     }
 
     const existing = await db.query('SELECT id FROM feature_flags WHERE key = $1', [body.key])
@@ -136,8 +150,15 @@ export async function registerAnalyticsRoutes(
       enabled: z.boolean().optional(),
       rollout_percent: z.number().min(0).max(100).optional(),
       enabled_user_ids: z.array(z.string().uuid()).optional(),
-      variants: z.array(z.object({ key: z.string(), weight: z.number().min(1) })).nullable().optional(),
+      variants: variantsSchema,
     }).parse(req.body)
+
+    if (body.variants !== undefined) {
+      const variantCheck = validateVariantWeights(body.variants)
+      if (!variantCheck.ok) {
+        return reply.code(400).send({ error: variantCheck.error })
+      }
+    }
 
     const sets: string[] = []
     const params: any[] = []
