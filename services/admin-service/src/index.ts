@@ -37,6 +37,7 @@ import { registerMetricsRoutes } from './metrics-routes'
 import { registerPlayerAnomaliesRoutes } from './player-anomalies-routes'
 import { registerTaskRoutes } from './task-routes'
 import { registerNotificationRoutes } from './notifications-routes'
+import { registerAgentRoutes } from './agent-routes'
 import { createRateLimiter } from './middleware/rate-limiter'
 
 // QR images for payment methods are stored here. nginx's /uploads/ alias points at
@@ -140,6 +141,9 @@ async function start() {
 
   // Register Notification routes
   registerNotificationRoutes(app, db, authenticate)
+
+  // Register Agent commission system routes
+  await registerAgentRoutes(app, db, authenticate, requireRole)
 
   // POST /api/admin/auth/login
   // If the admin has 2FA enabled, the call must include `totp_code`. If it's
@@ -2465,6 +2469,7 @@ async function start() {
     const [overview, topDraws] = await Promise.all([
       db.query(`
         SELECT
+          COUNT(*) AS total_draws,
           COUNT(*) FILTER (WHERE status = 'open') AS open_draws,
           COUNT(*) FILTER (WHERE status = 'settled') AS settled_draws,
           COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled_draws,
@@ -2485,7 +2490,7 @@ async function start() {
         LIMIT 10
       `),
     ])
-    return reply.send({ overview: overview.rows[0], recent_draws: topDraws.rows })
+    return reply.send({ stats: { ...overview.rows[0], recent_draws: topDraws.rows } })
   })
 
   // --- Lottery Cancel + Refund ---
