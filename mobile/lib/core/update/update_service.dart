@@ -4,7 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:open_file/open_file.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import '../constants/app_config.dart';
+import '../network/api_client.dart';
 
 /// Checks the server for a newer app version and shows an update dialog
 /// that downloads the APK in-app and hands off to the system installer.
@@ -21,7 +21,7 @@ class UpdateService {
       final info = await PackageInfo.fromPlatform();
       final localCode = int.tryParse(info.buildNumber) ?? 0;
 
-      final res = await Dio().get('${AppConfig.apiBaseUrl.trim()}/api/app/version');
+      final res = await ApiClient().dio.get('/api/app/version');
       final data = res.data as Map<String, dynamic>;
       final serverCode = (data['version_code'] as num?)?.toInt() ?? 0;
       final forceUpdate = data['force_update'] == true;

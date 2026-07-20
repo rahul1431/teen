@@ -1,7 +1,7 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../../core/constants/app_config.dart';
+import '../../core/network/api_client.dart';
 import '../../core/update/update_service.dart';
 import '../../shared/theme/app_theme.dart';
 import '../support/support_page.dart';
@@ -42,8 +42,7 @@ class _AboutUsPageState extends State<AboutUsPage> {
   Future<void> _checkForUpdate() async {
     setState(() => _status = _UpdateCheckStatus.checking);
     try {
-      final res = await Dio()
-          .get('${AppConfig.apiBaseUrl.trim()}/api/app/version');
+      final res = await ApiClient().dio.get('/api/app/version');
       final data = res.data as Map<String, dynamic>;
       final serverCode = (data['version_code'] as num?)?.toInt() ?? 0;
       if (!mounted) return;
