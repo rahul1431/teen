@@ -117,12 +117,23 @@ export async function registerAgentRoutes(
     }
     if (sets.length === 0) return reply.code(400).send({ error: 'No fields to update' })
     params.push(id)
-    await db.query(`UPDATE agents SET ${sets.join(', ')} WHERE id = $${params.length}`, params)
-    await db.query(
-      `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'update_agent', 'agent', $2, $3)`,
-      [admin.sub, id, JSON.stringify(body)]
-    )
-    return reply.send({ success: true })
+
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query(`UPDATE agents SET ${sets.join(', ')} WHERE id = $${params.length}`, params)
+      await client.query(
+        `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'update_agent', 'agent', $2, $3)`,
+        [admin.sub, id, JSON.stringify(body)]
+      )
+      await client.query('COMMIT')
+      return reply.send({ success: true })
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
   })
 
   // GET /api/admin/agents/:id/players

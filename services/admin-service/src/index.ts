@@ -2469,7 +2469,6 @@ async function start() {
     const [overview, topDraws] = await Promise.all([
       db.query(`
         SELECT
-          COUNT(*) AS total_draws,
           COUNT(*) FILTER (WHERE status = 'open') AS open_draws,
           COUNT(*) FILTER (WHERE status = 'settled') AS settled_draws,
           COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled_draws,
@@ -2490,7 +2489,7 @@ async function start() {
         LIMIT 10
       `),
     ])
-    return reply.send({ stats: { ...overview.rows[0], recent_draws: topDraws.rows } })
+    return reply.send({ overview: overview.rows[0], recent_draws: topDraws.rows })
   })
 
   // --- Lottery Cancel + Refund ---
