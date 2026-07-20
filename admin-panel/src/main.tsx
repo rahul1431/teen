@@ -40,6 +40,7 @@ const MetricsDashboard = React.lazy(() => import('./pages/MetricsDashboard'))
 const PlayerAnomaliesPage = React.lazy(() => import('./pages/PlayerAnomaliesPage'))
 const Tasks = React.lazy(() => import('./pages/Tasks'))
 const Agents = React.lazy(() => import('./pages/Agents'))
+const Analytics = React.lazy(() => import('./pages/Analytics'))
 const AgentLogin = React.lazy(() => import('./pages/AgentLogin'))
 const AgentPortal = React.lazy(() => import('./pages/AgentPortal'))
 const WebsiteSettings = React.lazy(() => import('./pages/WebsiteSettings'))
@@ -100,6 +101,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="player-anomalies" element={<PlayerAnomaliesPage />} />
             <Route path="tasks" element={<Tasks />} />
             <Route path="agents" element={<Agents />} />
+            <Route path="analytics" element={<Analytics />} />
             <Route path="settings" element={<WebsiteSettings />} />
           </Route>
           <Route path="*" element={<Navigate to="/admin" replace />} />
