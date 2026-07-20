@@ -2759,7 +2759,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                       )),
                 ],
               ],
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
               // Prize amount
               Text(won ? 'You Won $prizeText' : 'Prize: $prizeText',
                   style: TextStyle(
@@ -2768,7 +2768,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     color: won ? const Color(0xFFFFD700) : Colors.white,
                   ),
                   textAlign: TextAlign.center),
-              const SizedBox(height: 28),
+              const SizedBox(height: 20),
               Row(mainAxisSize: MainAxisSize.min, children: [
                 if (_privateCode != null) ...[
                   // Friends table: next hand auto-starts server-side.
