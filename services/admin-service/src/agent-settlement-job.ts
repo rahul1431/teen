@@ -67,13 +67,14 @@ export class AgentSettlementJob {
     try {
       await client.query('BEGIN')
       for (const r of results) {
-        await client.query(
+        const ledgerRes = await client.query(
           `INSERT INTO agent_commission_ledger (agent_id, date, direct_commission, override_commission, total_commission)
            VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (agent_id, date) DO NOTHING`,
+           ON CONFLICT (agent_id, date) DO NOTHING
+           RETURNING agent_id`,
           [r.agentId, dateStr, r.directCommission, r.overrideCommission, r.totalCommission]
         )
-        if (r.totalCommission > 0) {
+        if (ledgerRes.rows.length > 0 && r.totalCommission > 0) {
           await client.query(
             `UPDATE agent_wallets SET balance = balance + $1, total_earned = total_earned + $1, updated_at = NOW() WHERE agent_id = $2`,
             [r.totalCommission, r.agentId]
