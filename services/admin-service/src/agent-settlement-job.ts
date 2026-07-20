@@ -45,6 +45,16 @@ export class AgentSettlementJob {
     // Net house win per player for the target IST day, attributed to their
     // direct agent. game_debit = player staked/lost, game_credit = player
     // won back — matches WalletService.TxnType (services/wallet-service/src/wallet.service.ts:5).
+    //
+    // CRITICAL: the `status = 'completed'` filter is required for financial
+    // correctness — DO NOT remove it. WalletService writes TWO distinct
+    // game_debit rows per bet in its lock lifecycle (wallet.service.ts):
+    //   1. lockForGame()      -> a 'pending'   game_debit ("Funds locked for game")
+    //   2. consumeLockedFunds() -> a 'completed' game_debit ("Locked funds consumed")
+    // The pending row is never flipped in place — it stays as a separate row.
+    // Without this filter both rows are summed, roughly DOUBLING net house win
+    // and overpaying agents. Mirrors the per-user PnL query in index.ts (~L377),
+    // which also filters status = 'completed' for the same reason.
     const lossesRes = await this.db.query(
       `SELECT u.agent_id,
               COALESCE(SUM(CASE WHEN wt.type = 'game_debit' THEN wt.amount ELSE 0 END), 0)
@@ -53,6 +63,7 @@ export class AgentSettlementJob {
        JOIN users u ON u.id = wt.user_id
        WHERE u.agent_id IS NOT NULL
          AND wt.type IN ('game_debit', 'game_credit')
+         AND wt.status = 'completed'
          AND wt.created_at >= ($1::date AT TIME ZONE 'Asia/Kolkata')
          AND wt.created_at <  (($1::date + 1) AT TIME ZONE 'Asia/Kolkata')
        GROUP BY u.agent_id`,

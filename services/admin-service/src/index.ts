@@ -94,7 +94,16 @@ async function start() {
   }
 
   const authenticate = async (req: any, reply: any) => {
-    try { await req.jwtVerify() } catch { reply.code(401).send({ error: 'Unauthorized' }) }
+    try {
+      await req.jwtVerify()
+      // Agent tokens (role: 'agent', signed in agent-portal-routes.ts) are valid
+      // JWTs but must NEVER pass the shared admin gate — they'd otherwise reach
+      // every route guarded by `authenticate` alone (no requireRole on top).
+      // Agent self-service routes use their own `authenticateAgent` guard instead.
+      if ((req.user as any)?.role === 'agent') {
+        return reply.code(403).send({ error: 'Forbidden' })
+      }
+    } catch { reply.code(401).send({ error: 'Unauthorized' }) }
   }
 
   // Role-gate factory. Use as: { onRequest: [authenticate, requireRole('finance')] }
@@ -146,7 +155,7 @@ async function start() {
 
   // Register Agent commission system routes
   await registerAgentRoutes(app, db, authenticate, requireRole)
-  await registerAgentPortalRoutes(app, db, authenticate)
+  await registerAgentPortalRoutes(app, db)
   new AgentSettlementJob(db, (msg) => app.log.info(msg)).start()
 
   // POST /api/admin/auth/login

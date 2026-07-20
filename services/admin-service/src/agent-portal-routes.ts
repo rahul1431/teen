@@ -5,15 +5,20 @@ import bcrypt from 'bcryptjs'
 
 // Self-service routes for agents themselves (not admin staff). Agent JWTs
 // carry role: 'agent', which is intentionally outside the admin ROLES
-// hierarchy in index.ts — requireAgent below is the guard for these routes,
-// mirroring the shape of index.ts's own requireRole factory.
+// hierarchy in index.ts. These routes use their own combined verify+role guard
+// (authenticateAgent) rather than index.ts's shared `authenticate` decorator,
+// because that shared decorator now REJECTS role: 'agent' tokens (so agent JWTs
+// can't leak into general admin routes). req.jwtVerify() is available globally
+// once @fastify/jwt is registered in index.ts, so no passed-in guard is needed.
 export async function registerAgentPortalRoutes(
   app: FastifyInstance,
   db: Pool,
-  authenticate: any,
 ) {
-  const requireAgent = async (req: any, reply: any) => {
-    if ((req.user as any)?.role !== 'agent') return reply.code(403).send({ error: 'Forbidden' })
+  const authenticateAgent = async (req: any, reply: any) => {
+    try {
+      await req.jwtVerify()
+      if ((req.user as any)?.role !== 'agent') return reply.code(403).send({ error: 'Forbidden' })
+    } catch { reply.code(401).send({ error: 'Unauthorized' }) }
   }
 
   // POST /api/admin/agent-portal/auth/login
@@ -33,7 +38,7 @@ export async function registerAgentPortalRoutes(
   })
 
   // GET /api/admin/agent-portal/me — dashboard summary
-  app.get('/api/admin/agent-portal/me', { onRequest: [authenticate, requireAgent] }, async (req, reply) => {
+  app.get('/api/admin/agent-portal/me', { onRequest: [authenticateAgent] }, async (req, reply) => {
     const agentId = (req.user as any).sub
     const [agentRes, walletRes, subAgentsRes] = await Promise.all([
       db.query('SELECT id, username, display_name, commission_rate, referral_code, parent_agent_id FROM agents WHERE id = $1', [agentId]),
@@ -49,7 +54,7 @@ export async function registerAgentPortalRoutes(
   })
 
   // GET /api/admin/agent-portal/players — this agent's direct players (read-only)
-  app.get('/api/admin/agent-portal/players', { onRequest: [authenticate, requireAgent] }, async (req, reply) => {
+  app.get('/api/admin/agent-portal/players', { onRequest: [authenticateAgent] }, async (req, reply) => {
     const agentId = (req.user as any).sub
     const res = await db.query(
       `SELECT username, status, created_at,
@@ -61,7 +66,7 @@ export async function registerAgentPortalRoutes(
   })
 
   // GET /api/admin/agent-portal/ledger — this agent's commission history
-  app.get('/api/admin/agent-portal/ledger', { onRequest: [authenticate, requireAgent] }, async (req, reply) => {
+  app.get('/api/admin/agent-portal/ledger', { onRequest: [authenticateAgent] }, async (req, reply) => {
     const agentId = (req.user as any).sub
     const res = await db.query(
       `SELECT date, direct_commission::float, override_commission::float, total_commission::float, status
@@ -72,7 +77,7 @@ export async function registerAgentPortalRoutes(
   })
 
   // POST /api/admin/agent-portal/payout — request a payout against the current balance
-  app.post('/api/admin/agent-portal/payout', { onRequest: [authenticate, requireAgent] }, async (req, reply) => {
+  app.post('/api/admin/agent-portal/payout', { onRequest: [authenticateAgent] }, async (req, reply) => {
     const agentId = (req.user as any).sub
     const body = z.object({
       amount: z.number().min(100),

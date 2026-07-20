@@ -100,7 +100,6 @@ Agents aren't `users` rows, so they can't hold a `wallets` row or receive `walle
 
 ## Edge cases / guardrails
 
-- **Self-referral fraud**: block an agent's own linked accounts (matched via existing Player Tracking device-fingerprint data) from counting toward that agent's commission.
 - **Admin reversal**: a specific day's ledger row can be voided by admin after the fact; the reversal is an explicit `manual_debit`, not a silent delete — full audit trail preserved.
 - **Suspended agent**: their existing players are unaffected and keep playing; the settlement job simply skips commission accrual for a suspended agent going forward. Their upline's override continues to be computed from that agent's downline activity as normal (the suspension doesn't freeze the branch below them).
 - **Rate sanity**: admin UI blocks setting a commission rate above a configured max, and blocks assigning an upline rate lower than any of its existing downlines' rates.
@@ -117,3 +116,4 @@ Agents aren't `users` rows, so they can't hold a `wallets` row or receive `walle
 - Admin leaderboard of top agents.
 - KYC requirement for agent accounts.
 - Any direct fund-management capability for agents (deposits/withdrawals/limit changes on player accounts) — agents are read-only regarding player accounts.
+- **Self-referral fraud detection**: automatically excluding an agent's own linked/self-owned accounts from counting toward that agent's commission. NOT yet implemented — only a `flagged_for_review` column exists as an unused landing spot for this. Intended future approach: cluster an agent's own device-fingerprint data (from the existing Player Tracking system) against their referred players' fingerprints and exclude self-matches from the settlement pool.

@@ -63,9 +63,15 @@ export function calculateDailySettlement(
 
     // Walk up the chain applying the override. Always continue the walk even
     // through a suspended ancestor, but only credit ancestors that are active.
+    // The `visited` set is defense-in-depth against a corrupted circular
+    // parentAgentId chain (should be prevented at assignment time by
+    // validateNewAgentParent) — break rather than loop forever.
+    const visited = new Set<string>([leaf.id])
     let child = leaf
     let parent = child.parentAgentId ? agentById.get(child.parentAgentId) : undefined
     while (parent) {
+      if (visited.has(parent.id)) break // cycle detected — stop walking
+      visited.add(parent.id)
       const rateDiff = Math.max(0, parent.commissionRate - child.commissionRate)
       const overrideAmt = Math.max(0, (rateDiff / 100) * pool)
       if (parent.status === 'active') {
@@ -76,7 +82,15 @@ export function calculateDailySettlement(
     }
   }
 
+  // Round all monetary outputs to 2 decimals (paise) before they reach the
+  // NUMERIC(15,2) ledger columns and the `balance + $1` wallet accumulation,
+  // which would otherwise drift on raw float sums over many settlement runs.
+  // Round direct/override first, then sum the ALREADY-rounded values for total,
+  // so stored total always equals stored direct + stored override.
+  const round2 = (n: number) => Math.round(n * 100) / 100
   for (const r of results.values()) {
+    r.directCommission = round2(r.directCommission)
+    r.overrideCommission = round2(r.overrideCommission)
     r.totalCommission = r.directCommission + r.overrideCommission
   }
 

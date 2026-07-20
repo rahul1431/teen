@@ -82,6 +82,28 @@ describe('calculateDailySettlement', () => {
     expect(result.find(r => r.agentId === 'MASTER')!.totalCommission).toBe(50)
   })
 
+  it('accumulates override at a shared top-level master from two independent downline chains', () => {
+    // Two leaf agents on separate parent chains, both terminating at the SAME
+    // master. Each contributes override to the master in a single settlement
+    // call — the master's overrideCommission must be the SUM of both, not
+    // overwritten by the second (exercises the += accumulation across iterations).
+    const agents: AgentNode[] = [
+      { id: 'MASTER', parentAgentId: null, commissionRate: 30, status: 'active' },
+      { id: 'SUBA', parentAgentId: 'MASTER', commissionRate: 20, status: 'active' },
+      { id: 'SUBB', parentAgentId: 'MASTER', commissionRate: 25, status: 'active' },
+    ]
+    const losses: PlayerNetLoss[] = [
+      { agentId: 'SUBA', netHouseWin: 1000 }, // master override (30-20)% * 1000 = 100
+      { agentId: 'SUBB', netHouseWin: 1000 }, // master override (30-25)% * 1000 = 50
+    ]
+    const result = calculateDailySettlement(agents, losses)
+    const master = result.find(r => r.agentId === 'MASTER')!
+    expect(master.overrideCommission).toBe(150) // 100 + 50, summed not overwritten
+    expect(master.totalCommission).toBe(150)
+    expect(result.find(r => r.agentId === 'SUBA')!.totalCommission).toBe(200) // 20% * 1000
+    expect(result.find(r => r.agentId === 'SUBB')!.totalCommission).toBe(250) // 25% * 1000
+  })
+
   it('returns an empty array for no agents and no losses', () => {
     expect(calculateDailySettlement([], [])).toEqual([])
   })

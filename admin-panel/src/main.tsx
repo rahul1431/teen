@@ -45,8 +45,10 @@ const AgentPortal = React.lazy(() => import('./pages/AgentPortal'))
 const WebsiteSettings = React.lazy(() => import('./pages/WebsiteSettings'))
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { token } = useAuthStore()
-  if (!token) return <Navigate to="/admin/login" replace />
+  const { token, admin } = useAuthStore()
+  // An agent JWT must never render the admin SPA shell — the API calls behind it
+  // now 403, but the shell itself shouldn't load for a non-admin session either.
+  if (!token || admin?.role === 'agent') return <Navigate to="/admin/login" replace />
   return <>{children}</>
 }
 

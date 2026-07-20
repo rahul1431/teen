@@ -27,6 +27,10 @@ export default function AgentPortal() {
   useEffect(() => { load() }, [])
 
   const requestPayout = async (values: any) => {
+    if (!values.bank_account?.trim() && !values.upi_id?.trim()) {
+      message.error('Enter a bank account or a UPI ID to receive the payout')
+      return
+    }
     try {
       await adminApi.post('/agent-portal/payout', values)
       message.success('Payout requested')
@@ -66,9 +70,9 @@ export default function AgentPortal() {
               { title: 'Last Active', dataIndex: 'last_active', render: (v: string | null) => v ? new Date(v).toLocaleDateString() : '—' },
             ]} />,
           },
-          ...(me.sub_agents.length > 0 ? [{
-            key: 'sub_agents', label: `Your Sub-Agents (${me.sub_agents.length})`,
-            children: <Table rowKey="id" dataSource={me.sub_agents} columns={[
+          ...((me.sub_agents?.length ?? 0) > 0 ? [{
+            key: 'sub_agents', label: `Your Sub-Agents (${me.sub_agents?.length ?? 0})`,
+            children: <Table rowKey="id" dataSource={me.sub_agents ?? []} columns={[
               { title: 'Name', dataIndex: 'display_name' },
               { title: 'Their Rate', dataIndex: 'commission_rate', render: (v: number) => `${v}%` },
             ]} />,
