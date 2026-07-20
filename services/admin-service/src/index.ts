@@ -39,6 +39,7 @@ import { registerTaskRoutes } from './task-routes'
 import { registerNotificationRoutes } from './notifications-routes'
 import { registerAgentRoutes } from './agent-routes'
 import { registerAgentPortalRoutes } from './agent-portal-routes'
+import { registerAnalyticsRoutes } from './analytics-routes'
 import { AgentSettlementJob } from './agent-settlement-job'
 import { createRateLimiter } from './middleware/rate-limiter'
 
@@ -156,6 +157,7 @@ async function start() {
   // Register Agent commission system routes
   await registerAgentRoutes(app, db, authenticate, requireRole)
   await registerAgentPortalRoutes(app, db)
+  await registerAnalyticsRoutes(app, db, authenticate, requireRole)
   new AgentSettlementJob(db, (msg) => app.log.info(msg)).start()
 
   // POST /api/admin/auth/login
