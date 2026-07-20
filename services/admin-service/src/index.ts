@@ -38,6 +38,7 @@ import { registerPlayerAnomaliesRoutes } from './player-anomalies-routes'
 import { registerTaskRoutes } from './task-routes'
 import { registerNotificationRoutes } from './notifications-routes'
 import { registerAgentRoutes } from './agent-routes'
+import { registerAgentPortalRoutes } from './agent-portal-routes'
 import { createRateLimiter } from './middleware/rate-limiter'
 
 // QR images for payment methods are stored here. nginx's /uploads/ alias points at
@@ -144,6 +145,7 @@ async function start() {
 
   // Register Agent commission system routes
   await registerAgentRoutes(app, db, authenticate, requireRole)
+  await registerAgentPortalRoutes(app, db, authenticate)
 
   // POST /api/admin/auth/login
   // If the admin has 2FA enabled, the call must include `totp_code`. If it's
