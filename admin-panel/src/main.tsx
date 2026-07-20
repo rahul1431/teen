@@ -39,6 +39,7 @@ const CMSManagement = React.lazy(() => import('./pages/CMSManagement'))
 const MetricsDashboard = React.lazy(() => import('./pages/MetricsDashboard'))
 const PlayerAnomaliesPage = React.lazy(() => import('./pages/PlayerAnomaliesPage'))
 const Tasks = React.lazy(() => import('./pages/Tasks'))
+const Agents = React.lazy(() => import('./pages/Agents'))
 const WebsiteSettings = React.lazy(() => import('./pages/WebsiteSettings'))
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -86,6 +87,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="metrics-dashboard" element={<MetricsDashboard />} />
             <Route path="player-anomalies" element={<PlayerAnomaliesPage />} />
             <Route path="tasks" element={<Tasks />} />
+            <Route path="agents" element={<Agents />} />
             <Route path="settings" element={<WebsiteSettings />} />
           </Route>
           <Route path="*" element={<Navigate to="/admin" replace />} />
