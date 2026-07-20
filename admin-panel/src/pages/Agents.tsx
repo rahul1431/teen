@@ -56,17 +56,25 @@ export default function Agents() {
 
   const toggleStatus = async (agent: Agent) => {
     const next = agent.status === 'active' ? 'suspended' : 'active'
-    await adminApi.patch(`/agents/${agent.id}`, { status: next })
-    message.success(`Agent ${next}`)
-    load()
+    try {
+      await adminApi.patch(`/agents/${agent.id}`, { status: next })
+      message.success(`Agent ${next}`)
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Failed to update agent status')
+    }
   }
 
   const decidePayout = async (id: string, status: 'paid' | 'rejected') => {
     const reference = status === 'paid' ? window.prompt('Bank/UPI reference (optional):') || undefined : undefined
-    await adminApi.patch(`/agent-payouts/${id}`, { status, reference })
-    message.success(`Payout ${status}`)
-    loadPayouts()
-    load()
+    try {
+      await adminApi.patch(`/agent-payouts/${id}`, { status, reference })
+      message.success(`Payout ${status}`)
+      loadPayouts()
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Failed to update payout')
+    }
   }
 
   const columns = [
@@ -119,8 +127,12 @@ export default function Agents() {
                   {
                     title: 'Actions', render: (_: any, r: any) => (
                       <>
-                        <Button size="small" type="primary" onClick={() => decidePayout(r.id, 'paid')}>Approve</Button>{' '}
-                        <Button size="small" danger onClick={() => decidePayout(r.id, 'rejected')}>Reject</Button>
+                        <Popconfirm title="Approve this payout?" onConfirm={() => decidePayout(r.id, 'paid')}>
+                          <Button size="small" type="primary">Approve</Button>
+                        </Popconfirm>{' '}
+                        <Popconfirm title="Reject this payout?" onConfirm={() => decidePayout(r.id, 'rejected')}>
+                          <Button size="small" danger>Reject</Button>
+                        </Popconfirm>
                       </>
                     ),
                   },
