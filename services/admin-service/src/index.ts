@@ -39,6 +39,7 @@ import { registerTaskRoutes } from './task-routes'
 import { registerNotificationRoutes } from './notifications-routes'
 import { registerAgentRoutes } from './agent-routes'
 import { registerAgentPortalRoutes } from './agent-portal-routes'
+import { AgentSettlementJob } from './agent-settlement-job'
 import { createRateLimiter } from './middleware/rate-limiter'
 
 // QR images for payment methods are stored here. nginx's /uploads/ alias points at
@@ -146,6 +147,7 @@ async function start() {
   // Register Agent commission system routes
   await registerAgentRoutes(app, db, authenticate, requireRole)
   await registerAgentPortalRoutes(app, db, authenticate)
+  new AgentSettlementJob(db, (msg) => app.log.info(msg)).start()
 
   // POST /api/admin/auth/login
   // If the admin has 2FA enabled, the call must include `totp_code`. If it's
