@@ -7,7 +7,7 @@ import {
   TeamOutlined, ProfileOutlined, WarningOutlined, CustomerServiceOutlined,
   FundOutlined, RobotOutlined, HistoryOutlined, GiftOutlined,
   PictureOutlined, TagOutlined, AuditOutlined, MobileOutlined,
-  MenuOutlined, GlobalOutlined, SettingOutlined
+  MenuOutlined, GlobalOutlined, SettingOutlined, LineChartOutlined
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
@@ -64,6 +64,7 @@ const menuItems: MenuProps['items'] = [
   { key: '/admin/settings', icon: <SettingOutlined />, label: 'Website Settings' },
   { key: '/admin/tasks', icon: <ProfileOutlined />, label: '📋 Tasks' },
   { key: '/admin/agents', icon: <RobotOutlined />, label: 'Agents' },
+  { key: '/admin/analytics', icon: <LineChartOutlined />, label: 'Analytics' },
   // App Monitor and Player Tracking live inside the AI Control Center tabs.
   { key: '/admin/changelog', icon: <HistoryOutlined />, label: 'Changelog' },
 ]
