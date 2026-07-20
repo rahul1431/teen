@@ -40,11 +40,19 @@ const MetricsDashboard = React.lazy(() => import('./pages/MetricsDashboard'))
 const PlayerAnomaliesPage = React.lazy(() => import('./pages/PlayerAnomaliesPage'))
 const Tasks = React.lazy(() => import('./pages/Tasks'))
 const Agents = React.lazy(() => import('./pages/Agents'))
+const AgentLogin = React.lazy(() => import('./pages/AgentLogin'))
+const AgentPortal = React.lazy(() => import('./pages/AgentPortal'))
 const WebsiteSettings = React.lazy(() => import('./pages/WebsiteSettings'))
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token } = useAuthStore()
   if (!token) return <Navigate to="/admin/login" replace />
+  return <>{children}</>
+}
+
+function ProtectedAgentRoute({ children }: { children: React.ReactNode }) {
+  const { token, admin } = useAuthStore()
+  if (!token || admin?.role !== 'agent') return <Navigate to="/agent/login" replace />
   return <>{children}</>
 }
 
@@ -54,6 +62,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <Suspense fallback={<div style={{ padding: 100, textAlign: 'center', fontSize: 18, color: '#d4af37' }}>Loading page...</div>}>
         <Routes>
           <Route path="/admin/login" element={<Login />} />
+          <Route path="/agent/login" element={<AgentLogin />} />
+          <Route path="/agent" element={<ProtectedAgentRoute><AgentPortal /></ProtectedAgentRoute>} />
           <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
             <Route index element={<Dashboard />} />
             <Route path="users" element={<Users />} />
