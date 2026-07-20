@@ -15,6 +15,7 @@ import { notificationsPlugin } from './plugins/notifications'
 import { bettingPlugin } from './plugins/betting'
 import { supportPlugin } from './plugins/support'
 import { seoMarketingPlugin } from './plugins/seo-marketing'
+import { analyticsPlugin } from './plugins/analytics'
 import { FantasyScoringPoller } from './helpers/fantasy-scoring-poller'
 import { MatchStatusPoller } from './helpers/match-status-poller'
 
@@ -76,6 +77,7 @@ async function start() {
   await app.register(supportPlugin(db))
   await app.register(seoMarketingPlugin(db))
   await app.register(bettingPlugin(bettingDb))   // isolated pool — heavy queries don't starve auth
+  await app.register(analyticsPlugin(db))
 
   app.get('/health', async () => ({
     status: 'ok',
