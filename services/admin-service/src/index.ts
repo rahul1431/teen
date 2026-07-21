@@ -2557,6 +2557,15 @@ async function start() {
          VALUES ($1, $2, 0)`,
         [botId, body.initial_balance]
       )
+      // Logged so bot bankroll ROI (sub-project #4) can reconstruct total
+      // invested capital -- previously only later top-ups were logged,
+      // never the initial funding itself.
+      await client.query(
+        `INSERT INTO wallet_transactions
+           (user_id, type, wallet_type, amount, balance_before, balance_after, idempotency_key, status, description)
+         VALUES ($1, 'manual_credit', 'real', $2, 0, $2, $3, 'completed', 'Initial bot funding')`,
+        [botId, body.initial_balance, `initial-fund:${botId}`]
+      )
       await client.query('COMMIT')
       return reply.send({ success: true, bot: { id: botId, username: body.username, phone, balance: body.initial_balance, preferred_game_type: body.preferred_game_type } })
     } catch (e: any) {
