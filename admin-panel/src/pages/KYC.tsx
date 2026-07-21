@@ -87,10 +87,26 @@ export default function KYCPage() {
     } finally { setActing(false) }
   }
 
-  const resolve = (url: string | null) => {
-    if (!url) return ''
-    if (url.startsWith('http')) return url
-    return `${window.location.origin}${url}`
+  const KycImg = ({ userId, type, style }: { userId: string; type: 'front' | 'back' | 'selfie'; style: React.CSSProperties }) => {
+    const [src, setSrc] = useState<string | null>(null)
+    useEffect(() => {
+      let objectUrl: string | null = null
+      let cancelled = false
+      fetch(`/api/admin/kyc/${userId}/file/${type}`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(res => (res.ok ? res.blob() : Promise.reject()))
+        .then(blob => {
+          if (cancelled) return
+          objectUrl = URL.createObjectURL(blob)
+          setSrc(objectUrl)
+        })
+        .catch(() => {})
+      return () => {
+        cancelled = true
+        if (objectUrl) URL.revokeObjectURL(objectUrl)
+      }
+    }, [userId, type])
+    if (!src) return <div style={{ ...style, background: '#0d1117' }} />
+    return <Image src={src} style={style} />
   }
 
   const columns = [
@@ -125,9 +141,9 @@ export default function KYCPage() {
       title: 'Documents',
       render: (_: any, s: KYCSub) => (
         <Space>
-          {s.front_url && <Image src={resolve(s.front_url)} width={48} height={32} style={{ objectFit: 'cover', borderRadius: 4 }} />}
-          {s.back_url && <Image src={resolve(s.back_url)} width={48} height={32} style={{ objectFit: 'cover', borderRadius: 4 }} />}
-          {s.selfie_url && <Image src={resolve(s.selfie_url)} width={32} height={32} style={{ objectFit: 'cover', borderRadius: 16 }} />}
+          {s.front_url && <KycImg userId={s.user_id} type="front" style={{ width: 48, height: 32, objectFit: 'cover', borderRadius: 4 }} />}
+          {s.back_url && <KycImg userId={s.user_id} type="back" style={{ width: 48, height: 32, objectFit: 'cover', borderRadius: 4 }} />}
+          {s.selfie_url && <KycImg userId={s.user_id} type="selfie" style={{ width: 32, height: 32, objectFit: 'cover', borderRadius: 16 }} />}
         </Space>
       ),
     },
@@ -229,14 +245,15 @@ export default function KYCPage() {
             <Text style={{ color: '#8b949e', fontSize: 12, display: 'block', marginBottom: 10 }}>DOCUMENTS</Text>
             <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
               {[
-                { url: reviewing.front_url, label: 'Aadhaar Front' },
-                { url: reviewing.back_url, label: 'Aadhaar Back' },
-                { url: reviewing.selfie_url, label: 'Selfie' },
+                { url: reviewing.front_url, type: 'front' as const, label: 'Aadhaar Front' },
+                { url: reviewing.back_url, type: 'back' as const, label: 'Aadhaar Back' },
+                { url: reviewing.selfie_url, type: 'selfie' as const, label: 'Selfie' },
               ].map(d => d.url && (
                 <Col span={8} key={d.label}>
                   <div style={{ textAlign: 'center' }}>
-                    <Image
-                      src={resolve(d.url)}
+                    <KycImg
+                      userId={reviewing.user_id}
+                      type={d.type}
                       style={{ width: '100%', maxHeight: 160, objectFit: 'cover', borderRadius: 8, border: '1px solid #30363d' }}
                     />
                     <Text style={{ color: '#8b949e', fontSize: 11, display: 'block', marginTop: 4 }}>{d.label}</Text>
