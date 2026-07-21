@@ -524,10 +524,10 @@ export function bettingPlugin(db: Pool) {
     app.post('/internal/lottery/bot-config', { onRequest: [internal] }, async (req, reply) => {
       const body = z.object({
         enabled: z.boolean(),
-        default_max_tickets: z.number().int().positive(),
-        fill_pct: z.number().min(0).max(100),
-        trigger_pct: z.number().min(0).max(100),
-        release_pct: z.number().min(0).max(100),
+        default_max_tickets: z.coerce.number().int().positive(),
+        fill_pct: z.coerce.number().min(0).max(100),
+        trigger_pct: z.coerce.number().min(0).max(100),
+        release_pct: z.coerce.number().min(0).max(100),
       }).parse(req.body)
       const result = await db.query(
         `UPDATE lottery_bot_config
