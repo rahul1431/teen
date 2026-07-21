@@ -3415,6 +3415,32 @@ async function start() {
     return reply.send(stats)
   })
 
+  // GET /api/admin/kyc/:userId/file/:type — stream a KYC document image
+  // (nginx denies public /uploads/kyc/ access — docs are sensitive — so the
+  // admin panel must fetch them through this authenticated proxy instead)
+  const KYC_UPLOAD_DIR = process.env.KYC_UPLOAD_DIR || '/opt/teen/uploads/kyc'
+  const KYC_FILE_KEYS: Record<string, string> = { front: 'aadhaar_front', back: 'aadhaar_back', selfie: 'selfie' }
+  const KYC_MIME_TYPES: Record<string, string> = { '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' }
+  app.get('/api/admin/kyc/:userId/file/:type', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { userId, type } = req.params as any
+    const key = KYC_FILE_KEYS[type]
+    if (!key) return reply.code(400).send({ error: 'Invalid document type' })
+
+    const userDir = path.resolve(path.join(KYC_UPLOAD_DIR, userId))
+    if (!userDir.startsWith(path.resolve(KYC_UPLOAD_DIR) + path.sep)) {
+      return reply.code(400).send({ error: 'Invalid user id' })
+    }
+
+    let files: string[]
+    try { files = fs.readdirSync(userDir) } catch { return reply.code(404).send({ error: 'Not found' }) }
+    const match = files.find(f => f.startsWith(`${key}.`))
+    if (!match) return reply.code(404).send({ error: 'Not found' })
+
+    const mime = KYC_MIME_TYPES[path.extname(match).toLowerCase()] || 'application/octet-stream'
+    reply.type(mime)
+    return reply.send(fs.createReadStream(path.join(userDir, match)))
+  })
+
   // PUT /api/admin/kyc/:userId/review — approve or reject
   app.put('/api/admin/kyc/:userId/review', {
     onRequest: [app.authenticate, app.requireRole('support')],
