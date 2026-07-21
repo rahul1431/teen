@@ -1,6 +1,10 @@
 /* Global responsiveness for the admin panel.
    Keeps pages usable on phones without touching every page individually. */
 
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
 html, body, #root {
   max-width: 100%;
 }
