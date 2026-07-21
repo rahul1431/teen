@@ -26,4 +26,9 @@ describe('antdTheme', () => {
     expect(antdTheme.components?.Menu?.darkItemBg).toBe('transparent')
     expect(antdTheme.components?.Menu?.darkItemSelectedBg).toBe(tokens.color.goldActive)
   })
+
+  it('gives Card real elevation instead of a flat border', () => {
+    expect(antdTheme.components?.Card?.borderRadiusLG).toBe(tokens.radius.card)
+    expect(antdTheme.components?.Card?.boxShadowTertiary).toBe(tokens.shadow.card)
+  })
 })

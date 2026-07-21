@@ -53,7 +53,7 @@ export default function AdminLayout() {
   return (
     <Layout style={{ minHeight: '100vh' }}>
       {!isMobile && (
-        <Sider width={220} theme="dark" style={{ position: 'fixed', height: '100vh', zIndex: 10, overflowY: 'auto', background: tokens.color.inkBase }}>
+        <Sider width={220} theme="dark" style={{ position: 'fixed', height: '100vh', zIndex: 10, overflowY: 'auto', background: tokens.gradient.sidebar }}>
           {brand}
           {nav}
         </Sider>
@@ -66,7 +66,7 @@ export default function AdminLayout() {
           onClose={() => setDrawerOpen(false)}
           width={240}
           closable={false}
-          styles={{ body: { padding: 0, background: tokens.color.inkBase } }}
+          styles={{ body: { padding: 0, background: tokens.gradient.sidebar } }}
         >
           {brand}
           {nav}
@@ -75,13 +75,12 @@ export default function AdminLayout() {
 
       <Layout style={{ marginLeft: isMobile ? 0 : 220 }}>
         <Header
+          className="admin-glass-header"
           style={{
-            background: '#fff',
             padding: isMobile ? '0 12px' : '0 24px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
             position: 'sticky',
             top: 0,
             zIndex: 9,
@@ -105,7 +104,7 @@ export default function AdminLayout() {
               { key: 'logout', icon: <LogoutOutlined />, label: 'Logout', onClick: handleLogout },
             ] }}>
               <Button type="text" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Avatar size="small" icon={<UserOutlined />} style={{ background: '#d4af37' }} />
+                <Avatar size="small" icon={<UserOutlined />} style={{ background: tokens.color.gold }} />
                 <span>{admin?.username}</span>
               </Button>
             </Dropdown>

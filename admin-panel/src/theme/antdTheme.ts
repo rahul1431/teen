@@ -27,5 +27,9 @@ export const antdTheme: ThemeConfig = {
       darkItemSelectedColor: tokens.color.inkBase,
       darkSubMenuItemBg: 'transparent',
     },
+    Card: {
+      borderRadiusLG: tokens.radius.card,
+      boxShadowTertiary: tokens.shadow.card,
+    },
   },
 }

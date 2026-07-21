@@ -27,11 +27,28 @@ export const tokens = {
     warning: '#D97706',
     error: '#DC2626',
     info: '#2563EB',
+
+    // Muted body/label text for light (content-area) surfaces — distinct from
+    // textOnDarkMuted, which is only contrast-checked against inkBase.
+    textMuted: '#6B6558',
   },
   font: {
     family: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
   },
   radius: {
     base: 10,
+    card: 16,
+  },
+  shadow: {
+    card: '0 1px 2px rgba(20, 17, 13, 0.04), 0 8px 24px rgba(20, 17, 13, 0.06)',
+    cardHover: '0 4px 8px rgba(20, 17, 13, 0.06), 0 16px 40px rgba(20, 17, 13, 0.10)',
+  },
+  gradient: {
+    // Sidebar surface — subtle vertical depth instead of a flat fill.
+    sidebar: 'linear-gradient(180deg, #17140F 0%, #0E0C09 100%)',
+  },
+  glass: {
+    headerBg: 'rgba(255, 255, 255, 0.72)',
+    blur: '12px',
   },
 } as const

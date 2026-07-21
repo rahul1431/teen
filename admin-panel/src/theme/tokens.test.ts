@@ -10,7 +10,7 @@ describe('tokens', () => {
       'inkBase', 'inkRaised', 'inkBorder',
       'bgLayout', 'bgCard',
       'textOnDark', 'textOnDarkMuted',
-      'success', 'warning', 'error', 'info',
+      'success', 'warning', 'error', 'info', 'textMuted',
     ]
     for (const key of required) {
       expect(tokens.color).toHaveProperty(key)
@@ -22,7 +22,19 @@ describe('tokens', () => {
     expect(tokens.font.family).toContain('Inter')
   })
 
-  it('defines a border radius token', () => {
+  it('defines border radius tokens', () => {
     expect(tokens.radius.base).toBe(10)
+    expect(tokens.radius.card).toBe(16)
+  })
+
+  it('defines card elevation shadows', () => {
+    expect(tokens.shadow.card).toContain('rgba')
+    expect(tokens.shadow.cardHover).toContain('rgba')
+  })
+
+  it('defines the sidebar gradient and glass header tokens', () => {
+    expect(tokens.gradient.sidebar).toContain('linear-gradient')
+    expect(tokens.glass.headerBg).toContain('rgba')
+    expect(tokens.glass.blur).toBe('12px')
   })
 })
