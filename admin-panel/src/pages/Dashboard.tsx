@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Row, Col, Card, Statistic, Table, Tag, Typography, Badge } from 'antd'
 import { UserOutlined, DollarOutlined, PlayCircleOutlined, WarningOutlined } from '@ant-design/icons'
 import { adminApi } from '../api/client'
+import { tokens } from '../theme/tokens'
 
 // ---- Custom SVG Charting Component ----
 function SVGLineChart({ data, width = 400, height = 180, strokeColor = '#52c41a', fillColor = 'rgba(82, 196, 26, 0.05)', valueKey = 'ggr' }: { data: any[], width?: number, height?: number, strokeColor?: string, fillColor?: string, valueKey?: string }) {
@@ -96,22 +97,22 @@ export default function Dashboard() {
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={12} xl={6}>
           <Card>
-            <Statistic title="Active Users Now" value={stats.active_users || 0} prefix={<UserOutlined />} valueStyle={{ color: '#52c41a' }} />
+            <Statistic title="Active Users Now" value={stats.active_users || 0} prefix={<UserOutlined />} valueStyle={{ color: tokens.color.success }} />
           </Card>
         </Col>
         <Col xs={24} sm={12} xl={6}>
           <Card>
-            <Statistic title="Active Game Rooms" value={stats.active_rooms || 0} prefix={<PlayCircleOutlined />} valueStyle={{ color: '#1677ff' }} />
+            <Statistic title="Active Game Rooms" value={stats.active_rooms || 0} prefix={<PlayCircleOutlined />} valueStyle={{ color: tokens.color.info }} />
           </Card>
         </Col>
         <Col xs={24} sm={12} xl={6}>
           <Card>
-            <Statistic title="Revenue Today (₹)" value={stats.revenue_today || 0} prefix={<DollarOutlined />} precision={2} valueStyle={{ color: '#d4af37' }} />
+            <Statistic title="Revenue Today (₹)" value={stats.revenue_today || 0} prefix={<DollarOutlined />} precision={2} valueStyle={{ color: tokens.color.gold }} />
           </Card>
         </Col>
         <Col xs={24} sm={12} xl={6}>
           <Card>
-            <Statistic title="Fraud Alerts" value={stats.fraud_alerts || 0} prefix={<WarningOutlined />} valueStyle={{ color: stats.fraud_alerts > 0 ? '#ff4d4f' : '#52c41a' }} />
+            <Statistic title="Fraud Alerts" value={stats.fraud_alerts || 0} prefix={<WarningOutlined />} valueStyle={{ color: stats.fraud_alerts > 0 ? tokens.color.error : tokens.color.success }} />
           </Card>
         </Col>
       </Row>
@@ -124,12 +125,12 @@ export default function Dashboard() {
         </Col>
         <Col xs={24} xl={8}>
           <Card title="Pending Withdrawals" size="small">
-            <Statistic value={stats.pending_withdrawals || 0} suffix="requests" valueStyle={{ color: stats.pending_withdrawals > 0 ? '#fa8c16' : undefined }} />
+            <Statistic value={stats.pending_withdrawals || 0} suffix="requests" valueStyle={{ color: stats.pending_withdrawals > 0 ? tokens.color.warning : undefined }} />
           </Card>
         </Col>
         <Col xs={24} xl={8}>
           <Card title="Pending Deposits (to approve)" size="small">
-            <Statistic value={stats.pending_deposits || 0} suffix="requests" valueStyle={{ color: stats.pending_deposits > 0 ? '#fa8c16' : undefined }} />
+            <Statistic value={stats.pending_deposits || 0} suffix="requests" valueStyle={{ color: stats.pending_deposits > 0 ? tokens.color.warning : undefined }} />
           </Card>
         </Col>
       </Row>
@@ -151,7 +152,7 @@ export default function Dashboard() {
           <Card title="Weekly Revenue GGR Trend (₹)" style={{ height: '100%', borderRadius: 12 }}>
             <div style={{ padding: '16px 8px' }}>
               {reconciliationData ? (
-                <SVGLineChart data={reconciliationData.ggr} strokeColor="#d4af37" fillColor="rgba(212, 175, 55, 0.05)" />
+                <SVGLineChart data={reconciliationData.ggr} strokeColor={tokens.color.gold} fillColor="rgba(212, 175, 55, 0.05)" />
               ) : (
                 <div style={{ height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading trend...</div>
               )}
