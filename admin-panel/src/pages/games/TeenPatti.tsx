@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag, Badge,
   Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col,
-  Input, Popconfirm, Modal, Typography, Spin, Upload, Grid
+  Input, Popconfirm, Modal, Typography, Spin, Upload, Grid, Tabs
 } from 'antd'
 import { ReloadOutlined, EyeOutlined, PlusOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
+import BotManagementPanel from '../../components/BotManagementPanel'
 
 const { Text } = Typography
 
@@ -227,6 +228,7 @@ export default function TeenPatti() {
   ]
 
   return (
+    <Tabs items={[{ key: 'overview', label: 'Overview', children: (
     <div>
       <h2 style={{ color: '#d4af37', marginBottom: 24 }}>🃏 Teen Patti Management</h2>
       <Row gutter={[24, 24]}>
@@ -449,5 +451,6 @@ export default function TeenPatti() {
         )}
       </Drawer>
     </div>
+    ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="teen_patti" /> }]} />
   )
 }
