@@ -171,6 +171,16 @@ export default function AdminLayout() {
           <Outlet />
         </Content>
       </Layout>
+
+      <style>{`
+        .ant-menu-dark .ant-menu-submenu-selected > .ant-menu-submenu-title {
+          background-color: #d4af37 !important;
+          color: #000 !important;
+        }
+        .ant-menu-dark .ant-menu-submenu-selected > .ant-menu-submenu-title .anticon {
+          color: #000 !important;
+        }
+      `}</style>
     </Layout>
   )
 }
