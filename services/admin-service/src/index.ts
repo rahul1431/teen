@@ -371,16 +371,18 @@ async function start() {
 
   // GET /api/admin/users
   app.get('/api/admin/users', { onRequest: [authenticate] }, async (req, reply) => {
-    const { page = 1, limit = 20, search, status, is_bot = 'false' } = req.query as any
+    const { page = 1, limit = 20, search, status, is_bot = 'false', game_type } = req.query as any
     const offset = (parseInt(page) - 1) * parseInt(limit)
     const conditions: string[] = ['u.is_bot = $1']
     const params: any[] = [is_bot !== 'false']
     let idx = 2
     if (search) { conditions.push(`(u.username ILIKE $${idx} OR u.phone ILIKE $${idx})`); params.push(`%${search}%`); idx++ }
     if (status) { conditions.push(`u.status = $${idx}`); params.push(status); idx++ }
+    if (game_type) { conditions.push(`u.preferred_game_type = $${idx}`); params.push(game_type); idx++ }
     const where = conditions.join(' AND ')
     const [users, countRes] = await Promise.all([
       db.query(`SELECT u.id, u.username, u.phone, u.email, u.kyc_status, u.status, u.referral_code, u.created_at,
+                       u.preferred_game_type, u.bot_difficulty,
                        w.real_balance, w.bonus_balance,
                        COALESCE(
                          (SELECT SUM(CASE WHEN type = 'game_credit' THEN amount ELSE -amount END)
@@ -2586,6 +2588,31 @@ async function start() {
     } finally {
       client.release()
     }
+  })
+
+  app.patch('/api/admin/bots/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const botCheck = await db.query('SELECT is_bot FROM users WHERE id = $1', [id])
+    if (!botCheck.rows.length || !botCheck.rows[0].is_bot) {
+      return reply.code(400).send({ error: 'User is not a bot or does not exist' })
+    }
+
+    const body = z.object({
+      preferred_game_type: z.string().min(1).optional(),
+      bot_difficulty: z.enum(['easy', 'medium', 'hard']).nullable().optional(),
+    }).parse(req.body)
+
+    const sets: string[] = []
+    const params: any[] = [id]
+    if (body.preferred_game_type !== undefined) { params.push(body.preferred_game_type); sets.push(`preferred_game_type = $${params.length}`) }
+    if (body.bot_difficulty !== undefined) { params.push(body.bot_difficulty); sets.push(`bot_difficulty = $${params.length}`) }
+
+    if (sets.length === 0) {
+      return reply.code(400).send({ error: 'No fields to update' })
+    }
+
+    await db.query(`UPDATE users SET ${sets.join(', ')} WHERE id = $1`, params)
+    return reply.send({ success: true })
   })
 
 
