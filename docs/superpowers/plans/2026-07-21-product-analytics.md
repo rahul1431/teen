@@ -1,6 +1,6 @@
 # Product Analytics Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Close the deposit-funnel, onboarding-funnel, retention/cohort, feature-flag, and A/B-testing gaps identified in the design spec, using only infrastructure already running (shared Postgres, existing `admin-service`/`core-api-service` processes, existing admin-panel) — no PostHog, no new processes.
 
@@ -26,7 +26,7 @@
 **Interfaces:**
 - Produces: tables `product_events`, `feature_flags`. All later tasks depend on these exact column names.
 
-- [ ] **Step 1: Write the migration**
+- [x] **Step 1: Write the migration**
 
 ```sql
 -- Product analytics: event tracking + feature flags, built on existing
@@ -61,12 +61,12 @@ CREATE TABLE feature_flags (
 );
 ```
 
-- [ ] **Step 2: Verify column list**
+- [x] **Step 2: Verify column list**
 
 Run: `grep -c "CREATE TABLE\|CREATE INDEX" infra/db/migrations/083_product_analytics.sql`
 Expected: `5` (2 tables + 3 indexes).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add infra/db/migrations/083_product_analytics.sql
@@ -84,7 +84,7 @@ git commit -m "feat(db): add product_events and feature_flags tables"
 **Interfaces:**
 - Produces: `evaluateFlag(flag: FeatureFlag, userId: string): FlagResult` — used by Task 3's `GET /flags` route.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```typescript
 // services/core-api-service/tests/flag-evaluation.test.ts
@@ -200,12 +200,12 @@ describe('evaluateFlag', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd services/core-api-service && npx vitest run tests/flag-evaluation.test.ts`
 Expected: FAIL — `Cannot find module '../src/flag-evaluation'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```typescript
 // services/core-api-service/src/flag-evaluation.ts
@@ -264,12 +264,12 @@ export function evaluateFlag(flag: FeatureFlag, userId: string): FlagResult {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd services/core-api-service && npx vitest run tests/flag-evaluation.test.ts`
 Expected: PASS — all 11 tests green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add services/core-api-service/src/flag-evaluation.ts services/core-api-service/tests/flag-evaluation.test.ts
@@ -288,7 +288,7 @@ git commit -m "feat(core-api-service): deterministic feature-flag evaluation"
 - Consumes: `evaluateFlag` from `../flag-evaluation` (Task 2).
 - Produces: `POST /events`, `GET /flags` routes, registered as `analyticsPlugin(db)`.
 
-- [ ] **Step 1: Write the plugin**
+- [x] **Step 1: Write the plugin**
 
 ```typescript
 // services/core-api-service/src/plugins/analytics.ts
@@ -349,7 +349,7 @@ export function analyticsPlugin(db: Pool) {
 }
 ```
 
-- [ ] **Step 2: Wire into `index.ts`**
+- [x] **Step 2: Wire into `index.ts`**
 
 In `services/core-api-service/src/index.ts`, add the import after the other plugin imports (after `import { seoMarketingPlugin } from './plugins/seo-marketing'` or wherever the last plugin import is):
 
@@ -363,12 +363,12 @@ And register it after `await app.register(bettingPlugin(bettingDb))` (line 78):
   await app.register(analyticsPlugin(db))
 ```
 
-- [ ] **Step 3: Verify it builds**
+- [x] **Step 3: Verify it builds**
 
 Run: `cd services/core-api-service && npx tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 4: Manual smoke test**
+- [x] **Step 4: Manual smoke test**
 
 With the service running locally against a dev DB:
 
@@ -378,7 +378,7 @@ curl -X POST http://127.0.0.1:3001/events -H "Content-Type: application/json" \
 ```
 Expected: `200 {"success":true}`, and `SELECT * FROM product_events ORDER BY created_at DESC LIMIT 1` shows a row with `user_id` NULL (no auth token sent) and `source='mobile'`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add services/core-api-service/src/plugins/analytics.ts services/core-api-service/src/index.ts
@@ -396,7 +396,7 @@ git commit -m "feat(core-api-service): player-facing event tracking and flag eva
 - Consumes: nothing from earlier tasks.
 - Produces: `/api/analytics/*` publicly reachable, proxied to `core-api-service`. Required for Task 3's routes and Task 8's mobile client to be reachable at all in production.
 
-- [ ] **Step 1: Add the location block**
+- [x] **Step 1: Add the location block**
 
 In `infra/nginx/game.myonlinejoker.com.conf`, add a new block following the exact style of the existing `/api/betting/` block (find it and place this immediately after it):
 
@@ -413,11 +413,11 @@ location /api/analytics/ {
 }
 ```
 
-- [ ] **Step 2: Verify the rewrite is correct**
+- [x] **Step 2: Verify the rewrite is correct**
 
 Confirm the `rewrite` strips exactly the `/api/analytics/` prefix so `/api/analytics/events` → `/events` and `/api/analytics/flags` → `/flags`, matching Task 3's route paths exactly (no leading prefix in the Fastify plugin).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add infra/nginx/game.myonlinejoker.com.conf
@@ -438,7 +438,7 @@ git commit -m "feat(nginx): route /api/analytics/ to core-api-service"
 - Consumes: `product_events`, `feature_flags` tables (Task 1). Does not depend on Task 2/3's code directly — flag CRUD here only reads/writes raw flag config; evaluation happens client-side (core-api-service).
 - Produces: registers routes under `/api/admin/analytics/*`, all `requireRole('superadmin')` except the dashboards which are `requireRole('finance')` (read-only, matches the existing pattern where finance staff can view money-adjacent dashboards).
 
-- [ ] **Step 1: Write the route module**
+- [x] **Step 1: Write the route module**
 
 ```typescript
 // services/admin-service/src/analytics-routes.ts
@@ -625,7 +625,7 @@ export async function registerAnalyticsRoutes(
 }
 ```
 
-- [ ] **Step 2: Wire into `index.ts`**
+- [x] **Step 2: Wire into `index.ts`**
 
 In `services/admin-service/src/index.ts`, add the import after the `registerAgentPortalRoutes` import:
 
@@ -639,12 +639,12 @@ And register it after `await registerAgentPortalRoutes(app, db, authenticate)`:
   await registerAnalyticsRoutes(app, db, authenticate, requireRole)
 ```
 
-- [ ] **Step 3: Verify it builds**
+- [x] **Step 3: Verify it builds**
 
 Run: `cd services/admin-service && npx tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 4: Manual smoke test**
+- [x] **Step 4: Manual smoke test**
 
 With a valid superadmin JWT:
 
@@ -655,7 +655,7 @@ curl -X POST http://127.0.0.1:3008/api/admin/analytics/flags \
 ```
 Expected: `201` with `{id}`. Then `GET /api/admin/analytics/funnels/onboarding?days=30` returns `200` with signup/deposit/bet counts (zeros are fine if no data in range).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add services/admin-service/src/analytics-routes.ts services/admin-service/src/index.ts
@@ -674,7 +674,7 @@ git commit -m "feat(admin-service): analytics dashboards and feature-flag CRUD r
 - Consumes: `adminApi` from `admin-panel/src/api/client.ts`, the routes from Task 5.
 - Produces: `/admin/analytics` route.
 
-- [ ] **Step 1: Write the page**
+- [x] **Step 1: Write the page**
 
 ```tsx
 // admin-panel/src/pages/Analytics.tsx
@@ -817,7 +817,7 @@ function FeatureFlags() {
 }
 ```
 
-- [ ] **Step 2: Wire into the router**
+- [x] **Step 2: Wire into the router**
 
 In `admin-panel/src/main.tsx`, add the lazy import after the `Agents` import:
 
@@ -831,16 +831,16 @@ And add the route inside the `/admin` route block, after `<Route path="agents" e
             <Route path="analytics" element={<Analytics />} />
 ```
 
-- [ ] **Step 3: Verify it builds**
+- [x] **Step 3: Verify it builds**
 
 Run: `cd admin-panel && npx tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 4: Manual verification**
+- [x] **Step 4: Manual verification**
 
 Run `npm run dev`, log in as superadmin, navigate to `/admin/analytics`. Expected: all 4 tabs load without error (zeros/empty tables are fine with no data yet), "New Flag" modal creates a flag, toggling Enabled and editing Rollout % both persist after a page refresh.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add admin-panel/src/pages/Analytics.tsx admin-panel/src/main.tsx
@@ -858,24 +858,24 @@ git commit -m "feat(admin-panel): Analytics module — funnels, retention, featu
 - Consumes: nothing new.
 - Produces: nothing later depends on this — makes Task 6's page reachable from the nav instead of only by direct URL.
 
-- [ ] **Step 1: Find the existing nav item array**
+- [x] **Step 1: Find the existing nav item array**
 
 Run: `grep -n "path: '/admin/agents'\|/admin/agents" admin-panel/src/pages/Layout.tsx`
 
 This locates the Agents menu item added in the prior Agent-system feature — add the new Analytics item using the exact same shape immediately after it.
 
-- [ ] **Step 2: Add the nav entry**
+- [x] **Step 2: Add the nav entry**
 
 Add an entry for `/admin/analytics` following the exact structure of the `/admin/agents` entry found in Step 1 — same icon-import style, same object shape — change only the `key`/`label`/`path` fields to `'analytics'` / `'Analytics'` / `/admin/analytics`. Pick an icon distinct from any already used in the file (e.g. `LineChartOutlined` from `@ant-design/icons`, adding the import alongside the file's other icon imports if not already present).
 
-- [ ] **Step 3: Verify it builds and renders**
+- [x] **Step 3: Verify it builds and renders**
 
 Run: `cd admin-panel && npx tsc --noEmit`
 Expected: no errors.
 
 Run `npm run dev`, log in as superadmin. Expected: "Analytics" appears in the sidebar and navigates to the Task 6 page.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add admin-panel/src/pages/Layout.tsx
@@ -894,7 +894,7 @@ git commit -m "feat(admin-panel): add Analytics module to the sidebar nav"
 - Consumes: `ApiClient` from `mobile/lib/core/network/api_client.dart` (existing).
 - Produces: `ProductAnalytics.instance.init()`, `ProductAnalytics.instance.track(event, properties)`, `ProductAnalytics.instance.isEnabled(flagKey)` — used by Task 9's deposit-flow instrumentation.
 
-- [ ] **Step 1: Write the service**
+- [x] **Step 1: Write the service**
 
 ```dart
 // mobile/lib/core/analytics/product_analytics.dart
@@ -950,7 +950,7 @@ class ProductAnalytics {
 }
 ```
 
-- [ ] **Step 2: Call `init()` after login**
+- [x] **Step 2: Call `init()` after login**
 
 Find where the app currently transitions to the logged-in/home state after a successful login (search for where `SecureStorage.saveTokens` or the home route is pushed after auth success — likely in a login/auth flow file, not `main.dart`, since flags require a logged-in player). Add:
 
@@ -960,12 +960,12 @@ import 'core/analytics/product_analytics.dart';
 
 and call `await ProductAnalytics.instance.init();` immediately after tokens are saved on successful login, before navigating to the home screen. If you cannot find a single clear post-login hook, report DONE_WITH_CONCERNS with the file/line you considered and why — don't guess at a location that might not actually run on every login path (e.g. skip a silent-refresh path that isn't a fresh login).
 
-- [ ] **Step 3: Verify it builds**
+- [x] **Step 3: Verify it builds**
 
 Run: `cd mobile && flutter analyze lib/core/analytics/product_analytics.dart`
 Expected: no errors (warnings pre-existing elsewhere in the codebase are fine, per established convention this session — only new errors in this file block).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add mobile/lib/core/analytics/product_analytics.dart mobile/lib/main.dart
@@ -985,7 +985,7 @@ git commit -m "feat(mobile): ProductAnalytics service — event tracking + featu
 - Consumes: `ProductAnalytics.instance.track()` from Task 8.
 - Produces: `deposit_screen_opened` and `deposit_submitted` events feeding Task 5's `GET /analytics/funnels/deposit` dashboard.
 
-- [ ] **Step 1: Track `deposit_screen_opened`**
+- [x] **Step 1: Track `deposit_screen_opened`**
 
 In `mobile/lib/features/wallet/wallet_page.dart`, `_WalletPageState._openDeposit()` (around line 135) is where the deposit bottom sheet is opened. Add the import at the top of the file:
 
@@ -1001,7 +1001,7 @@ Then at the very start of `_openDeposit()`, before the `showModalBottomSheet` ca
     final ok = await showModalBottomSheet<bool>(
 ```
 
-- [ ] **Step 2: Track `deposit_submitted`**
+- [x] **Step 2: Track `deposit_submitted`**
 
 In the same file, `_DepositSheetState._submit()` (around line 390), the deposit request is POSTed at line 416-417 (`await widget.api.dio.post('/api/wallet/deposit/submit', data: form);`). Add the tracking call right after that POST succeeds (immediately before the existing `if (mounted) Navigator.pop(context, true);` at line 418):
 
@@ -1012,16 +1012,16 @@ In the same file, `_DepositSheetState._submit()` (around line 390), the deposit 
       if (mounted) Navigator.pop(context, true);
 ```
 
-- [ ] **Step 3: Verify it builds**
+- [x] **Step 3: Verify it builds**
 
 Run: `cd mobile && flutter analyze lib/features/wallet/wallet_page.dart`
 Expected: no new errors (the file has 2 known pre-existing warnings elsewhere per project history — don't let those block; only new errors from this change matter).
 
-- [ ] **Step 4: Manual verification**
+- [x] **Step 4: Manual verification**
 
 With the app pointed at a dev backend running Tasks 1-4, open the Wallet page, tap Deposit (opens the sheet) — confirm a `deposit_screen_opened` row appears in `product_events`. Fill in and submit a test deposit — confirm a `deposit_submitted` row appears with `properties.amount` matching what was entered.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add mobile/lib/features/wallet/wallet_page.dart
