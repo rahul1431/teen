@@ -2547,18 +2547,19 @@ async function start() {
       username: z.string(),
       phone: z.string().optional(),
       initial_balance: z.number().nonnegative().default(10000),
+      preferred_game_type: z.enum(['teen_patti', 'ludo', 'lottery']).optional(),
     }).parse(req.body)
-    
+
     const phone = body.phone || `999${Math.floor(1000000 + Math.random() * 9000000)}`
     const referralCode = Math.random().toString(36).substring(2, 10).toUpperCase()
-    
+
     const client = await db.connect()
     try {
       await client.query('BEGIN')
       const userRes = await client.query(
-        `INSERT INTO users (phone, username, password_hash, is_bot, status, referral_code)
-         VALUES ($1, $2, $3, true, 'active', $4) RETURNING id`,
-        [phone, body.username, '$2b$12$invalid_bot_hash_never_login', referralCode]
+        `INSERT INTO users (phone, username, password_hash, is_bot, status, referral_code, preferred_game_type)
+         VALUES ($1, $2, $3, true, 'active', $4, $5) RETURNING id`,
+        [phone, body.username, '$2b$12$invalid_bot_hash_never_login', referralCode, body.preferred_game_type ?? null]
       )
       const botId = userRes.rows[0].id
       await client.query(

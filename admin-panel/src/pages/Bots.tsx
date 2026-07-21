@@ -484,6 +484,17 @@ export default function Bots() {
           >
             <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
+          <Form.Item
+            name="preferred_game_type"
+            label="Bot Pool"
+            tooltip={{ title: 'Which feature this bot is dedicated to — lottery bots only buy lottery tickets, never join Teen Patti/Ludo rooms.', icon: <InfoCircleOutlined /> }}
+          >
+            <Select placeholder="Unassigned (general pool)" allowClear>
+              <Select.Option value="lottery">Lottery (ticket fill)</Select.Option>
+              <Select.Option value="teen_patti">Teen Patti</Select.Option>
+              <Select.Option value="ludo">Ludo</Select.Option>
+            </Select>
+          </Form.Item>
         </Form>
       </Modal>
 
