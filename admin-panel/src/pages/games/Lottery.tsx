@@ -21,6 +21,10 @@ export default function Lottery() {
   const [loadingConfig, setLoadingConfig] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
 
+  const [botConfig, setBotConfig] = useState<any>(null)
+  const [loadingBotConfig, setLoadingBotConfig] = useState(false)
+  const [savingBotConfig, setSavingBotConfig] = useState(false)
+
   const [draws, setDraws] = useState<any[]>([])
   const [loadingDraws, setLoadingDraws] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
@@ -58,6 +62,26 @@ export default function Lottery() {
       message.error('Failed to save configuration')
     } finally {
       setSavingConfig(false)
+    }
+  }
+
+  const loadBotConfig = () => {
+    setLoadingBotConfig(true)
+    adminApi.get('/betting/lottery/bot-config')
+      .then(r => setBotConfig(r.data))
+      .finally(() => setLoadingBotConfig(false))
+  }
+
+  const saveBotConfig = async (values: any) => {
+    setSavingBotConfig(true)
+    try {
+      const r = await adminApi.post('/betting/lottery/bot-config', values)
+      setBotConfig(r.data)
+      message.success('Bot fill configuration saved!')
+    } catch {
+      message.error('Failed to save bot fill configuration')
+    } finally {
+      setSavingBotConfig(false)
     }
   }
 
@@ -135,6 +159,7 @@ export default function Lottery() {
     loadConfig()
     loadDraws()
     loadStats()
+    loadBotConfig()
   }, [])
 
   // Styles
@@ -254,9 +279,55 @@ export default function Lottery() {
         </Col>
       </Row>
 
+      <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
+        <Col span={24}>
+          <Card
+            title={
+              <Space>
+                <SettingOutlined style={{ color: '#d4af37' }} />
+                <span style={{ color: '#f3f4f6' }}>Bot Ticket Fill (Daily / Weekly / Monthly)</span>
+              </Space>
+            }
+            loading={loadingBotConfig}
+            style={cardStyle}
+            headStyle={{ borderBottom: '1px solid #374151' }}
+          >
+            {botConfig && (
+              <Form
+                layout="vertical"
+                initialValues={botConfig}
+                onFinish={saveBotConfig}
+                style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}
+              >
+                <Form.Item name="enabled" label={<span style={{ color: '#d1d5db' }}>Enabled</span>} valuePropName="checked">
+                  <Switch checkedChildren="ON" unCheckedChildren="OFF" />
+                </Form.Item>
+                <Form.Item name="default_max_tickets" label={<span style={{ color: '#d1d5db' }}>Pool Size (new draws)</span>}>
+                  <InputNumber min={1} style={{ width: 160 }} />
+                </Form.Item>
+                <Form.Item name="fill_pct" label={<span style={{ color: '#d1d5db' }}>Bot Fill %</span>}>
+                  <InputNumber min={0} max={100} style={{ width: 120 }} />
+                </Form.Item>
+                <Form.Item name="trigger_pct" label={<span style={{ color: '#d1d5db' }}>Release Trigger %</span>}>
+                  <InputNumber min={0} max={100} style={{ width: 120 }} />
+                </Form.Item>
+                <Form.Item name="release_pct" label={<span style={{ color: '#d1d5db' }}>Release %</span>}>
+                  <InputNumber min={0} max={100} style={{ width: 120 }} />
+                </Form.Item>
+                <Form.Item>
+                  <Button type="primary" htmlType="submit" loading={savingBotConfig}>
+                    Save
+                  </Button>
+                </Form.Item>
+              </Form>
+            )}
+          </Card>
+        </Col>
+      </Row>
+
       <Row gutter={[24, 24]}>
         <Col xs={24} lg={8}>
-          <Card 
+          <Card
             title={
               <Space>
                 <SettingOutlined style={{ color: '#d4af37' }} />
@@ -392,7 +463,14 @@ export default function Lottery() {
                 {
                   title: 'Sold',
                   dataIndex: 'ticket_count',
-                  render: (v) => <span style={{ fontWeight: 'bold' }}>{v || 0}</span>
+                  render: (v, record: any) => (
+                    <span style={{ fontWeight: 'bold' }}>
+                      {v || 0}{record.max_tickets ? ` / ${record.max_tickets}` : ''}
+                      {record.bot_ticket_count > 0 && (
+                        <Tag color="purple" style={{ marginLeft: 6, fontSize: 10 }}>{record.bot_ticket_count} bot</Tag>
+                      )}
+                    </span>
+                  )
                 },
                 { 
                   title: 'Draw Time', 
