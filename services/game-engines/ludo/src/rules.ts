@@ -318,21 +318,9 @@ export function rollDie(): number {
  *            leaving a token within an opponent's striking distance (1-6
  *            cells behind, on an unsafe cell) if a non-exposed move exists.
  */
-export function chooseBotToken(
-  state: LudoState,
-  playerIdx: number,
-  dice: number,
-  difficulty: BotDifficulty = 'medium',
-): number {
-  const movable = movableTokens(state, playerIdx, dice)
-  if (movable.length === 0) return -1
+/** The first movable token that would capture an opponent this turn, or -1. */
+export function findCapturingMove(state: LudoState, playerIdx: number, dice: number, movable: number[]): number {
   const player = state.players[playerIdx]
-
-  if (difficulty === 'easy' && Math.random() < 0.8) {
-    return movable[Math.floor(Math.random() * movable.length)]
-  }
-
-  // Prefer a move that captures an opponent.
   for (const t of movable) {
     const prog = player.tokens[t]
     if (prog === -1) continue
@@ -345,28 +333,68 @@ export function chooseBotToken(
       }
     }
   }
+  return -1
+}
+
+/** Of the movable tokens, which would NOT leave the token exposed (within an opponent's 1-6 cell striking distance) after this move. */
+export function findSafeMoves(state: LudoState, playerIdx: number, dice: number, movable: number[]): number[] {
+  const player = state.players[playerIdx]
+  return movable.filter((t) => {
+    const prog = player.tokens[t]
+    if (prog === -1) return true // entering play this turn is never "exposed" yet
+    const cell = absoluteCell(playerIdx, prog + dice)
+    if (cell === -1 || SAFE_CELLS.has(cell)) return true
+    for (let p = 0; p < state.players.length; p++) {
+      if (p === playerIdx) continue
+      for (const tp of state.players[p].tokens) {
+        const oc = absoluteCell(p, tp)
+        if (oc === -1) continue
+        const dist = (cell - oc + MAIN_TRACK) % MAIN_TRACK
+        if (dist >= 1 && dist <= 6) return false
+      }
+    }
+    return true
+  })
+}
+
+export function chooseBotToken(
+  state: LudoState,
+  playerIdx: number,
+  dice: number,
+  difficulty: BotDifficulty = 'medium',
+  trainedProfile?: { capture_probability?: number | null; safe_play_probability?: number | null },
+): number {
+  const movable = movableTokens(state, playerIdx, dice)
+  if (movable.length === 0) return -1
+  const player = state.players[playerIdx]
+
+  if (difficulty === 'easy' && Math.random() < 0.8) {
+    return movable[Math.floor(Math.random() * movable.length)]
+  }
+
+  const capturingMove = findCapturingMove(state, playerIdx, dice, movable)
+  if (capturingMove !== -1) {
+    const captureProbability = trainedProfile?.capture_probability
+    if (captureProbability == null || Math.random() < captureProbability) {
+      return capturingMove
+    }
+    // Trained data says: at this rate, a real player would NOT take this
+    // capture. Fall through to the same advance-most-progressed logic
+    // used when there's genuinely no capture available.
+  }
 
   if (difficulty === 'hard') {
-    const safeMoves = movable.filter((t) => {
-      const prog = player.tokens[t]
-      if (prog === -1) return true // entering play this turn is never "exposed" yet
-      const cell = absoluteCell(playerIdx, prog + dice)
-      if (cell === -1 || SAFE_CELLS.has(cell)) return true
-      for (let p = 0; p < state.players.length; p++) {
-        if (p === playerIdx) continue
-        for (const tp of state.players[p].tokens) {
-          const oc = absoluteCell(p, tp)
-          if (oc === -1) continue
-          const dist = (cell - oc + MAIN_TRACK) % MAIN_TRACK
-          if (dist >= 1 && dist <= 6) return false
-        }
-      }
-      return true
-    })
+    const safeMoves = findSafeMoves(state, playerIdx, dice, movable)
     if (safeMoves.length > 0) {
-      let best = safeMoves[0]
-      for (const t of safeMoves) if (player.tokens[t] > player.tokens[best]) best = t
-      return best
+      const safePlayProbability = trainedProfile?.safe_play_probability
+      if (safePlayProbability == null || Math.random() < safePlayProbability) {
+        let best = safeMoves[0]
+        for (const t of safeMoves) if (player.tokens[t] > player.tokens[best]) best = t
+        return best
+      }
+      // Trained data says: at this rate, a real player would take the
+      // exposed move anyway. Fall through to advance-most-progressed
+      // over ALL movable tokens (not just the safe subset).
     }
   }
 
