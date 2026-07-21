@@ -55,7 +55,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function ProtectedAgentRoute({ children }: { children: React.ReactNode }) {
   const { token, admin } = useAuthStore()
-  if (!token || admin?.role !== 'agent') return <Navigate to="/agent/login" replace />
+  if (!token || admin?.role !== 'agent') return <Navigate to="/admin/agent/login" replace />
   return <>{children}</>
 }
 
@@ -65,8 +65,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <Suspense fallback={<div style={{ padding: 100, textAlign: 'center', fontSize: 18, color: '#d4af37' }}>Loading page...</div>}>
         <Routes>
           <Route path="/admin/login" element={<Login />} />
-          <Route path="/agent/login" element={<AgentLogin />} />
-          <Route path="/agent" element={<ProtectedAgentRoute><AgentPortal /></ProtectedAgentRoute>} />
+          <Route path="/admin/agent/login" element={<AgentLogin />} />
+          <Route path="/admin/agent" element={<ProtectedAgentRoute><AgentPortal /></ProtectedAgentRoute>} />
           <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
             <Route index element={<Dashboard />} />
             <Route path="users" element={<Users />} />
