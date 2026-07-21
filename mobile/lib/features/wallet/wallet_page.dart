@@ -9,6 +9,7 @@ import 'package:gal/gal.dart';
 import '../../core/network/api_client.dart';
 import '../../core/constants/app_config.dart';
 import '../../core/services/balance_service.dart';
+import '../../core/analytics/product_analytics.dart';
 import '../../shared/theme/app_theme.dart';
 import '../profile/kyc_page.dart';
 
@@ -133,6 +134,7 @@ class _WalletPageState extends State<WalletPage> {
   }
 
   Future<void> _openDeposit() async {
+    ProductAnalytics.instance.track('deposit_screen_opened');
     final ok = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -415,6 +417,7 @@ class _DepositSheetState extends State<_DepositSheet> {
       });
       final res =
           await widget.api.dio.post('/api/wallet/deposit/submit', data: form);
+      ProductAnalytics.instance.track('deposit_submitted', {'amount': amount});
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       final msg = e is DioException
