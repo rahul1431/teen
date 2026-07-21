@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/constants/app_config.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../core/services/locale_service.dart';
+import '../../../core/analytics/product_analytics.dart';
 import '../../../shared/theme/app_theme.dart';
 
 class LoginPage extends StatefulWidget {
@@ -95,6 +96,8 @@ class _LoginPageState extends State<LoginPage> {
       // Save credentials for biometric login
       await SecureStorage.saveBiometricCredentials(
           _phoneCtrl.text.trim(), _passCtrl.text);
+
+      await ProductAnalytics.instance.init();
 
       if (mounted) context.go('/home');
     } on DioException catch (e) {
