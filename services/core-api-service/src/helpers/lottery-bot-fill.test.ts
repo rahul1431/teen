@@ -1,5 +1,7 @@
 import { pool } from '../db/pool'
 import { getBotConfig, pickLotteryBotWithBalance, randomUnusedTicketNumber } from './lottery-bot-fill'
+import { rebalanceWeeklyMonthlyBotTickets } from './lottery-bot-fill'
+import crypto from 'crypto'
 
 describe('lottery-bot-fill helpers', () => {
   describe('getBotConfig', () => {
@@ -59,5 +61,63 @@ describe('lottery-bot-fill helpers', () => {
       const result = randomUnusedTicketNumber(existing, 1)
       expect(result).toBeNull()
     })
+  })
+})
+
+describe('rebalanceWeeklyMonthlyBotTickets', () => {
+  async function createTestDraw(maxTickets: number) {
+    const id = crypto.randomUUID()
+    await pool.query(
+      `INSERT INTO lottery_draws (id, name, ticket_price, draw_time, prize_tiers, category, status, max_tickets)
+       VALUES ($1, 'Test Weekly Draw', 10, NOW() + INTERVAL '1 day', '[{"match_type":"exact","multiplier":1000}]', 'weekly', 'open', $2)`,
+      [id, maxTickets]
+    )
+    return id
+  }
+
+  it('does nothing when bot fill is disabled', async () => {
+    await pool.query('UPDATE lottery_bot_config SET enabled = false')
+    const drawId = await createTestDraw(10)
+    await rebalanceWeeklyMonthlyBotTickets(drawId)
+    const count = await pool.query('SELECT COUNT(*)::int AS c FROM lottery_tickets WHERE draw_id = $1', [drawId])
+    expect(count.rows[0].c).toBe(0)
+  })
+
+  it('bots buy up toward fill_pct of the pool when enabled', async () => {
+    await pool.query(
+      `UPDATE lottery_bot_config SET enabled = true, fill_pct = 60, trigger_pct = 99, release_pct = 1`
+    )
+    const drawId = await createTestDraw(10) // 60% of 10 = 6 tickets
+    await rebalanceWeeklyMonthlyBotTickets(drawId)
+    const count = await pool.query('SELECT COUNT(*)::int AS c FROM lottery_tickets WHERE draw_id = $1', [drawId])
+    expect(count.rows[0].c).toBe(6)
+    await pool.query('UPDATE lottery_bot_config SET enabled = false')
+  })
+
+  it('releases 1% of bot tickets and refunds them once sold reaches trigger_pct', async () => {
+    await pool.query(
+      `UPDATE lottery_bot_config SET enabled = true, fill_pct = 60, trigger_pct = 90, release_pct = 20`
+    )
+    const drawId = await createTestDraw(10)
+    await rebalanceWeeklyMonthlyBotTickets(drawId) // bots fill to 6/10 (60%)
+
+    // Simulate 3 real purchases to push sold to 9/10 (90%, hits trigger)
+    for (let i = 0; i < 3; i++) {
+      const ticketId = crypto.randomUUID()
+      await pool.query(
+        `INSERT INTO lottery_tickets (id, draw_id, user_id, ticket_number, amount)
+         VALUES ($1, $2, (SELECT id FROM users WHERE is_bot = false LIMIT 1), $3, 10)`,
+        [ticketId, drawId, `100${i}`]
+      )
+    }
+    await rebalanceWeeklyMonthlyBotTickets(drawId)
+
+    const botCount = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM lottery_tickets t JOIN users u ON u.id = t.user_id WHERE t.draw_id = $1 AND u.is_bot = true`,
+      [drawId]
+    )
+    // Started with 6 bot tickets, release_pct=20% of 10 = 2 released -> 4 remain
+    expect(botCount.rows[0].c).toBe(4)
+    await pool.query('UPDATE lottery_bot_config SET enabled = false, fill_pct = 60, trigger_pct = 99, release_pct = 1')
   })
 })

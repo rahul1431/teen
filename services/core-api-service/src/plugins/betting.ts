@@ -3,6 +3,7 @@ import { Pool } from 'pg'
 import { z } from 'zod'
 import crypto from 'crypto'
 import { debitStake, creditPrize } from '../helpers/wallet-client'
+import { rebalanceWeeklyMonthlyBotTickets } from '../helpers/lottery-bot-fill'
 import { MATKA_MULTIPLIERS, validateMatkaBet, settleMatkaSession } from '../helpers/matka'
 import { settleLottery, generateWinningNumber } from '../helpers/lottery'
 import { rollOutcome } from '../helpers/scratch'
@@ -157,6 +158,7 @@ export function bettingPlugin(db: Pool) {
       
       try {
         await db.query(`INSERT INTO lottery_tickets (id, draw_id, user_id, ticket_number, amount) VALUES ($1,$2,$3,$4,$5)`, [ticketId, body.draw_id, uid(req), ticketNumClean, draw.ticket_price])
+        await rebalanceWeeklyMonthlyBotTickets(body.draw_id)
         return { success: true, ticket_id: ticketId }
       } catch (err: any) {
         await creditPrize({ userId: uid(req), amount: Number(draw.ticket_price), referenceId: ticketId, idempotencyKey: `lottery_buy_refund_${ticketId}` })
@@ -474,6 +476,7 @@ export function bettingPlugin(db: Pool) {
         category: z.enum(['daily', 'weekly', 'monthly']),
       }).parse(req.body)
       const r = await db.query(`INSERT INTO lottery_draws (name, ticket_price, draw_time, prize_tiers, category) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [body.name, body.ticket_price, body.draw_time, JSON.stringify(body.prize_tiers), body.category])
+      await rebalanceWeeklyMonthlyBotTickets(r.rows[0].id)
       return { success: true, draw: r.rows[0] }
     })
 
