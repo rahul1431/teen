@@ -481,8 +481,14 @@ export function bettingPlugin(db: Pool) {
         // this enum later needs no migration, just this one-line change.
         category: z.enum(['daily', 'weekly', 'monthly']),
       }).parse(req.body)
-      const r = await db.query(`INSERT INTO lottery_draws (name, ticket_price, draw_time, prize_tiers, category) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [body.name, body.ticket_price, body.draw_time, JSON.stringify(body.prize_tiers), body.category])
-      await rebalanceWeeklyMonthlyBotTickets(r.rows[0].id)
+      const botConfigRes = await db.query('SELECT default_max_tickets FROM lottery_bot_config LIMIT 1')
+      const maxTickets = botConfigRes.rows[0]?.default_max_tickets ?? 200
+      const r = await db.query(`INSERT INTO lottery_draws (name, ticket_price, draw_time, prize_tiers, category, max_tickets) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`, [body.name, body.ticket_price, body.draw_time, JSON.stringify(body.prize_tiers), body.category, maxTickets])
+      try {
+        await rebalanceWeeklyMonthlyBotTickets(r.rows[0].id)
+      } catch (err: any) {
+        console.error(`[lottery] rebalanceWeeklyMonthlyBotTickets failed for newly created draw ${r.rows[0].id}:`, err?.message || err)
+      }
       return { success: true, draw: r.rows[0] }
     })
 

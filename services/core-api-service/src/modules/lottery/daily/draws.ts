@@ -31,9 +31,12 @@ export async function createDraw(req: {
   // Use provided prize_tiers or copy from tier defaults
   const prizeTiers = req.prize_tiers || tier.default_prize_tiers
 
+  const botConfigRes = await pool.query('SELECT default_max_tickets FROM lottery_bot_config LIMIT 1')
+  const maxTickets = botConfigRes.rows[0]?.default_max_tickets ?? 200
+
   const query = `
-    INSERT INTO lottery_daily_draws (id, tier_id, draw_date, draw_time, status, prize_tiers)
-    VALUES ($1, $2, $3, $4, $5, $6)
+    INSERT INTO lottery_daily_draws (id, tier_id, draw_date, draw_time, status, prize_tiers, max_tickets)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
     RETURNING *
   `
 
@@ -44,6 +47,7 @@ export async function createDraw(req: {
     drawTimestamp.toISOString(),
     'open',
     JSON.stringify(prizeTiers),
+    maxTickets,
   ])
 
   return formatDraw(result.rows[0])
