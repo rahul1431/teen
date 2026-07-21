@@ -45,8 +45,42 @@ export class RealtimeHub {
     conn.rooms.clear()
   }
 
-  // Join every live connection of a user to a room
+  // Join every LOCAL connection of a user to a room, and tell the rest of
+  // the cluster to do the same for any local connections THEY hold for this
+  // user.
+  //
+  // Why: nginx hashes WebSocket connections by player token, not by room, so
+  // two players at the same table routinely land on different game-gateway
+  // processes. sendToRoom() already relays broadcasts across instances via
+  // Redis pub/sub — but each instance's relay handler just re-runs its own
+  // LOCAL sendToRoom(), which only reaches connections THIS process
+  // registered via joinRoom(). Before this fix, joinRoom() only ever ran on
+  // whichever single instance executed the game-start code (wherever the
+  // bot-fill timer happened to fire), so a player connected to any OTHER
+  // instance was never registered in ANY instance's byRoom map — not even
+  // its own. Confirmed live: a Ludo player on a different instance than the
+  // one that started the room received zero game:state_update broadcasts —
+  // not opponents' moves, not their own turn arriving — until the AFK timer
+  // auto-played for them. Publishing the join over the same cluster channel
+  // sendToRoom already uses closes that gap: whichever instance the target
+  // user actually has a live connection on picks it up and registers it
+  // locally too.
   joinRoom(userId: string, roomId: string): void {
+    this.joinRoomLocal(userId, roomId)
+    if (this.redisPub) {
+      this.redisPub.publish('gateway:broadcast', JSON.stringify({
+        type: 'joinRoom',
+        target: roomId,
+        userId,
+        sender: this.processId,
+      })).catch(() => {})
+    }
+  }
+
+  // Local-only half of joinRoom — also the entrypoint the cluster relay
+  // calls on other instances, so this must NOT itself publish (that would
+  // loop the join event around the cluster forever).
+  joinRoomLocal(userId: string, roomId: string): void {
     const conns = this.byUser.get(userId)
     if (!conns) return
     let roomSet = this.byRoom.get(roomId)
