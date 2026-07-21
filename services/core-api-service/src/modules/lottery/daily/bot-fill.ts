@@ -36,12 +36,15 @@ export async function rebalanceDailyBotTickets(drawId: string): Promise<void> {
     )
     for (const ticket of toRelease.rows) {
       await pool.query('DELETE FROM lottery_daily_tickets WHERE id = $1', [ticket.id])
-      await creditPrize({
+      const refunded = await creditPrize({
         userId: ticket.user_id,
         amount: ticketPrice,
         referenceId: ticket.id,
         idempotencyKey: `lottery_daily_bot_release_${ticket.id}`,
       })
+      if (!refunded) {
+        console.error(`[lottery] daily bot ticket release refund failed for ticket ${ticket.id} (bot ${ticket.user_id}, amount ${ticketPrice})`)
+      }
     }
     return
   }
