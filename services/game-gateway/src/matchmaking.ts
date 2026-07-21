@@ -405,9 +405,9 @@ export class MatchmakingService {
       `SELECT u.id, u.username
        FROM users u
        JOIN wallets w ON w.user_id = u.id
-       WHERE u.is_bot = true AND u.status = 'active' AND w.real_balance >= $1
-       ORDER BY RANDOM() LIMIT $2`,
-      [stake, count]
+       WHERE u.is_bot = true AND u.status = 'active' AND u.preferred_game_type = $1 AND w.real_balance >= $2
+       ORDER BY RANDOM() LIMIT $3`,
+      [gameType, stake, count]
     )
     return botRes.rows.map(b => ({ userId: b.id, username: b.username }))
   }
