@@ -7,6 +7,7 @@ import {
 import { ReloadOutlined, EyeOutlined, PlusOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 import BotManagementPanel from '../../components/BotManagementPanel'
+import GamePnlDashboard from '../../components/GamePnlDashboard'
 
 const { Text } = Typography
 
@@ -451,6 +452,6 @@ export default function TeenPatti() {
         )}
       </Drawer>
     </div>
-    ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="teen_patti" /> }]} />
+    ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="teen_patti" /> }, { key: 'analytics', label: 'Analytics', children: <GamePnlDashboard gameType="teen_patti" /> }]} />
   )
 }
