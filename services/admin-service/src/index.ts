@@ -1929,7 +1929,8 @@ async function start() {
   app.get('/api/admin/betting/lottery/draws', { onRequest: [authenticate] }, async (_req, reply) => {
     const rows = await db.query(
       `SELECT d.*,
-              (SELECT COUNT(*) FROM lottery_tickets t WHERE t.draw_id = d.id) AS ticket_count
+              (SELECT COUNT(*) FROM lottery_tickets t WHERE t.draw_id = d.id) AS ticket_count,
+              (SELECT COUNT(*) FROM lottery_tickets t JOIN users u ON u.id = t.user_id WHERE t.draw_id = d.id AND u.is_bot = true) AS bot_ticket_count
        FROM lottery_draws d ORDER BY d.draw_time DESC LIMIT 100`)
     return reply.send({ draws: rows.rows })
   })
@@ -2498,6 +2499,7 @@ async function start() {
           COUNT(*) FILTER (WHERE status = 'settled') AS settled_draws,
           COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled_draws,
           (SELECT COUNT(*) FROM lottery_tickets) AS total_tickets,
+          (SELECT COUNT(*) FROM lottery_tickets t JOIN users u ON u.id = t.user_id WHERE u.is_bot = true) AS total_bot_tickets,
           (SELECT COALESCE(SUM(amount), 0) FROM lottery_tickets) AS total_revenue,
           (SELECT COALESCE(SUM(prize), 0) FROM lottery_tickets WHERE is_winner = true) AS total_paid_out
         FROM lottery_draws

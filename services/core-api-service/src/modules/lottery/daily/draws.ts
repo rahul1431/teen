@@ -12,6 +12,7 @@ export interface Draw {
   prize_tiers: PrizeTier[]
   created_at: string
   tickets_count?: number
+  bot_tickets_count?: number
 }
 
 export async function createDraw(req: {
@@ -100,9 +101,11 @@ export async function getDrawsForToday(): Promise<Draw[]> {
   const today = new Date().toISOString().split('T')[0]
 
   const result = await pool.query(
-    `SELECT d.*, COUNT(t.id)::int AS tickets_count
+    `SELECT d.*, COUNT(t.id)::int AS tickets_count,
+            COUNT(t.id) FILTER (WHERE u.is_bot = true)::int AS bot_tickets_count
      FROM lottery_daily_draws d
      LEFT JOIN lottery_daily_tickets t ON t.draw_id = d.id
+     LEFT JOIN users u ON u.id = t.user_id
      WHERE d.draw_date = $1
      GROUP BY d.id
      ORDER BY d.draw_time ASC`,
@@ -160,5 +163,6 @@ function formatDraw(row: any): Draw {
     prize_tiers: row.prize_tiers,
     created_at: row.created_at,
     ...(row.tickets_count !== undefined && { tickets_count: row.tickets_count }),
+    ...(row.bot_tickets_count !== undefined && { bot_tickets_count: row.bot_tickets_count }),
   }
 }
