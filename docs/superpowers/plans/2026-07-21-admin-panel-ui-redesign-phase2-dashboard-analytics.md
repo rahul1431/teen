@@ -43,6 +43,8 @@
 | 132 | `stats.pending_deposits > 0 ? '#fa8c16' : undefined` | Pending Deposits (warning) | `stats.pending_deposits > 0 ? tokens.color.warning : undefined` |
 | 154 | `strokeColor="#d4af37" fillColor="rgba(212, 175, 55, 0.05)"` | Revenue trend chart line | `strokeColor={tokens.color.gold} fillColor="rgba(212, 175, 55, 0.05)"` (fillColor stays a literal rgba — `tokens.ts` doesn't provide an rgba helper, and the value is unchanged since `tokens.color.gold` is the same hex `#D4AF37` this rgba was already derived from) |
 
+**Correction (post-implementation):** this table originally claimed every substitution was value-identical to the literal it replaced. That was checked against an assumption, not against the committed `tokens.ts`. The actual committed values are `tokens.color.success = '#16A34A'`, `tokens.color.info = '#2563EB'`, `tokens.color.error = '#DC2626'`, `tokens.color.warning = '#D97706'` — all different from the antd-default literals above (only `tokens.color.gold = '#D4AF37'` happens to match). The user was asked and explicitly accepted this shift: Dashboard's status colors now use the redesign's semantic palette instead of staying pixel-identical to antd's defaults, consistent with the design spec's goal of one consistent semantic palette instead of per-page raw hex. Task 1 is approved on that basis, not as a "zero visual change" refactor.
+
 - [ ] **Step 1: Confirm Analytics.tsx needs no changes**
 
 Run: `grep -n "'#\|valueStyle\|style={{ color" admin-panel/src/pages/Analytics.tsx`
