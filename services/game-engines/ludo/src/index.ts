@@ -11,6 +11,8 @@ import {
   forfeitPlayer,
   rollDie,
   chooseBotToken,
+  findCapturingMove,
+  findSafeMoves,
   LudoState,
   ActionResult,
   BotDifficulty,
@@ -133,6 +135,29 @@ async function start() {
           if (!state.movable_tokens.includes(tokenIndex)) {
             return reply.code(409).send({ error: 'Illegal move' })
           }
+
+          // Log real players' actual decisions for training (sub-project #3) —
+          // never blocks the move on failure.
+          if (!state.players[idx].is_bot) {
+            const capturingMove = findCapturingMove(state, idx, state.dice!, state.movable_tokens)
+            const safeMoves = findSafeMoves(state, idx, state.dice!, state.movable_tokens)
+            const captureAvailable = capturingMove !== -1
+            const safeMoveAvailable = safeMoves.length > 0 && safeMoves.length < state.movable_tokens.length
+            db.query(
+              `INSERT INTO ludo_move_decisions (room_id, user_id, dice, capture_available, capture_taken, safe_move_available, chose_safe_move)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [
+                state.room_id,
+                state.players[idx].user_id,
+                state.dice,
+                captureAvailable,
+                captureAvailable && tokenIndex === capturingMove,
+                safeMoveAvailable,
+                safeMoveAvailable && safeMoves.includes(tokenIndex),
+              ]
+            ).catch((err: unknown) => console.error('[ludo] Failed to log move decision', err))
+          }
+
           const r = applyMove(state, tokenIndex)
           result = r.result
         } else {
