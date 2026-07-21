@@ -158,8 +158,6 @@ export function bettingPlugin(db: Pool) {
       
       try {
         await db.query(`INSERT INTO lottery_tickets (id, draw_id, user_id, ticket_number, amount) VALUES ($1,$2,$3,$4,$5)`, [ticketId, body.draw_id, uid(req), ticketNumClean, draw.ticket_price])
-        await rebalanceWeeklyMonthlyBotTickets(body.draw_id)
-        return { success: true, ticket_id: ticketId }
       } catch (err: any) {
         await creditPrize({ userId: uid(req), amount: Number(draw.ticket_price), referenceId: ticketId, idempotencyKey: `lottery_buy_refund_${ticketId}` })
         if (err.code === '23505') {
@@ -167,6 +165,14 @@ export function bettingPlugin(db: Pool) {
         }
         throw err
       }
+
+      try {
+        await rebalanceWeeklyMonthlyBotTickets(body.draw_id)
+      } catch (err: any) {
+        console.error(`[lottery] rebalanceWeeklyMonthlyBotTickets failed for draw ${body.draw_id}:`, err?.message || err)
+      }
+
+      return { success: true, ticket_id: ticketId }
     })
 
     app.get('/lottery/my-tickets', { onRequest: [auth] }, async (req) => {

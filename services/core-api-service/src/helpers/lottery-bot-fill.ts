@@ -75,12 +75,15 @@ export async function rebalanceWeeklyMonthlyBotTickets(drawId: string): Promise<
     )
     for (const ticket of toRelease.rows) {
       await pool.query('DELETE FROM lottery_tickets WHERE id = $1', [ticket.id])
-      await creditPrize({
+      const refunded = await creditPrize({
         userId: ticket.user_id,
         amount: Number(ticket.amount),
         referenceId: ticket.id,
         idempotencyKey: `lottery_bot_release_${ticket.id}`,
       })
+      if (!refunded) {
+        console.error(`[lottery] bot ticket release refund failed for ticket ${ticket.id} (bot ${ticket.user_id}, amount ${ticket.amount})`)
+      }
     }
     return
   }
