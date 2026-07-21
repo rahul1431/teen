@@ -207,6 +207,8 @@ export class ProfileBuilder {
           avg_stake_preference  NUMERIC(10,2),
           aggression_score      NUMERIC(4,2),
           sample_size           INTEGER DEFAULT 0,
+          capture_probability   NUMERIC(5,4),
+          safe_play_probability NUMERIC(5,4),
           last_rebuilt_at       TIMESTAMPTZ,
           created_at            TIMESTAMPTZ DEFAULT NOW(),
           CONSTRAINT uq_${tableName}_game_difficulty UNIQUE (game_type, difficulty)
@@ -292,10 +294,33 @@ export class ProfileBuilder {
       // raiseProb is computed but used only as intermediate — final value is normalizedRaise
       void raiseProb
 
+      // Ludo-only: capture/safe-play rates learned from real players' actual
+      // decisions (sub-project #3), not the fold/call/raise-shaped fields
+      // above (meaningless for Ludo). NULL below this tier's sample-size
+      // threshold rather than writing a low-confidence value -- chooseBotToken
+      // treats NULL as "no trained data, use today's deterministic rule".
+      let captureProbability: number | null = null
+      let safePlayProbability: number | null = null
+      if (gameType === 'ludo' && tierPlayers.length >= cfg.min_sample_size) {
+        const tierUserIds = tierPlayers.map((p: any) => p.user_id)
+        const decisionRes = await this.pool.query(
+          `SELECT
+             COALESCE(SUM(capture_taken::int)::float / NULLIF(SUM(capture_available::int), 0), NULL) AS capture_rate,
+             COALESCE(SUM(chose_safe_move::int)::float / NULLIF(SUM(safe_move_available::int), 0), NULL) AS safe_play_rate
+           FROM ludo_move_decisions
+           WHERE user_id = ANY($1) AND created_at > NOW() - INTERVAL '${parseInt(String(cfg.stream_lookback_days), 10)} days'`,
+          [tierUserIds]
+        )
+        const row = decisionRes.rows[0]
+        captureProbability = row?.capture_rate != null ? parseFloat(row.capture_rate) : null
+        safePlayProbability = row?.safe_play_rate != null ? parseFloat(row.safe_play_rate) : null
+      }
+
       // Fetch current profile to capture old values for audit log
       const oldProfile = await this.pool.query(
         `SELECT win_rate_target, fold_probability, call_probability, raise_probability,
-                avg_decision_delay_ms, avg_stake_preference, aggression_score, sample_size
+                avg_decision_delay_ms, avg_stake_preference, aggression_score, sample_size,
+                capture_probability, safe_play_probability
          FROM bot_profiles WHERE game_type = $1 AND difficulty = $2`,
         [gameType, difficulty]
       )
@@ -313,6 +338,8 @@ export class ProfileBuilder {
         avg_stake_preference: Math.round(avgStake),
         aggression_score: Math.round(aggression * 10) / 10,
         sample_size: tierPlayers.length,
+        capture_probability: captureProbability,
+        safe_play_probability: safePlayProbability,
       }
 
       // Only log changes if profile existed before
@@ -330,18 +357,20 @@ export class ProfileBuilder {
         `INSERT INTO ${tableName}
            (game_type, difficulty, win_rate_target, fold_probability, call_probability,
             raise_probability, avg_decision_delay_ms, avg_stake_preference, aggression_score,
-            sample_size, last_rebuilt_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+            sample_size, capture_probability, safe_play_probability, last_rebuilt_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
          ON CONFLICT (game_type, difficulty) DO UPDATE SET
-           win_rate_target       = $3,
-           fold_probability      = $4,
-           call_probability      = $5,
-           raise_probability     = $6,
-           avg_decision_delay_ms = $7,
-           avg_stake_preference  = $8,
-           aggression_score      = $9,
-           sample_size           = $10,
-           last_rebuilt_at       = NOW()`,
+           win_rate_target        = $3,
+           fold_probability       = $4,
+           call_probability       = $5,
+           raise_probability      = $6,
+           avg_decision_delay_ms  = $7,
+           avg_stake_preference   = $8,
+           aggression_score       = $9,
+           sample_size            = $10,
+           capture_probability    = $11,
+           safe_play_probability  = $12,
+           last_rebuilt_at        = NOW()`,
         [
           gameType, difficulty,
           newValues.win_rate_target,
@@ -352,6 +381,8 @@ export class ProfileBuilder {
           newValues.avg_stake_preference,
           newValues.aggression_score,
           newValues.sample_size,
+          newValues.capture_probability,
+          newValues.safe_play_probability,
         ]
       )
 
