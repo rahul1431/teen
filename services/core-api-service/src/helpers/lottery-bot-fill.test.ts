@@ -53,7 +53,9 @@ describe('lottery-bot-fill helpers', () => {
     })
 
     it('returns null when the entire number space is exhausted', () => {
-      const existing = new Set(['0', '1'])
+      // digits=1 has a space of 10^1=10 possible values ('0'..'9') -- all
+      // must be present for the space to actually be exhausted.
+      const existing = new Set(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
       const result = randomUnusedTicketNumber(existing, 1)
       expect(result).toBeNull()
     })
