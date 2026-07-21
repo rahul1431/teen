@@ -70,7 +70,7 @@ async function withRoomLock<T>(roomId: string, fn: () => Promise<T>): Promise<T>
 interface StartReq {
   room_id: string
   stake: number
-  players: { user_id: string; username: string; seat: number; is_bot: boolean }[]
+  players: { user_id: string; username: string; seat: number; is_bot: boolean; bot_difficulty?: BotDifficulty }[]
   bot_difficulty?: BotDifficulty
 }
 
@@ -169,7 +169,7 @@ async function start() {
         let movedToken = -1
 
         if (state.awaiting === 'move') {
-          movedToken = chooseBotToken(state, idx, dice, state.bot_difficulty)
+          movedToken = chooseBotToken(state, idx, dice, state.players[idx].bot_difficulty ?? state.bot_difficulty)
           if (movedToken >= 0) {
             const r = applyMove(state, movedToken)
             result = r.result
