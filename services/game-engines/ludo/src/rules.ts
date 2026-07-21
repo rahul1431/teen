@@ -30,6 +30,8 @@ export interface LudoPlayer {
   finished: number       // count of tokens that reached HOME
   status: string         // 'active' | 'finished' | 'disconnected'
   bot_difficulty?: BotDifficulty // per-bot override; unset = use LudoState.bot_difficulty
+  capture_probability?: number | null // trained (sub-project #3); null/unset = deterministic rule
+  safe_play_probability?: number | null
 }
 
 export type BotDifficulty = 'easy' | 'medium' | 'hard'
@@ -67,7 +69,7 @@ export function absoluteCell(seatIndex: number, progress: number): number {
 export function createInitialState(
   roomId: string,
   stake: number,
-  players: { user_id: string; username: string; seat: number; is_bot: boolean; bot_difficulty?: BotDifficulty }[],
+  players: { user_id: string; username: string; seat: number; is_bot: boolean; bot_difficulty?: BotDifficulty; capture_probability?: number | null; safe_play_probability?: number | null }[],
   botDifficulty: BotDifficulty = 'medium',
 ): LudoState {
   return {
@@ -84,6 +86,8 @@ export function createInitialState(
       finished: 0,
       status: 'active',
       bot_difficulty: p.bot_difficulty,
+      capture_probability: p.capture_probability,
+      safe_play_probability: p.safe_play_probability,
     })),
     status: 'active',
     current_turn: 0,
