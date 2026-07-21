@@ -1944,6 +1944,16 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  app.get('/api/admin/betting/lottery/bot-config', { onRequest: [authenticate] }, async (_req, reply) => {
+    const r = await callBetting('/internal/lottery/bot-config', undefined, 'GET')
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/lottery/bot-config', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/lottery/bot-config', req.body)
+    return reply.code(r.status).send(r.data)
+  })
+
   // --- Lottery: Instant (Scratch Card) ---
   app.get('/api/admin/betting/lottery/scratch/products', { onRequest: [authenticate] }, async (_req, reply) => {
     const rows = await db.query(`

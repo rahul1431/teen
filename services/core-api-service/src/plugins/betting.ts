@@ -510,6 +510,28 @@ export function bettingPlugin(db: Pool) {
       return { success: true, refunded: tickets.rows.length }
     })
 
+    app.get('/internal/lottery/bot-config', { onRequest: [internal] }, async (_req, reply) => {
+      const result = await db.query('SELECT * FROM lottery_bot_config LIMIT 1')
+      return reply.send(result.rows[0] || null)
+    })
+
+    app.post('/internal/lottery/bot-config', { onRequest: [internal] }, async (req, reply) => {
+      const body = z.object({
+        enabled: z.boolean(),
+        default_max_tickets: z.number().int().positive(),
+        fill_pct: z.number().min(0).max(100),
+        trigger_pct: z.number().min(0).max(100),
+        release_pct: z.number().min(0).max(100),
+      }).parse(req.body)
+      const result = await db.query(
+        `UPDATE lottery_bot_config
+         SET enabled = $1, default_max_tickets = $2, fill_pct = $3, trigger_pct = $4, release_pct = $5, updated_at = NOW()
+         RETURNING *`,
+        [body.enabled, body.default_max_tickets, body.fill_pct, body.trigger_pct, body.release_pct]
+      )
+      return reply.send(result.rows[0])
+    })
+
     app.post('/internal/lottery/scratch/create', { onRequest: [internal] }, async (req, reply) => {
       const body = z.object({
         name: z.string(),
