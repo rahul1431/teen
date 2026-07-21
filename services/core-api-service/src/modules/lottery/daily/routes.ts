@@ -7,6 +7,7 @@ import { debitStake, creditPrize } from '../../../helpers/wallet-client'
 import { z } from 'zod'
 import crypto from 'crypto'
 import type { PrizeTier } from './tiers'
+import { rebalanceDailyBotTickets } from './bot-fill'
 
 /**
  * Daily Lottery API Routes
@@ -152,6 +153,12 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
            VALUES ($1, $2, $3, $4, $5)`,
           [ticketId, body.draw_id, user_id, body.ticket_number, 'none']
         )
+
+        try {
+          await rebalanceDailyBotTickets(body.draw_id)
+        } catch (err: any) {
+          console.error(`[Daily Lottery] Bot rebalance failed for draw ${body.draw_id}:`, err.message)
+        }
 
         return reply.code(201).send({
           ticket_id: ticketId,
@@ -377,6 +384,12 @@ export async function registerDailyLotteryRoutes(app: FastifyInstance) {
           draw_date: drawDate,
           prize_tiers: body.prize_tiers as PrizeTier[] | undefined,
         })
+
+        try {
+          await rebalanceDailyBotTickets(draw.id)
+        } catch (err: any) {
+          console.error(`[Daily Lottery] Bot rebalance failed for draw ${draw.id}:`, err.message)
+        }
 
         return reply.code(201).send(draw)
       } catch (err: any) {
