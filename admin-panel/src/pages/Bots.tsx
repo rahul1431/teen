@@ -469,6 +469,19 @@ export default function Bots() {
             <Input placeholder="e.g. LaserJoker, AlphaPlayer" />
           </Form.Item>
           <Form.Item
+            name="preferred_game_type"
+            label="Game"
+            rules={[{ required: true, message: 'Select which game this bot belongs to' }]}
+          >
+            <Select
+              placeholder="Select a game"
+              options={[
+                { value: 'teen_patti', label: 'Teen Patti' },
+                { value: 'ludo', label: 'Ludo' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
             name="phone"
             label="Dummy Phone Number (Optional)"
             rules={[{ pattern: /^[0-9]{10}$/, message: 'Must be exactly 10 digits' }]}
