@@ -35,6 +35,7 @@ import { registerBotLearningRoutes } from './bot-learning-routes'
 import { registerMonitorRoutes } from './monitor-routes'
 import { registerMetricsRoutes } from './metrics-routes'
 import { registerPlayerAnomaliesRoutes } from './player-anomalies-routes'
+import { registerPnlDashboardRoutes } from './pnl-dashboard-routes'
 import { registerTaskRoutes } from './task-routes'
 import { registerNotificationRoutes } from './notifications-routes'
 import { registerAgentRoutes } from './agent-routes'
@@ -147,6 +148,9 @@ async function start() {
 
   // Register Player Anomalies Dashboard routes
   await registerPlayerAnomaliesRoutes(app, db, authenticate, requireRole)
+
+  // Register PnL Dashboard routes (Teen Patti / Ludo)
+  await registerPnlDashboardRoutes(app, db, authenticate, requireRole)
 
   // Register Task Management routes
   await registerTaskRoutes(app, db, authenticate, requireRole)
