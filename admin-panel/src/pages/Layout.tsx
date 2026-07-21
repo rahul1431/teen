@@ -1,73 +1,17 @@
 import { useState } from 'react'
 import { Layout, Menu, Typography, Avatar, Dropdown, Button, Grid, Drawer } from 'antd'
-import type { MenuProps } from 'antd'
 import {
-  DashboardOutlined, UserOutlined, PlayCircleOutlined, DollarOutlined,
-  BellOutlined, LogoutOutlined, TrophyOutlined, SafetyOutlined,
-  TeamOutlined, ProfileOutlined, WarningOutlined, CustomerServiceOutlined,
-  FundOutlined, RobotOutlined, HistoryOutlined, GiftOutlined,
-  PictureOutlined, TagOutlined, AuditOutlined, MobileOutlined,
-  MenuOutlined, GlobalOutlined, SettingOutlined, LineChartOutlined
+  UserOutlined, LogoutOutlined, ProfileOutlined, MenuOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
 import NotificationBell from '../components/NotificationBell'
+import { buildMenuItems } from './layout/menuConfig'
+import { tokens } from '../theme/tokens'
 
 const { Sider, Header, Content } = Layout
 
-const menuItems: MenuProps['items'] = [
-  { key: '/admin', icon: <DashboardOutlined />, label: 'Dashboard' },
-  {
-    key: 'user_management_group',
-    icon: <TeamOutlined />,
-    label: 'User Management',
-    children: [
-      { key: '/admin/users', label: '👥 Players' },
-      { key: '/admin/admin-users', label: '🛡️ Admin Users' },
-      { key: '/admin/bots', label: '🤖 Bot Profiles' },
-    ]
-  },
-  {
-    key: 'games',
-    icon: <PlayCircleOutlined />,
-    label: 'Games',
-    children: [
-      { key: '/admin/games/teen-patti', label: '🃏 Teen Patti' },
-      { key: '/admin/games/ludo', label: '🎲 Ludo' },
-      { key: '/admin/games/aviator', label: '✈️ Aviator' },
-      { key: '/admin/games/matka', label: '🎯 Satta Matka' },
-      { key: '/admin/games/lottery', label: '🎰 Lottery' },
-      { key: '/admin/games/cricket', label: '🏏 Cricket' },
-    ]
-  },
-  {
-    key: 'marketing_group',
-    icon: <GlobalOutlined />,
-    label: 'Marketing & CMS',
-    children: [
-      { key: '/admin/marketing', label: '📣 SEO & Campaigns' },
-      { key: '/admin/promo-codes', label: '🏷️ Promo Codes' },
-      { key: '/admin/banners', label: '🖼️ Home Banners' },
-      { key: '/admin/daily-bonus', label: '🎁 Daily Bonus' },
-      { key: '/admin/marketing/cms', label: '📄 CMS Management' },
-    ]
-  },
-  { key: '/admin/kyc', icon: <AuditOutlined />, label: 'KYC Verification' },
-  { key: '/admin/app-update', icon: <MobileOutlined />, label: 'App Update' },
-  { key: '/admin/finance', icon: <DollarOutlined />, label: 'Finance' },
-  { key: '/admin/notifications', icon: <BellOutlined />, label: 'Notifications' },
-  { key: '/admin/risk-center', icon: <WarningOutlined />, label: 'Risk Center' },
-  { key: '/admin/ai-control', icon: <FundOutlined />, label: 'AI Control Center' },
-  { key: '/admin/support', icon: <CustomerServiceOutlined />, label: 'Support Center' },
-  { key: '/admin/leaderboard', icon: <TrophyOutlined />, label: 'Leaderboard' },
-  { key: '/admin/security', icon: <SafetyOutlined />, label: 'Security' },
-  { key: '/admin/settings', icon: <SettingOutlined />, label: 'Website Settings' },
-  { key: '/admin/tasks', icon: <ProfileOutlined />, label: '📋 Tasks' },
-  { key: '/admin/agents', icon: <RobotOutlined />, label: 'Agents' },
-  { key: '/admin/analytics', icon: <LineChartOutlined />, label: 'Analytics' },
-  // App Monitor and Player Tracking live inside the AI Control Center tabs.
-  { key: '/admin/changelog', icon: <HistoryOutlined />, label: 'Changelog' },
-]
+const menuItems = buildMenuItems()
 
 export default function AdminLayout() {
   const navigate = useNavigate()
@@ -84,9 +28,9 @@ export default function AdminLayout() {
   }
 
   const brand = (
-    <div style={{ padding: '16px 24px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-      <Typography.Title level={5} style={{ color: '#d4af37', margin: 0 }}>🃏 MyOnlineJoker</Typography.Title>
-      <Typography.Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>Admin Panel</Typography.Text>
+    <div style={{ padding: '18px 24px', borderBottom: `1px solid ${tokens.color.inkBorder}` }}>
+      <Typography.Title level={5} style={{ color: tokens.color.gold, margin: 0, fontWeight: 700 }}>🃏 MyOnlineJoker</Typography.Title>
+      <Typography.Text style={{ color: tokens.color.textOnDarkMuted, fontSize: 11 }}>Admin Panel</Typography.Text>
     </div>
   )
 
@@ -109,7 +53,7 @@ export default function AdminLayout() {
   return (
     <Layout style={{ minHeight: '100vh' }}>
       {!isMobile && (
-        <Sider width={220} theme="dark" style={{ position: 'fixed', height: '100vh', zIndex: 10, overflowY: 'auto' }}>
+        <Sider width={220} theme="dark" style={{ position: 'fixed', height: '100vh', zIndex: 10, overflowY: 'auto', background: tokens.color.inkBase }}>
           {brand}
           {nav}
         </Sider>
@@ -122,7 +66,7 @@ export default function AdminLayout() {
           onClose={() => setDrawerOpen(false)}
           width={240}
           closable={false}
-          styles={{ body: { padding: 0, background: '#001529' } }}
+          styles={{ body: { padding: 0, background: tokens.color.inkBase } }}
         >
           {brand}
           {nav}
