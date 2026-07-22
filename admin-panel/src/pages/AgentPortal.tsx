@@ -10,6 +10,10 @@ export default function AgentPortal() {
   const [ledger, setLedger] = useState<any[]>([])
   const [referrals, setReferrals] = useState<{ rows: any[]; totals: any }>({ rows: [], totals: { clicks: 0, signups: 0, conversion_rate: 0 } })
   const [channels, setChannels] = useState<any[]>([])
+  const [liveCommission, setLiveCommission] = useState<{ today: any; players: any[] }>({
+    today: { direct_commission: 0, override_commission: 0, total_commission: 0 },
+    players: [],
+  })
   const [payoutModalOpen, setPayoutModalOpen] = useState(false)
   const [form] = Form.useForm()
   const [channelForm] = Form.useForm()
@@ -17,18 +21,20 @@ export default function AgentPortal() {
   const logout = useAuthStore(s => s.logout)
 
   const load = async () => {
-    const [meRes, playersRes, ledgerRes, referralsRes, channelsRes] = await Promise.all([
+    const [meRes, playersRes, ledgerRes, referralsRes, channelsRes, liveCommissionRes] = await Promise.all([
       adminApi.get('/agent-portal/me'),
       adminApi.get('/agent-portal/players'),
       adminApi.get('/agent-portal/ledger'),
       adminApi.get('/agent-portal/referrals'),
       adminApi.get('/agent-portal/channels'),
+      adminApi.get('/agent-portal/commission/live'),
     ])
     setMe(meRes.data)
     setPlayers(playersRes.data)
     setLedger(ledgerRes.data)
     setReferrals(referralsRes.data)
     setChannels(channelsRes.data)
+    setLiveCommission(liveCommissionRes.data)
   }
 
   const addChannel = async (values: any) => {
@@ -119,12 +125,40 @@ export default function AgentPortal() {
           }] : []),
           {
             key: 'ledger', label: 'Commission History',
-            children: <Table rowKey="date" dataSource={ledger} columns={[
-              { title: 'Date', dataIndex: 'date' },
-              { title: 'Direct', dataIndex: 'direct_commission', render: (v: number) => `₹${v.toFixed(2)}` },
-              { title: 'Override', dataIndex: 'override_commission', render: (v: number) => `₹${v.toFixed(2)}` },
-              { title: 'Total', dataIndex: 'total_commission', render: (v: number) => `₹${v.toFixed(2)}` },
-            ]} />,
+            children: <>
+              <Typography.Title level={5} style={{ marginTop: 0 }}>Today (live estimate)</Typography.Title>
+              <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+                Not yet paid out — settles into your balance after tonight's processing.
+              </Typography.Text>
+              <Row gutter={16} style={{ marginBottom: 16 }}>
+                <Col span={8}><Card><Statistic title="Direct (est.)" value={liveCommission.today.direct_commission} prefix="₹" precision={2} /></Card></Col>
+                <Col span={8}><Card><Statistic title="Override (est.)" value={liveCommission.today.override_commission} prefix="₹" precision={2} /></Card></Col>
+                <Col span={8}><Card><Statistic title="Total (est.)" value={liveCommission.today.total_commission} prefix="₹" precision={2} /></Card></Col>
+              </Row>
+              {liveCommission.players.length > 0 && (
+                <Table
+                  rowKey="username"
+                  dataSource={liveCommission.players}
+                  pagination={false}
+                  size="small"
+                  style={{ marginBottom: 24 }}
+                  columns={[
+                    { title: 'Player (today)', dataIndex: 'username' },
+                    {
+                      title: 'Net Win/Loss', dataIndex: 'net_house_win',
+                      render: (v: number) => `₹${v.toFixed(2)}`,
+                    },
+                  ]}
+                />
+              )}
+              <Typography.Title level={5}>History</Typography.Title>
+              <Table rowKey="date" dataSource={ledger} columns={[
+                { title: 'Date', dataIndex: 'date' },
+                { title: 'Direct', dataIndex: 'direct_commission', render: (v: number) => `₹${v.toFixed(2)}` },
+                { title: 'Override', dataIndex: 'override_commission', render: (v: number) => `₹${v.toFixed(2)}` },
+                { title: 'Total', dataIndex: 'total_commission', render: (v: number) => `₹${v.toFixed(2)}` },
+              ]} />
+            </>,
           },
           {
             key: 'referrals', label: 'Referrals',
