@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { Pool } from 'pg'
 import { z } from 'zod'
 import bcrypt from 'bcryptjs'
+import { mergeReferralRows, conversionRate } from './referral-metrics'
 
 // Self-service routes for agents themselves (not admin staff). Agent JWTs
 // carry role: 'agent', which is intentionally outside the admin ROLES
@@ -74,6 +75,45 @@ export async function registerAgentPortalRoutes(
       [agentId]
     )
     return reply.send(res.rows)
+  })
+
+  // GET /api/admin/agent-portal/referrals — click/signup funnel for this
+  // agent's own referral_code, last 90 days, merged by day.
+  app.get('/api/admin/agent-portal/referrals', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+    const agentRes = await db.query('SELECT referral_code FROM agents WHERE id = $1', [agentId])
+    if (!agentRes.rows.length) return reply.code(404).send({ error: 'Agent not found' })
+    const referralCode = agentRes.rows[0].referral_code
+
+    const [clicksRes, signupsRes] = await Promise.all([
+      db.query(
+        `SELECT clicked_at::date::text AS date, COUNT(*)::int AS clicks
+         FROM referral_clicks
+         WHERE ref_code = $1 AND clicked_at >= NOW() - INTERVAL '90 days'
+         GROUP BY 1`,
+        [referralCode]
+      ),
+      db.query(
+        `SELECT created_at::date::text AS date, COUNT(*)::int AS signups
+         FROM users
+         WHERE agent_id = $1 AND created_at >= NOW() - INTERVAL '90 days'
+         GROUP BY 1`,
+        [agentId]
+      ),
+    ])
+
+    const rows = mergeReferralRows(clicksRes.rows, signupsRes.rows)
+    const totalClicks = rows.reduce((sum, r) => sum + r.clicks, 0)
+    const totalSignups = rows.reduce((sum, r) => sum + r.signups, 0)
+
+    return reply.send({
+      rows,
+      totals: {
+        clicks: totalClicks,
+        signups: totalSignups,
+        conversion_rate: conversionRate(totalSignups, totalClicks),
+      },
+    })
   })
 
   // POST /api/admin/agent-portal/payout — request a payout against the current balance
