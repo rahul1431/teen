@@ -107,13 +107,19 @@ export default function AgentPortal() {
               <Row gutter={16} style={{ marginBottom: 16 }}>
                 <Col span={8}><Card><Statistic title="Total Clicks" value={referrals.totals.clicks} /></Card></Col>
                 <Col span={8}><Card><Statistic title="Total Signups" value={referrals.totals.signups} /></Card></Col>
-                <Col span={8}><Card><Statistic title="Conversion Rate" value={referrals.totals.conversion_rate * 100} precision={1} suffix="%" /></Card></Col>
+                <Col span={8}><Card><Statistic title="Conversion Rate" value={Math.min(referrals.totals.conversion_rate * 100, 100)} precision={1} suffix="%" /></Card></Col>
               </Row>
               <Table rowKey="date" dataSource={referrals.rows} columns={[
                 { title: 'Date', dataIndex: 'date' },
                 { title: 'Clicks', dataIndex: 'clicks' },
                 { title: 'Signups', dataIndex: 'signups' },
-                { title: 'Conversion', dataIndex: 'conversion_rate', render: (v: number) => `${(v * 100).toFixed(1)}%` },
+                {
+                  title: 'Conversion', dataIndex: 'conversion_rate',
+                  // Clicks and signups come from independent sources (a code
+                  // can be shared verbally with zero tracked clicks), so the
+                  // raw ratio can exceed 100% — cap the display, not the data.
+                  render: (v: number) => `${Math.min(v * 100, 100).toFixed(1)}%`,
+                },
               ]} />
             </>,
           },
