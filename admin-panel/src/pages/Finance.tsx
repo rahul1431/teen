@@ -82,6 +82,19 @@ function DealerTips() {
   )
 }
 
+// Withdrawal order metadata used to be { bank_account, upi_id } (free text the
+// user typed). It's now a snapshot of the user's verified bank_details row
+// ({ holder_name, bank_name, account_number, ifsc_code, upi_id }) — the
+// bank_account fallback keeps orders created before that change readable.
+function withdrawalDestination(metadata: any): string {
+  if (!metadata) return '-'
+  if (metadata.account_number) {
+    const parts = [metadata.holder_name, metadata.bank_name, metadata.account_number, metadata.ifsc_code].filter(Boolean)
+    return parts.join(' · ') || '-'
+  }
+  return metadata.upi_id || metadata.bank_account || '-'
+}
+
 // ---- Withdrawals ----
 function Withdrawals() {
   const [rows, setRows] = useState<any[]>([])
@@ -136,7 +149,7 @@ function Withdrawals() {
         columns={[
           { title: 'User', dataIndex: 'username' },
           { title: 'Amount (₹)', dataIndex: 'amount', align: 'right' as const, render: (v: any) => parseFloat(v).toFixed(2) },
-          { title: 'UPI / Bank', key: 'payment', render: (r: any) => r.metadata?.upi_id || r.metadata?.bank_account || '-' },
+          { title: 'UPI / Bank', key: 'payment', render: (r: any) => withdrawalDestination(r.metadata) },
           { title: 'Requested', dataIndex: 'created_at', render: (d: string) => new Date(d).toLocaleString() },
           { title: 'UTR', key: 'utr', render: (r: any) => r.metadata?.utr || '-' },
           { title: 'Status', dataIndex: 'status', render: (s: string) => (
@@ -175,7 +188,7 @@ function Withdrawals() {
               <Descriptions.Item label="User">{acting.row.username}</Descriptions.Item>
               <Descriptions.Item label="Amount">₹{parseFloat(acting.row.amount).toFixed(2)}</Descriptions.Item>
               <Descriptions.Item label="Current Status">{acting.row.status}</Descriptions.Item>
-              <Descriptions.Item label="Destination">{acting.row.metadata?.upi_id || acting.row.metadata?.bank_account || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Destination">{withdrawalDestination(acting.row.metadata)}</Descriptions.Item>
             </Descriptions>
             {acting.action === 'paid' ? (
               <>
