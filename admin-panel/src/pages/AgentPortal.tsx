@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Table, Tabs, Statistic, Row, Col, Button, Modal, Form, InputNumber, Input, message } from 'antd'
+import { Card, Table, Tabs, Statistic, Row, Col, Button, Modal, Form, InputNumber, Input, message, Typography } from 'antd'
 import { adminApi } from '../api/client'
 import { useAuthStore } from '../store/auth'
 
@@ -8,20 +8,23 @@ export default function AgentPortal() {
   const [me, setMe] = useState<any>(null)
   const [players, setPlayers] = useState<any[]>([])
   const [ledger, setLedger] = useState<any[]>([])
+  const [referrals, setReferrals] = useState<{ rows: any[]; totals: any }>({ rows: [], totals: { clicks: 0, signups: 0, conversion_rate: 0 } })
   const [payoutModalOpen, setPayoutModalOpen] = useState(false)
   const [form] = Form.useForm()
   const navigate = useNavigate()
   const logout = useAuthStore(s => s.logout)
 
   const load = async () => {
-    const [meRes, playersRes, ledgerRes] = await Promise.all([
+    const [meRes, playersRes, ledgerRes, referralsRes] = await Promise.all([
       adminApi.get('/agent-portal/me'),
       adminApi.get('/agent-portal/players'),
       adminApi.get('/agent-portal/ledger'),
+      adminApi.get('/agent-portal/referrals'),
     ])
     setMe(meRes.data)
     setPlayers(playersRes.data)
     setLedger(ledgerRes.data)
+    setReferrals(referralsRes.data)
   }
 
   useEffect(() => { load() }, [])
@@ -55,7 +58,19 @@ export default function AgentPortal() {
         <Col span={6}><Card><Statistic title="Available Balance" value={me.wallet.balance} prefix="₹" precision={2} /></Card></Col>
         <Col span={6}><Card><Statistic title="Pending Payout" value={me.wallet.locked_balance} prefix="₹" precision={2} /></Card></Col>
         <Col span={6}><Card><Statistic title="Total Earned" value={me.wallet.total_earned} prefix="₹" precision={2} /></Card></Col>
-        <Col span={6}><Card><Statistic title="Your Referral Code" value={me.agent.referral_code} /></Card></Col>
+        <Col span={6}>
+          <Card>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>Your Referral Link</Typography.Text>
+            <div style={{ marginTop: 4 }}>
+              <Typography.Text
+                copyable={{ text: `${window.location.origin}/join?ref=${me.agent.referral_code}` }}
+                style={{ fontSize: 13 }}
+              >
+                /join?ref={me.agent.referral_code}
+              </Typography.Text>
+            </div>
+          </Card>
+        </Col>
       </Row>
 
       <Button type="primary" onClick={() => setPayoutModalOpen(true)} style={{ marginBottom: 16 }}>Request Payout</Button>
@@ -85,6 +100,22 @@ export default function AgentPortal() {
               { title: 'Override', dataIndex: 'override_commission', render: (v: number) => `₹${v.toFixed(2)}` },
               { title: 'Total', dataIndex: 'total_commission', render: (v: number) => `₹${v.toFixed(2)}` },
             ]} />,
+          },
+          {
+            key: 'referrals', label: 'Referrals',
+            children: <>
+              <Row gutter={16} style={{ marginBottom: 16 }}>
+                <Col span={8}><Card><Statistic title="Total Clicks" value={referrals.totals.clicks} /></Card></Col>
+                <Col span={8}><Card><Statistic title="Total Signups" value={referrals.totals.signups} /></Card></Col>
+                <Col span={8}><Card><Statistic title="Conversion Rate" value={referrals.totals.conversion_rate * 100} precision={1} suffix="%" /></Card></Col>
+              </Row>
+              <Table rowKey="date" dataSource={referrals.rows} columns={[
+                { title: 'Date', dataIndex: 'date' },
+                { title: 'Clicks', dataIndex: 'clicks' },
+                { title: 'Signups', dataIndex: 'signups' },
+                { title: 'Conversion', dataIndex: 'conversion_rate', render: (v: number) => `${(v * 100).toFixed(1)}%` },
+              ]} />
+            </>,
           },
         ]}
       />
