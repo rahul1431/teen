@@ -4,6 +4,7 @@ import { z } from 'zod'
 import bcrypt from 'bcryptjs'
 import { mergeReferralRows, conversionRate } from './referral-metrics'
 import { validateChannelUrl } from './channel-validation'
+import { calculateDailySettlement, AgentNode, PlayerNetLoss } from './agent-settlement'
 
 // Self-service routes for agents themselves (not admin staff). Agent JWTs
 // carry role: 'agent', which is intentionally outside the admin ROLES
@@ -192,5 +193,73 @@ export async function registerAgentPortalRoutes(
     const res = await db.query(`DELETE FROM agent_channels WHERE id = $1 AND agent_id = $2`, [id, agentId])
     if (res.rowCount === 0) return reply.code(404).send({ error: 'Channel not found' })
     return reply.send({ success: true })
+  })
+
+  // GET /api/admin/agent-portal/commission/live — read-only estimate of
+  // today's commission, computed with the exact same formula the nightly
+  // AgentSettlementJob uses, fed with today's (still in-progress) completed
+  // transactions instead of a finalized past day. Writes nothing.
+  app.get('/api/admin/agent-portal/commission/live', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+
+    const [agentsRes, lossesRes, playersRes] = await Promise.all([
+      db.query('SELECT id, parent_agent_id, commission_rate, status FROM agents'),
+      // Same shape as AgentSettlementJob.runSettlementForDate's query, but
+      // scoped to "today so far" (Asia/Kolkata) instead of a fixed past date.
+      // The status = 'completed' filter is REQUIRED — see the identical
+      // comment in agent-settlement-job.ts for why (pending/completed
+      // double-counting in the lock/consume lifecycle).
+      db.query(
+        `SELECT u.agent_id,
+                COALESCE(SUM(CASE WHEN wt.type = 'game_debit' THEN wt.amount ELSE 0 END), 0)
+                - COALESCE(SUM(CASE WHEN wt.type = 'game_credit' THEN wt.amount ELSE 0 END), 0) AS net_house_win
+         FROM wallet_transactions wt
+         JOIN users u ON u.id = wt.user_id
+         WHERE u.agent_id IS NOT NULL
+           AND wt.type IN ('game_debit', 'game_credit')
+           AND wt.status = 'completed'
+           AND wt.created_at >= (CURRENT_DATE AT TIME ZONE 'Asia/Kolkata')
+           AND wt.created_at <  ((CURRENT_DATE + 1) AT TIME ZONE 'Asia/Kolkata')
+         GROUP BY u.agent_id`
+      ),
+      // Per-player breakdown for THIS agent's own direct players only.
+      db.query(
+        `SELECT u.username,
+                COALESCE(SUM(CASE WHEN wt.type = 'game_debit' THEN wt.amount ELSE 0 END), 0)
+                - COALESCE(SUM(CASE WHEN wt.type = 'game_credit' THEN wt.amount ELSE 0 END), 0) AS net_house_win
+         FROM wallet_transactions wt
+         JOIN users u ON u.id = wt.user_id
+         WHERE u.agent_id = $1
+           AND wt.type IN ('game_debit', 'game_credit')
+           AND wt.status = 'completed'
+           AND wt.created_at >= (CURRENT_DATE AT TIME ZONE 'Asia/Kolkata')
+           AND wt.created_at <  ((CURRENT_DATE + 1) AT TIME ZONE 'Asia/Kolkata')
+         GROUP BY u.username
+         ORDER BY net_house_win DESC`,
+        [agentId]
+      ),
+    ])
+
+    const agents: AgentNode[] = agentsRes.rows.map(r => ({
+      id: r.id, parentAgentId: r.parent_agent_id, commissionRate: parseFloat(r.commission_rate), status: r.status,
+    }))
+    const playerLosses: PlayerNetLoss[] = lossesRes.rows.map(r => ({
+      agentId: r.agent_id, netHouseWin: parseFloat(r.net_house_win),
+    }))
+
+    const results = calculateDailySettlement(agents, playerLosses)
+    const mine = results.find(r => r.agentId === agentId)
+
+    return reply.send({
+      today: {
+        direct_commission: mine?.directCommission ?? 0,
+        override_commission: mine?.overrideCommission ?? 0,
+        total_commission: mine?.totalCommission ?? 0,
+      },
+      players: playersRes.rows.map(r => ({
+        username: r.username,
+        net_house_win: parseFloat(r.net_house_win),
+      })),
+    })
   })
 }
