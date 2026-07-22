@@ -145,7 +145,7 @@ export default function AgentPortal() {
                   columns={[
                     { title: 'Player (today)', dataIndex: 'username' },
                     {
-                      title: 'Net Win/Loss', dataIndex: 'net_house_win',
+                      title: 'Net House Win', dataIndex: 'net_house_win',
                       render: (v: number) => `₹${v.toFixed(2)}`,
                     },
                   ]}
