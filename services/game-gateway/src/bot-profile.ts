@@ -6,6 +6,10 @@ export interface BotDecisionProfile {
   call_probability: number
   raise_probability: number
   avg_decision_delay_ms: number
+  // Ludo-only trained fields (sub-project #3) — meaningless/absent for
+  // Teen Patti and Aviator, which use fold/call/raise instead.
+  capture_probability?: number | null
+  safe_play_probability?: number | null
 }
 
 // Hardcoded fallbacks used when bot-learning-service is unreachable
@@ -61,6 +65,8 @@ export async function getBotProfile(
         call_probability:      parseFloat(p.call_probability),
         raise_probability:     parseFloat(p.raise_probability),
         avg_decision_delay_ms: parseInt(p.avg_decision_delay_ms, 10),
+        capture_probability:   p.capture_probability   != null ? parseFloat(p.capture_probability)   : null,
+        safe_play_probability: p.safe_play_probability != null ? parseFloat(p.safe_play_probability) : null,
       }
       // Cache in gateway's own Redis so next call is instant
       redis.setex(cacheKey, CACHE_TTL, JSON.stringify(profile)).catch(() => {})

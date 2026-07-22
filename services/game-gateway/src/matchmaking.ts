@@ -429,6 +429,29 @@ export class MatchmakingService {
     return resolved
   }
 
+  // Ludo-only: fetches the trained capture/safe-play profile for each
+  // distinct difficulty tier present among the seated bots (per-bot
+  // overrides from resolveBotDifficulties mean this can't be fetched once
+  // per room), and returns each bot's own profile keyed by userId.
+  private async resolveLudoTrainedProfiles(
+    botDifficulties: Map<string, string>
+  ): Promise<Map<string, { capture_probability?: number | null; safe_play_probability?: number | null }>> {
+    const profiles = new Map<string, { capture_probability?: number | null; safe_play_probability?: number | null }>()
+    const distinctTiers = new Set(Array.from(botDifficulties.values()))
+    const profileByTier = new Map<string, any>()
+    for (const tier of distinctTiers) {
+      profileByTier.set(tier, await getBotProfile(this.redis, 'ludo', tier as 'easy' | 'medium' | 'hard'))
+    }
+    for (const [botId, tier] of botDifficulties) {
+      const profile = profileByTier.get(tier)
+      profiles.set(botId, {
+        capture_probability: profile?.capture_probability,
+        safe_play_probability: profile?.safe_play_probability,
+      })
+    }
+    return profiles
+  }
+
   // Seat order = board colour. When any real player expressed a colour
   // preference (Ludo), place each at the array index matching their chosen
   // seat (FCFS by queue order; conflicts fall through to the next free seat),
@@ -494,6 +517,9 @@ export class MatchmakingService {
     }
 
     const botDifficulties = await this.resolveBotDifficulties(bots.map(b => b.userId), botDifficulty)
+    const ludoTrainedProfiles = gameType === 'ludo'
+      ? await this.resolveLudoTrainedProfiles(botDifficulties)
+      : new Map<string, { capture_probability?: number | null; safe_play_probability?: number | null }>()
 
     const client = await this.db.connect()
     const lockedUserIds: string[] = []
@@ -633,7 +659,14 @@ export class MatchmakingService {
           room_id: roomId,
           stake,
           bot_difficulty: botDifficulty,
-          players: gatewayPlayers.map(p => ({ user_id: p.userId, username: p.username, seat: p.seat, is_bot: p.isBot, bot_difficulty: p.botDifficulty })),
+          players: gatewayPlayers.map(p => ({
+            user_id: p.userId,
+            username: p.username,
+            seat: p.seat,
+            is_bot: p.isBot,
+            bot_difficulty: p.botDifficulty,
+            ...(ludoTrainedProfiles.get(p.userId) ?? {}),
+          })),
         }),
         signal: AbortSignal.timeout(5000),
       })

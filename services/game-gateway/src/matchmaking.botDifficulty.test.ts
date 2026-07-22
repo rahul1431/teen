@@ -33,11 +33,18 @@ class MockPool {
   }
 }
 
-const mockRedis = { get: async () => null, setex: async () => {} } as any
+class MockRedisCache {
+  private cache = new Map<string, string>()
+  set(key: string, value: object) { this.cache.set(key, JSON.stringify(value)) }
+  async get(key: string) { return this.cache.get(key) ?? null }
+  async setex() {}
+}
+
 const mockHub = { sendToUser: () => {} } as any
 
 async function run() {
   const pool = new MockPool()
+  const mockRedis = new MockRedisCache() as any
   const service = new MatchmakingService(mockRedis, pool as any, mockHub)
 
   const botDifficultyQuery = `SELECT id, bot_difficulty FROM users WHERE id = ANY($1::uuid[])`
@@ -53,6 +60,16 @@ async function run() {
 
   const empty = await (service as any).resolveBotDifficulties([], 'medium')
   assert('an empty bot list resolves to an empty map without querying', empty.size === 0)
+
+  // Ludo trained-profile resolution: seed the Redis cache (what getBotProfile
+  // checks first) with a per-difficulty-tier profile, then confirm each bot
+  // gets the profile matching ITS OWN resolved difficulty.
+  mockRedis.set('bot:profile:ludo:hard', { fold_probability: 0, call_probability: 0, raise_probability: 0, avg_decision_delay_ms: 1000, capture_probability: 0.8, safe_play_probability: 0.95 })
+  mockRedis.set('bot:profile:ludo:medium', { fold_probability: 0, call_probability: 0, raise_probability: 0, avg_decision_delay_ms: 2000, capture_probability: 0.5, safe_play_probability: null })
+
+  const ludoProfiles = await (service as any).resolveLudoTrainedProfiles(resolved)
+  assert('bot-1 (hard) gets the hard tier\'s trained profile', ludoProfiles.get('bot-1')?.capture_probability === 0.8 && ludoProfiles.get('bot-1')?.safe_play_probability === 0.95)
+  assert('bot-2 (medium, via fallback) gets the medium tier\'s trained profile', ludoProfiles.get('bot-2')?.capture_probability === 0.5 && ludoProfiles.get('bot-2')?.safe_play_probability === null)
 
   if (testsFailed) {
     console.error(`\n${testsFailed} test(s) FAILED`)

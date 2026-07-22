@@ -6,6 +6,8 @@ import {
   applyMove,
   movableTokens,
   chooseBotToken,
+  findCapturingMove,
+  findSafeMoves,
   absoluteCell,
   HOME_PROGRESS,
   LudoState,
@@ -270,5 +272,109 @@ describe('per-player bot_difficulty override', () => {
     assert.equal(effectiveDifficulty, 'hard')
     const t = chooseBotToken(state, 0, dice, effectiveDifficulty)
     assert.equal(t, 1) // the safe star-cell move, per 'hard' behavior — not medium's capture-or-advance pick
+  })
+})
+
+describe('findCapturingMove / findSafeMoves (extracted decision-point helpers)', () => {
+  test('findCapturingMove returns the token that captures, matching chooseBotToken medium behavior', () => {
+    const state = makeState()
+    state.players[0].tokens = [10, 20, -1, -1]
+    state.players[1].tokens = [3, -1, -1, -1] // sits on absolute cell 16 == 10+6
+    const movable = movableTokens(state, 0, 6)
+    assert.equal(findCapturingMove(state, 0, 6, movable), 0)
+  })
+
+  test('findCapturingMove returns -1 when no movable token captures', () => {
+    const state = makeState()
+    state.players[0].tokens = [10, -1, -1, -1]
+    const movable = movableTokens(state, 0, 4)
+    assert.equal(findCapturingMove(state, 0, 4, movable), -1)
+  })
+
+  test('findSafeMoves matches the exact set chooseBotToken(hard) would pick from', () => {
+    const state = makeState()
+    const dice = 4
+    state.players[0].tokens = [5, 30, -1, -1]
+    state.players[1].tokens = [45, -1, -1, -1]
+    const movable = movableTokens(state, 0, dice)
+    const safe = findSafeMoves(state, 0, dice, movable)
+    assert.deepEqual(safe, [1]) // only the star-cell move (token 1) is safe
+  })
+})
+
+describe('chooseBotToken with a trainedProfile', () => {
+  test('absent trainedProfile: byte-identical to today (capture always taken)', () => {
+    const state = makeState()
+    state.players[0].tokens = [10, 20, -1, -1]
+    state.players[1].tokens = [3, -1, -1, -1]
+    assert.equal(chooseBotToken(state, 0, 6, 'medium'), 0)
+    assert.equal(chooseBotToken(state, 0, 6, 'medium', undefined), 0)
+  })
+
+  test('capture_probability: null behaves exactly like absent (always takes the capture)', () => {
+    const state = makeState()
+    state.players[0].tokens = [10, 20, -1, -1]
+    state.players[1].tokens = [3, -1, -1, -1]
+    assert.equal(chooseBotToken(state, 0, 6, 'medium', { capture_probability: null }), 0)
+  })
+
+  test('capture_probability: 0 never takes an available capture across many trials', () => {
+    const state = makeState()
+    state.players[0].tokens = [10, 20, -1, -1]
+    state.players[1].tokens = [3, -1, -1, -1]
+    for (let i = 0; i < 200; i++) {
+      const t = chooseBotToken(state, 0, 6, 'medium', { capture_probability: 0 })
+      assert.notEqual(t, 0, 'should never choose the capturing token when capture_probability is 0')
+    }
+  })
+
+  test('capture_probability: 1 always takes an available capture (same as today)', () => {
+    const state = makeState()
+    state.players[0].tokens = [10, 20, -1, -1]
+    state.players[1].tokens = [3, -1, -1, -1]
+    for (let i = 0; i < 50; i++) {
+      assert.equal(chooseBotToken(state, 0, 6, 'medium', { capture_probability: 1 }), 0)
+    }
+  })
+
+  test('safe_play_probability: 0 lets hard pick the exposed-but-more-progressed move', () => {
+    // token0: progress 30 -> lands at absolute cell 34, a SAFE_CELL star (the safe choice).
+    // token1: progress 45 -> lands at absolute cell 49 (unsafe), with an opponent
+    // at cell 46 (3 cells behind, within striking distance) -- exposed, but
+    // MORE progressed than token0, so it's what "advance most-progressed
+    // among ALL movable tokens" would pick once the safe-preference is
+    // overridden away.
+    const state = makeState()
+    const dice = 4
+    state.players[0].tokens = [30, 45, -1, -1]
+    state.players[1].tokens = [33, -1, -1, -1] // (13+33)%52 = 46
+
+    // Sanity: with the safe preference on (today's default), hard picks the safe token0.
+    assert.equal(chooseBotToken(state, 0, dice, 'hard'), 0)
+
+    // With safe_play_probability 0, the override always falls through to the
+    // exposed-but-more-progressed token1 instead.
+    for (let i = 0; i < 50; i++) {
+      assert.equal(chooseBotToken(state, 0, dice, 'hard', { safe_play_probability: 0 }), 1)
+    }
+  })
+
+  test('safe_play_probability: 1 always picks the safe move (same as today\'s hard default)', () => {
+    const state = makeState()
+    const dice = 4
+    state.players[0].tokens = [30, 45, -1, -1]
+    state.players[1].tokens = [33, -1, -1, -1]
+    for (let i = 0; i < 50; i++) {
+      assert.equal(chooseBotToken(state, 0, dice, 'hard', { safe_play_probability: 1 }), 0)
+    }
+  })
+
+  test('easy ignores trainedProfile entirely', () => {
+    const state = makeState()
+    state.players[0].tokens = [5, 12, -1, -1]
+    for (let i = 0; i < 20; i++) {
+      const t = chooseBotToken(state, 0, 4, 'easy', { capture_probability: 0, safe_play_probability: 1 })
+      assert.ok([0, 1].includes(t))
+    }
   })
 })

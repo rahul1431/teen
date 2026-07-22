@@ -35,6 +35,7 @@ import { registerBotLearningRoutes } from './bot-learning-routes'
 import { registerMonitorRoutes } from './monitor-routes'
 import { registerMetricsRoutes } from './metrics-routes'
 import { registerPlayerAnomaliesRoutes } from './player-anomalies-routes'
+import { registerPnlDashboardRoutes } from './pnl-dashboard-routes'
 import { registerTaskRoutes } from './task-routes'
 import { registerNotificationRoutes } from './notifications-routes'
 import { registerAgentRoutes } from './agent-routes'
@@ -147,6 +148,9 @@ async function start() {
 
   // Register Player Anomalies Dashboard routes
   await registerPlayerAnomaliesRoutes(app, db, authenticate, requireRole)
+
+  // Register PnL Dashboard routes (Teen Patti / Ludo)
+  await registerPnlDashboardRoutes(app, db, authenticate, requireRole)
 
   // Register Task Management routes
   await registerTaskRoutes(app, db, authenticate, requireRole)
@@ -2568,6 +2572,15 @@ async function start() {
         `INSERT INTO wallets (user_id, real_balance, bonus_balance)
          VALUES ($1, $2, 0)`,
         [botId, body.initial_balance]
+      )
+      // Logged so bot bankroll ROI (sub-project #4) can reconstruct total
+      // invested capital -- previously only later top-ups were logged,
+      // never the initial funding itself.
+      await client.query(
+        `INSERT INTO wallet_transactions
+           (user_id, type, wallet_type, amount, balance_before, balance_after, idempotency_key, status, description)
+         VALUES ($1, 'manual_credit', 'real', $2, 0, $2, $3, 'completed', 'Initial bot funding')`,
+        [botId, body.initial_balance, `initial-fund:${botId}`]
       )
       await client.query('COMMIT')
       return reply.send({ success: true, bot: { id: botId, username: body.username, phone, balance: body.initial_balance, preferred_game_type: body.preferred_game_type } })
