@@ -209,6 +209,13 @@ export async function registerAgentPortalRoutes(
       // The status = 'completed' filter is REQUIRED — see the identical
       // comment in agent-settlement-job.ts for why (pending/completed
       // double-counting in the lock/consume lifecycle).
+      // Uses (now() AT TIME ZONE 'Asia/Kolkata')::date rather than bare
+      // CURRENT_DATE: CURRENT_DATE resolves in the Postgres session's
+      // configured TimeZone (this DB's session TimeZone is UTC, confirmed
+      // via `SHOW TimeZone`), which would silently shift this window by a
+      // day during the ~5.5h/day UTC/IST calendar-date mismatch window
+      // (UTC 18:30-23:59 = IST 00:00-05:29) — exactly the kind of
+      // day-boundary bug this feature exists to compute correctly.
       db.query(
         `SELECT u.agent_id,
                 COALESCE(SUM(CASE WHEN wt.type = 'game_debit' THEN wt.amount ELSE 0 END), 0)
@@ -218,8 +225,8 @@ export async function registerAgentPortalRoutes(
          WHERE u.agent_id IS NOT NULL
            AND wt.type IN ('game_debit', 'game_credit')
            AND wt.status = 'completed'
-           AND wt.created_at >= (CURRENT_DATE AT TIME ZONE 'Asia/Kolkata')
-           AND wt.created_at <  ((CURRENT_DATE + 1) AT TIME ZONE 'Asia/Kolkata')
+           AND wt.created_at >= ((now() AT TIME ZONE 'Asia/Kolkata')::date AT TIME ZONE 'Asia/Kolkata')
+           AND wt.created_at <  (((now() AT TIME ZONE 'Asia/Kolkata')::date + 1) AT TIME ZONE 'Asia/Kolkata')
          GROUP BY u.agent_id`
       ),
       // Per-player breakdown for THIS agent's own direct players only.
@@ -232,8 +239,8 @@ export async function registerAgentPortalRoutes(
          WHERE u.agent_id = $1
            AND wt.type IN ('game_debit', 'game_credit')
            AND wt.status = 'completed'
-           AND wt.created_at >= (CURRENT_DATE AT TIME ZONE 'Asia/Kolkata')
-           AND wt.created_at <  ((CURRENT_DATE + 1) AT TIME ZONE 'Asia/Kolkata')
+           AND wt.created_at >= ((now() AT TIME ZONE 'Asia/Kolkata')::date AT TIME ZONE 'Asia/Kolkata')
+           AND wt.created_at <  (((now() AT TIME ZONE 'Asia/Kolkata')::date + 1) AT TIME ZONE 'Asia/Kolkata')
          GROUP BY u.username
          ORDER BY net_house_win DESC`,
         [agentId]
