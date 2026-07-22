@@ -14,7 +14,7 @@ export default function AgentLogin() {
     try {
       const res = await adminApi.post('/agent-portal/auth/login', values)
       setAuth(res.data.token, res.data.admin)
-      navigate('/agent')
+      navigate('/admin/agent')
     } catch (e: any) {
       message.error(e.response?.data?.error || 'Login failed')
     } finally {

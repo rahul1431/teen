@@ -48,7 +48,7 @@ export default function AgentPortal() {
     <div style={{ padding: 24, maxWidth: 1000, margin: '0 auto' }}>
       <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
         <Col><h2>{me.agent.display_name}'s Dashboard</h2></Col>
-        <Col><Button onClick={() => { logout(); navigate('/agent/login') }}>Log Out</Button></Col>
+        <Col><Button onClick={() => { logout(); navigate('/admin/agent/login') }}>Log Out</Button></Col>
       </Row>
 
       <Row gutter={16} style={{ marginBottom: 24 }}>
