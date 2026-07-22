@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Table, Tabs, Statistic, Row, Col, Button, Modal, Form, InputNumber, Input, message, Typography } from 'antd'
+import { Card, Table, Tabs, Statistic, Row, Col, Button, Modal, Form, InputNumber, Input, message, Typography, Select, Tag, Popconfirm, Space } from 'antd'
 import { adminApi } from '../api/client'
 import { useAuthStore } from '../store/auth'
 
@@ -9,22 +9,47 @@ export default function AgentPortal() {
   const [players, setPlayers] = useState<any[]>([])
   const [ledger, setLedger] = useState<any[]>([])
   const [referrals, setReferrals] = useState<{ rows: any[]; totals: any }>({ rows: [], totals: { clicks: 0, signups: 0, conversion_rate: 0 } })
+  const [channels, setChannels] = useState<any[]>([])
   const [payoutModalOpen, setPayoutModalOpen] = useState(false)
   const [form] = Form.useForm()
+  const [channelForm] = Form.useForm()
   const navigate = useNavigate()
   const logout = useAuthStore(s => s.logout)
 
   const load = async () => {
-    const [meRes, playersRes, ledgerRes, referralsRes] = await Promise.all([
+    const [meRes, playersRes, ledgerRes, referralsRes, channelsRes] = await Promise.all([
       adminApi.get('/agent-portal/me'),
       adminApi.get('/agent-portal/players'),
       adminApi.get('/agent-portal/ledger'),
       adminApi.get('/agent-portal/referrals'),
+      adminApi.get('/agent-portal/channels'),
     ])
     setMe(meRes.data)
     setPlayers(playersRes.data)
     setLedger(ledgerRes.data)
     setReferrals(referralsRes.data)
+    setChannels(channelsRes.data)
+  }
+
+  const addChannel = async (values: any) => {
+    try {
+      await adminApi.post('/agent-portal/channels', values)
+      message.success('Channel submitted for review')
+      channelForm.resetFields()
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Failed to add channel')
+    }
+  }
+
+  const deleteChannel = async (id: string) => {
+    try {
+      await adminApi.delete(`/agent-portal/channels/${id}`)
+      message.success('Channel removed')
+      load()
+    } catch (e: any) {
+      message.error('Failed to remove channel')
+    }
   }
 
   useEffect(() => { load() }, [])
@@ -119,6 +144,50 @@ export default function AgentPortal() {
                   // can be shared verbally with zero tracked clicks), so the
                   // raw ratio can exceed 100% — cap the display, not the data.
                   render: (v: number) => `${Math.min(v * 100, 100).toFixed(1)}%`,
+                },
+              ]} />
+            </>,
+          },
+          {
+            key: 'channels', label: 'Channels',
+            children: <>
+              <Form form={channelForm} layout="inline" onFinish={addChannel} style={{ marginBottom: 16 }}>
+                <Form.Item name="platform" rules={[{ required: true, message: 'Select a platform' }]} initialValue="telegram">
+                  <Select style={{ width: 140 }} options={[
+                    { value: 'telegram', label: 'Telegram' },
+                    { value: 'whatsapp', label: 'WhatsApp' },
+                    { value: 'other', label: 'Other' },
+                  ]} />
+                </Form.Item>
+                <Form.Item name="label" rules={[{ required: true, message: 'Enter a label' }]}>
+                  <Input placeholder="e.g. My Telegram Group" style={{ width: 220 }} />
+                </Form.Item>
+                <Form.Item name="url" rules={[{ required: true, message: 'Enter the channel URL' }]}>
+                  <Input placeholder="https://t.me/..." style={{ width: 260 }} />
+                </Form.Item>
+                <Form.Item>
+                  <Button type="primary" htmlType="submit">Add Channel</Button>
+                </Form.Item>
+              </Form>
+              <Table rowKey="id" dataSource={channels} columns={[
+                { title: 'Platform', dataIndex: 'platform', render: (v: string) => v.charAt(0).toUpperCase() + v.slice(1) },
+                { title: 'Label', dataIndex: 'label' },
+                { title: 'URL', dataIndex: 'url', render: (v: string) => <a href={v} target="_blank" rel="noreferrer">{v}</a> },
+                {
+                  title: 'Status', dataIndex: 'status',
+                  render: (v: string, r: any) => (
+                    <Space direction="vertical" size={0}>
+                      <Tag color={v === 'approved' ? 'green' : v === 'rejected' ? 'red' : 'orange'}>{v.toUpperCase()}</Tag>
+                      {v === 'rejected' && r.rejection_reason && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{r.rejection_reason}</Typography.Text>}
+                    </Space>
+                  ),
+                },
+                {
+                  title: 'Actions', render: (r: any) => (
+                    <Popconfirm title="Remove this channel?" onConfirm={() => deleteChannel(r.id)}>
+                      <Button danger size="small">Delete</Button>
+                    </Popconfirm>
+                  ),
                 },
               ]} />
             </>,
