@@ -1,13 +1,44 @@
 /* Global responsiveness for the admin panel.
    Keeps pages usable on phones without touching every page individually. */
 
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Never let a rogue wide element scroll the whole page sideways. */
+  overflow-x: hidden;
+  /* Subtle warm/cool glow in the content area so the glass header has
+     something to blur, instead of a flat off-white field. */
+  background:
+    radial-gradient(1200px 600px at 8% -10%, rgba(228, 197, 88, 0.10), transparent 60%),
+    radial-gradient(1000px 520px at 100% 0%, rgba(37, 99, 235, 0.05), transparent 55%),
+    #F7F5F1;
+  background-attachment: fixed;
+}
+
 html, body, #root {
   max-width: 100%;
 }
 
-/* Never let a rogue wide element scroll the whole page sideways. */
-body {
-  overflow-x: hidden;
+/* Header floats over the content-area gradient with a frosted-glass look. */
+.admin-glass-header {
+  background: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(20, 17, 13, 0.06);
+}
+
+/* Real elevation instead of a flat 1px border — cards lift slightly on hover. */
+.ant-card {
+  border-color: rgba(20, 17, 13, 0.06) !important;
+  transition: box-shadow 200ms ease, transform 200ms ease;
+}
+.ant-card:hover {
+  box-shadow: 0 4px 8px rgba(20, 17, 13, 0.06), 0 16px 40px rgba(20, 17, 13, 0.10);
+  transform: translateY(-2px);
+}
+
+/* Gold glow around the active sidebar item, not just a flat fill. */
+.ant-menu-dark.ant-menu-inline .ant-menu-item-selected {
+  box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.35), 0 4px 16px rgba(212, 175, 55, 0.25);
 }
 
 /* Phones (below Ant's `md`). */

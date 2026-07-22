@@ -1,7 +1,9 @@
 import React, { Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { ConfigProvider, theme } from 'antd'
+import { ConfigProvider } from 'antd'
+import { antdTheme } from './theme/antdTheme'
+import { tokens } from './theme/tokens'
 import './index.css'
 import { useAuthStore } from './store/auth'
 
@@ -60,9 +62,9 @@ function ProtectedAgentRoute({ children }: { children: React.ReactNode }) {
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <ConfigProvider theme={{ algorithm: theme.defaultAlgorithm, token: { colorPrimary: '#d4af37', borderRadius: 8 } }}>
+  <ConfigProvider theme={antdTheme}>
     <BrowserRouter basename={import.meta.env.VITE_ROUTER_BASE || undefined}>
-      <Suspense fallback={<div style={{ padding: 100, textAlign: 'center', fontSize: 18, color: '#d4af37' }}>Loading page...</div>}>
+      <Suspense fallback={<div style={{ padding: 100, textAlign: 'center', fontSize: 18, color: tokens.color.gold }}>Loading page...</div>}>
         <Routes>
           <Route path="/admin/login" element={<Login />} />
           <Route path="/admin/agent/login" element={<AgentLogin />} />
