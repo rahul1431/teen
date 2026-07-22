@@ -3,6 +3,7 @@ import { Pool } from 'pg'
 import { z } from 'zod'
 import bcrypt from 'bcryptjs'
 import { mergeReferralRows, conversionRate } from './referral-metrics'
+import { validateChannelUrl } from './channel-validation'
 
 // Self-service routes for agents themselves (not admin staff). Agent JWTs
 // carry role: 'agent', which is intentionally outside the admin ROLES
@@ -150,5 +151,46 @@ export async function registerAgentPortalRoutes(
     } finally {
       client.release()
     }
+  })
+
+  // GET /api/admin/agent-portal/channels — this agent's own marketing channels
+  app.get('/api/admin/agent-portal/channels', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+    const res = await db.query(
+      `SELECT id, platform, label, url, status, rejection_reason, created_at
+       FROM agent_channels WHERE agent_id = $1 ORDER BY created_at DESC`,
+      [agentId]
+    )
+    return reply.send(res.rows)
+  })
+
+  // POST /api/admin/agent-portal/channels — register a new channel (starts pending)
+  app.post('/api/admin/agent-portal/channels', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+    const body = z.object({
+      platform: z.enum(['telegram', 'whatsapp', 'other']),
+      label: z.string().min(1).max(100),
+      url: z.string().min(1).max(300),
+    }).parse(req.body)
+
+    const check = validateChannelUrl(body.platform, body.url)
+    if (!check.ok) return reply.code(400).send({ error: check.error })
+
+    const res = await db.query(
+      `INSERT INTO agent_channels (agent_id, platform, label, url)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, platform, label, url, status, rejection_reason, created_at`,
+      [agentId, body.platform, body.label, body.url]
+    )
+    return reply.code(201).send(res.rows[0])
+  })
+
+  // DELETE /api/admin/agent-portal/channels/:id — remove own channel only
+  app.delete('/api/admin/agent-portal/channels/:id', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+    const { id } = req.params as any
+    const res = await db.query(`DELETE FROM agent_channels WHERE id = $1 AND agent_id = $2`, [id, agentId])
+    if (res.rowCount === 0) return reply.code(404).send({ error: 'Channel not found' })
+    return reply.send({ success: true })
   })
 }
