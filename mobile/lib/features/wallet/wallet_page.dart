@@ -12,6 +12,7 @@ import '../../core/services/balance_service.dart';
 import '../../core/analytics/product_analytics.dart';
 import '../../shared/theme/app_theme.dart';
 import '../profile/kyc_page.dart';
+import '../profile/bank_details_page.dart';
 
 // Resolve a possibly-relative server path (e.g. /uploads/qr/x.png) to a full URL.
 String _resolveUrl(String? p) {
@@ -839,14 +840,38 @@ class _WithdrawSheet extends StatefulWidget {
 
 class _WithdrawSheetState extends State<_WithdrawSheet> {
   final _amountCtrl = TextEditingController();
-  final _upiCtrl = TextEditingController();
-  final _bankCtrl = TextEditingController();
   bool _submitting = false;
+  bool _loadingBank = true;
+  Map<String, dynamic>? _bank;
+
+  bool get _bankVerified => _bank != null && _bank!['verified'] == true;
 
   // Withdrawal window: 10 AM – 9 PM (device local time, UI-only gate).
   bool get _withdrawOpen {
     final h = DateTime.now().hour;
     return h >= 10 && h < 21;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBank();
+  }
+
+  Future<void> _loadBank() async {
+    try {
+      final res = await widget.api.dio.get('/api/users/me/bank');
+      if (mounted) setState(() => _bank = res.data['bank'] as Map<String, dynamic>?);
+    } catch (_) {
+      if (mounted) setState(() => _bank = null);
+    } finally {
+      if (mounted) setState(() => _loadingBank = false);
+    }
+  }
+
+  String _maskAccount(String acc) {
+    if (acc.length <= 4) return acc;
+    return '•' * (acc.length - 4) + acc.substring(acc.length - 4);
   }
 
   void _snack(String msg, Color c) => ScaffoldMessenger.of(context)
@@ -907,17 +932,14 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
       _snack('Minimum withdrawal is ₹100', AppColors.red);
       return;
     }
-    if (_upiCtrl.text.trim().isEmpty && _bankCtrl.text.trim().isEmpty) {
-      _snack('Enter your UPI ID or bank account', AppColors.red);
+    if (!_bankVerified) {
+      _snack('Add and verify your bank details before withdrawing', AppColors.red);
       return;
     }
     setState(() => _submitting = true);
     try {
       await widget.api.dio.post('/api/wallet/withdraw/request', data: {
         'amount': amount,
-        if (_upiCtrl.text.trim().isNotEmpty) 'upi_id': _upiCtrl.text.trim(),
-        if (_bankCtrl.text.trim().isNotEmpty)
-          'bank_account': _bankCtrl.text.trim(),
       });
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
@@ -979,6 +1001,7 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
           const SizedBox(height: 16),
           TextField(
             controller: _amountCtrl,
+            enabled: _bankVerified,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(
                 labelText: 'Amount (₹)',
@@ -986,22 +1009,114 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
                 helperText:
                     'Min ₹100 · KYC required · Withdrawals 10 AM – 9 PM'),
           ),
-          const SizedBox(height: 12),
-          TextField(
-              controller: _upiCtrl,
-              decoration: const InputDecoration(
-                  labelText: 'Your UPI ID (optional)', hintText: 'name@bank')),
-          const SizedBox(height: 12),
-          TextField(
-              controller: _bankCtrl,
-              decoration: const InputDecoration(
-                  labelText: 'Your Bank A/c + IFSC (optional)',
-                  hintText: 'A/c · IFSC')),
+          const SizedBox(height: 16),
+          if (_loadingBank)
+            const Center(
+                child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ))
+          else if (_bank == null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.orange.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+                border:
+                    Border.all(color: AppColors.orange.withValues(alpha: 0.4)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(children: [
+                    Icon(Icons.account_balance_rounded,
+                        color: AppColors.orange, size: 18),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text('Add your bank details to withdraw',
+                          style: TextStyle(
+                              color: AppColors.orange,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13)),
+                    ),
+                  ]),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.of(context, rootNavigator: true).push(
+                            MaterialPageRoute(
+                                builder: (_) => const BankDetailsPage()));
+                      },
+                      child: const Text('Add Bank Details'),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else if (!_bankVerified)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.orange.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+                border:
+                    Border.all(color: AppColors.orange.withValues(alpha: 0.4)),
+              ),
+              child: const Row(children: [
+                Icon(Icons.hourglass_top_rounded,
+                    color: AppColors.orange, size: 18),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                      'Your bank details are pending verification. You can withdraw once approved.',
+                      style: TextStyle(color: AppColors.orange, fontSize: 12.5)),
+                ),
+              ]),
+            )
+          else
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.cardBg,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(children: [
+                    Icon(Icons.verified_rounded,
+                        color: AppColors.green, size: 16),
+                    SizedBox(width: 6),
+                    Text('Payout account',
+                        style: TextStyle(
+                            color: AppColors.textSecondary, fontSize: 12)),
+                  ]),
+                  const SizedBox(height: 6),
+                  Text(_bank!['holder_name']?.toString() ?? '',
+                      style:
+                          const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  Text(
+                      '${_bank!['bank_name'] ?? ''} · ${_maskAccount(_bank!['account_number']?.toString() ?? '')}',
+                      style: const TextStyle(fontSize: 12.5)),
+                  Text(_bank!['ifsc_code']?.toString() ?? '',
+                      style: const TextStyle(
+                          color: AppColors.textSecondary, fontSize: 12)),
+                ],
+              ),
+            ),
           const SizedBox(height: 20),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: (_submitting || !_withdrawOpen) ? null : _submit,
+              onPressed:
+                  (_submitting || !_withdrawOpen || !_bankVerified) ? null : _submit,
               child: _submitting
                   ? const SizedBox(
                       height: 20,
