@@ -459,14 +459,24 @@ async function start() {
     const user = req.user as any
     const body = z.object({
       amount: z.number().min(100).max(50000),
-      bank_account: z.string().optional(),
-      upi_id: z.string().optional(),
     }).parse(req.body)
 
     // KYC check first
     const kycRes = await db.query('SELECT kyc_status FROM users WHERE id = $1', [user.sub])
     if (kycRes.rows[0]?.kyc_status !== 'approved') {
       return reply.code(403).send({ error: 'KYC verification required before withdrawal' })
+    }
+
+    // Payout destination must be the user's own admin-verified bank account —
+    // never trust client-supplied account details for where money is sent.
+    const bankRes = await db.query(
+      `SELECT holder_name, bank_name, account_number, ifsc_code, upi_id, verified
+       FROM bank_details WHERE user_id = $1`,
+      [user.sub]
+    )
+    const bank = bankRes.rows[0]
+    if (!bank || bank.verified !== true) {
+      return reply.code(400).send({ error: 'Add and verify your bank details before withdrawing' })
     }
 
     // Lock the amount in a transaction so balance + order creation are atomic
@@ -493,7 +503,13 @@ async function start() {
       const orderRes = await client.query(
         `INSERT INTO payment_orders (user_id, gateway, amount, type, status, metadata)
          VALUES ($1, 'manual', $2, 'withdrawal', 'created', $3) RETURNING id`,
-        [user.sub, body.amount, JSON.stringify({ bank_account: body.bank_account, upi_id: body.upi_id })]
+        [user.sub, body.amount, JSON.stringify({
+          holder_name: bank.holder_name,
+          bank_name: bank.bank_name,
+          account_number: bank.account_number,
+          ifsc_code: bank.ifsc_code,
+          upi_id: bank.upi_id,
+        })]
       )
 
       // Log the lock
