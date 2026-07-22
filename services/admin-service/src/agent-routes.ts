@@ -253,4 +253,62 @@ export async function registerAgentRoutes(
       client.release()
     }
   })
+
+  // GET /api/admin/agent-channels — all agent-submitted marketing channels, for review
+  app.get('/api/admin/agent-channels', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { status } = req.query as any
+    const params: any[] = []
+    let where = ''
+    if (status) { params.push(status); where = `WHERE c.status = $1` }
+    const res = await db.query(
+      `SELECT c.id, c.agent_id, a.display_name AS agent_display_name, c.platform, c.label, c.url,
+              c.status, c.rejection_reason, c.created_at
+       FROM agent_channels c JOIN agents a ON a.id = c.agent_id
+       ${where}
+       ORDER BY c.created_at DESC`,
+      params
+    )
+    return reply.send(res.rows)
+  })
+
+  // PATCH /api/admin/agent-channels/:id — approve or reject
+  app.patch('/api/admin/agent-channels/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as any
+    const body = z.object({
+      status: z.enum(['approved', 'rejected']),
+      rejection_reason: z.string().optional(),
+    }).parse(req.body)
+
+    if (body.status === 'rejected' && !body.rejection_reason?.trim()) {
+      return reply.code(400).send({ error: 'Rejection reason is required' })
+    }
+
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
+      const res = await client.query(
+        `UPDATE agent_channels
+         SET status = $1, rejection_reason = $2, reviewed_at = NOW(), reviewed_by = $3
+         WHERE id = $4 AND status = 'pending'
+         RETURNING id`,
+        [body.status, body.status === 'rejected' ? body.rejection_reason : null, admin.sub, id]
+      )
+      if (!res.rows.length) {
+        await client.query('ROLLBACK')
+        return reply.code(404).send({ error: 'Channel not found or already reviewed' })
+      }
+      await client.query(
+        `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'agent_channel', $3, $4)`,
+        [admin.sub, `agent_channel_${body.status}`, id, JSON.stringify({ rejection_reason: body.rejection_reason || null })]
+      )
+      await client.query('COMMIT')
+      return reply.send({ success: true })
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
+  })
 }
