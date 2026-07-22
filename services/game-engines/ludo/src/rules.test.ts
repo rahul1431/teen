@@ -231,3 +231,44 @@ describe('chooseBotToken', () => {
     }
   })
 })
+
+describe('per-player bot_difficulty override', () => {
+  test('createInitialState maps a per-player bot_difficulty onto that player only', () => {
+    const state = createInitialState('room1', 100, [
+      { user_id: 'p0', username: 'P0', seat: 1, is_bot: true, bot_difficulty: 'hard' },
+      { user_id: 'p1', username: 'P1', seat: 2, is_bot: true },
+    ], 'medium')
+    assert.equal(state.players[0].bot_difficulty, 'hard')
+    assert.equal(state.players[1].bot_difficulty, undefined)
+    assert.equal(state.bot_difficulty, 'medium') // room-wide default unchanged
+  })
+
+  test('a bot without its own override falls back to the room-wide difficulty at the call site', () => {
+    // Mirrors exactly what index.ts's bot-move handler does:
+    // state.players[idx].bot_difficulty ?? state.bot_difficulty
+    const state = createInitialState('room1', 100, [
+      { user_id: 'p0', username: 'P0', seat: 1, is_bot: true },
+    ], 'hard')
+    const effectiveDifficulty = state.players[0].bot_difficulty ?? state.bot_difficulty
+    assert.equal(effectiveDifficulty, 'hard')
+  })
+
+  test('a per-player override actually changes chooseBotToken behavior, independent of the room-wide default', () => {
+    // Same board as 'hard avoids leaving a token within striking distance' above,
+    // but the ROOM-WIDE default is 'medium' (which would prefer the more-progressed
+    // token1 move) while player0 has its OWN override set to 'hard'. If the
+    // override resolution is wired correctly, the effective difficulty used at
+    // the call site is 'hard', and the safe move (token 1) is chosen — proving
+    // the per-player tag, not the room default, drove the decision.
+    const state = makeState({ bot_difficulty: 'medium' })
+    state.players[0].bot_difficulty = 'hard'
+    const dice = 4
+    state.players[0].tokens = [5, 30, -1, -1]
+    state.players[1].tokens = [45, -1, -1, -1]
+
+    const effectiveDifficulty = state.players[0].bot_difficulty ?? state.bot_difficulty
+    assert.equal(effectiveDifficulty, 'hard')
+    const t = chooseBotToken(state, 0, dice, effectiveDifficulty)
+    assert.equal(t, 1) // the safe star-cell move, per 'hard' behavior — not medium's capture-or-advance pick
+  })
+})

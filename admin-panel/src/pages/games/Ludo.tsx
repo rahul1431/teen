@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag, Badge,
-  Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col, Grid
+  Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col, Grid, Tabs
 } from 'antd'
 import { ReloadOutlined, EyeOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
+import BotManagementPanel from '../../components/BotManagementPanel'
 
 export default function Ludo() {
   const screens = Grid.useBreakpoint()
@@ -78,6 +79,7 @@ export default function Ludo() {
   ]
 
   return (
+    <Tabs items={[{ key: 'overview', label: 'Overview', children: (
     <div>
       <h2 style={{ color: '#d4af37', marginBottom: 24 }}>🎲 Ludo Management</h2>
       <Row gutter={[24, 24]}>
@@ -170,5 +172,6 @@ export default function Ludo() {
         )}
       </Drawer>
     </div>
+    ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="ludo" /> }]} />
   )
 }

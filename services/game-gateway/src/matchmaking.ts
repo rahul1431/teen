@@ -405,11 +405,28 @@ export class MatchmakingService {
       `SELECT u.id, u.username
        FROM users u
        JOIN wallets w ON w.user_id = u.id
-       WHERE u.is_bot = true AND u.status = 'active' AND w.real_balance >= $1
-       ORDER BY RANDOM() LIMIT $2`,
-      [stake, count]
+       WHERE u.is_bot = true AND u.status = 'active' AND u.preferred_game_type = $1 AND w.real_balance >= $2
+       ORDER BY RANDOM() LIMIT $3`,
+      [gameType, stake, count]
     )
     return botRes.rows.map(b => ({ userId: b.id, username: b.username }))
+  }
+
+  // Resolves each bot's effective difficulty: its own users.bot_difficulty
+  // tag if set, otherwise the room-wide default computed from game_configs.
+  private async resolveBotDifficulties(botUserIds: string[], roomWideDefault: string): Promise<Map<string, string>> {
+    const resolved = new Map<string, string>()
+    if (botUserIds.length === 0) return resolved
+
+    const res = await this.db.query(
+      `SELECT id, bot_difficulty FROM users WHERE id = ANY($1::uuid[])`,
+      [botUserIds]
+    )
+    const overrides = new Map(res.rows.map((r: any) => [r.id, r.bot_difficulty]))
+    for (const id of botUserIds) {
+      resolved.set(id, overrides.get(id) ?? roomWideDefault)
+    }
+    return resolved
   }
 
   // Seat order = board colour. When any real player expressed a colour
@@ -475,6 +492,8 @@ export class MatchmakingService {
         botDifficultySource = 'personalized'
       }
     }
+
+    const botDifficulties = await this.resolveBotDifficulties(bots.map(b => b.userId), botDifficulty)
 
     const client = await this.db.connect()
     const lockedUserIds: string[] = []
@@ -560,6 +579,7 @@ export class MatchmakingService {
       seat: i + 1,
       isBot: bots.some(b => b.userId === p.userId),
       status: 'active',
+      botDifficulty: botDifficulties.get(p.userId), // undefined for real players
     }))
 
     const fallbackState = {
@@ -613,7 +633,7 @@ export class MatchmakingService {
           room_id: roomId,
           stake,
           bot_difficulty: botDifficulty,
-          players: gatewayPlayers.map(p => ({ user_id: p.userId, username: p.username, seat: p.seat, is_bot: p.isBot })),
+          players: gatewayPlayers.map(p => ({ user_id: p.userId, username: p.username, seat: p.seat, is_bot: p.isBot, bot_difficulty: p.botDifficulty })),
         }),
         signal: AbortSignal.timeout(5000),
       })
@@ -780,7 +800,13 @@ export class MatchmakingService {
     // Bot acts after a profile-driven delay
     const gameType = state.gameType ?? state.game_type ?? 'teen_patti'
     // I3: Ensure botDifficulty always resolves to a typed string before reaching getBotProfile
-    const botDifficulty = (state.botDifficulty ?? state.bot_difficulty ?? 'medium') as 'easy' | 'medium' | 'hard'
+    const roomWideDifficulty = (state.botDifficulty ?? state.bot_difficulty ?? 'medium') as 'easy' | 'medium' | 'hard'
+    // Teen Patti's persisted room state comes from the Go engine's response,
+    // which has no bot_difficulty field per player — so the acting bot's own
+    // override (if any) is looked up directly here rather than read off state.
+    const actingBotId = currentPlayer.user_id ?? currentPlayer.userId
+    const resolvedDifficulties = await this.resolveBotDifficulties([actingBotId], roomWideDifficulty)
+    const botDifficulty = (resolvedDifficulties.get(actingBotId) ?? roomWideDifficulty) as 'easy' | 'medium' | 'hard'
     const botProfile = await getBotProfile(this.redis, gameType, botDifficulty)
     const botAction = pickBotAction(botProfile)
     const botDelay = pickBotDelay(botProfile)
