@@ -41,8 +41,9 @@ export default function AdminLayout() {
       selectedKeys={[location.pathname]}
       items={menuItems}
       onClick={({ key }) => {
+        // Navigation itself now happens via the real <Link> each leaf label
+        // renders (see menuConfig.ts) — this only handles the mobile drawer.
         if (key.startsWith('/')) {
-          navigate(key)
           setDrawerOpen(false)
         }
       }}
