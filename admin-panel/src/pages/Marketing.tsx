@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Tabs, Table, Tag, Button, Modal, Form, Input, Space, message, Popconfirm,
-  Row, Col, Statistic, Tooltip, InputNumber
+  Row, Col, Statistic, Tooltip, InputNumber, Select
 } from 'antd'
 import {
   LineChartOutlined, GlobalOutlined, ShareAltOutlined, CopyOutlined,
-  PlusOutlined, DeleteOutlined, SaveOutlined, InfoCircleOutlined
+  PlusOutlined, DeleteOutlined, SaveOutlined, InfoCircleOutlined, MessageOutlined
 } from '@ant-design/icons'
 import { adminApi } from '../api/client'
 
@@ -340,12 +340,100 @@ function GlobalSeoTab() {
   )
 }
 
+interface AgentChannel {
+  id: string
+  agent_id: string
+  agent_display_name: string
+  platform: string
+  label: string
+  url: string
+  status: string
+  rejection_reason?: string
+  created_at: string
+}
+
+function AgentChannelsTab() {
+  const [channels, setChannels] = useState<AgentChannel[]>([])
+  const [loading, setLoading] = useState(false)
+  const [statusFilter, setStatusFilter] = useState<string | undefined>('pending')
+  const [rejecting, setRejecting] = useState<AgentChannel | null>(null)
+  const [reason, setReason] = useState('')
+
+  const load = () => {
+    setLoading(true)
+    adminApi.get('/agent-channels', { params: statusFilter ? { status: statusFilter } : {} })
+      .then(r => setChannels(r.data))
+      .catch(() => message.error('Failed to load channels'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { load() /* eslint-disable-next-line */ }, [statusFilter])
+
+  const approve = async (id: string) => {
+    try {
+      await adminApi.patch(`/agent-channels/${id}`, { status: 'approved' })
+      message.success('Channel approved')
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Failed to approve')
+    }
+  }
+
+  const reject = async () => {
+    if (!reason.trim()) { message.warning('Rejection reason required'); return }
+    try {
+      await adminApi.patch(`/agent-channels/${rejecting!.id}`, { status: 'rejected', rejection_reason: reason })
+      message.success('Channel rejected')
+      setRejecting(null)
+      setReason('')
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Failed to reject')
+    }
+  }
+
+  return (
+    <>
+      <Space style={{ marginBottom: 16 }}>
+        <Select value={statusFilter} onChange={setStatusFilter} style={{ width: 160 }} allowClear placeholder="All statuses">
+          <Select.Option value="pending">Pending</Select.Option>
+          <Select.Option value="approved">Approved</Select.Option>
+          <Select.Option value="rejected">Rejected</Select.Option>
+        </Select>
+      </Space>
+      <Table rowKey="id" dataSource={channels} loading={loading} columns={[
+        { title: 'Agent', dataIndex: 'agent_display_name' },
+        { title: 'Platform', dataIndex: 'platform', render: (v: string) => v.charAt(0).toUpperCase() + v.slice(1) },
+        { title: 'Label', dataIndex: 'label' },
+        { title: 'URL', dataIndex: 'url', render: (v: string) => <a href={v} target="_blank" rel="noreferrer">{v}</a> },
+        { title: 'Status', dataIndex: 'status', render: (v: string) => (
+          <Tag color={v === 'approved' ? 'green' : v === 'rejected' ? 'red' : 'orange'}>{v.toUpperCase()}</Tag>
+        )},
+        { title: 'Submitted', dataIndex: 'created_at', render: (d: string) => new Date(d).toLocaleString() },
+        {
+          title: 'Actions', render: (r: AgentChannel) => r.status === 'pending' ? (
+            <Space>
+              <Button size="small" type="primary" onClick={() => approve(r.id)}>Approve</Button>
+              <Button size="small" danger onClick={() => setRejecting(r)}>Reject</Button>
+            </Space>
+          ) : null,
+        },
+      ]} />
+      <Modal title="Reject Channel" open={!!rejecting} onCancel={() => { setRejecting(null); setReason('') }} onOk={reject}>
+        <p>Reason for rejection (required):</p>
+        <Input.TextArea rows={3} value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Not an official group, suspicious link" />
+      </Modal>
+    </>
+  )
+}
+
 export default function Marketing() {
   return (
     <Card title="SEO & Marketing System">
       <Tabs defaultActiveKey="campaigns" items={[
         { key: 'campaigns', label: <><ShareAltOutlined /> UTM Tracking Links</>, children: <CampaignsTab /> },
         { key: 'referrals', label: <><LineChartOutlined /> Referral Analytics</>, children: <ReferralsTab /> },
+        { key: 'agent_channels', label: <><MessageOutlined /> Agent Channels</>, children: <AgentChannelsTab /> },
         { key: 'seo', label: <><GlobalOutlined /> Global SEO Settings</>, children: <GlobalSeoTab /> }
       ]} />
     </Card>
