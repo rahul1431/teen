@@ -25,8 +25,8 @@ export class BotTrainingConfigRepository {
     }
 
     // Fall back to database
-    const row = await this.db.query(
-      `SELECT value FROM config WHERE key = ?`,
+    const res = await this.db.query(
+      `SELECT value FROM config WHERE key = $1`,
       [CONFIG_DB_KEY]
     )
 
@@ -37,11 +37,11 @@ export class BotTrainingConfigRepository {
       aggressiveness: 0.4,
     }
 
-    if (!row || !row[0]) {
+    if (!res.rows || !res.rows[0]) {
       return defaultConfig
     }
 
-    const config = JSON.parse(row[0].value)
+    const config = JSON.parse(res.rows[0].value)
     // Cache it
     await this.redis.setex(CONFIG_REDIS_KEY, 3600, JSON.stringify(config))
     return config
@@ -58,9 +58,9 @@ export class BotTrainingConfigRepository {
 
     const configJson = JSON.stringify(config)
 
-    // Update database
+    // Update database (PostgreSQL upsert syntax)
     await this.db.query(
-      `INSERT INTO config (key, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?`,
+      `INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $3`,
       [CONFIG_DB_KEY, configJson, configJson]
     )
 
