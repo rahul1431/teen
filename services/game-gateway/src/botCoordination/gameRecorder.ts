@@ -43,7 +43,7 @@ export class GameRecorder {
           outcome.gameId,
           metadata.winnerBotId,
           outcome.actualWinnerId,
-          JSON.stringify(metadata.botIds),
+          JSON.stringify(metadata.botIds.map(id => id.toString())),
           metadata.rpId,
           metadata.strategy,
           metadata.targetWinRate,

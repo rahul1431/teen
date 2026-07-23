@@ -50,7 +50,7 @@ export class BotStatsLoader {
         AVG((bot_performance::jsonb -> ($1::text) -> 'move_efficiency')::numeric) as avg_efficiency
       FROM bot_learning_sessions
       WHERE bot_ids @> $2::jsonb`,
-      [botId, JSON.stringify(botId)]
+      [botId, JSON.stringify([botId.toString()])]
     )
 
     const lifeRow = lifetimeResult.rows[0] || {}
@@ -65,7 +65,7 @@ export class BotStatsLoader {
         SUM(CASE WHEN actual_winner_id = $1 THEN 1 ELSE 0 END) as rp_wins
       FROM bot_learning_sessions
       WHERE bot_ids @> $2::jsonb`,
-      [botId, JSON.stringify(botId)]
+      [botId, JSON.stringify([botId.toString()])]
     )
 
     const rpRow = vsRpResult.rows[0] || {}
@@ -82,7 +82,7 @@ export class BotStatsLoader {
       WHERE bot_ids @> $1::jsonb
       ORDER BY created_at DESC
       LIMIT 10`,
-      [JSON.stringify(botId)]
+      [JSON.stringify([botId.toString()])]
     )
 
     const last10Games = lastGamesResult.rows.map((row: any) => ({
