@@ -103,6 +103,17 @@ function Withdrawals() {
   const [acting, setActing] = useState<{ row: any; action: 'paid' | 'refunded' } | null>(null)
   const [reference, setReference] = useState('')
   const [reason, setReason] = useState('')
+  const [recent, setRecent] = useState<any[]>([])
+  const [recentLoading, setRecentLoading] = useState(false)
+
+  const loadRecent = async () => {
+    setRecentLoading(true)
+    try {
+      const res = await adminApi.get('/finance/withdrawals', { params: { status: 'all', limit: 15 } })
+      setRecent(res.data)
+    } finally { setRecentLoading(false) }
+  }
+  useEffect(() => { loadRecent() }, [])
 
   const load = async () => {
     setLoading(true)
@@ -137,11 +148,36 @@ function Withdrawals() {
 
   return (
     <>
+      <Card
+        size="small"
+        title="Recent Withdrawals"
+        extra={<Button size="small" onClick={loadRecent} loading={recentLoading}>Refresh</Button>}
+        style={{ marginBottom: 16 }}
+      >
+        <Table
+          dataSource={recent}
+          rowKey="id"
+          size="small"
+          loading={recentLoading}
+          pagination={false}
+          scroll={{ x: 'max-content' }}
+          columns={[
+            { title: 'User', dataIndex: 'username' },
+            { title: 'Amount (₹)', dataIndex: 'amount', align: 'right' as const, render: (v: any) => parseFloat(v).toFixed(2) },
+            { title: 'Status', dataIndex: 'status', render: (s: string) => (
+              <Tag color={{ created: 'orange', paid: 'green', failed: 'red', refunded: 'purple' }[s] || 'default'}>{s}</Tag>
+            )},
+            { title: 'Requested', dataIndex: 'created_at', render: (d: string) => new Date(d).toLocaleString() },
+          ]}
+          locale={{ emptyText: 'No withdrawals yet' }}
+        />
+      </Card>
       <Space style={{ marginBottom: 16 }}>
         <Select value={status} onChange={setStatus} style={{ width: 160 }}>
           <Select.Option value="created">Pending</Select.Option>
           <Select.Option value="paid">Approved</Select.Option>
           <Select.Option value="refunded">Rejected</Select.Option>
+          <Select.Option value="all">All</Select.Option>
         </Select>
         <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
       </Space>
