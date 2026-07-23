@@ -7,11 +7,11 @@ describe('buildWithdrawalsFilter', () => {
   })
 
   it('filters by the given status', () => {
-    expect(buildWithdrawalsFilter('paid')).toEqual({ clause: 'AND po.status = $2', params: ['paid'] })
+    expect(buildWithdrawalsFilter('paid')).toEqual({ clause: 'AND po.status = $1', params: ['paid'] })
   })
 
   it('defaults to "created" when status is missing', () => {
-    expect(buildWithdrawalsFilter(undefined)).toEqual({ clause: 'AND po.status = $2', params: ['created'] })
+    expect(buildWithdrawalsFilter(undefined)).toEqual({ clause: 'AND po.status = $1', params: ['created'] })
   })
 })
 

@@ -1,6 +1,6 @@
 export function buildWithdrawalsFilter(status: string | undefined): { clause: string; params: any[] } {
   if (status === 'all') return { clause: '', params: [] }
-  return { clause: 'AND po.status = $2', params: [status || 'created'] }
+  return { clause: 'AND po.status = $1', params: [status || 'created'] }
 }
 
 export function resolveWithdrawalsLimit(raw: unknown): number {
