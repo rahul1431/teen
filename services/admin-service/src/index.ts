@@ -41,6 +41,7 @@ import { registerNotificationRoutes } from './notifications-routes'
 import { registerAgentRoutes } from './agent-routes'
 import { registerAgentPortalRoutes } from './agent-portal-routes'
 import { registerAnalyticsRoutes } from './analytics-routes'
+import { registerBotTrainingRoutes } from './routes'
 import { AgentSettlementJob } from './agent-settlement-job'
 import { createRateLimiter } from './middleware/rate-limiter'
 import { buildWithdrawalsFilter, resolveWithdrawalsLimit } from './withdrawals-query'
@@ -163,6 +164,10 @@ async function start() {
   await registerAgentRoutes(app, db, authenticate, requireRole)
   await registerAgentPortalRoutes(app, db)
   await registerAnalyticsRoutes(app, db, authenticate, requireRole)
+
+  // Register Bot Training Config routes
+  await registerBotTrainingRoutes(app, redis, db, authenticate, requireRole)
+
   new AgentSettlementJob(db, (msg) => app.log.info(msg)).start()
 
   // POST /api/admin/auth/login
