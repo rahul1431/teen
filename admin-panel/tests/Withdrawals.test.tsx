@@ -34,4 +34,31 @@ describe('Withdrawals tab', () => {
     fireEvent.mouseDown(selectors[0])
     await waitFor(() => expect(screen.getAllByText('All').length).toBeGreaterThan(0))
   })
+
+  it('refetches the main table with status=all when "All" is selected in the status filter', async () => {
+    render(<Finance />)
+    await waitFor(() => expect(screen.getByText('Recent Withdrawals')).toBeInTheDocument())
+
+    // Initial mount load() call uses the default status ('created').
+    await waitFor(() => {
+      expect(adminApi.get).toHaveBeenCalledWith('/finance/withdrawals', { params: { status: 'created' } })
+    })
+
+    // The recents card has no per-row status Select while its dataSource is
+    // empty, so the first (and only) .ant-select-selector on the page at
+    // this point is the main status filter.
+    const selectors = document.querySelectorAll('.ant-select-selector')
+    fireEvent.mouseDown(selectors[0])
+    await waitFor(() => expect(screen.getAllByText('All').length).toBeGreaterThan(0))
+
+    // The currently-selected value is "Pending", so "All" appears once: the
+    // dropdown option. Take the last match in case a duplicate render exists.
+    const allOption = screen.getAllByText('All').pop()
+    expect(allOption).toBeTruthy()
+    fireEvent.click(allOption!)
+
+    await waitFor(() => {
+      expect(adminApi.get).toHaveBeenCalledWith('/finance/withdrawals', { params: { status: 'all' } })
+    })
+  })
 })
