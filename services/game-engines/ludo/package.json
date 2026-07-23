@@ -5,7 +5,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "tsx --test src/rules.test.ts"
+    "test": "tsx --test src/rules.test.ts src/coordination.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",
