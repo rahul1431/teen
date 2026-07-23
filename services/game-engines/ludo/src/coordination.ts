@@ -1,4 +1,4 @@
-import { LudoState, LudoPlayer } from './rules'
+import { LudoState, LudoPlayer, chooseBotToken } from './rules'
 
 export interface CoordinationMetadata {
   isHelper: boolean
@@ -105,10 +105,4 @@ function findSacrificeToken(myTokens: number[], rpTokens: number[], dice: number
     }
   }
   return -1
-}
-
-// Placeholder: delegate to existing chooseBotToken logic
-function chooseBotToken(state: LudoState, botIdx: number, dice: number): number {
-  // Import and call the real implementation
-  return 0
 }

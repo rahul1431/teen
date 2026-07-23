@@ -17,6 +17,7 @@ import {
   ActionResult,
   BotDifficulty,
 } from './rules'
+import { chooseBotTokenCoordinated } from './coordination'
 
 const app = Fastify({ logger: false })
 const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
@@ -74,6 +75,11 @@ interface StartReq {
   stake: number
   players: { user_id: string; username: string; seat: number; is_bot: boolean; bot_difficulty?: BotDifficulty; capture_probability?: number | null; safe_play_probability?: number | null }[]
   bot_difficulty?: BotDifficulty
+  botCoordination?: {
+    isHelper: boolean
+    winnerBotIdx: number
+    aggressiveness: number
+  }
 }
 
 interface ActionReq {
@@ -98,6 +104,13 @@ async function start() {
       ? (body.bot_difficulty as BotDifficulty)
       : 'medium'
     const state = createInitialState(body.room_id, body.stake, body.players, difficulty)
+    if (body.botCoordination) {
+      state.coordination = {
+        isHelper: body.botCoordination.isHelper,
+        winnerBotIdx: body.botCoordination.winnerBotIdx,
+        aggressiveness: body.botCoordination.aggressiveness,
+      }
+    }
     await saveState(state)
     return state
   })
@@ -194,16 +207,22 @@ async function start() {
         let movedToken = -1
 
         if (state.awaiting === 'move') {
-          movedToken = chooseBotToken(
-            state,
-            idx,
-            dice,
-            state.players[idx].bot_difficulty ?? state.bot_difficulty,
-            {
-              capture_probability: state.players[idx].capture_probability,
-              safe_play_probability: state.players[idx].safe_play_probability,
-            },
-          )
+          movedToken = state.coordination
+            ? chooseBotTokenCoordinated(state, idx, dice, {
+                isHelper: state.coordination.isHelper,
+                winnerBotIdx: state.coordination.winnerBotIdx,
+                aggressiveness: state.coordination.aggressiveness,
+              })
+            : chooseBotToken(
+                state,
+                idx,
+                dice,
+                state.players[idx].bot_difficulty ?? state.bot_difficulty,
+                {
+                  capture_probability: state.players[idx].capture_probability,
+                  safe_play_probability: state.players[idx].safe_play_probability,
+                },
+              )
           if (movedToken >= 0) {
             const r = applyMove(state, movedToken)
             result = r.result

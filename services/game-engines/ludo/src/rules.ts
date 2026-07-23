@@ -51,6 +51,11 @@ export interface LudoState {
   round: number
   created_at: number
   bot_difficulty: BotDifficulty
+  coordination?: {
+    isHelper: boolean
+    winnerBotIdx: number
+    aggressiveness: number
+  }
 }
 
 export interface ActionResult {
