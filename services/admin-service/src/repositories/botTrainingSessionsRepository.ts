@@ -33,34 +33,36 @@ export class BotTrainingSessionsRepository {
     const params: any[] = []
 
     if (query.startDate) {
-      whereClause += ' AND created_at >= ?'
       params.push(query.startDate)
+      whereClause += ` AND created_at >= $${params.length}`
     }
     if (query.endDate) {
-      whereClause += ' AND created_at <= ?'
       params.push(query.endDate)
+      whereClause += ` AND created_at <= $${params.length}`
     }
     if (query.botId !== undefined) {
-      whereClause += ' AND JSON_CONTAINS(bot_ids, ?)'
-      params.push(JSON.stringify(query.botId))
+      params.push(JSON.stringify([query.botId]))
+      whereClause += ` AND bot_ids @> $${params.length}::jsonb`
     }
     if (query.success !== undefined) {
-      whereClause += ' AND coordination_success = ?'
       params.push(query.success ? 1 : 0)
+      whereClause += ` AND coordination_success = $${params.length}`
     }
 
     const countResult = await this.db.query(
       `SELECT COUNT(*) as total FROM bot_learning_sessions WHERE ${whereClause}`,
       params
     )
-    const total = countResult[0]?.total || 0
+    const total = countResult.rows[0]?.total || 0
 
+    params.push(limit)
+    params.push(offset)
     const rows = await this.db.query(
-      `SELECT * FROM bot_learning_sessions WHERE ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      `SELECT * FROM bot_learning_sessions WHERE ${whereClause} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
     )
 
-    const sessions = rows.map((row: any) => ({
+    const sessions = rows.rows.map((row: any) => ({
       gameId: row.game_id,
       winnerBotId: row.winner_bot_id,
       actualWinnerId: row.actual_winner_id,
