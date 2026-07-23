@@ -7,6 +7,9 @@ import { ReloadOutlined, EyeOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 import BotManagementPanel from '../../components/BotManagementPanel'
 import GamePnlDashboard from '../../components/GamePnlDashboard'
+import { BotTrainingConfigPanel } from '../../components/BotTrainingConfigPanel'
+import { BotMetricsTable } from '../../components/BotMetricsTable'
+import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
 
 export default function Ludo() {
   const screens = Grid.useBreakpoint()
@@ -173,6 +176,12 @@ export default function Ludo() {
         )}
       </Drawer>
     </div>
-    ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="ludo" /> }, { key: 'analytics', label: 'Analytics', children: <GamePnlDashboard gameType="ludo" /> }]} />
+    ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="ludo" /> }, { key: 'analytics', label: 'Analytics', children: <GamePnlDashboard gameType="ludo" /> }, { key: 'bot-training', label: 'Bot Training', children: (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+        <BotTrainingConfigPanel />
+        <BotMetricsTable />
+        <BotTrainingAuditTrail />
+      </div>
+    ) }]} />
   )
 }
