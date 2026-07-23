@@ -14,6 +14,48 @@ export async function registerBotTrainingRoutes(
   const botTrainingConfigRepo = new BotTrainingConfigRepository(redis, db)
   const botTrainingSessionsRepo = new BotTrainingSessionsRepository(db)
 
+  // GET /api/admin/ludo/bot-stats
+  app.get('/api/admin/ludo/bot-stats', { onRequest: [authenticate] }, async (req, reply) => {
+    try {
+      const { page = '1', limit = '10' } = req.query as any
+      const offset = (parseInt(page) - 1) * parseInt(limit)
+
+      // Query bot stats from bot_learning_sessions table
+      const res = await db.query(`
+        SELECT
+          winner_bot_id as bot_id,
+          COUNT(*) as lifetime_wins,
+          (COUNT(*) FILTER (WHERE coordination_success = true)::float / NULLIF(COUNT(*), 0) * 100) as win_rate,
+          0 as vs_rp_win_rate,
+          '[]'::jsonb as last_10_games
+        FROM bot_learning_sessions
+        WHERE winner_bot_id IS NOT NULL
+        GROUP BY winner_bot_id
+        ORDER BY lifetime_wins DESC
+        LIMIT $1 OFFSET $2
+      `, [parseInt(limit), offset])
+
+      const countRes = await db.query(`
+        SELECT COUNT(DISTINCT winner_bot_id) as count FROM bot_learning_sessions
+      `)
+
+      return reply.send({
+        bots: res.rows.map((row: any) => ({
+          bot_id: row.bot_id?.toString() || '',
+          name: `Bot ${row.bot_id?.toString().slice(0, 8) || ''}`,
+          lifetime_wins: parseInt(row.lifetime_wins || 0),
+          win_rate: parseFloat(row.win_rate || 0),
+          vs_rp_win_rate: parseFloat(row.vs_rp_win_rate || 0),
+          last_10_games: [],
+        })),
+        total: parseInt(countRes.rows[0]?.count || 0),
+      })
+    } catch (err: any) {
+      app.log.error(err, 'Failed to fetch bot stats')
+      return reply.code(500).send({ error: 'Internal server error' })
+    }
+  })
+
   // GET /api/admin/ludo/bot-training/config
   app.get('/api/admin/ludo/bot-training/config', { onRequest: [authenticate] }, async (req, reply) => {
     try {

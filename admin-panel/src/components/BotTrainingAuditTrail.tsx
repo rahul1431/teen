@@ -39,7 +39,7 @@ export const BotTrainingAuditTrail: React.FC = () => {
       if (filters.botId) params.append('botId', filters.botId.toString())
       if (filters.success !== undefined) params.append('success', filters.success ? 'true' : 'false')
 
-      const response = await adminApi.get(`/api/admin/ludo/bot-training/sessions?${params}`)
+      const response = await adminApi.get(`/ludo/bot-training/sessions?${params}`)
       setSessions(response.data.sessions || [])
       setTotal(response.data.total || 0)
     } catch (error) {

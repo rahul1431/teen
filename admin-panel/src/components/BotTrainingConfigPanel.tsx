@@ -28,7 +28,7 @@ export const BotTrainingConfigPanel: React.FC = () => {
 
   const fetchConfig = async () => {
     try {
-      const response = await adminApi.get('/api/admin/ludo/bot-training/config')
+      const response = await adminApi.get('/ludo/bot-training/config')
       setConfig(response.data)
       form.setFieldsValue(response.data)
       setLoading(false)
@@ -41,7 +41,7 @@ export const BotTrainingConfigPanel: React.FC = () => {
   const handleSave = async (values: any) => {
     setSaving(true)
     try {
-      await adminApi.patch('/api/admin/ludo/bot-training/config', values)
+      await adminApi.patch('/ludo/bot-training/config', values)
       setConfig(values)
       message.success('Bot training config updated')
     } catch (error) {
