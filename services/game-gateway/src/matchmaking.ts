@@ -1167,6 +1167,32 @@ export class MatchmakingService {
     }
   }
 
+  // Check bot coordination state and return coordination metadata
+  async handleBotTurn(roomId: string, userId: string): Promise<{
+    isCoordinated: boolean
+    isWinner?: boolean
+    isHelper?: boolean
+    coordinationMetadata?: any
+  }> {
+    // Check if coordination is active for this game
+    const botTrainingRaw = await this.redis.get(`room:${roomId}:botTraining`)
+    const botTraining = botTrainingRaw ? JSON.parse(botTrainingRaw) : null
+
+    if (!botTraining) {
+      return { isCoordinated: false }
+    }
+
+    // Determine if this bot is the winner or helper
+    const isWinner = botTraining.winnerBotId === userId
+
+    return {
+      isCoordinated: true,
+      isWinner,
+      isHelper: !isWinner,
+      coordinationMetadata: botTraining,
+    }
+  }
+
   // Drive consecutive bot turns for a Ludo room until it's a human's turn or
   // the game ends. Each bot turn is broadcast so clients animate the dice/move.
   async driveLudoBots(roomId: string): Promise<void> {
@@ -1187,10 +1213,22 @@ export class MatchmakingService {
 
       await new Promise(r => setTimeout(r, 1200)) // pacing so the table feels live
       try {
+        // Check bot coordination state
+        const coordination = await this.handleBotTurn(roomId, cur.user_id)
+
+        const botTurnPayload: any = { room_id: roomId, user_id: cur.user_id }
+
+        // Include coordination metadata if active
+        if (coordination.isCoordinated) {
+          botTurnPayload.isCoordinated = true
+          botTurnPayload.isHelper = coordination.isHelper
+          botTurnPayload.coordinationMetadata = coordination.coordinationMetadata
+        }
+
         const res = await fetch(`${engineUrl}/bot-turn`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ room_id: roomId, user_id: cur.user_id }),
+          body: JSON.stringify(botTurnPayload),
           signal: AbortSignal.timeout(5000),
         })
         if (!res.ok) return
