@@ -44,13 +44,13 @@ export class BotStatsLoader {
       `SELECT
         COUNT(*) as total_games,
         SUM(CASE WHEN actual_winner_id = $1 THEN 1 ELSE 0 END) as total_wins,
-        SUM(CASE WHEN winner_bot_id = $2 AND coordination_success = 1 THEN 1 ELSE 0 END) as winner_successes,
-        SUM(CASE WHEN winner_bot_id = $3 THEN 1 ELSE 0 END) as chosen_as_winner,
-        AVG(JSON_EXTRACT(bot_performance, CONCAT('$.', $4, '.blocks_on_rp'))) as avg_blocks,
-        AVG(JSON_EXTRACT(bot_performance, CONCAT('$.', $5, '.move_efficiency'))) as avg_efficiency
+        SUM(CASE WHEN winner_bot_id = $1 AND coordination_success = true THEN 1 ELSE 0 END) as winner_successes,
+        SUM(CASE WHEN winner_bot_id = $1 THEN 1 ELSE 0 END) as chosen_as_winner,
+        AVG((bot_performance::jsonb -> ($1::text) -> 'blocks_on_rp')::numeric) as avg_blocks,
+        AVG((bot_performance::jsonb -> ($1::text) -> 'move_efficiency')::numeric) as avg_efficiency
       FROM bot_learning_sessions
-      WHERE JSON_CONTAINS(bot_ids, $6)`,
-      [botId, botId, botId, botId, botId, JSON.stringify(botId)]
+      WHERE bot_ids @> $2::jsonb`,
+      [botId, JSON.stringify(botId)]
     )
 
     const lifeRow = lifetimeResult.rows[0] || {}
@@ -64,7 +64,7 @@ export class BotStatsLoader {
         COUNT(*) as rp_games,
         SUM(CASE WHEN actual_winner_id = $1 THEN 1 ELSE 0 END) as rp_wins
       FROM bot_learning_sessions
-      WHERE JSON_CONTAINS(bot_ids, $2)`,
+      WHERE bot_ids @> $2::jsonb`,
       [botId, JSON.stringify(botId)]
     )
 
@@ -79,7 +79,7 @@ export class BotStatsLoader {
         actual_winner_id,
         created_at
       FROM bot_learning_sessions
-      WHERE JSON_CONTAINS(bot_ids, $1)
+      WHERE bot_ids @> $1::jsonb
       ORDER BY created_at DESC
       LIMIT 10`,
       [JSON.stringify(botId)]
