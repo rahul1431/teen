@@ -26,7 +26,7 @@
 - Test: `services/admin-service/tests/withdrawals-query.test.ts`
 
 **Interfaces:**
-- Produces: `buildWithdrawalsFilter(status: string | undefined): { clause: string; params: any[] }` — `clause` is either `''` (when `status` is `'all'`) or `'AND po.status = $2'` (any other value, including the default), `params` is `[]` or `[status || 'created']` respectively.
+- Produces: `buildWithdrawalsFilter(status: string | undefined): { clause: string; params: any[] }` — `clause` is either `''` (when `status` is `'all'`) or `'AND po.status = $1'` (any other value, including the default), `params` is `[]` or `[status || 'created']` respectively.
 - Produces: `resolveWithdrawalsLimit(raw: unknown): number` — parses `raw` to an integer, clamps to `[1, 500]`, defaults to `100` when `raw` is missing/non-numeric.
 
 - [ ] **Step 1: Write the failing tests**
@@ -42,11 +42,11 @@ describe('buildWithdrawalsFilter', () => {
   })
 
   it('filters by the given status', () => {
-    expect(buildWithdrawalsFilter('paid')).toEqual({ clause: 'AND po.status = $2', params: ['paid'] })
+    expect(buildWithdrawalsFilter('paid')).toEqual({ clause: 'AND po.status = $1', params: ['paid'] })
   })
 
   it('defaults to "created" when status is missing', () => {
-    expect(buildWithdrawalsFilter(undefined)).toEqual({ clause: 'AND po.status = $2', params: ['created'] })
+    expect(buildWithdrawalsFilter(undefined)).toEqual({ clause: 'AND po.status = $1', params: ['created'] })
   })
 })
 
@@ -85,7 +85,7 @@ Expected: FAIL with "Cannot find module '../src/withdrawals-query'"
 // services/admin-service/src/withdrawals-query.ts
 export function buildWithdrawalsFilter(status: string | undefined): { clause: string; params: any[] } {
   if (status === 'all') return { clause: '', params: [] }
-  return { clause: 'AND po.status = $2', params: [status || 'created'] }
+  return { clause: 'AND po.status = $1', params: [status || 'created'] }
 }
 
 export function resolveWithdrawalsLimit(raw: unknown): number {
@@ -98,7 +98,7 @@ export function resolveWithdrawalsLimit(raw: unknown): number {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd services/admin-service && npx vitest run tests/withdrawals-query.test.ts`
-Expected: PASS (9 tests)
+Expected: PASS (8 tests)
 
 - [ ] **Step 5: Commit**
 
