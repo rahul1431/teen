@@ -43,6 +43,7 @@ import { registerAgentPortalRoutes } from './agent-portal-routes'
 import { registerAnalyticsRoutes } from './analytics-routes'
 import { AgentSettlementJob } from './agent-settlement-job'
 import { createRateLimiter } from './middleware/rate-limiter'
+import { buildWithdrawalsFilter, resolveWithdrawalsLimit } from './withdrawals-query'
 
 // QR images for payment methods are stored here. nginx's /uploads/ alias points at
 // /opt/teen/uploads/ (not /opt/teen-prod), even though services now run from /opt/teen-prod —
@@ -684,14 +685,18 @@ async function start() {
   })
 
   // GET /api/admin/finance/withdrawals
+  // status='all' returns every status (used by the "All" filter and the Recents card);
+  // any other value (or omitted) filters to that single status, defaulting to 'created'.
   app.get('/api/admin/finance/withdrawals', { onRequest: [authenticate] }, async (req, reply) => {
-    const { status } = req.query as any
+    const { status, limit } = req.query as any
+    const { clause, params } = buildWithdrawalsFilter(status)
+    const boundedLimit = resolveWithdrawalsLimit(limit)
     const res = await db.query(`
       SELECT po.*, u.username FROM payment_orders po
       JOIN users u ON u.id = po.user_id
-      WHERE po.type = 'withdrawal' AND po.status = $1
-      ORDER BY po.created_at DESC LIMIT 100
-    `, [status || 'created'])
+      WHERE po.type = 'withdrawal' ${clause}
+      ORDER BY po.created_at DESC LIMIT ${boundedLimit}
+    `, params)
     return reply.send(res.rows)
   })
 
