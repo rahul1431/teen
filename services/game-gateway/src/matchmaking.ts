@@ -7,6 +7,9 @@ import { GameWatchdog } from './watchdog'
 import { getBotProfile, pickBotAction, pickBotDelay } from './bot-profile'
 import { monitorEmitter } from './monitor-emitter'
 import { isInPersonalizationCanary, getPersonalizedDifficulty } from './personalized-difficulty-client'
+import { BotStatsLoader } from './botCoordination/botStatsLoader'
+import { ElectionAlgorithm, BotWithStats } from './botCoordination/electionAlgorithm'
+import { BotTrainingConfigRepository } from './repositories/botTrainingConfigRepository'
 
 export interface MatchmakingEntry {
   userId: string
@@ -67,11 +70,19 @@ export class MatchmakingService {
   // app, crash). In normal cases, the client folds first and the server timeout never fires.
   private static readonly TEEN_PATTI_TURN_TIMEOUT_MS = 30000
 
+  private botStatsLoader: BotStatsLoader
+  private electionAlgorithm: ElectionAlgorithm
+  private botTrainingConfig: BotTrainingConfigRepository
+
   constructor(
     private redis: Redis,
     private db: Pool,
     private hub: RealtimeHub,
-  ) {}
+  ) {
+    this.botStatsLoader = new BotStatsLoader(this.redis, this.db as any)
+    this.electionAlgorithm = new ElectionAlgorithm()
+    this.botTrainingConfig = new BotTrainingConfigRepository(this.redis, this.db as any)
+  }
 
   // Room-state helpers used by the gateway's game:action handler.
   async getRoomState(roomId: string): Promise<any | null> {
@@ -621,6 +632,52 @@ export class MatchmakingService {
       round: 1,
       createdAt: Date.now(),
       botDifficulty: botDifficulty,  // I3: default bot difficulty written into room state
+    }
+
+    // Load bot training config
+    const config = await this.botTrainingConfig.getConfig()
+
+    if (config.enabled && gatewayPlayers.filter(p => p.isBot).length === 3) {
+      // This is a 3-bot + 1-RP game; apply coordination
+      const botPlayers = gatewayPlayers.filter(p => p.isBot)
+
+      try {
+        // Load stats for all bots in this game
+        const botsWithStats: BotWithStats[] = await Promise.all(
+          botPlayers.map(async (bot) => ({
+            botId: BigInt(bot.userId),
+            stats: await this.botStatsLoader.loadBotStats(BigInt(bot.userId)),
+          }))
+        )
+
+        // Elect the winner bot
+        const winnerBotId = this.electionAlgorithm.electWinnerBot(
+          botsWithStats,
+          config.strategy,
+          gameType
+        )
+
+        // Store coordination metadata in Redis
+        const botTrainingMetadata = {
+          winnerBotId: winnerBotId.toString(),
+          strategy: config.strategy,
+          targetWinRate: config.targetWinRate,
+          aggressiveness: config.aggressiveness,
+          botIds: botPlayers.map(b => b.userId),
+          rpId: gatewayPlayers.find(p => !p.isBot)?.userId,
+        }
+
+        await this.redis.setex(
+          `room:${roomId}:botTraining`,
+          86400, // 24 hour expiry
+          JSON.stringify(botTrainingMetadata)
+        )
+
+        console.log(`[BotCoordination] Game ${roomId}: ${winnerBotId} elected to win (strategy: ${config.strategy})`)
+      } catch (error) {
+        console.error(`[BotCoordination] Failed to initialize coordination for game ${roomId}:`, error)
+        // Coordination failed gracefully; game proceeds without it
+      }
     }
 
     let engineState: any = null
