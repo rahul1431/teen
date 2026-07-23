@@ -24,12 +24,6 @@ export class BotTrainingConfigRepository {
       return JSON.parse(cached)
     }
 
-    // Fall back to database
-    const res = await this.db.query(
-      `SELECT value FROM config WHERE key = $1`,
-      [CONFIG_DB_KEY]
-    )
-
     const defaultConfig: BotTrainingConfig = {
       enabled: false,
       strategy: 'lifetime_winrate',
@@ -37,14 +31,25 @@ export class BotTrainingConfigRepository {
       aggressiveness: 0.4,
     }
 
-    if (!res.rows || !res.rows[0]) {
+    // Fall back to database (if table exists)
+    try {
+      const res = await this.db.query(
+        `SELECT value FROM config WHERE key = $1`,
+        [CONFIG_DB_KEY]
+      )
+
+      if (!res.rows || !res.rows[0]) {
+        return defaultConfig
+      }
+
+      const config = JSON.parse(res.rows[0].value)
+      // Cache it
+      await this.redis.setex(CONFIG_REDIS_KEY, 3600, JSON.stringify(config))
+      return config
+    } catch (err: any) {
+      // Table doesn't exist or other DB error - return default config
       return defaultConfig
     }
-
-    const config = JSON.parse(res.rows[0].value)
-    // Cache it
-    await this.redis.setex(CONFIG_REDIS_KEY, 3600, JSON.stringify(config))
-    return config
   }
 
   async updateConfig(config: BotTrainingConfig): Promise<void> {
@@ -58,11 +63,15 @@ export class BotTrainingConfigRepository {
 
     const configJson = JSON.stringify(config)
 
-    // Update database (PostgreSQL upsert syntax)
-    await this.db.query(
-      `INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $3`,
-      [CONFIG_DB_KEY, configJson, configJson]
-    )
+    // Try to update database (if table exists)
+    try {
+      await this.db.query(
+        `INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $3`,
+        [CONFIG_DB_KEY, configJson, configJson]
+      )
+    } catch (err) {
+      // Table doesn't exist - just use Redis (in-memory for this session)
+    }
 
     // Update Redis cache
     await this.redis.setex(CONFIG_REDIS_KEY, 3600, configJson)
