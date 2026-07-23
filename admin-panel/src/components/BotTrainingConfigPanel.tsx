@@ -29,8 +29,13 @@ export const BotTrainingConfigPanel: React.FC = () => {
   const fetchConfig = async () => {
     try {
       const response = await adminApi.get('/ludo/bot-training/config')
-      setConfig(response.data)
-      form.setFieldsValue(response.data)
+      // Convert targetWinRate from decimal (0.85-1.0) to percentage (85-100) for display
+      const configForDisplay = {
+        ...response.data,
+        targetWinRate: response.data.targetWinRate * 100,
+      }
+      setConfig(configForDisplay)
+      form.setFieldsValue(configForDisplay)
       setLoading(false)
     } catch (error) {
       message.error('Failed to load bot training config')
@@ -41,7 +46,12 @@ export const BotTrainingConfigPanel: React.FC = () => {
   const handleSave = async (values: any) => {
     setSaving(true)
     try {
-      await adminApi.patch('/ludo/bot-training/config', values)
+      // Convert targetWinRate from percentage (85-100) to decimal (0.85-1.0)
+      const configToSave = {
+        ...values,
+        targetWinRate: values.targetWinRate / 100,
+      }
+      await adminApi.patch('/ludo/bot-training/config', configToSave)
       setConfig(values)
       message.success('Bot training config updated')
     } catch (error) {
