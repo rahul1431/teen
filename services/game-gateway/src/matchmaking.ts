@@ -10,6 +10,7 @@ import { isInPersonalizationCanary, getPersonalizedDifficulty } from './personal
 import { BotStatsLoader } from './botCoordination/botStatsLoader'
 import { ElectionAlgorithm, BotWithStats } from './botCoordination/electionAlgorithm'
 import { BotTrainingConfigRepository } from './repositories/botTrainingConfigRepository'
+import { GameRecorder } from './botCoordination/gameRecorder'
 
 export interface MatchmakingEntry {
   userId: string
@@ -73,6 +74,7 @@ export class MatchmakingService {
   private botStatsLoader: BotStatsLoader
   private electionAlgorithm: ElectionAlgorithm
   private botTrainingConfig: BotTrainingConfigRepository
+  private gameRecorder: GameRecorder
 
   constructor(
     private redis: Redis,
@@ -82,6 +84,7 @@ export class MatchmakingService {
     this.botStatsLoader = new BotStatsLoader(this.redis, this.db as any)
     this.electionAlgorithm = new ElectionAlgorithm()
     this.botTrainingConfig = new BotTrainingConfigRepository(this.redis, this.db as any)
+    this.gameRecorder = new GameRecorder(this.db)
   }
 
   // Room-state helpers used by the gateway's game:action handler.
@@ -1473,6 +1476,27 @@ export class MatchmakingService {
       }
     }
 
+    // Record coordinated game if applicable
+    const botTrainingRaw = await this.redis.get(`room:${roomId}:botTraining`)
+    if (botTrainingRaw) {
+      const botTraining = JSON.parse(botTrainingRaw)
+      await this.gameRecorder.recordCoordinatedGame({
+        gameId: roomId,
+        actualWinnerId: BigInt(result?.winner_id || 0),
+        botTrainingMetadata: botTraining,
+        botPerformance: result?.botPerformance || {},
+        rpPerformance: result?.rpPerformance || {},
+      })
+
+      // Invalidate bot stats cache so next election uses fresh data
+      for (const botId of botTraining.botIds) {
+        await this.botStatsLoader.invalidateStats(BigInt(botId))
+      }
+    }
+
+    // Clean up coordination metadata
+    await this.redis.del(`room:${roomId}:botTraining`)
+
     monitorEmitter.emit('game_result', {
       game_type: 'ludo',
       room_id: roomId,
@@ -1535,6 +1559,27 @@ export class MatchmakingService {
     } catch (e) {
       console.error('[gateway] Failed to settle Teen Patti game', e)
     }
+
+    // Record coordinated game if applicable
+    const botTrainingRaw = await this.redis.get(`room:${roomId}:botTraining`)
+    if (botTrainingRaw) {
+      const botTraining = JSON.parse(botTrainingRaw)
+      await this.gameRecorder.recordCoordinatedGame({
+        gameId: roomId,
+        actualWinnerId: BigInt(result.winner_id || 0),
+        botTrainingMetadata: botTraining,
+        botPerformance: result.botPerformance || {},
+        rpPerformance: result.rpPerformance || {},
+      })
+
+      // Invalidate bot stats cache so next election uses fresh data
+      for (const botId of botTraining.botIds) {
+        await this.botStatsLoader.invalidateStats(BigInt(botId))
+      }
+    }
+
+    // Clean up coordination metadata
+    await this.redis.del(`room:${roomId}:botTraining`)
 
     monitorEmitter.emit('game_result', {
       game_type: state?.gameType ?? state?.game_type ?? 'teen_patti',
