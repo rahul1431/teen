@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { Form, Input, Button, Select, Card, message, Radio } from 'antd'
+import { Form, Input, Button, Select, Card, message, Radio, Tabs } from 'antd'
 import { SendOutlined } from '@ant-design/icons'
 import { adminApi } from '../api/client'
+import { NotificationHistoryTab } from '../components/NotificationHistoryTab'
+import { NotificationAnalyticsTab } from '../components/NotificationAnalyticsTab'
 
-export default function Notifications() {
+function SendTab() {
   const [loading, setLoading] = useState(false)
   const [form] = Form.useForm()
   const [target, setTarget] = useState<'all' | 'user'>('all')
@@ -64,5 +66,19 @@ export default function Notifications() {
         </Form.Item>
       </Form>
     </Card>
+  )
+}
+
+export default function Notifications() {
+  return (
+    <div style={{ padding: 24 }}>
+      <Tabs
+        items={[
+          { key: 'send', label: 'Send', children: <SendTab /> },
+          { key: 'history', label: 'History', children: <NotificationHistoryTab /> },
+          { key: 'analytics', label: 'Analytics', children: <NotificationAnalyticsTab /> },
+        ]}
+      />
+    </div>
   )
 }
