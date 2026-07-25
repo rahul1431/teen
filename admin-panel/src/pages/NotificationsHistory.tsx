@@ -5,6 +5,7 @@ import type { Dayjs } from 'dayjs'
 import { adminApi } from '../api/client'
 import { useAuthStore } from '../store/auth'
 import { useNotificationStore, type AdminNotification } from '../store/notifications'
+import { NotificationBellTrendChart } from '../components/NotificationBellTrendChart'
 
 const { Title } = Typography
 const { RangePicker } = DatePicker
@@ -82,6 +83,7 @@ export default function NotificationsHistory() {
         <Title level={3}>Notification History</Title>
         <Button onClick={onMarkAllRead}>Mark All Read</Button>
       </div>
+      <NotificationBellTrendChart />
       <Card>
         <div style={{ marginBottom: 16 }}>
           <RangePicker
