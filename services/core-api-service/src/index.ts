@@ -17,6 +17,7 @@ import { supportPlugin } from './plugins/support'
 import { seoMarketingPlugin } from './plugins/seo-marketing'
 import { analyticsPlugin } from './plugins/analytics'
 import { referralPlugin } from './plugins/referral'
+import { missionsPlugin } from './plugins/missions'
 import { FantasyScoringPoller } from './helpers/fantasy-scoring-poller'
 import { MatchStatusPoller } from './helpers/match-status-poller'
 
@@ -80,6 +81,7 @@ async function start() {
   await app.register(bettingPlugin(bettingDb))   // isolated pool — heavy queries don't starve auth
   await app.register(analyticsPlugin(db))
   await app.register(referralPlugin(db))
+  await app.register(missionsPlugin(db))
 
   app.get('/health', async () => ({
     status: 'ok',
