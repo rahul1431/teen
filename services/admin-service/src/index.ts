@@ -451,7 +451,7 @@ async function start() {
     const res = await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/debit/manual`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-      body: JSON.stringify({ user_id: id, amount, description: description || 'Manual debit by admin' }),
+      body: JSON.stringify({ user_id: id, amount, request_id: crypto.randomUUID(), description: description || 'Manual debit by admin' }),
     })
     if (!res.ok) return reply.code(res.status).send(await res.json().catch(() => ({ error: 'Wallet service error' })))
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'debit_wallet', 'user', $2, $3)`,
