@@ -17,7 +17,7 @@ async function creditMissionReward(userId: string, rewardWalletType: 'real' | 'b
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-internal-key': INTERNAL_SERVICE_KEY },
     body: JSON.stringify({ user_id: userId, amount, type, idempotency_key: idempotencyKey, description }),
-  })
+  }).catch(err => console.error('[missions] wallet credit failed:', err))
 }
 
 const missionBodySchema = z.object({
