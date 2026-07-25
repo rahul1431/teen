@@ -8,6 +8,10 @@ import crypto from 'crypto'
 
 const CHURN_ML_SERVICE_URL = process.env.CHURN_ML_SERVICE_URL || 'http://127.0.0.1:3020'
 const CANARY_PCT = Math.max(0, Math.min(100, parseInt(process.env.PERSONALIZATION_CANARY_PCT || '0', 10) || 0))
+// Ludo gets its own rollout knob so enabling it can never activate the
+// canary for other game types (Teen Patti is under a hard lockdown — this
+// must not be a side effect of a Ludo-only rollout decision).
+const CANARY_PCT_LUDO = Math.max(0, Math.min(100, parseInt(process.env.PERSONALIZATION_CANARY_PCT_LUDO || '0', 10) || 0))
 const PREDICT_TIMEOUT_MS = 150
 
 export interface DifficultyPrediction {
@@ -24,11 +28,14 @@ function hashToPercent(id: string): number {
 
 /**
  * Returns true if this room should use the personalized-difficulty canary,
- * based on a deterministic hash of the room's primary player id.
+ * based on a deterministic hash of the room's primary player id. Ludo reads
+ * its own PERSONALIZATION_CANARY_PCT_LUDO knob; every other game type keeps
+ * using the shared PERSONALIZATION_CANARY_PCT exactly as before.
  */
-export function isInPersonalizationCanary(playerId: string): boolean {
-  if (CANARY_PCT <= 0) return false
-  return hashToPercent(playerId) < CANARY_PCT
+export function isInPersonalizationCanary(playerId: string, gameType: string): boolean {
+  const pct = gameType === 'ludo' ? CANARY_PCT_LUDO : CANARY_PCT
+  if (pct <= 0) return false
+  return hashToPercent(playerId) < pct
 }
 
 /**

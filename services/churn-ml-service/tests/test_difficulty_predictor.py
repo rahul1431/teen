@@ -16,7 +16,9 @@ from difficulty_predictor import (
     PredictionResult,
     get_predictor,
     DIFFICULTY_LEVELS,
-    GAME_TYPES
+    GAME_TYPES,
+    LUDO_FINAL_RANK_FIX_CUTOVER,
+    MIN_LUDO_TRAINING_ROWS,
 )
 
 
@@ -444,6 +446,102 @@ class TestDifficultyPredictorIntegration:
 
             # Training should have progressed
             # (Note: In test environment, this is best-effort)
+
+
+class TestDifficultyPredictorLudoDataQuality:
+    """Ludo's final_rank was NULL for every game before the 2026-07-25 fix
+    (see services/game-gateway/src/matchmaking.ts handleLudoEnd), so every
+    pre-fix Ludo participant row shows a fabricated 0% win rate. These tests
+    verify that poisoned history is excluded from training/prediction, and
+    that the model refuses to train on too little real post-fix Ludo data."""
+
+    def test_ludo_branch_excludes_pre_cutover_rows_from_query(self, predictor):
+        """The game_participants query must filter Ludo rows to
+        joined_at >= the fix cutover, and must NOT apply that filter to
+        other game types (their final_rank was never broken)."""
+        captured = {}
+
+        def fake_read_sql_query(query, conn, params=None):
+            captured['query'] = query
+            return pd.DataFrame(columns=[
+                'player_id', 'game_type', 'current_win_rate', 'game_count',
+                'avg_session_duration', 'bet_aggression', 'playstyle_cluster'
+            ])
+
+        with patch('difficulty_predictor.pd.read_sql_query', side_effect=fake_read_sql_query):
+            with patch.object(predictor, 'get_db_connection', return_value=MagicMock()):
+                predictor.get_player_features()
+
+        query = captured['query']
+        assert LUDO_FINAL_RANK_FIX_CUTOVER in query, \
+            "query must filter Ludo rows by the final_rank fix cutover date"
+
+        # The cutover filter must be scoped inside the 'ludo' CASE branch,
+        # not applied blanket to the whole query (teen_patti etc. never had
+        # this bug and must keep seeing their full history).
+        ludo_branch_start = query.index("THEN 'ludo'")
+        teen_patti_branch_start = query.index("THEN 'teen_patti'")
+        cutover_pos = query.index(LUDO_FINAL_RANK_FIX_CUTOVER)
+        assert ludo_branch_start < cutover_pos, \
+            "cutover filter should appear at/after the ludo CASE branch"
+        # Only one occurrence — proves it's not duplicated onto other branches too.
+        assert query.count(LUDO_FINAL_RANK_FIX_CUTOVER) == 1
+
+    def test_train_raises_when_ludo_volume_below_threshold(self, predictor):
+        """With fewer than MIN_LUDO_TRAINING_ROWS real post-cutover Ludo
+        rows, train() must refuse rather than silently training on a
+        near-empty Ludo slice."""
+        n_other = 300
+        n_ludo = MIN_LUDO_TRAINING_ROWS - 1
+        np.random.seed(1)
+
+        def make_rows(game_type, n):
+            win_rate = np.random.uniform(20, 80, n)
+            return pd.DataFrame({
+                'game_type': [game_type] * n,
+                'current_win_rate': win_rate,
+                'game_count': np.random.randint(10, 100, n),
+                'avg_session_duration': np.random.uniform(5, 120, n),
+                'bet_aggression': np.random.uniform(0, 1, n),
+                'playstyle_cluster': np.random.randint(0, 5, n),
+            })
+
+        df = pd.concat([
+            make_rows('teen_patti', n_other),
+            make_rows('ludo', n_ludo),
+        ], ignore_index=True)
+
+        with patch.object(predictor, 'get_player_features', return_value=df):
+            with pytest.raises(ValueError, match=r"(?i)ludo.*volume|volume.*ludo"):
+                predictor.train()
+
+    def test_train_succeeds_when_ludo_volume_meets_threshold(self, predictor):
+        """At/above MIN_LUDO_TRAINING_ROWS real post-cutover Ludo rows,
+        training proceeds normally (existing accuracy quality gate still
+        applies on top of this)."""
+        n_other = 300
+        n_ludo = MIN_LUDO_TRAINING_ROWS
+        np.random.seed(2)
+
+        def make_rows(game_type, n):
+            win_rate = np.random.uniform(20, 80, n)
+            return pd.DataFrame({
+                'game_type': [game_type] * n,
+                'current_win_rate': win_rate,
+                'game_count': np.random.randint(10, 100, n),
+                'avg_session_duration': np.random.uniform(5, 120, n),
+                'bet_aggression': np.random.uniform(0, 1, n),
+                'playstyle_cluster': np.random.randint(0, 5, n),
+            })
+
+        df = pd.concat([
+            make_rows('teen_patti', n_other),
+            make_rows('ludo', n_ludo),
+        ], ignore_index=True)
+
+        with patch.object(predictor, 'get_player_features', return_value=df):
+            result = predictor.train()
+            assert result["success"] is True
 
 
 if __name__ == "__main__":

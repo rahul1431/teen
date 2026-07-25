@@ -26,6 +26,18 @@ SCALER_PATH = os.path.join(os.path.dirname(__file__), "scaler.pkl")
 DIFFICULTY_LEVELS = ['easy', 'medium', 'hard']
 GAME_TYPES = ['teen_patti', 'ludo', 'aviator', 'matka']
 
+# game_participants.final_rank was never written for Ludo before this fix
+# (services/game-gateway/src/matchmaking.ts handleLudoEnd) — every pre-fix
+# Ludo row shows a fabricated 0% win rate regardless of the real outcome.
+# Excluded from training/prediction features so the model isn't taught that
+# every Ludo player always loses.
+LUDO_FINAL_RANK_FIX_CUTOVER = '2026-07-25 06:04:03+00'
+
+# Minimum real post-cutover Ludo game_participants rows required before
+# /train-difficulty is allowed to produce a model — below this, the Random
+# Forest would be fit on too few genuine Ludo examples to trust.
+MIN_LUDO_TRAINING_ROWS = 200
+
 @dataclass
 class PredictionResult:
     """Result of difficulty prediction."""
@@ -52,6 +64,7 @@ class DifficultyPredictor:
         self.training_in_progress: bool = False
         self.model_lock = threading.Lock()
         self.test_accuracy: float = 0.0
+        self._last_training_ludo_rows: int = 0
 
     def get_db_connection(self):
         """Create database connection."""
@@ -76,7 +89,7 @@ class DifficultyPredictor:
         """
         conn = self.get_db_connection()
         try:
-            query = """
+            query = f"""
             SELECT
               u.id as player_id,
               COALESCE(gp.game_type, 'teen_patti') as game_type,
@@ -116,6 +129,14 @@ class DifficultyPredictor:
                 left_at
               FROM game_participants
               WHERE user_id IS NOT NULL AND user_id != ''
+                -- final_rank was never written for Ludo before this cutover
+                -- (see LUDO_FINAL_RANK_FIX_CUTOVER) — every earlier Ludo row
+                -- looks like a 0% win rate regardless of the real outcome,
+                -- so exclude them here rather than teach the model that lie.
+                AND (
+                  room_id NOT IN (SELECT id FROM game_rooms WHERE game_type = 'ludo')
+                  OR joined_at >= '{LUDO_FINAL_RANK_FIX_CUTOVER}'
+                )
               GROUP BY user_id, game_type, joined_at, left_at
             ) gp ON gp.user_id = u.id
             LEFT JOIN bot_player_profiles bpp ON bpp.player_id = u.id AND bpp.game_type = gp.game_type
@@ -171,8 +192,11 @@ class DifficultyPredictor:
 
         if len(df) < 5:
             logger.warning(f"Insufficient training data: {len(df)} records")
+            self._last_training_ludo_rows = 0
             # Generate synthetic data for testing
             return self._generate_synthetic_training_data()
+
+        self._last_training_ludo_rows = int((df['game_type'] == 'ludo').sum()) if 'game_type' in df.columns else 0
 
         # Create target variable: optimal_difficulty
         df['optimal_difficulty'] = df.apply(
@@ -244,6 +268,16 @@ class DifficultyPredictor:
 
             if len(X) < 5:
                 raise ValueError("Insufficient training data even after synthetic generation")
+
+            # get_player_features already excludes pre-cutover Ludo rows, so
+            # any 'ludo' rows counted here are real post-fix outcomes. Don't
+            # let a Random Forest fit on a handful of them go live.
+            ludo_rows = self._last_training_ludo_rows
+            if 0 < ludo_rows < MIN_LUDO_TRAINING_ROWS:
+                raise ValueError(
+                    f"Ludo training volume gate failed: {ludo_rows} real post-cutover "
+                    f"Ludo rows < {MIN_LUDO_TRAINING_ROWS} required minimum"
+                )
 
             # Encode target variable
             y_encoded = pd.Categorical(y, categories=DIFFICULTY_LEVELS).codes

@@ -522,7 +522,7 @@ export class MatchmakingService {
     // difficulty per room, so this only applies cleanly to the common
     // "one real player + bot fill" case — not multi-real-player rooms.
     let botDifficultySource: 'standard' | 'personalized' = 'standard'
-    if (realPlayers.length === 1 && isInPersonalizationCanary(realPlayers[0].userId)) {
+    if (realPlayers.length === 1 && isInPersonalizationCanary(realPlayers[0].userId, gameType)) {
       const prediction = await getPersonalizedDifficulty(realPlayers[0].userId, gameType)
       if (prediction) {
         botDifficulty = prediction.recommended_difficulty
