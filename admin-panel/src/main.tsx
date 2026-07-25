@@ -45,6 +45,7 @@ const Analytics = React.lazy(() => import('./pages/Analytics'))
 const AgentLogin = React.lazy(() => import('./pages/AgentLogin'))
 const AgentPortal = React.lazy(() => import('./pages/AgentPortal'))
 const WebsiteSettings = React.lazy(() => import('./pages/WebsiteSettings'))
+const Missions = React.lazy(() => import('./pages/Missions'))
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token, admin } = useAuthStore()
@@ -103,6 +104,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="agents" element={<Agents />} />
             <Route path="analytics" element={<Analytics />} />
             <Route path="settings" element={<WebsiteSettings />} />
+            <Route path="missions" element={<Missions />} />
           </Route>
           <Route path="*" element={<Navigate to="/admin" replace />} />
         </Routes>

@@ -87,6 +87,7 @@ export function buildMenuItems(): MenuProps['items'] {
       children: [
         { key: '/admin/notifications', icon: createElement(BellOutlined), label: link('/admin/notifications', 'Notifications') },
         { key: '/admin/leaderboard', icon: createElement(TrophyOutlined), label: link('/admin/leaderboard', 'Leaderboard') },
+        { key: '/admin/missions', icon: createElement(TrophyOutlined), label: link('/admin/missions', 'Missions') },
         { key: '/admin/support', icon: createElement(CustomerServiceOutlined), label: link('/admin/support', 'Support Center') },
       ],
     },

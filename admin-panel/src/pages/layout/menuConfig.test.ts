@@ -25,6 +25,7 @@ const EXPECTED_KEYS = [
   '/admin/ai-control',
   '/admin/support',
   '/admin/leaderboard',
+  '/admin/missions',
   '/admin/security',
   '/admin/settings',
   '/admin/tasks',
