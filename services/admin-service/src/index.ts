@@ -39,6 +39,7 @@ import { registerPnlDashboardRoutes } from './pnl-dashboard-routes'
 import { registerTaskRoutes } from './task-routes'
 import { registerMissionRoutes } from './mission-routes'
 import { registerNotificationRoutes } from './notifications-routes'
+import { registerNotificationCampaignRoutes } from './notification-campaigns-routes'
 import { registerAgentRoutes } from './agent-routes'
 import { registerAgentPortalRoutes } from './agent-portal-routes'
 import { registerAnalyticsRoutes } from './analytics-routes'
@@ -164,6 +165,7 @@ async function start() {
 
   // Register Notification routes
   registerNotificationRoutes(app, db, authenticate)
+  registerNotificationCampaignRoutes(app, db, authenticate, requireRole)
 
   // Register Agent commission system routes
   await registerAgentRoutes(app, db, authenticate, requireRole)
