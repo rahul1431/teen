@@ -60,7 +60,7 @@ export class ElectionAlgorithm {
    * If the chosen bot actually won, success = true.
    * Otherwise, success = rand() < targetWinRate (allows failures to count as "success" based on probability)
    */
-  isCoordinationSuccess(actualWinnerId: string, electedWinnerId: string, targetWinRate: number): boolean {
+  isCoordinationSuccess(actualWinnerId: string | null, electedWinnerId: string, targetWinRate: number): boolean {
     if (actualWinnerId === electedWinnerId) {
       return true
     }

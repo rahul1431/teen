@@ -1535,7 +1535,7 @@ export class MatchmakingService {
       const botTraining = JSON.parse(botTrainingRaw)
       await this.gameRecorder.recordCoordinatedGame({
         gameId: roomId,
-        actualWinnerId: result?.winner_id || '',
+        actualWinnerId: result?.winner_id || null,
         botTrainingMetadata: botTraining,
         botPerformance: result?.botPerformance || {},
         rpPerformance: result?.rpPerformance || {},
@@ -1619,7 +1619,7 @@ export class MatchmakingService {
       const botTraining = JSON.parse(botTrainingRaw)
       await this.gameRecorder.recordCoordinatedGame({
         gameId: roomId,
-        actualWinnerId: result.winner_id || '',
+        actualWinnerId: result.winner_id || null,
         botTrainingMetadata: botTraining,
         botPerformance: result.botPerformance || {},
         rpPerformance: result.rpPerformance || {},

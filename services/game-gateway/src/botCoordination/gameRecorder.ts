@@ -3,7 +3,7 @@ import { ElectionAlgorithm } from './electionAlgorithm'
 
 export interface GameOutcome {
   gameId: string
-  actualWinnerId: string
+  actualWinnerId: string | null
   botTrainingMetadata?: {
     winnerBotId: string
     strategy: string
