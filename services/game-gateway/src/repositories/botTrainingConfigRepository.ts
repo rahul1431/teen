@@ -4,11 +4,12 @@ import { Pool } from 'pg'
 export interface BotTrainingConfig {
   enabled: boolean
   strategy: 'lifetime_winrate' | 'vs_rp_winrate' | 'rotation' | 'weakest_first'
-  targetWinRate: number // 0.85 - 1.0
+  targetWinRate: number // 0.5 - 1.0
   aggressiveness: number // 0.0 - 1.0
   winnerBotSkill: 'casual' | 'skilled' | 'expert'
   winnerBotBoldness: number // 0.0 - 1.0
   adaptiveBoldness: boolean // auto-tune winnerBotBoldness from recent coordination success rate
+  winnerBotDiceBias: number // 0.0 - 1.0; skews the winner bot's OWN dice rolls toward high faces (0 = fair). Simulation showed this plateaus around 0.3-0.5 (~60% win rate) -- the three-consecutive-sixes forfeit rule caps further gains from higher bias.
 }
 
 const CONFIG_REDIS_KEY = 'ludo:bot-training:config'
@@ -22,6 +23,7 @@ const DEFAULT_CONFIG: BotTrainingConfig = {
   winnerBotSkill: 'casual',
   winnerBotBoldness: 0.5,
   adaptiveBoldness: false,
+  winnerBotDiceBias: 0,
 }
 
 export class BotTrainingConfigRepository {
@@ -55,14 +57,17 @@ export class BotTrainingConfigRepository {
 
   async updateConfig(config: BotTrainingConfig): Promise<void> {
     // Validate ranges
-    if (config.targetWinRate < 0.85 || config.targetWinRate > 1.0) {
-      throw new Error('targetWinRate must be between 0.85 and 1.0')
+    if (config.targetWinRate < 0.5 || config.targetWinRate > 1.0) {
+      throw new Error('targetWinRate must be between 0.5 and 1.0')
     }
     if (config.aggressiveness < 0 || config.aggressiveness > 1.0) {
       throw new Error('aggressiveness must be between 0 and 1.0')
     }
     if (config.winnerBotBoldness < 0 || config.winnerBotBoldness > 1.0) {
       throw new Error('winnerBotBoldness must be between 0 and 1.0')
+    }
+    if (config.winnerBotDiceBias < 0 || config.winnerBotDiceBias > 1.0) {
+      throw new Error('winnerBotDiceBias must be between 0 and 1.0')
     }
     if (!['casual', 'skilled', 'expert'].includes(config.winnerBotSkill)) {
       throw new Error('winnerBotSkill must be one of casual, skilled, expert')

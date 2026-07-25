@@ -57,6 +57,7 @@ export interface LudoState {
     aggressiveness: number
     winnerSkill?: WinnerSkill
     boldness?: number
+    diceBias?: number // 0 = fair dice for the winner bot, 1 = maximum favor toward high rolls
   }
 }
 
@@ -317,6 +318,29 @@ export function forfeitPlayer(
 /** Cryptographically secure die roll (1..6). The engine is server-authoritative. */
 export function rollDie(): number {
   return crypto.randomInt(1, 7)
+}
+
+/**
+ * Cryptographically secure die roll (1..6), weighted toward higher faces by
+ * `bias` (0 = identical to rollDie(), 1 = maximum skew toward 5/6). Every
+ * face keeps non-zero probability at any bias so a biased roller never
+ * becomes deterministic or visibly "always sixes." Linear per-face weight:
+ * weight(face) = 1 + bias * (face - 1) * 2, e.g. at bias=1 a 6 is 11x more
+ * likely than a 1.
+ */
+export function rollDieBiased(bias: number): number {
+  if (bias <= 0) return rollDie()
+  const clamped = Math.min(bias, 1)
+  const weights = [1, 2, 3, 4, 5, 6].map((face) => 1 + clamped * (face - 1) * 2)
+  const scaledWeights = weights.map((w) => Math.round(w * 1000))
+  const total = scaledWeights.reduce((a, b) => a + b, 0)
+  let r = crypto.randomInt(0, total)
+  for (let face = 1; face <= 6; face++) {
+    const w = scaledWeights[face - 1]
+    if (r < w) return face
+    r -= w
+  }
+  return 6 // unreachable; satisfies the compiler
 }
 
 /**

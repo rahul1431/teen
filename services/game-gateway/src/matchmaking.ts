@@ -657,6 +657,7 @@ export class MatchmakingService {
       aggressiveness: number
       winnerSkill: 'casual' | 'skilled' | 'expert'
       boldness: number
+      diceBias: number
     } | null = null
 
     if (config.enabled && botCount === 3) {
@@ -708,6 +709,7 @@ export class MatchmakingService {
               aggressiveness: config.aggressiveness,
               winnerSkill: config.winnerBotSkill,
               boldness,
+              diceBias: config.winnerBotDiceBias,
             }
           }
         }

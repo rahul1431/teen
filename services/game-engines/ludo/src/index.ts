@@ -10,6 +10,7 @@ import {
   applyMove,
   forfeitPlayer,
   rollDie,
+  rollDieBiased,
   chooseBotToken,
   findCapturingMove,
   findSafeMoves,
@@ -81,6 +82,7 @@ interface StartReq {
     aggressiveness: number
     winnerSkill?: WinnerSkill
     boldness?: number
+    diceBias?: number
   }
 }
 
@@ -112,6 +114,7 @@ async function start() {
         aggressiveness: body.botCoordination.aggressiveness,
         winnerSkill: body.botCoordination.winnerSkill,
         boldness: body.botCoordination.boldness,
+        diceBias: body.botCoordination.diceBias,
       }
     }
     await saveState(state)
@@ -204,7 +207,8 @@ async function start() {
           return reply.code(409).send({ error: 'Not bot turn' })
         }
 
-        const dice = rollDie()
+        const isWinnerBot = state.coordination && idx === state.coordination.winnerBotIdx
+        const dice = isWinnerBot ? rollDieBiased(state.coordination!.diceBias ?? 0) : rollDie()
         applyRoll(state, dice)
         let result: ActionResult | null = null
         let movedToken = -1

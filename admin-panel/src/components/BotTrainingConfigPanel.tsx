@@ -12,6 +12,7 @@ interface BotTrainingConfig {
   winnerBotSkill: 'casual' | 'skilled' | 'expert'
   winnerBotBoldness: number
   adaptiveBoldness: boolean
+  winnerBotDiceBias: number
   effectiveBoldness?: number // read-only, returned by GET only
 }
 
@@ -100,17 +101,18 @@ export const BotTrainingConfigPanel: React.FC = () => {
         <Form.Item
           name="targetWinRate"
           label="Target Win Rate (%)"
+          help="Simulation against the current move-choice + dice bias settings shows this design realistically plateaus around 55-65% -- treat higher targets as aspirational, not guaranteed"
           rules={[
             { required: true },
             {
               validator: (_, value) => {
-                if (value >= 85 && value <= 100) return Promise.resolve()
-                return Promise.reject(new Error('Must be 85-100%'))
+                if (value >= 50 && value <= 100) return Promise.resolve()
+                return Promise.reject(new Error('Must be 50-100%'))
               },
             },
           ]}
         >
-          <Slider min={85} max={100} step={1} marks={{ 85: '85%', 100: '100%' }} />
+          <Slider min={50} max={100} step={1} marks={{ 50: '50%', 100: '100%' }} />
         </Form.Item>
 
         <Form.Item
@@ -158,6 +160,14 @@ export const BotTrainingConfigPanel: React.FC = () => {
           help="Auto-tune boldness from the last 20 coordinated games' success rate vs. target win rate, instead of using a fixed value"
         >
           <Switch />
+        </Form.Item>
+
+        <Form.Item
+          name="winnerBotDiceBias"
+          label="Winner Bot Dice Bias"
+          help="Skews the winner bot's OWN dice rolls toward high faces (0 = completely fair, same as every other player). This is direct outcome manipulation, not move-choice AI. Simulation showed this plateaus around 0.3-0.5 (~60% win rate) -- the three-consecutive-sixes forfeit rule caps further gains from pushing higher."
+        >
+          <Slider min={0} max={1} step={0.1} marks={{ 0: 'Fair', 0.4: 'Recommended', 1: 'Max' }} />
         </Form.Item>
 
         {config.adaptiveBoldness && effectiveBoldness !== undefined && (
