@@ -33,7 +33,7 @@ export function NotificationBellTrendChart() {
   for (const p of points) {
     const key = dayjs(p.date).format('MMM DD')
     if (!byDate.has(key)) byDate.set(key, { date: key })
-    byDate.get(key)[p.type] = p.count
+    byDate.get(key)[p.type] = (byDate.get(key)[p.type] ?? 0) + p.count
   }
   const chartData = Array.from(byDate.values())
 
