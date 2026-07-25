@@ -1,4 +1,4 @@
-# Remove Daily Login Bonus + Add Task System
+# Remove Daily Login Bonus + Add Missions System
 
 Date: 2026-07-25
 
@@ -6,7 +6,9 @@ Date: 2026-07-25
 
 Two changes:
 1. Fully remove the Daily Login Bonus feature (app + admin panel + backend + DB tables).
-2. Replace it with a configurable Task System (Weekly / Monthly / One-time tasks) that admins fully manage — tasks reward players for actions like joining a Telegram group, sharing a win, inviting friends, depositing, and playing specific games.
+2. Replace it with a configurable **Missions** system (Weekly / Monthly / One-time tasks) that admins fully manage — missions reward players for actions like joining a Telegram group, sharing a win, inviting friends, depositing, and playing specific games.
+
+**Naming note:** the player-facing feature is called "Missions," not "Tasks" — the codebase already has an unrelated internal employee task-tracker (`tasks`/`task_comments` tables, `/api/admin/tasks` routes, `admin-panel/src/pages/Tasks.tsx`, see `docs/superpowers/specs/2026-07-12-task-management-design.md`). Reusing "Task" would collide with that feature's tables, routes, and admin page. Everything below uses "mission" throughout.
 
 ## Part 1 — Remove Daily Login Bonus (full removal)
 
@@ -14,16 +16,16 @@ Delete entirely, no data preserved beyond what's already recorded in the shared 
 
 - `admin-panel/src/pages/DailyBonus.tsx` + its `menuConfig.ts` entry (`/admin/daily-bonus`)
 - `mobile/lib/features/daily_bonus/` (whole directory) + its route in `app.dart` (`/daily-bonus`) + the "🎯 Daily Bonus" hero badge in `home_page.dart`
-- Backend: `/users/daily-bonus/status` and `/users/daily-bonus/claim` in `services/core-api-service/src/plugins/users.ts`; admin routes `bonus/login-config` and `bonus/stats` in `services/admin-service/src/index.ts`
+- Backend: `/users/daily-bonus/status` and `/users/daily-bonus/claim` in `services/core-api-service/src/plugins/users.ts`; admin routes `bonus/login-config` and `bonus/stats` in `services/admin-service/src/index.ts` (lines ~3237-3290)
 - New migration: `DROP TABLE login_bonus_config, user_login_streaks`
 
 Rows already in `bonuses` with `type = 'daily_login'` are left alone — that table is shared/historical ledger, not part of the live feature.
 
-## Part 2 — Task System
+## Part 2 — Missions System
 
 ### Data model (new migration)
 
-**`tasks`** — admin-authored task definitions:
+**`player_missions`** — admin-authored mission definitions:
 - `id UUID PK`
 - `title TEXT`, `description TEXT`, `emoji VARCHAR(10)`
 - `category VARCHAR(10)` — `weekly` | `monthly` | `one_time` (defines the reset period)
@@ -36,20 +38,20 @@ Rows already in `bonuses` with `type = 'daily_login'` are left alone — that ta
 - `verification_type VARCHAR(15)` — `auto` | `telegram_bot` | `manual_review`
 - `is_active BOOLEAN`, `sort_order INT`, `created_at`, `updated_at`
 
-**`user_task_completions`** — one row per reward actually claimed:
-- `id UUID PK`, `user_id UUID`, `task_id UUID`
+**`user_mission_completions`** — one row per reward actually claimed:
+- `id UUID PK`, `user_id UUID`, `mission_id UUID` (FK → `player_missions.id`)
 - `period_key VARCHAR(10)` — `2026-W30` for weekly, `2026-07` for monthly, `lifetime` for one_time
-- `completion_number INT` — 1, 2, 3… within the period (supports repeatable tasks)
+- `completion_number INT` — 1, 2, 3… within the period (supports repeatable missions)
 - `reward_amount NUMERIC(15,2)`, `status VARCHAR(15)` — `completed` | `pending_review` | `rejected`
 - `proof_url TEXT` nullable, `reviewed_by UUID` nullable, `reviewed_at TIMESTAMPTZ` nullable
 - `created_at`
-- `UNIQUE (user_id, task_id, period_key, completion_number)` — prevents double-claim races
+- `UNIQUE (user_id, mission_id, period_key, completion_number)` — prevents double-claim races
 
 **`user_telegram_links`** — `user_id UUID PK`, `telegram_user_id BIGINT UNIQUE`, `telegram_username TEXT`, `linked_at TIMESTAMPTZ`
 
 ### Progress engine
 
-For `auto` tasks, progress is always computed live from the real source table for the current period — never duplicated into a counter:
+For `auto` missions, progress is always computed live from the real source table for the current period — never duplicated into a counter:
 - `deposit_amount` → sum of wallet deposit transactions in period
 - `referral_count` → count of `referrals` rows with `status IN ('qualified','rewarded')` created in period, for that referrer
 - `game_played` → count of `game_participants` rows matching `game_type`/`min_stake` in period
@@ -64,33 +66,33 @@ This one formula covers every auto example: "play 1 Teen Patti game" (target=1, 
 ### Verification flows
 
 - **`auto`** — no extra plumbing; progress engine above handles it end-to-end.
-- **`telegram_bot`** (e.g. Join Telegram Group) — new routes added to `core-api-service` (not a separate microservice): `GET /telegram/deep-link` issues a signed one-time token; `POST /telegram/webhook` receives Telegram's `/start <token>` update, resolves the user, stores `user_telegram_links`, then calls Telegram's `getChatMember` against `TELEGRAM_GROUP_CHAT_ID` to confirm membership. Once confirmed, the task becomes claimable. Requires `TELEGRAM_BOT_TOKEN` / `TELEGRAM_GROUP_CHAT_ID` env vars (already available, to be supplied at deploy time).
-- **`manual_review`** (e.g. Share Winning to Telegram, or any task without a reliable auto signal) — user submits via `POST /users/tasks/:id/submit` with an optional proof image (reuses existing avatar/KYC upload plumbing); row inserted as `pending_review`. Admin approves/rejects via the Review Queue; approval triggers the wallet credit and existing reward flow.
+- **`telegram_bot`** (e.g. Join Telegram Group) — new routes added to `core-api-service` (not a separate microservice): `GET /telegram/deep-link` issues a signed one-time token; `POST /telegram/webhook` receives Telegram's `/start <token>` update, resolves the user, stores `user_telegram_links`, then calls Telegram's `getChatMember` against `TELEGRAM_GROUP_CHAT_ID` to confirm membership. Once confirmed, the mission becomes claimable. Requires `TELEGRAM_BOT_TOKEN` / `TELEGRAM_GROUP_CHAT_ID` env vars (already available, to be supplied at deploy time).
+- **`manual_review`** (e.g. Share Winning to Telegram, or any mission without a reliable auto signal) — user submits via `POST /users/missions/:id/submit` with an optional proof image (reuses existing avatar/KYC upload plumbing); row inserted as `pending_review`. Admin approves/rejects via the Review Queue; approval triggers the wallet credit and existing reward flow.
 
 ### Reward crediting
 
-On claim (auto/telegram tasks) or admin approval (manual tasks): insert the `user_task_completions` row first (unique constraint guards against double-credit), then call `wallet-service`'s existing `/internal/wallet/credit` endpoint with `idempotency_key = task:{task_id}:{user_id}:{period_key}:{completion_number}` — same pattern the old daily-bonus code used. Task rewards do **not** get inserted into the shared `bonuses` ledger table (that table's `bonus_type_enum` is a fixed Postgres enum meant for wagering-requirement bonuses like welcome/deposit-match; extending it isn't worth it — `user_task_completions` is the ledger for this feature).
+On claim (auto/telegram missions) or admin approval (manual missions): insert the `user_mission_completions` row first (unique constraint guards against double-credit), then call `wallet-service`'s existing `/internal/wallet/credit` endpoint with `idempotency_key = mission:{mission_id}:{user_id}:{period_key}:{completion_number}` — same pattern the old daily-bonus code used. Mission rewards do **not** get inserted into the shared `bonuses` ledger table (that table's `bonus_type_enum` is a fixed Postgres enum meant for wagering-requirement bonuses like welcome/deposit-match; extending it isn't worth it — `user_mission_completions` is the ledger for this feature).
 
 ### API surface
 
-- `GET /users/tasks` — returns active tasks grouped by category with the caller's live progress/status for the current period
-- `POST /users/tasks/:id/claim` — claims an `auto` or `telegram_bot`-verified task once `completions_available > 0`
-- `POST /users/tasks/:id/submit` — submits a `manual_review` task (with optional proof)
+- `GET /users/missions` — returns active missions grouped by category with the caller's live progress/status for the current period
+- `POST /users/missions/:id/claim` — claims an `auto` or `telegram_bot`-verified mission once `completions_available > 0`
+- `POST /users/missions/:id/submit` — submits a `manual_review` mission (with optional proof)
 - `GET /telegram/deep-link`, `POST /telegram/webhook` — Telegram linking (see above)
-- Admin (`admin-service`): `GET/POST/PUT/DELETE /admin/tasks`, `GET /admin/tasks/review-queue`, `POST /admin/tasks/review-queue/:id/approve|reject`, `GET /admin/tasks/stats`
+- Admin (`admin-service`): `GET/POST/PUT/DELETE /admin/missions`, `GET /admin/missions/review-queue`, `POST /admin/missions/review-queue/:id/approve|reject`, `GET /admin/missions/stats`
 
 ### Admin panel
 
-New **Tasks** page (`admin-panel/src/pages/Tasks.tsx`), replacing the Daily Bonus nav entry:
-1. **Task Config tab** — CRUD table for the fields above (title, category, metric, target, reward, wallet type, verification type, max completions, active toggle), styled like the table-editing UX of the removed `DailyBonus.tsx`.
+New **Missions** page (`admin-panel/src/pages/Missions.tsx`), replacing the Daily Bonus nav entry:
+1. **Mission Config tab** — CRUD table for the fields above (title, category, metric, target, reward, wallet type, verification type, max completions, active toggle), styled like the table-editing UX of the removed `DailyBonus.tsx`.
 2. **Review Queue tab** — pending `manual_review` submissions with proof image, approve/reject actions, plus a stats strip (completions today, amount distributed today, pending count).
 
 ### Mobile app
 
-Replaces the Daily Bonus page/route/hero-badge with a **Tasks** page (`mobile/lib/features/tasks/`), tabs for Weekly / Monthly (one-time tasks surface inline, e.g. under Weekly, until completed). Each task card shows progress (`3/5 games played`), and one of: **Claim** button (auto/telegram, ready), **Connect Telegram** (telegram_bot, not linked yet), **Submit Proof** (manual_review, not yet submitted), or **Pending Review** (manual_review, submitted).
+Replaces the Daily Bonus page/route/hero-badge with a **Missions** page (`mobile/lib/features/missions/`), tabs for Weekly / Monthly (one-time missions surface inline, e.g. under Weekly, until completed). Each mission card shows progress (`3/5 games played`), and one of: **Claim** button (auto/telegram, ready), **Connect Telegram** (telegram_bot, not linked yet), **Submit Proof** (manual_review, not yet submitted), or **Pending Review** (manual_review, submitted).
 
 ### Out of scope
 
-- Real-time push notifications when a task becomes claimable (future enhancement)
-- Task ordering/personalization per user segment
-- Localized task copy beyond what the existing i18n system already supports
+- Real-time push notifications when a mission becomes claimable (future enhancement)
+- Mission ordering/personalization per user segment
+- Localized mission copy beyond what the existing i18n system already supports
