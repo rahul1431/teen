@@ -1269,27 +1269,54 @@ async function start() {
   // POST /api/admin/notifications/broadcast
   app.post('/api/admin/notifications/broadcast', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const body = req.body as any
+    const me = req.user as any
     const CORE_API_URL = process.env.CORE_API_URL || 'http://127.0.0.1:3001'
+
+    const totalRes = await db.query(`SELECT COUNT(*)::int AS c FROM users WHERE is_bot = false AND status = 'active'`)
+    const totalRecipients = totalRes.rows[0].c
+
+    const campaignRes = await db.query(
+      `INSERT INTO notification_campaigns (title, body, type, target_type, sent_by, total_recipients)
+       VALUES ($1, $2, $3, 'all', $4, $5) RETURNING id`,
+      [body.title, body.body, body.type || 'broadcast', me.sub, totalRecipients],
+    )
+    const campaignId = campaignRes.rows[0].id
+
     const res = await fetch(`${CORE_API_URL}/internal/notifications/broadcast`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, campaign_id: campaignId }),
     })
     const data = await res.json()
-    return reply.send(data)
+
+    await db.query(`UPDATE notification_campaigns SET delivered_count = $1 WHERE id = $2`, [data.sent ?? 0, campaignId])
+
+    return reply.send({ ...data, campaign_id: campaignId })
   })
 
   // POST /api/admin/notifications/send
   app.post('/api/admin/notifications/send', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const body = req.body as any
+    const me = req.user as any
     const CORE_API_URL = process.env.CORE_API_URL || 'http://127.0.0.1:3001'
+
+    const campaignRes = await db.query(
+      `INSERT INTO notification_campaigns (title, body, type, target_type, target_user_id, sent_by, total_recipients)
+       VALUES ($1, $2, $3, 'specific_user', $4, $5, 1) RETURNING id`,
+      [body.title, body.body, body.type || 'general', body.user_id, me.sub],
+    )
+    const campaignId = campaignRes.rows[0].id
+
     const res = await fetch(`${CORE_API_URL}/internal/notifications/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, campaign_id: campaignId }),
     })
     const data = await res.json()
-    return reply.send(data)
+
+    await db.query(`UPDATE notification_campaigns SET delivered_count = $1 WHERE id = $2`, [data.delivered ?? 0, campaignId])
+
+    return reply.send({ ...data, campaign_id: campaignId })
   })
 
   // ---- Risk Center / Anti-Cheat ----
