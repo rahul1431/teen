@@ -8,6 +8,18 @@ import { z } from 'zod'
 // (tasks/task_comments, registerTaskRoutes in task-routes.ts).
 // See docs/superpowers/specs/2026-07-25-daily-bonus-removal-task-system-design.md
 
+const WALLET_SERVICE_URL = process.env.WALLET_SERVICE_URL || 'http://127.0.0.1:3003'
+const INTERNAL_SERVICE_KEY = process.env.INTERNAL_SERVICE_KEY || ''
+
+async function creditMissionReward(userId: string, rewardWalletType: 'real' | 'bonus', amount: number, description: string, idempotencyKey: string) {
+  const type = rewardWalletType === 'bonus' ? 'bonus' : 'manual_credit'
+  await fetch(`${WALLET_SERVICE_URL}/internal/wallet/credit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-internal-key': INTERNAL_SERVICE_KEY },
+    body: JSON.stringify({ user_id: userId, amount, type, idempotency_key: idempotencyKey, description }),
+  })
+}
+
 const missionBodySchema = z.object({
   title: z.string().min(1).max(200),
   description: z.string().optional(),
@@ -71,5 +83,75 @@ export async function registerMissionRoutes(
     const res = await db.query(`UPDATE player_missions SET is_active = false, updated_at = NOW() WHERE id = $1 RETURNING id`, [id])
     if (!res.rows.length) return reply.code(404).send({ error: 'Mission not found' })
     return reply.send({ success: true })
+  })
+
+  app.get('/api/admin/missions/review-queue', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query(
+      `SELECT c.id, c.user_id, u.username, c.mission_id, m.title AS mission_title, c.period_key,
+              c.reward_amount, c.proof_url, c.created_at
+       FROM user_mission_completions c
+       JOIN player_missions m ON m.id = c.mission_id
+       JOIN users u ON u.id = c.user_id
+       WHERE c.status = 'pending_review'
+       ORDER BY c.created_at ASC`,
+    )
+    return reply.send(res.rows)
+  })
+
+  app.post('/api/admin/missions/review-queue/:id/approve', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const admin = req.user as any
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
+      const res = await client.query(
+        `UPDATE user_mission_completions SET status = 'completed', reviewed_by = $1, reviewed_at = NOW()
+         WHERE id = $2 AND status = 'pending_review' RETURNING *`,
+        [admin.sub, id],
+      )
+      if (!res.rows.length) { await client.query('ROLLBACK'); return reply.code(404).send({ error: 'Submission not found or already reviewed' }) }
+      const completion = res.rows[0]
+      const missionRes = await client.query(`SELECT title, reward_wallet_type FROM player_missions WHERE id = $1`, [completion.mission_id])
+      await client.query('COMMIT')
+
+      const mission = missionRes.rows[0]
+      await creditMissionReward(
+        completion.user_id, mission.reward_wallet_type, parseFloat(completion.reward_amount),
+        `Mission reward: ${mission.title}`,
+        `mission:${completion.mission_id}:${completion.user_id}:${completion.period_key}:${completion.completion_number}`,
+      )
+      return reply.send({ success: true })
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
+  })
+
+  app.post('/api/admin/missions/review-queue/:id/reject', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const admin = req.user as any
+    const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
+    const res = await db.query(
+      `UPDATE user_mission_completions SET status = 'rejected', admin_note = $1, reviewed_by = $2, reviewed_at = NOW()
+       WHERE id = $3 AND status = 'pending_review' RETURNING id`,
+      [reason, admin.sub, id],
+    )
+    if (!res.rows.length) return reply.code(404).send({ error: 'Submission not found or already reviewed' })
+    return reply.send({ success: true })
+  })
+
+  app.get('/api/admin/missions/stats', { onRequest: [authenticate] }, async (_req, reply) => {
+    const [today, allTime, pending] = await Promise.all([
+      db.query(`SELECT COUNT(*)::int AS count, COALESCE(SUM(reward_amount),0) AS amount FROM user_mission_completions WHERE status = 'completed' AND created_at::date = CURRENT_DATE`),
+      db.query(`SELECT COUNT(*)::int AS count, COALESCE(SUM(reward_amount),0) AS amount FROM user_mission_completions WHERE status = 'completed'`),
+      db.query(`SELECT COUNT(*)::int AS count FROM user_mission_completions WHERE status = 'pending_review'`),
+    ])
+    return reply.send({
+      today: { completions: today.rows[0].count, distributed: today.rows[0].amount },
+      all_time: { completions: allTime.rows[0].count, distributed: allTime.rows[0].amount },
+      pending_review: pending.rows[0].count,
+    })
   })
 }
