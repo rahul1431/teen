@@ -1,5 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:dio/dio.dart';
 import '../../core/network/api_client.dart';
 import '../../shared/theme/app_theme.dart'; // AppColors, AppSnackBar, formatCurrency all live here
 
@@ -14,6 +17,7 @@ class _MissionsPageState extends State<MissionsPage> with SingleTickerProviderSt
   List<dynamic> _weekly = [];
   List<dynamic> _monthly = [];
   final Set<String> _busy = {};
+  final _picker = ImagePicker();
   late final TabController _tabController;
 
   @override
@@ -63,9 +67,57 @@ class _MissionsPageState extends State<MissionsPage> with SingleTickerProviderSt
   }
 
   Future<void> _submitProof(String id) async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Attach Screenshot (optional)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: const Icon(Icons.camera_alt_rounded, color: AppColors.gold),
+                title: const Text('Camera'),
+                onTap: () => Navigator.pop(ctx, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_rounded, color: AppColors.gold),
+                title: const Text('Gallery'),
+                onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+              ),
+              ListTile(
+                leading: const Icon(Icons.send_rounded, color: AppColors.textSecondary),
+                title: const Text('Submit without photo'),
+                onTap: () => Navigator.pop(ctx, null),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted) return;
+
+    File? proofFile;
+    if (source != null) {
+      final picked = await _picker.pickImage(source: source, maxWidth: 1600, imageQuality: 85);
+      if (picked != null) proofFile = File(picked.path);
+      if (!mounted) return;
+    }
+
     setState(() => _busy.add(id));
     try {
-      await ApiClient().dio.post('/api/users/missions/$id/submit');
+      if (proofFile != null) {
+        final formData = FormData.fromMap({
+          'proof': await MultipartFile.fromFile(proofFile.path, filename: 'proof.jpg'),
+        });
+        await ApiClient().dio.post('/api/users/missions/$id/submit', data: formData);
+      } else {
+        await ApiClient().dio.post('/api/users/missions/$id/submit');
+      }
       if (!mounted) return;
       AppSnackBar.show(context, 'Submitted for review!');
       await _load();

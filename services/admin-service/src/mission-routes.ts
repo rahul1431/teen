@@ -35,6 +35,32 @@ const missionBodySchema = z.object({
   verification_type: z.enum(['auto', 'telegram_bot', 'manual_review']),
   is_active: z.boolean().default(true),
   sort_order: z.number().int().default(0),
+}).superRefine((data, ctx) => {
+  // Cross-field checks: without these, an admin can save a mission that is
+  // internally coherent per-field but silently unclaimable end-to-end (see
+  // docs/superpowers/plans final-review findings for the three concrete
+  // failure modes this prevents).
+  if (data.metric_type === 'game_played' && !data.game_type) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['game_type'],
+      message: 'game_type is required when metric_type is "game_played"',
+    })
+  }
+  if (data.metric_type === 'manual_proof' && data.verification_type !== 'manual_review') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['verification_type'],
+      message: 'verification_type must be "manual_review" when metric_type is "manual_proof"',
+    })
+  }
+  if (data.metric_type === 'telegram_join' && data.verification_type !== 'telegram_bot') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['verification_type'],
+      message: 'verification_type must be "telegram_bot" when metric_type is "telegram_join"',
+    })
+  }
 })
 
 export async function registerMissionRoutes(
