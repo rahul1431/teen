@@ -422,8 +422,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 const SizedBox(height: 14),
                 Row(
                   children: [
-                    _heroBadge('🎯 Daily Bonus', AppColors.green),
-                    const SizedBox(width: 8),
                     _heroBadge('🎰 Jackpot ₹10 CR', AppColors.orange),
                   ],
                 ),
@@ -613,13 +611,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
           children: [
-            _promoCard(
-                '🎁',
-                'Daily Login\nBonus',
-                'Claim ₹100 Now!',
-                [const Color(0xFF1A4C2E), const Color(0xFF0D2E19)],
-                AppColors.green,
-                onTap: () => context.push('/daily-bonus')),
             _promoCard(
                 '👥',
                 'Refer &\nEarn',
