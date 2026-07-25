@@ -7,6 +7,7 @@ import {
 } from './rules'
 import {
   chooseBotTokenCoordinated,
+  chooseWinnerBotToken,
   CoordinationMetadata,
 } from './coordination'
 
@@ -22,14 +23,13 @@ function makeState(overrides?: Partial<LudoState>): LudoState {
 
 describe('chooseBotTokenCoordinated', () => {
   test('helper bot blocks RP instead of advancing own token', () => {
-    // Setup: 1 RP + 3 bots
-    // RP token at progress 10 (absolute cell 10 for seat 0)
-    // Helper bot (b1) at progress 4 (absolute cell 17 for seat 1)
-    // If helper rolls a 6, it could move token to 4+6=10, landing on RP
-    // With aggressiveness > 0.3, it should choose to block (return token index)
+    // Setup: 1 RP (seat idx 0, offset 0) + 3 bots. Helper bot is seat idx 1 (offset 13).
+    // RP token at progress 20 -> absolute cell 20 (offset 0).
+    // Helper token at progress 1; rolling a 6 moves it to progress 7 ->
+    // absolute cell (13+7)%52 = 20, landing exactly on the RP's cell.
     const state = makeState()
-    state.players[0].tokens = [10, -1, -1, -1] // RP at progress 10
-    state.players[1].tokens = [4, -1, -1, -1] // Helper bot at progress 4
+    state.players[0].tokens = [20, -1, -1, -1] // RP at progress 20 (absolute cell 20)
+    state.players[1].tokens = [1, -1, -1, -1] // Helper bot at progress 1
     state.players[2].tokens = [-1, -1, -1, -1] // Other bots inactive
     state.players[3].tokens = [-1, -1, -1, -1]
 
@@ -40,7 +40,7 @@ describe('chooseBotTokenCoordinated', () => {
     }
 
     const result = chooseBotTokenCoordinated(state, 1, 6, metadata)
-    // Token at index 0 can block RP (4+6=10, landing on RP at 10)
+    // Token at index 0 can block RP (progress 1+6=7 -> absolute cell 20, same as RP)
     // Should return 0 (the blocking token)
     assert.equal(result, 0, 'helper bot should choose the token that blocks RP')
   })
@@ -90,14 +90,12 @@ describe('chooseBotTokenCoordinated', () => {
   })
 
   test('priority 1 (blocking RP) triggers when aggressiveness > 0.3', () => {
-    // Setup: RP has a token that can be blocked
-    // Helper bot can block it on the current roll
-    // With aggressiveness > 0.3, priority 1 should trigger
+    // Setup: RP (seat idx 0, offset 0) has a token that can be blocked.
+    // Helper bot is seat idx 1 (offset 13), at progress 10; rolling a 5 moves
+    // it to progress 15 -> absolute cell (13+15)%52 = 28, matching RP's cell.
     const state = makeState()
-    // RP token at progress 15
-    state.players[0].tokens = [15, -1, -1, -1]
-    // Helper bot at progress 10, can move to 15 with a 5-roll
-    state.players[1].tokens = [10, 20, -1, -1]
+    state.players[0].tokens = [28, -1, -1, -1] // RP at progress 28 (absolute cell 28)
+    state.players[1].tokens = [10, 20, -1, -1] // Helper bot; token 0 can block
     state.players[2].tokens = [30, -1, -1, -1]
     state.players[3].tokens = [40, -1, -1, -1]
 
@@ -108,21 +106,19 @@ describe('chooseBotTokenCoordinated', () => {
     }
 
     const result = chooseBotTokenCoordinated(state, 1, 5, metadata)
-    // Token 0 can block (10+5=15)
+    // Token 0 can block (progress 10+5=15 -> absolute cell 28, same as RP)
     assert.equal(result, 0, 'priority 1 should trigger when aggressiveness > 0.3 and RP can be blocked')
   })
 
   test('priority 2 (clearing path) triggers when aggressiveness > 0.2', () => {
-    // Setup: winner bot has a token blocked by helper bot
-    // With aggressiveness > 0.2 (but not > 0.3), priority 2 should trigger
-    // Priority 1 check: no RP tokens or aggressiveness <= 0.3, so skip
-    // Priority 2 check: aggressiveness > 0.2 and helper is blocking winner
+    // Setup: winner bot shares an absolute cell with the helper bot.
+    // Helper is seat idx 1 (offset 13) at progress 25 -> absolute cell (13+25)%52 = 38.
+    // Winner is seat idx 2 (offset 26) at progress 12 -> absolute cell (26+12)%52 = 38.
+    // With aggressiveness > 0.2 (but not > 0.3), priority 2 should trigger.
     const state = makeState()
-    state.players[0].tokens = [-1, -1, -1, -1] // RP (no tokens)
-    // Helper bot: tokens at position 25
-    state.players[1].tokens = [25, -1, -1, -1]
-    // Winner bot: also has token at position 25 (same cell, blocked)
-    state.players[2].tokens = [25, 30, -1, -1]
+    state.players[0].tokens = [-1, -1, -1, -1] // RP (no tokens): priority 1 can't trigger
+    state.players[1].tokens = [25, -1, -1, -1] // Helper bot: token 0 shares winner's cell
+    state.players[2].tokens = [12, 30, -1, -1] // Winner bot
     state.players[3].tokens = [40, -1, -1, -1]
 
     const metadata: CoordinationMetadata = {
@@ -132,8 +128,54 @@ describe('chooseBotTokenCoordinated', () => {
     }
 
     const result = chooseBotTokenCoordinated(state, 1, 3, metadata)
-    // Token 0 (at position 25) is blocking winner's token at position 25
+    // Token 0 (absolute cell 38) shares a cell with the winner's token 0 (also 38)
     // Should return 0 to clear the path (move token 0 out of the way)
     assert.equal(result, 0, 'priority 2 should trigger when aggressiveness > 0.2 and helper is blocking winner')
+  })
+})
+
+describe('chooseWinnerBotToken (skill tiers)', () => {
+  test('casual tier always takes an available capture', () => {
+    // Winner is seat idx 2 (offset 26). RP token at progress 10 (abs cell 10).
+    // Winner's token 0 at progress 30; +6 -> progress 36 -> abs cell (26+36)%52 = 10,
+    // landing exactly on the RP and capturing it. Tokens 1-3 are in base and
+    // also become movable with a 6 roll, but only token 0 captures.
+    const state = makeState()
+    state.players[0].tokens = [10, -1, -1, -1] // RP
+    state.players[2].tokens = [30, -1, -1, -1] // Winner bot
+
+    const result = chooseWinnerBotToken(state, 2, 6, 'casual', 0.5)
+    assert.equal(result, 0, 'casual tier should take the available capture')
+  })
+
+  test('skilled tier avoids a move exposed to the RP when a safe alternative exists', () => {
+    // Winner is seat idx 2 (offset 26). No capture available. Token 0
+    // (progress 20 -> 25 -> abs cell 51) lands within the RP's (abs cell 48)
+    // 1-6 striking distance next turn. Token 1 (progress 10 -> 15 -> abs
+    // cell 41) lands safely out of range.
+    const state = makeState()
+    state.players[0].tokens = [48, -1, -1, -1] // RP
+    state.players[2].tokens = [20, 10, -1, -1] // Winner: token0 exposed, token1 safe
+
+    const result = chooseWinnerBotToken(state, 2, 5, 'skilled', 0.5)
+    assert.equal(result, 1, 'skilled tier should prefer the non-exposed token over the exposed one')
+  })
+
+  test('expert tier with high boldness favours progress over avoiding RP exposure', () => {
+    const state = makeState()
+    state.players[0].tokens = [48, -1, -1, -1] // RP at abs cell 48
+    state.players[2].tokens = [20, 10, -1, -1] // Winner: token0 -> progress 25 (exposed), token1 -> progress 15 (safe)
+
+    const result = chooseWinnerBotToken(state, 2, 5, 'expert', 0.9)
+    assert.equal(result, 0, 'bold expert tier should take the higher-progress exposed move')
+  })
+
+  test('expert tier with low boldness favours playing safe over raw progress', () => {
+    const state = makeState()
+    state.players[0].tokens = [48, -1, -1, -1] // RP at abs cell 48
+    state.players[2].tokens = [20, 10, -1, -1] // Winner: token0 -> progress 25 (exposed), token1 -> progress 15 (safe)
+
+    const result = chooseWinnerBotToken(state, 2, 5, 'expert', 0.1)
+    assert.equal(result, 1, 'cautious expert tier should take the safer, lower-progress move')
   })
 })

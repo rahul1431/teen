@@ -16,6 +16,7 @@ import {
   LudoState,
   ActionResult,
   BotDifficulty,
+  WinnerSkill,
 } from './rules'
 import { chooseBotTokenCoordinated } from './coordination'
 
@@ -76,9 +77,10 @@ interface StartReq {
   players: { user_id: string; username: string; seat: number; is_bot: boolean; bot_difficulty?: BotDifficulty; capture_probability?: number | null; safe_play_probability?: number | null }[]
   bot_difficulty?: BotDifficulty
   botCoordination?: {
-    isHelper: boolean
     winnerBotIdx: number
     aggressiveness: number
+    winnerSkill?: WinnerSkill
+    boldness?: number
   }
 }
 
@@ -106,9 +108,10 @@ async function start() {
     const state = createInitialState(body.room_id, body.stake, body.players, difficulty)
     if (body.botCoordination) {
       state.coordination = {
-        isHelper: body.botCoordination.isHelper,
         winnerBotIdx: body.botCoordination.winnerBotIdx,
         aggressiveness: body.botCoordination.aggressiveness,
+        winnerSkill: body.botCoordination.winnerSkill,
+        boldness: body.botCoordination.boldness,
       }
     }
     await saveState(state)
@@ -209,9 +212,11 @@ async function start() {
         if (state.awaiting === 'move') {
           movedToken = state.coordination
             ? chooseBotTokenCoordinated(state, idx, dice, {
-                isHelper: state.coordination.isHelper,
+                isHelper: idx !== state.coordination.winnerBotIdx,
                 winnerBotIdx: state.coordination.winnerBotIdx,
                 aggressiveness: state.coordination.aggressiveness,
+                winnerSkill: state.coordination.winnerSkill,
+                boldness: state.coordination.boldness,
               })
             : chooseBotToken(
                 state,

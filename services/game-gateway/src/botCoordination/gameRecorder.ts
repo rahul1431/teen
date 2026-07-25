@@ -3,14 +3,14 @@ import { ElectionAlgorithm } from './electionAlgorithm'
 
 export interface GameOutcome {
   gameId: string
-  actualWinnerId: bigint
+  actualWinnerId: string
   botTrainingMetadata?: {
-    winnerBotId: bigint
+    winnerBotId: string
     strategy: string
     targetWinRate: number
     aggressiveness: number
-    botIds: bigint[]
-    rpId: bigint
+    botIds: string[]
+    rpId: string
   }
   botPerformance: Record<string, any>
   rpPerformance: any
@@ -43,7 +43,7 @@ export class GameRecorder {
           outcome.gameId,
           metadata.winnerBotId,
           outcome.actualWinnerId,
-          JSON.stringify(metadata.botIds.map(id => id.toString())),
+          JSON.stringify(metadata.botIds),
           metadata.rpId,
           metadata.strategy,
           metadata.targetWinRate,

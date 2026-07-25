@@ -10,6 +10,7 @@ import GamePnlDashboard from '../../components/GamePnlDashboard'
 import { BotTrainingConfigPanel } from '../../components/BotTrainingConfigPanel'
 import { BotMetricsTable } from '../../components/BotMetricsTable'
 import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
+import { BotTrainingTrendChart } from '../../components/BotTrainingTrendChart'
 import { MLTrainingPanel } from '../../components/MLTrainingPanel'
 
 export default function Ludo() {
@@ -180,6 +181,7 @@ export default function Ludo() {
     ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="ludo" /> }, { key: 'analytics', label: 'Analytics', children: <GamePnlDashboard gameType="ludo" /> }, { key: 'bot-training', label: 'Bot Training', children: (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
         <BotTrainingConfigPanel />
+        <BotTrainingTrendChart />
         <BotMetricsTable />
         <BotTrainingAuditTrail />
       </div>

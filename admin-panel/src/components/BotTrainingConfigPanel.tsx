@@ -1,12 +1,18 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Form, Switch, Select, Slider, Button, Space, message } from 'antd'
+import { Card, Form, Switch, Select, Slider, Button, Space, message, Statistic, Row, Col, Typography } from 'antd'
 import { adminApi } from '../api/client'
+
+const { Text } = Typography
 
 interface BotTrainingConfig {
   enabled: boolean
   strategy: 'lifetime_winrate' | 'vs_rp_winrate' | 'rotation' | 'weakest_first'
   targetWinRate: number
   aggressiveness: number
+  winnerBotSkill: 'casual' | 'skilled' | 'expert'
+  winnerBotBoldness: number
+  adaptiveBoldness: boolean
+  effectiveBoldness?: number // read-only, returned by GET only
 }
 
 const STRATEGY_OPTIONS = [
@@ -16,8 +22,15 @@ const STRATEGY_OPTIONS = [
   { label: 'Weakest Bot First', value: 'weakest_first' },
 ]
 
+const WINNER_SKILL_OPTIONS = [
+  { label: 'Casual — tactical booster (captures, safe cells, most progress)', value: 'casual' },
+  { label: 'Skilled — casual + avoids leaving itself exposed to the RP', value: 'skilled' },
+  { label: 'Expert — full move scoring, tuned by boldness below', value: 'expert' },
+]
+
 export const BotTrainingConfigPanel: React.FC = () => {
   const [config, setConfig] = useState<BotTrainingConfig | null>(null)
+  const [effectiveBoldness, setEffectiveBoldness] = useState<number | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [form] = Form.useForm()
@@ -35,6 +48,7 @@ export const BotTrainingConfigPanel: React.FC = () => {
         targetWinRate: response.data.targetWinRate * 100,
       }
       setConfig(configForDisplay)
+      setEffectiveBoldness(response.data.effectiveBoldness)
       form.setFieldsValue(configForDisplay)
       setLoading(false)
     } catch (error) {
@@ -71,8 +85,8 @@ export const BotTrainingConfigPanel: React.FC = () => {
         onFinish={handleSave}
         initialValues={config}
       >
-        <Form.Item name="enabled" valuePropName="checked">
-          <Switch /> Enable Bot Coordination
+        <Form.Item name="enabled" label="Enable Bot Coordination" valuePropName="checked">
+          <Switch />
         </Form.Item>
 
         <Form.Item
@@ -111,6 +125,56 @@ export const BotTrainingConfigPanel: React.FC = () => {
             marks={{ 0: 'Conservative', 1: 'Aggressive' }}
           />
         </Form.Item>
+
+        <Form.Item
+          name="winnerBotSkill"
+          label="Winner Bot Skill"
+          help="How smart the elected winner bot's own moves are — helpers stay unaffected"
+        >
+          <Select options={WINNER_SKILL_OPTIONS} />
+        </Form.Item>
+
+        <Form.Item noStyle shouldUpdate={(prev, cur) => prev.winnerBotSkill !== cur.winnerBotSkill || prev.adaptiveBoldness !== cur.adaptiveBoldness}>
+          {({ getFieldValue }) => {
+            const skill = getFieldValue('winnerBotSkill')
+            if (skill === 'casual') return null
+            const adaptive = getFieldValue('adaptiveBoldness')
+            return (
+              <Form.Item
+                name="winnerBotBoldness"
+                label={adaptive ? 'Winner Bot Boldness (starting point / floor)' : 'Winner Bot Boldness'}
+                help="How much the winner bot favours racing/captures (bold) vs. playing it safe (cautious)"
+              >
+                <Slider min={0} max={1} step={0.1} marks={{ 0: 'Cautious', 1: 'Bold' }} />
+              </Form.Item>
+            )
+          }}
+        </Form.Item>
+
+        <Form.Item
+          name="adaptiveBoldness"
+          label="Adaptive Boldness (self-learning)"
+          valuePropName="checked"
+          help="Auto-tune boldness from the last 20 coordinated games' success rate vs. target win rate, instead of using a fixed value"
+        >
+          <Switch />
+        </Form.Item>
+
+        {config.adaptiveBoldness && effectiveBoldness !== undefined && (
+          <Row style={{ marginBottom: 24 }}>
+            <Col>
+              <Statistic
+                title="Current Effective Boldness"
+                value={effectiveBoldness}
+                precision={2}
+                valueStyle={{ color: '#1677ff' }}
+              />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                Auto-tuned from recent coordination results — refreshes on page load
+              </Text>
+            </Col>
+          </Row>
+        )}
 
         <Form.Item>
           <Button type="primary" htmlType="submit" loading={saving}>

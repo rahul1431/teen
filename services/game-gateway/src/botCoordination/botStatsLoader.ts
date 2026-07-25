@@ -13,7 +13,7 @@ export interface BotStats {
   last10Games: Array<{ won: boolean; opponentType: string; date: string }>
 }
 
-const STATS_REDIS_KEY = (botId: bigint) => `bot:stats:${botId}`
+const STATS_REDIS_KEY = (botId: string) => `bot:stats:${botId}`
 const STATS_CACHE_TTL = 300 // 5 minutes
 
 export class BotStatsLoader {
@@ -22,7 +22,7 @@ export class BotStatsLoader {
     private db: Database,
   ) {}
 
-  async loadBotStats(botId: bigint): Promise<BotStats> {
+  async loadBotStats(botId: string): Promise<BotStats> {
     // Try Redis cache first
     const cached = await this.redis.get(STATS_REDIS_KEY(botId))
     if (cached) {
@@ -38,7 +38,7 @@ export class BotStatsLoader {
     return stats
   }
 
-  private async computeBotStats(botId: bigint): Promise<BotStats> {
+  private async computeBotStats(botId: string): Promise<BotStats> {
     // Count lifetime games where this bot participated
     const lifetimeResult = await this.db.query(
       `SELECT
@@ -50,7 +50,7 @@ export class BotStatsLoader {
         AVG((bot_performance::jsonb -> ($1::text) -> 'move_efficiency')::numeric) as avg_efficiency
       FROM bot_learning_sessions
       WHERE bot_ids @> $2::jsonb`,
-      [botId, JSON.stringify([botId.toString()])]
+      [botId, JSON.stringify([botId])]
     )
 
     const lifeRow = lifetimeResult.rows[0] || {}
@@ -65,7 +65,7 @@ export class BotStatsLoader {
         SUM(CASE WHEN actual_winner_id = $1 THEN 1 ELSE 0 END) as rp_wins
       FROM bot_learning_sessions
       WHERE bot_ids @> $2::jsonb`,
-      [botId, JSON.stringify([botId.toString()])]
+      [botId, JSON.stringify([botId])]
     )
 
     const rpRow = vsRpResult.rows[0] || {}
@@ -82,7 +82,7 @@ export class BotStatsLoader {
       WHERE bot_ids @> $1::jsonb
       ORDER BY created_at DESC
       LIMIT 10`,
-      [JSON.stringify([botId.toString()])]
+      [JSON.stringify([botId])]
     )
 
     const last10Games = lastGamesResult.rows.map((row: any) => ({
@@ -104,7 +104,7 @@ export class BotStatsLoader {
     }
   }
 
-  async invalidateStats(botId: bigint): Promise<void> {
+  async invalidateStats(botId: string): Promise<void> {
     await this.redis.del(STATS_REDIS_KEY(botId))
   }
 }

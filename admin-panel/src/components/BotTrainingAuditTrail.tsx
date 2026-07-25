@@ -21,7 +21,7 @@ export const BotTrainingAuditTrail: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [page, setPage] = useState(1)
   const [filters, setFilters] = useState({
-    botId: undefined as number | undefined,
+    botId: undefined as string | undefined,
     success: undefined as boolean | undefined,
   })
 
@@ -81,12 +81,11 @@ export const BotTrainingAuditTrail: React.FC = () => {
       <Space style={{ marginBottom: 16 }} wrap>
         <Input
           placeholder="Bot ID"
-          type="number"
           onChange={(e) => {
-            setFilters({ ...filters, botId: e.target.value ? parseInt(e.target.value) : undefined })
+            setFilters({ ...filters, botId: e.target.value || undefined })
             setPage(1)
           }}
-          style={{ width: 120 }}
+          style={{ width: 200 }}
         />
         <Select
           placeholder="Filter by result"

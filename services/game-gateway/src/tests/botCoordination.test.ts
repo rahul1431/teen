@@ -36,21 +36,13 @@ class MockDatabase {
   public lastQueries: Array<{ sql: string; params: any[] }> = []
 
   setQueryResult(sql: string, params: any[], rows: any[]) {
-    // Normalize params for matching (convert BigInt to string)
-    const normalizedParams = params.map(p =>
-      typeof p === 'bigint' ? p.toString() : p
-    )
-    const key = sql + JSON.stringify(normalizedParams)
+    const key = sql + JSON.stringify(params)
     this.queryResults.set(key, rows)
   }
 
   async query(sql: string, params: any[] = []): Promise<{ rows: any[] }> {
     this.lastQueries.push({ sql, params })
-    // Normalize params for matching (convert BigInt to string)
-    const normalizedParams = params.map(p =>
-      typeof p === 'bigint' ? p.toString() : p
-    )
-    const key = sql + JSON.stringify(normalizedParams)
+    const key = sql + JSON.stringify(params)
     const rows = this.queryResults.get(key) ?? []
     return { rows }
   }
@@ -82,7 +74,7 @@ function createBotStats(overrides: Partial<BotStats> = {}): BotStats {
   }
 }
 
-function createBotWithStats(botId: bigint, stats: BotStats): BotWithStats {
+function createBotWithStats(botId: string, stats: BotStats): BotWithStats {
   return { botId, stats }
 }
 
@@ -99,30 +91,30 @@ describe('BotCoordination - ElectionAlgorithm', () => {
 
   describe('Test 1: Election algorithm chooses correctly by lifetime_winrate strategy', () => {
     it('should select bot with highest lifetime_winrate', () => {
-      const bot1 = createBotWithStats(BigInt(1), createBotStats({ lifetimeWinRate: 0.5 }))
-      const bot2 = createBotWithStats(BigInt(2), createBotStats({ lifetimeWinRate: 0.75 }))
-      const bot3 = createBotWithStats(BigInt(3), createBotStats({ lifetimeWinRate: 0.6 }))
+      const bot1 = createBotWithStats('bot-1', createBotStats({ lifetimeWinRate: 0.5 }))
+      const bot2 = createBotWithStats('bot-2', createBotStats({ lifetimeWinRate: 0.75 }))
+      const bot3 = createBotWithStats('bot-3', createBotStats({ lifetimeWinRate: 0.6 }))
 
       const elected = algorithm.electWinnerBot([bot1, bot2, bot3], 'lifetime_winrate')
 
-      expect(elected).toBe(BigInt(2))
+      expect(elected).toBe('bot-2')
     })
 
     it('should handle ties by selecting first bot with highest rate', () => {
-      const bot1 = createBotWithStats(BigInt(1), createBotStats({ lifetimeWinRate: 0.8 }))
-      const bot2 = createBotWithStats(BigInt(2), createBotStats({ lifetimeWinRate: 0.8 }))
+      const bot1 = createBotWithStats('bot-1', createBotStats({ lifetimeWinRate: 0.8 }))
+      const bot2 = createBotWithStats('bot-2', createBotStats({ lifetimeWinRate: 0.8 }))
 
       const elected = algorithm.electWinnerBot([bot1, bot2], 'lifetime_winrate')
 
-      expect(elected).toBe(BigInt(1))
+      expect(elected).toBe('bot-1')
     })
 
     it('should work with single bot', () => {
-      const bot1 = createBotWithStats(BigInt(1), createBotStats({ lifetimeWinRate: 0.5 }))
+      const bot1 = createBotWithStats('bot-1', createBotStats({ lifetimeWinRate: 0.5 }))
 
       const elected = algorithm.electWinnerBot([bot1], 'lifetime_winrate')
 
-      expect(elected).toBe(BigInt(1))
+      expect(elected).toBe('bot-1')
     })
 
     it('should throw error with no bots', () => {
@@ -134,9 +126,9 @@ describe('BotCoordination - ElectionAlgorithm', () => {
 
   describe('Test 2: Election algorithm rotates through bots correctly', () => {
     it('should rotate through bots in order', () => {
-      const bot1 = createBotWithStats(BigInt(1), createBotStats())
-      const bot2 = createBotWithStats(BigInt(2), createBotStats())
-      const bot3 = createBotWithStats(BigInt(3), createBotStats())
+      const bot1 = createBotWithStats('bot-1', createBotStats())
+      const bot2 = createBotWithStats('bot-2', createBotStats())
+      const bot3 = createBotWithStats('bot-3', createBotStats())
       const bots = [bot1, bot2, bot3]
 
       const elected1 = algorithm.electWinnerBot(bots, 'rotation', 'teen_patti')
@@ -144,15 +136,15 @@ describe('BotCoordination - ElectionAlgorithm', () => {
       const elected3 = algorithm.electWinnerBot(bots, 'rotation', 'teen_patti')
       const elected4 = algorithm.electWinnerBot(bots, 'rotation', 'teen_patti')
 
-      expect(elected1).toBe(BigInt(2))
-      expect(elected2).toBe(BigInt(3))
-      expect(elected3).toBe(BigInt(1))
-      expect(elected4).toBe(BigInt(2))
+      expect(elected1).toBe('bot-2')
+      expect(elected2).toBe('bot-3')
+      expect(elected3).toBe('bot-1')
+      expect(elected4).toBe('bot-2')
     })
 
     it('should use separate rotation state per gameTypeKey', () => {
-      const bot1 = createBotWithStats(BigInt(1), createBotStats())
-      const bot2 = createBotWithStats(BigInt(2), createBotStats())
+      const bot1 = createBotWithStats('bot-1', createBotStats())
+      const bot2 = createBotWithStats('bot-2', createBotStats())
       const bots = [bot1, bot2]
 
       const tp1 = algorithm.electWinnerBot(bots, 'rotation', 'teen_patti')
@@ -160,27 +152,27 @@ describe('BotCoordination - ElectionAlgorithm', () => {
       const tp2 = algorithm.electWinnerBot(bots, 'rotation', 'teen_patti')
       const ludo2 = algorithm.electWinnerBot(bots, 'rotation', 'ludo')
 
-      expect(tp1).toBe(BigInt(2))
-      expect(ludo1).toBe(BigInt(2))
-      expect(tp2).toBe(BigInt(1))
-      expect(ludo2).toBe(BigInt(1))
+      expect(tp1).toBe('bot-2')
+      expect(ludo1).toBe('bot-2')
+      expect(tp2).toBe('bot-1')
+      expect(ludo2).toBe('bot-1')
     })
 
     it('should start rotation from index 0 for new gameTypeKey', () => {
-      const bot1 = createBotWithStats(BigInt(1), createBotStats())
-      const bot2 = createBotWithStats(BigInt(2), createBotStats())
+      const bot1 = createBotWithStats('bot-1', createBotStats())
+      const bot2 = createBotWithStats('bot-2', createBotStats())
       const bots = [bot1, bot2]
 
       const elected = algorithm.electWinnerBot(bots, 'rotation', 'new_game')
 
-      expect(elected).toBe(BigInt(2)) // First call returns next index (0+1) % 2 = 1
+      expect(elected).toBe('bot-2') // First call returns next index (0+1) % 2 = 1
     })
   })
 
   describe('Test 3: isCoordinationSuccess returns true when elected bot wins', () => {
     it('should return true when elected bot is the actual winner', () => {
-      const electedBotId = BigInt(1)
-      const actualWinnerId = BigInt(1)
+      const electedBotId = 'bot-1'
+      const actualWinnerId = 'bot-1'
       const targetWinRate = 0.7
 
       const success = algorithm.isCoordinationSuccess(actualWinnerId, electedBotId, targetWinRate)
@@ -189,8 +181,8 @@ describe('BotCoordination - ElectionAlgorithm', () => {
     })
 
     it('should return true regardless of targetWinRate when bot wins', () => {
-      const electedBotId = BigInt(1)
-      const actualWinnerId = BigInt(1)
+      const electedBotId = 'bot-1'
+      const actualWinnerId = 'bot-1'
 
       const success1 = algorithm.isCoordinationSuccess(actualWinnerId, electedBotId, 0.1)
       const success2 = algorithm.isCoordinationSuccess(actualWinnerId, electedBotId, 0.9)
@@ -202,8 +194,8 @@ describe('BotCoordination - ElectionAlgorithm', () => {
 
   describe('Test 4: isCoordinationSuccess probabilistic evaluation when elected bot loses', () => {
     it('should use probability when elected bot loses', () => {
-      const electedBotId = BigInt(1)
-      const actualWinnerId = BigInt(2)
+      const electedBotId = 'bot-1'
+      const actualWinnerId = 'bot-2'
       const targetWinRate = 0.8
 
       // Test multiple times to verify probability is used
@@ -226,8 +218,8 @@ describe('BotCoordination - ElectionAlgorithm', () => {
     })
 
     it('should return mostly false with very low targetWinRate', () => {
-      const electedBotId = BigInt(1)
-      const actualWinnerId = BigInt(2)
+      const electedBotId = 'bot-1'
+      const actualWinnerId = 'bot-2'
       const targetWinRate = 0.05
 
       const results: boolean[] = []
@@ -242,8 +234,8 @@ describe('BotCoordination - ElectionAlgorithm', () => {
     })
 
     it('should return mostly true with very high targetWinRate', () => {
-      const electedBotId = BigInt(1)
-      const actualWinnerId = BigInt(2)
+      const electedBotId = 'bot-1'
+      const actualWinnerId = 'bot-2'
       const targetWinRate = 0.95
 
       const results: boolean[] = []
@@ -272,8 +264,7 @@ describe('BotCoordination - BotStatsLoader', () => {
 
   describe('Test 5: Redis cache is populated at game start with bot stats', () => {
     it('should cache bot stats in Redis after loading', async () => {
-      const botId = BigInt(1)
-      const expectedStats = createBotStats({ lifetimeWinRate: 0.65 })
+      const botId = 'bot-1'
 
       const query = `SELECT
         COUNT(*) as total_games,
@@ -285,7 +276,7 @@ describe('BotCoordination - BotStatsLoader', () => {
       FROM bot_learning_sessions
       WHERE bot_ids @> $2::jsonb`
 
-      mockDb.setQueryResult(query, [botId, JSON.stringify(['1'])], [
+      mockDb.setQueryResult(query, [botId, JSON.stringify([botId])], [
         {
           total_games: 100,
           total_wins: 65,
@@ -302,7 +293,7 @@ describe('BotCoordination - BotStatsLoader', () => {
       FROM bot_learning_sessions
       WHERE bot_ids @> $2::jsonb`
 
-      mockDb.setQueryResult(rpQuery, [botId, JSON.stringify(['1'])], [
+      mockDb.setQueryResult(rpQuery, [botId, JSON.stringify([botId])], [
         {
           rp_games: 100,
           rp_wins: 45,
@@ -317,9 +308,9 @@ describe('BotCoordination - BotStatsLoader', () => {
       ORDER BY created_at DESC
       LIMIT 10`
 
-      mockDb.setQueryResult(lastGamesQuery, [JSON.stringify(['1'])], [
+      mockDb.setQueryResult(lastGamesQuery, [JSON.stringify([botId])], [
         { actual_winner_id: botId, created_at: '2026-07-23T10:00:00Z' },
-        { actual_winner_id: BigInt(2), created_at: '2026-07-23T09:00:00Z' },
+        { actual_winner_id: 'bot-2', created_at: '2026-07-23T09:00:00Z' },
       ])
 
       // Load stats
@@ -338,8 +329,7 @@ describe('BotCoordination - BotStatsLoader', () => {
     })
 
     it('should return cached stats on second load without DB query', async () => {
-      const botId = BigInt(2)
-      const expectedStats = createBotStats({ lifetimeWinRate: 0.75 })
+      const botId = 'bot-2'
 
       const query = `SELECT
         COUNT(*) as total_games,
@@ -351,7 +341,7 @@ describe('BotCoordination - BotStatsLoader', () => {
       FROM bot_learning_sessions
       WHERE bot_ids @> $2::jsonb`
 
-      mockDb.setQueryResult(query, [botId, JSON.stringify(['2'])], [
+      mockDb.setQueryResult(query, [botId, JSON.stringify([botId])], [
         {
           total_games: 100,
           total_wins: 75,
@@ -368,7 +358,7 @@ describe('BotCoordination - BotStatsLoader', () => {
       FROM bot_learning_sessions
       WHERE bot_ids @> $2::jsonb`
 
-      mockDb.setQueryResult(rpQuery, [botId, JSON.stringify(['2'])], [
+      mockDb.setQueryResult(rpQuery, [botId, JSON.stringify([botId])], [
         {
           rp_games: 100,
           rp_wins: 60,
@@ -383,11 +373,10 @@ describe('BotCoordination - BotStatsLoader', () => {
       ORDER BY created_at DESC
       LIMIT 10`
 
-      mockDb.setQueryResult(lastGamesQuery, [JSON.stringify(['2'])], [])
+      mockDb.setQueryResult(lastGamesQuery, [JSON.stringify([botId])], [])
 
       // First load
       const stats1 = await loader.loadBotStats(botId)
-      const queryCountAfterFirst = mockDb.lastQueries.length
 
       mockDb.clearQueries()
 
@@ -400,7 +389,7 @@ describe('BotCoordination - BotStatsLoader', () => {
     })
 
     it('should be able to invalidate cached stats', async () => {
-      const botId = BigInt(3)
+      const botId = 'bot-3'
 
       // Manually set cache
       const cacheKey = `bot:stats:${botId}`
@@ -434,18 +423,18 @@ describe('BotCoordination - GameRecorder', () => {
     it('should record coordinated game with correct fields', async () => {
       const outcome: GameOutcome = {
         gameId: 'game-123',
-        actualWinnerId: BigInt(1),
+        actualWinnerId: 'bot-1',
         botTrainingMetadata: {
-          winnerBotId: BigInt(1),
+          winnerBotId: 'bot-1',
           strategy: 'lifetime_winrate',
           targetWinRate: 0.75,
           aggressiveness: 0.8,
-          botIds: [BigInt(1), BigInt(2)],
-          rpId: BigInt(100),
+          botIds: ['bot-1', 'bot-2'],
+          rpId: 'rp-100',
         },
         botPerformance: {
-          '1': { blocks_on_rp: 2, move_efficiency: 0.85 },
-          '2': { blocks_on_rp: 1, move_efficiency: 0.7 },
+          'bot-1': { blocks_on_rp: 2, move_efficiency: 0.85 },
+          'bot-2': { blocks_on_rp: 1, move_efficiency: 0.7 },
         },
         rpPerformance: { avg_response_time: 500 },
       }
@@ -471,10 +460,10 @@ describe('BotCoordination - GameRecorder', () => {
       // Verify parameters
       const params = query.params
       expect(params[0]).toBe('game-123') // gameId
-      expect(params[1]).toBe(BigInt(1)) // winnerBotId
-      expect(params[2]).toBe(BigInt(1)) // actualWinnerId
-      expect(params[3]).toBe(JSON.stringify(['1', '2'])) // botIds (converted to strings)
-      expect(params[4]).toBe(BigInt(100)) // rpId
+      expect(params[1]).toBe('bot-1') // winnerBotId
+      expect(params[2]).toBe('bot-1') // actualWinnerId
+      expect(params[3]).toBe(JSON.stringify(['bot-1', 'bot-2'])) // botIds
+      expect(params[4]).toBe('rp-100') // rpId
       expect(params[5]).toBe('lifetime_winrate') // strategy
       expect(params[6]).toBe(0.75) // targetWinRate
       expect(params[8]).toBeDefined() // rpPerformance JSON
@@ -484,16 +473,16 @@ describe('BotCoordination - GameRecorder', () => {
     it('should record game with coordination_success=true when bot wins', async () => {
       const outcome: GameOutcome = {
         gameId: 'game-win',
-        actualWinnerId: BigInt(5),
+        actualWinnerId: 'bot-5',
         botTrainingMetadata: {
-          winnerBotId: BigInt(5),
+          winnerBotId: 'bot-5',
           strategy: 'vs_rp_winrate',
           targetWinRate: 0.6,
           aggressiveness: 0.5,
-          botIds: [BigInt(5)],
-          rpId: BigInt(200),
+          botIds: ['bot-5'],
+          rpId: 'rp-200',
         },
-        botPerformance: { '5': { blocks_on_rp: 3, move_efficiency: 0.9 } },
+        botPerformance: { 'bot-5': { blocks_on_rp: 3, move_efficiency: 0.9 } },
         rpPerformance: { avg_response_time: 400 },
       }
 
@@ -511,16 +500,16 @@ describe('BotCoordination - GameRecorder', () => {
       try {
         const outcome: GameOutcome = {
           gameId: 'game-loss',
-          actualWinnerId: BigInt(100),
+          actualWinnerId: 'rp-100',
           botTrainingMetadata: {
-            winnerBotId: BigInt(5),
+            winnerBotId: 'bot-5',
             strategy: 'rotation',
             targetWinRate: 0.5, // 50% chance
             aggressiveness: 0.7,
-            botIds: [BigInt(5), BigInt(6)],
-            rpId: BigInt(200),
+            botIds: ['bot-5', 'bot-6'],
+            rpId: 'rp-200',
           },
-          botPerformance: { '5': { blocks_on_rp: 1, move_efficiency: 0.6 } },
+          botPerformance: { 'bot-5': { blocks_on_rp: 1, move_efficiency: 0.6 } },
           rpPerformance: { avg_response_time: 600 },
         }
 
@@ -537,7 +526,7 @@ describe('BotCoordination - GameRecorder', () => {
     it('should skip non-coordinated games (no botTrainingMetadata)', async () => {
       const outcome: GameOutcome = {
         gameId: 'game-no-coordination',
-        actualWinnerId: BigInt(1),
+        actualWinnerId: 'bot-1',
         botPerformance: {},
         rpPerformance: {},
       }
@@ -550,21 +539,20 @@ describe('BotCoordination - GameRecorder', () => {
 
     it('should handle database errors gracefully', async () => {
       // Mock query to throw error
-      const originalQuery = mockDb.query.bind(mockDb)
       mockDb.query = vi.fn(async () => {
         throw new Error('Database connection failed')
       })
 
       const outcome: GameOutcome = {
         gameId: 'game-db-error',
-        actualWinnerId: BigInt(1),
+        actualWinnerId: 'bot-1',
         botTrainingMetadata: {
-          winnerBotId: BigInt(1),
+          winnerBotId: 'bot-1',
           strategy: 'lifetime_winrate',
           targetWinRate: 0.7,
           aggressiveness: 0.8,
-          botIds: [BigInt(1)],
-          rpId: BigInt(100),
+          botIds: ['bot-1'],
+          rpId: 'rp-100',
         },
         botPerformance: {},
         rpPerformance: {},
@@ -585,8 +573,8 @@ describe('BotCoordination - Integration', () => {
     const algorithm = new ElectionAlgorithm()
     const recorder = new GameRecorder(mockDb as any)
 
-    const botId1 = BigInt(1)
-    const botId2 = BigInt(2)
+    const botId1 = 'bot-1'
+    const botId2 = 'bot-2'
 
     // Setup mock data for stats loading
     const query = `SELECT
@@ -599,11 +587,11 @@ describe('BotCoordination - Integration', () => {
     FROM bot_learning_sessions
     WHERE bot_ids @> $2::jsonb`
 
-    mockDb.setQueryResult(query, [botId1, JSON.stringify(['1'])], [
+    mockDb.setQueryResult(query, [botId1, JSON.stringify([botId1])], [
       { total_games: 100, total_wins: 70, winner_successes: 25, chosen_as_winner: 30, avg_blocks: 2.5, avg_efficiency: 0.8 },
     ])
 
-    mockDb.setQueryResult(query, [botId2, JSON.stringify(['2'])], [
+    mockDb.setQueryResult(query, [botId2, JSON.stringify([botId2])], [
       { total_games: 100, total_wins: 60, winner_successes: 20, chosen_as_winner: 25, avg_blocks: 2.0, avg_efficiency: 0.75 },
     ])
 
@@ -613,8 +601,8 @@ describe('BotCoordination - Integration', () => {
     FROM bot_learning_sessions
     WHERE bot_ids @> $2::jsonb`
 
-    mockDb.setQueryResult(rpQuery, [botId1, JSON.stringify(['1'])], [{ rp_games: 100, rp_wins: 50 }])
-    mockDb.setQueryResult(rpQuery, [botId2, JSON.stringify(['2'])], [{ rp_games: 100, rp_wins: 45 }])
+    mockDb.setQueryResult(rpQuery, [botId1, JSON.stringify([botId1])], [{ rp_games: 100, rp_wins: 50 }])
+    mockDb.setQueryResult(rpQuery, [botId2, JSON.stringify([botId2])], [{ rp_games: 100, rp_wins: 45 }])
 
     const lastGamesQuery = `SELECT
       actual_winner_id,
@@ -624,8 +612,8 @@ describe('BotCoordination - Integration', () => {
     ORDER BY created_at DESC
     LIMIT 10`
 
-    mockDb.setQueryResult(lastGamesQuery, [JSON.stringify(['1'])], [])
-    mockDb.setQueryResult(lastGamesQuery, [JSON.stringify(['2'])], [])
+    mockDb.setQueryResult(lastGamesQuery, [JSON.stringify([botId1])], [])
+    mockDb.setQueryResult(lastGamesQuery, [JSON.stringify([botId2])], [])
 
     // Load stats for both bots
     const stats1 = await loader.loadBotStats(botId1)
@@ -655,9 +643,9 @@ describe('BotCoordination - Integration', () => {
         targetWinRate: stats1.lifetimeWinRate,
         aggressiveness: 0.75,
         botIds: [botId1, botId2],
-        rpId: BigInt(100),
+        rpId: 'rp-100',
       },
-      botPerformance: { '1': { blocks_on_rp: 2.5, move_efficiency: 0.8 } },
+      botPerformance: { 'bot-1': { blocks_on_rp: 2.5, move_efficiency: 0.8 } },
       rpPerformance: { avg_response_time: 500 },
     }
 

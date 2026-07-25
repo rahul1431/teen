@@ -11,6 +11,7 @@ import { BotStatsLoader } from './botCoordination/botStatsLoader'
 import { ElectionAlgorithm, BotWithStats } from './botCoordination/electionAlgorithm'
 import { BotTrainingConfigRepository } from './repositories/botTrainingConfigRepository'
 import { GameRecorder } from './botCoordination/gameRecorder'
+import { computeEffectiveBoldness } from './botCoordination/adaptiveBoldness'
 
 export interface MatchmakingEntry {
   userId: string
@@ -649,8 +650,16 @@ export class MatchmakingService {
 
     // Load bot training config
     const config = await this.botTrainingConfig.getConfig()
+    const botCount = gatewayPlayers.filter(p => p.isBot).length
 
-    if (config.enabled && gatewayPlayers.filter(p => p.isBot).length === 3) {
+    let botCoordinationForEngine: {
+      winnerBotIdx: number
+      aggressiveness: number
+      winnerSkill: 'casual' | 'skilled' | 'expert'
+      boldness: number
+    } | null = null
+
+    if (config.enabled && botCount === 3) {
       // This is a 3-bot + 1-RP game; apply coordination
       const botPlayers = gatewayPlayers.filter(p => p.isBot)
 
@@ -658,8 +667,8 @@ export class MatchmakingService {
         // Load stats for all bots in this game
         const botsWithStats: BotWithStats[] = await Promise.all(
           botPlayers.map(async (bot) => ({
-            botId: BigInt(bot.userId),
-            stats: await this.botStatsLoader.loadBotStats(BigInt(bot.userId)),
+            botId: bot.userId,
+            stats: await this.botStatsLoader.loadBotStats(bot.userId),
           }))
         )
 
@@ -672,7 +681,7 @@ export class MatchmakingService {
 
         // Store coordination metadata in Redis
         const botTrainingMetadata = {
-          winnerBotId: winnerBotId.toString(),
+          winnerBotId,
           strategy: config.strategy,
           targetWinRate: config.targetWinRate,
           aggressiveness: config.aggressiveness,
@@ -685,6 +694,23 @@ export class MatchmakingService {
           86400, // 24 hour expiry
           JSON.stringify(botTrainingMetadata)
         )
+
+        // Ludo's own engine keeps its own state (separate from gatewayPlayers)
+        // and needs the winner's seat index to bias per-turn token choices.
+        if (gameType === 'ludo') {
+          const winnerIdx = gatewayPlayers.findIndex(p => p.userId === winnerBotId)
+          if (winnerIdx !== -1) {
+            const boldness = config.adaptiveBoldness
+              ? await computeEffectiveBoldness(this.db, config.winnerBotBoldness, config.targetWinRate)
+              : config.winnerBotBoldness
+            botCoordinationForEngine = {
+              winnerBotIdx: winnerIdx,
+              aggressiveness: config.aggressiveness,
+              winnerSkill: config.winnerBotSkill,
+              boldness,
+            }
+          }
+        }
 
         console.log(`[BotCoordination] Game ${roomId}: ${winnerBotId} elected to win (strategy: ${config.strategy})`)
       } catch (error) {
@@ -737,6 +763,7 @@ export class MatchmakingService {
             bot_difficulty: p.botDifficulty,
             ...(ludoTrainedProfiles.get(p.userId) ?? {}),
           })),
+          ...(botCoordinationForEngine ? { botCoordination: botCoordinationForEngine } : {}),
         }),
         signal: AbortSignal.timeout(5000),
       })
@@ -1508,7 +1535,7 @@ export class MatchmakingService {
       const botTraining = JSON.parse(botTrainingRaw)
       await this.gameRecorder.recordCoordinatedGame({
         gameId: roomId,
-        actualWinnerId: BigInt(result?.winner_id || 0),
+        actualWinnerId: result?.winner_id || '',
         botTrainingMetadata: botTraining,
         botPerformance: result?.botPerformance || {},
         rpPerformance: result?.rpPerformance || {},
@@ -1516,7 +1543,7 @@ export class MatchmakingService {
 
       // Invalidate bot stats cache so next election uses fresh data
       for (const botId of botTraining.botIds) {
-        await this.botStatsLoader.invalidateStats(BigInt(botId))
+        await this.botStatsLoader.invalidateStats(botId)
       }
     }
 
@@ -1592,7 +1619,7 @@ export class MatchmakingService {
       const botTraining = JSON.parse(botTrainingRaw)
       await this.gameRecorder.recordCoordinatedGame({
         gameId: roomId,
-        actualWinnerId: BigInt(result.winner_id || 0),
+        actualWinnerId: result.winner_id || '',
         botTrainingMetadata: botTraining,
         botPerformance: result.botPerformance || {},
         rpPerformance: result.rpPerformance || {},
@@ -1600,7 +1627,7 @@ export class MatchmakingService {
 
       // Invalidate bot stats cache so next election uses fresh data
       for (const botId of botTraining.botIds) {
-        await this.botStatsLoader.invalidateStats(BigInt(botId))
+        await this.botStatsLoader.invalidateStats(botId)
       }
     }
 

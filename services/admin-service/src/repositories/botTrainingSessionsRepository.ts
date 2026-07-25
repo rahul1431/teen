@@ -2,10 +2,10 @@ import { Database } from '../db'
 
 export interface BotLearningSession {
   gameId: string
-  winnerBotId: bigint
-  actualWinnerId: bigint
-  botIds: bigint[]
-  rpId: bigint
+  winnerBotId: string
+  actualWinnerId: string
+  botIds: string[]
+  rpId: string
   strategyUsed: string
   targetWinRate: number
   coordinationSuccess: boolean
@@ -17,7 +17,7 @@ export interface SessionsQuery {
   limit?: number
   startDate?: string
   endDate?: string
-  botId?: bigint
+  botId?: string
   success?: boolean
 }
 
@@ -66,7 +66,7 @@ export class BotTrainingSessionsRepository {
       gameId: row.game_id,
       winnerBotId: row.winner_bot_id,
       actualWinnerId: row.actual_winner_id,
-      botIds: JSON.parse(row.bot_ids),
+      botIds: row.bot_ids,
       rpId: row.rp_id,
       strategyUsed: row.strategy_used,
       targetWinRate: row.target_win_rate,

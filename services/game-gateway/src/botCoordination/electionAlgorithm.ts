@@ -1,14 +1,14 @@
 import { BotStats } from './botStatsLoader'
 
 export interface BotWithStats {
-  botId: bigint
+  botId: string
   stats: BotStats
 }
 
 export class ElectionAlgorithm {
   private rotationState: Map<string, number> = new Map()
 
-  electWinnerBot(bots: BotWithStats[], strategy: string, gameTypeKey?: string): bigint {
+  electWinnerBot(bots: BotWithStats[], strategy: string, gameTypeKey?: string): string {
     if (bots.length === 0) {
       throw new Error('Cannot elect winner: no bots provided')
     }
@@ -28,19 +28,19 @@ export class ElectionAlgorithm {
     }
   }
 
-  private electionByLifetimeWinRate(bots: BotWithStats[]): bigint {
+  private electionByLifetimeWinRate(bots: BotWithStats[]): string {
     return bots.reduce((winner, bot) => {
       return bot.stats.lifetimeWinRate > winner.stats.lifetimeWinRate ? bot : winner
     }).botId
   }
 
-  private electionByVsRpWinRate(bots: BotWithStats[]): bigint {
+  private electionByVsRpWinRate(bots: BotWithStats[]): string {
     return bots.reduce((winner, bot) => {
       return bot.stats.vsRpWinRate > winner.stats.vsRpWinRate ? bot : winner
     }).botId
   }
 
-  private electionByRotation(bots: BotWithStats[], gameTypeKey: string): bigint {
+  private electionByRotation(bots: BotWithStats[], gameTypeKey: string): string {
     const key = `rotation:${gameTypeKey}`
     const lastWinnerIndex = this.rotationState.get(key) || 0
     const nextIndex = (lastWinnerIndex + 1) % bots.length
@@ -49,7 +49,7 @@ export class ElectionAlgorithm {
     return bots[nextIndex].botId
   }
 
-  private electionByWeakestFirst(bots: BotWithStats[]): bigint {
+  private electionByWeakestFirst(bots: BotWithStats[]): string {
     return bots.reduce((weakest, bot) => {
       return bot.stats.lifetimeWinRate < weakest.stats.lifetimeWinRate ? bot : weakest
     }).botId
@@ -60,7 +60,7 @@ export class ElectionAlgorithm {
    * If the chosen bot actually won, success = true.
    * Otherwise, success = rand() < targetWinRate (allows failures to count as "success" based on probability)
    */
-  isCoordinationSuccess(actualWinnerId: bigint, electedWinnerId: bigint, targetWinRate: number): boolean {
+  isCoordinationSuccess(actualWinnerId: string, electedWinnerId: string, targetWinRate: number): boolean {
     if (actualWinnerId === electedWinnerId) {
       return true
     }

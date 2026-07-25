@@ -35,6 +35,7 @@ export interface LudoPlayer {
 }
 
 export type BotDifficulty = 'easy' | 'medium' | 'hard'
+export type WinnerSkill = 'casual' | 'skilled' | 'expert'
 
 export interface LudoState {
   room_id: string
@@ -52,9 +53,10 @@ export interface LudoState {
   created_at: number
   bot_difficulty: BotDifficulty
   coordination?: {
-    isHelper: boolean
     winnerBotIdx: number
     aggressiveness: number
+    winnerSkill?: WinnerSkill
+    boldness?: number
   }
 }
 

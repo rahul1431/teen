@@ -6,10 +6,23 @@ export interface BotTrainingConfig {
   strategy: 'lifetime_winrate' | 'vs_rp_winrate' | 'rotation' | 'weakest_first'
   targetWinRate: number // 0.85 - 1.0
   aggressiveness: number // 0.0 - 1.0
+  winnerBotSkill: 'casual' | 'skilled' | 'expert'
+  winnerBotBoldness: number // 0.0 - 1.0
+  adaptiveBoldness: boolean // auto-tune winnerBotBoldness from recent coordination success rate
 }
 
 const CONFIG_REDIS_KEY = 'ludo:bot-training:config'
 const CONFIG_DB_KEY = 'ludo_bot_training_config'
+
+const DEFAULT_CONFIG: BotTrainingConfig = {
+  enabled: false,
+  strategy: 'lifetime_winrate',
+  targetWinRate: 0.95,
+  aggressiveness: 0.4,
+  winnerBotSkill: 'casual',
+  winnerBotBoldness: 0.5,
+  adaptiveBoldness: false,
+}
 
 export class BotTrainingConfigRepository {
   constructor(
@@ -21,27 +34,20 @@ export class BotTrainingConfigRepository {
     // Try Redis first
     const cached = await this.redis.get(CONFIG_REDIS_KEY)
     if (cached) {
-      return JSON.parse(cached)
+      return { ...DEFAULT_CONFIG, ...JSON.parse(cached) }
     }
 
     // Fall back to database
     const res = await this.db.query(
-      `SELECT value FROM config WHERE key = $1`,
+      `SELECT value FROM admin_config WHERE key = $1`,
       [CONFIG_DB_KEY]
     )
 
-    const defaultConfig: BotTrainingConfig = {
-      enabled: false,
-      strategy: 'lifetime_winrate',
-      targetWinRate: 0.95,
-      aggressiveness: 0.4,
-    }
-
     if (!res.rows || !res.rows[0]) {
-      return defaultConfig
+      return DEFAULT_CONFIG
     }
 
-    const config = JSON.parse(res.rows[0].value)
+    const config = { ...DEFAULT_CONFIG, ...(res.rows[0].value as Partial<BotTrainingConfig>) }
     // Cache it
     await this.redis.setex(CONFIG_REDIS_KEY, 3600, JSON.stringify(config))
     return config
@@ -55,17 +61,21 @@ export class BotTrainingConfigRepository {
     if (config.aggressiveness < 0 || config.aggressiveness > 1.0) {
       throw new Error('aggressiveness must be between 0 and 1.0')
     }
-
-    const configJson = JSON.stringify(config)
+    if (config.winnerBotBoldness < 0 || config.winnerBotBoldness > 1.0) {
+      throw new Error('winnerBotBoldness must be between 0 and 1.0')
+    }
+    if (!['casual', 'skilled', 'expert'].includes(config.winnerBotSkill)) {
+      throw new Error('winnerBotSkill must be one of casual, skilled, expert')
+    }
 
     // Update database
     await this.db.query(
-      `INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-      [CONFIG_DB_KEY, configJson]
+      `INSERT INTO admin_config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [CONFIG_DB_KEY, config]
     )
 
     // Update Redis cache
-    await this.redis.setex(CONFIG_REDIS_KEY, 3600, configJson)
+    await this.redis.setex(CONFIG_REDIS_KEY, 3600, JSON.stringify(config))
   }
 
   async invalidateCache(): Promise<void> {
