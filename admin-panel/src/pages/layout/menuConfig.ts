@@ -16,7 +16,7 @@ import {
   DollarOutlined, WarningOutlined, SafetyOutlined, AuditOutlined,
   BellOutlined, TrophyOutlined, CustomerServiceOutlined,
   FundOutlined, MobileOutlined, SettingOutlined, LineChartOutlined,
-  RobotOutlined, ProfileOutlined, HistoryOutlined,
+  RobotOutlined, ProfileOutlined, HistoryOutlined, AlertOutlined,
 } from '@ant-design/icons'
 
 // Wraps a leaf item's label in a real <Link>, so the sidebar renders actual
@@ -86,6 +86,7 @@ export function buildMenuItems(): MenuProps['items'] {
       label: 'Engagement',
       children: [
         { key: '/admin/notifications', icon: createElement(BellOutlined), label: link('/admin/notifications', 'Notifications') },
+        { key: '/admin/notifications-history', icon: createElement(AlertOutlined), label: link('/admin/notifications-history', 'Admin Alerts') },
         { key: '/admin/leaderboard', icon: createElement(TrophyOutlined), label: link('/admin/leaderboard', 'Leaderboard') },
         { key: '/admin/missions', icon: createElement(TrophyOutlined), label: link('/admin/missions', 'Missions') },
         { key: '/admin/support', icon: createElement(CustomerServiceOutlined), label: link('/admin/support', 'Support Center') },

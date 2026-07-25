@@ -21,6 +21,7 @@ const EXPECTED_KEYS = [
   '/admin/app-update',
   '/admin/finance',
   '/admin/notifications',
+  '/admin/notifications-history',
   '/admin/risk-center',
   '/admin/ai-control',
   '/admin/support',
