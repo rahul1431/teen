@@ -82,4 +82,27 @@ export function registerNotificationCampaignRoutes(app: FastifyInstance, db: Poo
       })),
     })
   })
+
+  // GET /api/admin/notifications/read-time-analytics?days=30 — how many
+  // notifications get opened at each hour of the day (IST), across all
+  // notifications (not just campaign sends) -- helps pick send times that
+  // land when users are actually likely to open them.
+  app.get('/api/admin/notifications/read-time-analytics', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { days = '30' } = req.query as any
+    const daysInt = parseInt(days, 10) || 30
+
+    const hourRes = await db.query(
+      `SELECT EXTRACT(HOUR FROM read_at AT TIME ZONE 'Asia/Kolkata')::int AS hour, COUNT(*)::int AS reads
+       FROM notifications
+       WHERE read = true AND read_at >= NOW() - ($1 || ' days')::interval
+       GROUP BY hour
+       ORDER BY hour`,
+      [daysInt],
+    )
+
+    const byHour = new Map<number, number>(hourRes.rows.map((r: any) => [r.hour, r.reads]))
+    const readsByHour = Array.from({ length: 24 }, (_, hour) => ({ hour, reads: byHour.get(hour) ?? 0 }))
+
+    return reply.send({ readsByHour })
+  })
 }

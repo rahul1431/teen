@@ -106,16 +106,31 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
       return reply.send({ success: true })
     })
 
+    // Marks the CALLING user's own notification(s) for a campaign as read —
+    // used when the user taps a push (foreground or background/terminated),
+    // where the client only knows the campaign_id from the FCM payload, not
+    // the underlying per-user notifications.id row.
+    app.put('/notifications/read-by-campaign/:campaignId', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      const { campaignId } = req.params as any
+      await db.query(
+        'UPDATE notifications SET read = true, read_at = NOW() WHERE campaign_id = $1 AND user_id = $2 AND read = false',
+        [campaignId, user.sub],
+      )
+      return reply.send({ success: true })
+    })
+
     app.post('/internal/notifications/send', { onRequest: [internal] }, async (req, reply) => {
       const { user_id, title, body, type = 'general', data, campaign_id } = req.body as any
+      const pushData = { ...(data || {}), ...(campaign_id ? { campaign_id: String(campaign_id) } : {}) }
       await db.query(
         'INSERT INTO notifications (user_id, type, title, body, data, campaign_id) VALUES ($1, $2, $3, $4, $5, $6)',
-        [user_id, type, title, body, JSON.stringify(data || {}), campaign_id || null],
+        [user_id, type, title, body, JSON.stringify(pushData), campaign_id || null],
       )
       const userRes = await db.query('SELECT fcm_token FROM users WHERE id = $1', [user_id])
       let delivered = 0
       if (userRes.rows[0]?.fcm_token) {
-        await sendPushNotification(userRes.rows[0].fcm_token, title, body, data)
+        await sendPushNotification(userRes.rows[0].fcm_token, title, body, pushData)
         delivered = 1
       }
       return reply.send({ success: true, delivered })
@@ -123,6 +138,7 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
 
     app.post('/internal/notifications/broadcast', { onRequest: [internal] }, async (req, reply) => {
       const { title, body, type = 'broadcast', data, campaign_id } = req.body as any
+      const pushData = { ...(data || {}), ...(campaign_id ? { campaign_id: String(campaign_id) } : {}) }
       const usersRes = await db.query(`SELECT id, fcm_token FROM users WHERE is_bot = false AND status = $1`, ['active'])
       const users = usersRes.rows
       if (users.length === 0) return reply.send({ success: true, sent: 0, total: 0 })
@@ -138,7 +154,7 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
           const offset = j * 6
           queryText += `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6})`
           if (j < batch.length - 1) queryText += ', '
-          values.push(u.id, type, title, body, JSON.stringify(data || {}), campaign_id || null)
+          values.push(u.id, type, title, body, JSON.stringify(pushData), campaign_id || null)
         }
         await db.query(queryText, values)
       }
@@ -154,7 +170,7 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
           const fcmMessages = tokens.map(token => ({
             token,
             notification: { title, body },
-            data,
+            data: pushData,
             android: { priority: 'high' } as any,
             apns: { payload: { aps: { sound: 'default' } } } as any
           }))

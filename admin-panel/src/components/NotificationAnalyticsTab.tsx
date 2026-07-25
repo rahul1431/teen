@@ -19,9 +19,15 @@ interface TypeBreakdown {
   avgReadRate: number
 }
 
+interface ReadByHour {
+  hour: number
+  reads: number
+}
+
 export function NotificationAnalyticsTab() {
   const [trend, setTrend] = useState<TrendPoint[]>([])
   const [byType, setByType] = useState<TypeBreakdown[]>([])
+  const [readsByHour, setReadsByHour] = useState<ReadByHour[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -31,12 +37,17 @@ export function NotificationAnalyticsTab() {
   async function fetchAnalytics() {
     setLoading(true)
     try {
-      const res = await adminApi.get('/notifications/analytics', { params: { days: 30 } })
-      setTrend(res.data.trend || [])
-      setByType(res.data.byType || [])
+      const [analyticsRes, readTimeRes] = await Promise.all([
+        adminApi.get('/notifications/analytics', { params: { days: 30 } }),
+        adminApi.get('/notifications/read-time-analytics', { params: { days: 30 } }),
+      ])
+      setTrend(analyticsRes.data.trend || [])
+      setByType(analyticsRes.data.byType || [])
+      setReadsByHour(readTimeRes.data.readsByHour || [])
     } catch {
       setTrend([])
       setByType([])
+      setReadsByHour([])
     } finally {
       setLoading(false)
     }
@@ -48,6 +59,8 @@ export function NotificationAnalyticsTab() {
     avgReadRatePct: p.avgReadRate * 100,
   }))
   const byTypeFormatted = byType.map((t) => ({ ...t, avgReadRatePct: t.avgReadRate * 100 }))
+  const readsByHourFormatted = readsByHour.map((h) => ({ ...h, label: `${h.hour}:00` }))
+  const hasReadActivity = readsByHour.some((h) => h.reads > 0)
 
   return (
     <Spin spinning={loading}>
@@ -86,6 +99,27 @@ export function NotificationAnalyticsTab() {
               </ResponsiveContainer>
             ) : (
               !loading && <Empty description="No notifications sent yet" />
+            )}
+          </Card>
+        </Col>
+        <Col span={24}>
+          <Card
+            title="When Users Open Notifications (last 30 days, IST)"
+            bordered={false}
+            extra={<span style={{ fontSize: 12, color: '#8b949e' }}>Use this to pick send times</span>}
+          >
+            {hasReadActivity ? (
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={readsByHourFormatted}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={1} />
+                  <YAxis tick={{ fontSize: 12 }} allowDecimals={false} label={{ value: 'Notifications Opened', angle: -90, position: 'insideLeft' }} />
+                  <Tooltip />
+                  <Bar dataKey="reads" name="Opened" fill="#722ed1" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              !loading && <Empty description="No notification opens recorded yet" />
             )}
           </Card>
         </Col>

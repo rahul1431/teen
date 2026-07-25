@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:go_router/go_router.dart';
@@ -64,8 +65,15 @@ class PushNotificationService {
       await _localNotifications.initialize(
         const InitializationSettings(android: androidSettings, iOS: iosSettings),
         onDidReceiveNotificationResponse: (response) {
-          final route = response.payload;
-          if (route != null && route.isNotEmpty) _navigate(route);
+          final payload = response.payload;
+          if (payload == null || payload.isEmpty) return;
+          try {
+            final decoded = jsonDecode(payload) as Map<String, dynamic>;
+            final route = decoded['route'] as String?;
+            final campaignId = decoded['campaign_id'] as String?;
+            if (route != null && route.isNotEmpty) _navigate(route);
+            _markCampaignRead(campaignId);
+          } catch (_) {}
         },
       );
 
@@ -102,7 +110,10 @@ class PushNotificationService {
           ),
           iOS: DarwinNotificationDetails(),
         ),
-        payload: message.data['route'] as String?,
+        payload: jsonEncode({
+          'route': message.data['route'],
+          'campaign_id': message.data['campaign_id'],
+        }),
       );
     } catch (_) {
       // Best-effort — a failed local notification must never crash the app.
@@ -127,9 +138,21 @@ class PushNotificationService {
   void _routeMessage(RemoteMessage message) {
     final route = message.data['route'] as String?;
     if (route != null && route.isNotEmpty) _navigate(route);
+    _markCampaignRead(message.data['campaign_id'] as String?);
   }
 
   void _navigate(String route) {
     _router?.push(route);
+  }
+
+  // Marks the notification read the moment the user actually acts on it —
+  // taps the tray notification (background/terminated, here) or the local
+  // foreground notification (see onDidReceiveNotificationResponse above).
+  // Best-effort: a failed mark-as-read must never block navigation.
+  Future<void> _markCampaignRead(String? campaignId) async {
+    if (campaignId == null || campaignId.isEmpty) return;
+    try {
+      await ApiClient().dio.put('/api/notifications/read-by-campaign/$campaignId');
+    } catch (_) {}
   }
 }

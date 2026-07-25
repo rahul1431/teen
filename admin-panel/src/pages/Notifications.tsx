@@ -5,22 +5,46 @@ import { adminApi } from '../api/client'
 import { NotificationHistoryTab } from '../components/NotificationHistoryTab'
 import { NotificationAnalyticsTab } from '../components/NotificationAnalyticsTab'
 
+const ROUTE_OPTIONS = [
+  { value: '/home', label: 'Home' },
+  { value: '/games/ludo', label: 'Ludo' },
+  { value: '/games/teen-patti', label: 'Teen Patti' },
+  { value: '/games/matka', label: 'Satta Matka' },
+  { value: '/games/lottery', label: 'Lottery' },
+  { value: '/games/cricket', label: 'Cricket' },
+  { value: '/wallet', label: 'Wallet' },
+  { value: '/leaderboard', label: 'Leaderboard' },
+  { value: '/missions', label: 'Missions' },
+  { value: '/referral', label: 'Refer & Earn' },
+  { value: 'custom', label: 'Custom route…' },
+]
+
 function SendTab() {
   const [loading, setLoading] = useState(false)
   const [form] = Form.useForm()
   const [target, setTarget] = useState<'all' | 'user'>('all')
+  const [routeChoice, setRouteChoice] = useState<string | undefined>(undefined)
+
+  const resolveRoute = (values: any): string | undefined => {
+    if (!routeChoice) return undefined
+    if (routeChoice === 'custom') return values.customRoute?.trim() || undefined
+    return routeChoice
+  }
 
   const onSend = async (values: any) => {
     setLoading(true)
     try {
+      const route = resolveRoute(values)
+      const data = route ? { route } : undefined
       if (target === 'all') {
-        await adminApi.post('/notifications/broadcast', { title: values.title, body: values.body, type: values.type || 'broadcast' })
+        await adminApi.post('/notifications/broadcast', { title: values.title, body: values.body, type: values.type || 'broadcast', data })
         message.success('Broadcast sent to all users!')
       } else {
-        await adminApi.post('/notifications/send', { user_id: values.user_id, title: values.title, body: values.body, type: values.type || 'general' })
+        await adminApi.post('/notifications/send', { user_id: values.user_id, title: values.title, body: values.body, type: values.type || 'general', data })
         message.success('Notification sent!')
       }
       form.resetFields()
+      setRouteChoice(undefined)
     } catch {
       message.error('Failed to send notification')
     } finally { setLoading(false) }
@@ -58,6 +82,22 @@ function SendTab() {
         <Form.Item name="body" label="Message" rules={[{ required: true, max: 300 }]}>
           <Input.TextArea rows={3} placeholder="Notification body" />
         </Form.Item>
+
+        <Form.Item label="Deep Link (optional)" help="Where tapping the notification takes the user — leave blank to just open the app">
+          <Select
+            allowClear
+            placeholder="No deep link"
+            value={routeChoice}
+            onChange={setRouteChoice}
+            options={ROUTE_OPTIONS}
+          />
+        </Form.Item>
+
+        {routeChoice === 'custom' && (
+          <Form.Item name="customRoute" label="Custom Route" rules={[{ required: true }]}>
+            <Input placeholder="e.g. /games/ludo/lobby" />
+          </Form.Item>
+        )}
 
         <Form.Item>
           <Button type="primary" htmlType="submit" icon={<SendOutlined />} loading={loading} block>
