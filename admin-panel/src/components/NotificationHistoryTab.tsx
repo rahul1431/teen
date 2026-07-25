@@ -79,7 +79,10 @@ export function NotificationHistoryTab() {
           placeholder="Filter by type"
           style={{ width: 180 }}
           value={type}
-          onChange={setType}
+          onChange={(value) => {
+            setType(value)
+            setPage(1)
+          }}
           options={[
             { value: 'general', label: 'General' },
             { value: 'promotion', label: 'Promotion' },
@@ -88,7 +91,14 @@ export function NotificationHistoryTab() {
             { value: 'broadcast', label: 'Broadcast' },
           ]}
         />
-        <RangePicker value={dateRange as any} onChange={(range) => setDateRange(range as [Dayjs | null, Dayjs | null] | null)} allowClear />
+        <RangePicker
+          value={dateRange as any}
+          onChange={(range) => {
+            setDateRange(range as [Dayjs | null, Dayjs | null] | null)
+            setPage(1)
+          }}
+          allowClear
+        />
       </Space>
       <Table
         dataSource={campaigns}
