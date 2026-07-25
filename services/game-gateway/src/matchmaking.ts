@@ -1461,6 +1461,22 @@ export class MatchmakingService {
           console.error(`[RECONCILE-NEEDED] Could not record settle-game failure for room=${roomId}`, redisErr)
         }
       }
+
+      // Persist the exact finishing order and payout per player. The wallet
+      // settle-game call above only moves money (winner credit); without this,
+      // game_participants.final_rank/prize_won stay at their defaults (NULL/0)
+      // for every Ludo player forever, so Game History (admin + mobile) can't
+      // show anything but a generic loss.
+      const rankings: { user_id: string }[] = result?.rankings ?? []
+      for (let i = 0; i < rankings.length; i++) {
+        const userId = rankings[i].user_id
+        const finalRank = i + 1
+        const prizeWon = userId === effectiveWinnerId ? effectivePrize : 0
+        await this.db.query(
+          'UPDATE game_participants SET prize_won = $1, final_rank = $2 WHERE room_id = $3 AND user_id = $4',
+          [prizeWon, finalRank, roomId, userId]
+        )
+      }
     } catch (e) {
       console.error('Failed to settle Ludo game', e)
       try {
