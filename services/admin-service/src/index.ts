@@ -37,6 +37,7 @@ import { registerMetricsRoutes } from './metrics-routes'
 import { registerPlayerAnomaliesRoutes } from './player-anomalies-routes'
 import { registerPnlDashboardRoutes } from './pnl-dashboard-routes'
 import { registerTaskRoutes } from './task-routes'
+import { registerMissionRoutes } from './mission-routes'
 import { registerNotificationRoutes } from './notifications-routes'
 import { registerAgentRoutes } from './agent-routes'
 import { registerAgentPortalRoutes } from './agent-portal-routes'
@@ -157,6 +158,9 @@ async function start() {
 
   // Register Task Management routes
   await registerTaskRoutes(app, db, authenticate, requireRole)
+
+  // Register Missions routes (player-facing rewards — distinct from the employee Task Management above)
+  await registerMissionRoutes(app, db, authenticate, requireRole)
 
   // Register Notification routes
   registerNotificationRoutes(app, db, authenticate)
