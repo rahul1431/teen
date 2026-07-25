@@ -455,6 +455,27 @@ class TestDifficultyPredictorLudoDataQuality:
     verify that poisoned history is excluded from training/prediction, and
     that the model refuses to train on too little real post-fix Ludo data."""
 
+    def test_query_does_not_compare_uuid_column_to_empty_string(self, predictor):
+        """Regression: user_id is a UUID column. `user_id != ''` is invalid
+        syntax in Postgres (raises 'invalid input syntax for type uuid') and
+        made /train-difficulty 500 against real data — never caught because
+        every other test here mocks get_player_features and never hits the
+        real query string."""
+        captured = {}
+
+        def fake_read_sql_query(query, conn, params=None):
+            captured['query'] = query
+            return pd.DataFrame(columns=[
+                'player_id', 'game_type', 'current_win_rate', 'game_count',
+                'avg_session_duration', 'bet_aggression', 'playstyle_cluster'
+            ])
+
+        with patch('difficulty_predictor.pd.read_sql_query', side_effect=fake_read_sql_query):
+            with patch.object(predictor, 'get_db_connection', return_value=MagicMock()):
+                predictor.get_player_features()
+
+        assert "!= ''" not in captured['query']
+
     def test_ludo_branch_excludes_pre_cutover_rows_from_query(self, predictor):
         """The game_participants query must filter Ludo rows to
         joined_at >= the fix cutover, and must NOT apply that filter to
@@ -486,6 +507,74 @@ class TestDifficultyPredictorLudoDataQuality:
             "cutover filter should appear at/after the ludo CASE branch"
         # Only one occurrence — proves it's not duplicated onto other branches too.
         assert query.count(LUDO_FINAL_RANK_FIX_CUTOVER) == 1
+
+    def test_bot_player_profiles_join_matches_real_schema(self, predictor):
+        """Regression: bot_player_profiles (migration 052, owned by
+        playstyle_clusterer.py) has UNIQUE(player_id) and a `cluster_id`
+        column — it has no `game_type` or `playstyle_cluster` column. The
+        original join (`bpp.game_type = gp.game_type`, `bpp.playstyle_cluster`)
+        raised 'column bpp.game_type does not exist' against the real DB on
+        every single call, invisible because predict()'s broad except
+        swallowed it into a silent fallback. Never caught because every
+        other test here mocks get_player_features entirely."""
+        captured = {}
+
+        def fake_read_sql_query(query, conn, params=None):
+            captured['query'] = query
+            return pd.DataFrame(columns=[
+                'player_id', 'game_type', 'current_win_rate', 'game_count',
+                'avg_session_duration', 'bet_aggression', 'playstyle_cluster'
+            ])
+
+        with patch('difficulty_predictor.pd.read_sql_query', side_effect=fake_read_sql_query):
+            with patch.object(predictor, 'get_db_connection', return_value=MagicMock()):
+                predictor.get_player_features()
+
+        query = captured['query']
+        assert 'bpp.game_type' not in query
+        assert 'bpp.playstyle_cluster' not in query
+        assert 'bpp.cluster_id' in query
+        assert 'bpp.player_id = u.id' in query
+
+    def test_predict_reads_current_difficulty_from_dedicated_table(self, predictor):
+        """Regression: predict()'s current_difficulty lookup queried
+        bot_player_profiles WHERE game_type = %s, a column that doesn't
+        exist on that table. It now reads from the dedicated
+        personalized_difficulty_predictions table (migration 090)."""
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+
+        with patch.object(predictor, 'get_db_connection', return_value=mock_conn):
+            predictor.predict('player1', 'ludo')
+
+        executed_sql = mock_cursor.execute.call_args[0][0]
+        assert 'personalized_difficulty_predictions' in executed_sql
+        assert 'bot_player_profiles' not in executed_sql
+
+    def test_store_prediction_writes_to_dedicated_table(self, predictor):
+        """Regression: store_prediction() wrote to bot_player_profiles
+        columns (recommended_difficulty, current_difficulty, game_type)
+        that don't exist there. It now writes to
+        personalized_difficulty_predictions."""
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+
+        with patch.object(predictor, 'get_db_connection', return_value=mock_conn):
+            predictor.store_prediction(PredictionResult(
+                recommended_difficulty='hard',
+                confidence_score=0.9,
+                player_id='player1',
+                game_type='ludo',
+                current_difficulty='medium',
+            ))
+
+        for call in mock_cursor.execute.call_args_list:
+            assert 'bot_player_profiles' not in call[0][0]
+        assert any('personalized_difficulty_predictions' in call[0][0] for call in mock_cursor.execute.call_args_list)
 
     def test_train_raises_when_ludo_volume_below_threshold(self, predictor):
         """With fewer than MIN_LUDO_TRAINING_ROWS real post-cutover Ludo

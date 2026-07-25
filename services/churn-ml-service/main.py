@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from synthetic_data import generate_synthetic_training_data, validate_synthetic_data
 from model_versioning import save_model_versioned, activate_model, get_active_model_path
 from src.difficulty_predictor import get_predictor as get_difficulty_predictor
+from src.anomaly_detector import run_anomaly_detection_pipeline
 
 load_dotenv()
 
@@ -391,14 +392,26 @@ def train_difficulty_model() -> Dict[str, Any]:
         logger.error(f"Difficulty model training failed: {e}")
         raise HTTPException(status_code=500, detail=f"Training failed: {str(e)}")
 
+@app.post("/run-anomaly-detection")
+def run_anomaly_detection() -> Dict[str, Any]:
+    """Admin-triggered fraud/anomaly detection sweep (ML Training tab, admin
+    panel). Runs synchronously — this is a manual action button, not a
+    hot path, so blocking the request for the pipeline's duration is fine."""
+    result = run_anomaly_detection_pipeline()
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Anomaly detection failed"))
+    return result
+
 @app.get("/health")
 def health():
     model_loaded = os.path.exists(MODEL_PATH)
     difficulty_model_loaded = os.path.exists(
         os.path.join(os.path.dirname(__file__), "src", "difficulty_model.pkl")
     )
+    difficulty_predictor = get_difficulty_predictor()
     return {
         "status": "healthy",
         "model_trained": model_loaded,
         "difficulty_model_trained": difficulty_model_loaded,
+        "difficulty_model_test_accuracy": difficulty_predictor.test_accuracy or None,
     }

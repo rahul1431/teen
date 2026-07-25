@@ -30,36 +30,40 @@ function findIdWithPercent(target: number): string {
 }
 
 async function run() {
-  // A Ludo-only canary var, set to 50%. The legacy shared var stays 0 —
-  // proves Ludo's rollout doesn't depend on the old global knob at all.
-  process.env.PERSONALIZATION_CANARY_PCT_LUDO = '50'
-  process.env.PERSONALIZATION_CANARY_PCT = '0'
+  const { isInCanaryPercent, isInPersonalizationCanary } = require('./personalized-difficulty-client')
 
-  // Re-require so the module reads the env vars set above (module-level consts).
+  const inBucket = findIdWithPercent(10)    // 10 < 50 → in a 50% bucket
+  const outOfBucket = findIdWithPercent(90) // 90 >= 50 → out of a 50% bucket
+
+  // Ludo's canary is now DB-driven (game_configs.personalization_canary_pct),
+  // passed in directly by the caller — no env var involved.
+  assert(
+    'a player hashing under a DB-sourced pct is in the canary',
+    isInCanaryPercent(inBucket, 50) === true
+  )
+  assert(
+    'a player hashing over a DB-sourced pct is NOT in the canary',
+    isInCanaryPercent(outOfBucket, 50) === false
+  )
+  assert('pct of 0 is always out', isInCanaryPercent(inBucket, 0) === false)
+  assert('pct of 100 is always in', isInCanaryPercent(outOfBucket, 100) === true)
+  assert('negative pct clamps to 0 (always out)', isInCanaryPercent(inBucket, -5) === false)
+  assert('pct above 100 clamps to 100 (always in)', isInCanaryPercent(outOfBucket, 500) === true)
+
+  // Every other game type still uses the legacy shared env var, untouched.
+  process.env.PERSONALIZATION_CANARY_PCT = '50'
   delete require.cache[require.resolve('./personalized-difficulty-client')]
-  const { isInPersonalizationCanary } = require('./personalized-difficulty-client')
-
-  const inBucket = findIdWithPercent(10)   // 10 < 50 → in Ludo canary
-  const outOfBucket = findIdWithPercent(90) // 90 >= 50 → out
-
+  const { isInPersonalizationCanary: isInLegacyCanary } = require('./personalized-difficulty-client')
   assert(
-    'a player hashing under the Ludo pct is in the canary for ludo',
-    isInPersonalizationCanary(inBucket, 'ludo') === true
-  )
-  assert(
-    'a player hashing over the Ludo pct is NOT in the canary for ludo',
-    isInPersonalizationCanary(outOfBucket, 'ludo') === false
-  )
-  assert(
-    'the same in-bucket player is NOT in the canary for teen_patti (legacy var is 0)',
-    isInPersonalizationCanary(inBucket, 'teen_patti') === false
+    'non-Ludo callers still read the legacy PERSONALIZATION_CANARY_PCT env var',
+    isInLegacyCanary(inBucket) === true
   )
 
   if (testsFailed) {
     console.error(`\n${testsFailed} test(s) FAILED`)
     process.exit(1)
   }
-  console.log(`\nAll ${testsPassed} personalized-difficulty canary-scoping tests passed.`)
+  console.log(`\nAll ${testsPassed} personalized-difficulty canary tests passed.`)
 }
 
 run()

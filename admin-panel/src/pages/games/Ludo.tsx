@@ -10,6 +10,7 @@ import GamePnlDashboard from '../../components/GamePnlDashboard'
 import { BotTrainingConfigPanel } from '../../components/BotTrainingConfigPanel'
 import { BotMetricsTable } from '../../components/BotMetricsTable'
 import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
+import { MLTrainingPanel } from '../../components/MLTrainingPanel'
 
 export default function Ludo() {
   const screens = Grid.useBreakpoint()
@@ -182,6 +183,6 @@ export default function Ludo() {
         <BotMetricsTable />
         <BotTrainingAuditTrail />
       </div>
-    ) }]} />
+    ) }, { key: 'ml-training', label: 'ML Training', children: <MLTrainingPanel /> }]} />
   )
 }

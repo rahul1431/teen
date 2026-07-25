@@ -122,9 +122,12 @@ def extract_player_anomaly_features(conn) -> List[PlayerAnomalyFeatures]:
                 AVG(EXTRACT(EPOCH FROM (gp.left_at - gp.joined_at)) / 60.0) as recent_avg_session_length,
                 COUNT(DISTINCT DATE(gp.joined_at)) as days_active_recent,
                 MAX(gp.joined_at) as last_game_at,
-                SUM(CASE WHEN gp.game_type = 'teen_patti' THEN 1 ELSE 0 END)::float /
+                -- game_type lives on game_rooms, not game_participants —
+                -- join to it rather than assuming it's a column here.
+                SUM(CASE WHEN gr.game_type = 'teen_patti' THEN 1 ELSE 0 END)::float /
                     NULLIF(COUNT(gp.id), 0) as tp_bet_aggression_ratio
             FROM game_participants gp
+            JOIN game_rooms gr ON gr.id = gp.room_id
             WHERE gp.is_bot = FALSE
               AND gp.joined_at > NOW() - INTERVAL '30 days'
               AND gp.left_at IS NOT NULL

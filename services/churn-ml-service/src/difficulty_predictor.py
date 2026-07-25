@@ -89,23 +89,17 @@ class DifficultyPredictor:
         """
         conn = self.get_db_connection()
         try:
+            # gp fully aggregates to exactly one row per (user_id, game_type)
+            # inside the CTE — every downstream reference to it (including
+            # AVG(...) for avg_session_duration) is over ALREADY-aggregated
+            # columns, so the outer query needs no GROUP BY of its own. (The
+            # previous version aggregated gp per (user_id, game_type,
+            # joined_at, left_at) — leaving multiple rows per game_type — and
+            # then referenced gp.games_won ungrouped in the outer SELECT,
+            # which Postgres rejects outright: "column gp.games_won must
+            # appear in the GROUP BY clause".)
             query = f"""
-            SELECT
-              u.id as player_id,
-              COALESCE(gp.game_type, 'teen_patti') as game_type,
-              CASE
-                WHEN gp.games_played > 0 THEN ROUND((gp.games_won::numeric / gp.games_played) * 100, 2)
-                ELSE 0
-              END as current_win_rate,
-              COALESCE(gp.games_played, 0) as game_count,
-              COALESCE(AVG(EXTRACT(EPOCH FROM (gp.left_at - gp.joined_at)) / 60), 0) as avg_session_duration,
-              COALESCE(
-                (COALESCE(gp.total_bets, 0) / NULLIF(gp.games_played, 0))::numeric,
-                0
-              ) as bet_aggression,
-              COALESCE(bpp.playstyle_cluster, 0) as playstyle_cluster
-            FROM users u
-            LEFT JOIN (
+            WITH gp AS (
               SELECT
                 user_id,
                 CASE WHEN room_id IN (
@@ -125,10 +119,9 @@ class DifficultyPredictor:
                 COUNT(*) as games_played,
                 SUM(CASE WHEN final_rank = 1 THEN 1 ELSE 0 END) as games_won,
                 SUM(COALESCE(prize_won, 0)) as total_bets,
-                joined_at,
-                left_at
+                AVG(EXTRACT(EPOCH FROM (left_at - joined_at)) / 60) as avg_session_duration
               FROM game_participants
-              WHERE user_id IS NOT NULL AND user_id != ''
+              WHERE user_id IS NOT NULL
                 -- final_rank was never written for Ludo before this cutover
                 -- (see LUDO_FINAL_RANK_FIX_CUTOVER) — every earlier Ludo row
                 -- looks like a 0% win rate regardless of the real outcome,
@@ -137,18 +130,36 @@ class DifficultyPredictor:
                   room_id NOT IN (SELECT id FROM game_rooms WHERE game_type = 'ludo')
                   OR joined_at >= '{LUDO_FINAL_RANK_FIX_CUTOVER}'
                 )
-              GROUP BY user_id, game_type, joined_at, left_at
-            ) gp ON gp.user_id = u.id
-            LEFT JOIN bot_player_profiles bpp ON bpp.player_id = u.id AND bpp.game_type = gp.game_type
+              GROUP BY user_id, game_type
+            )
+            SELECT
+              u.id as player_id,
+              COALESCE(gp.game_type, 'teen_patti') as game_type,
+              CASE
+                WHEN gp.games_played > 0 THEN ROUND((gp.games_won::numeric / gp.games_played) * 100, 2)
+                ELSE 0
+              END as current_win_rate,
+              COALESCE(gp.games_played, 0) as game_count,
+              COALESCE(gp.avg_session_duration, 0) as avg_session_duration,
+              COALESCE(
+                (COALESCE(gp.total_bets, 0) / NULLIF(gp.games_played, 0))::numeric,
+                0
+              ) as bet_aggression,
+              COALESCE(bpp.cluster_id, 0) as playstyle_cluster
+            FROM users u
+            LEFT JOIN gp ON gp.user_id = u.id
+            -- bot_player_profiles (migration 052) is owned by
+            -- playstyle_clusterer.py: one cross-game row per player
+            -- (UNIQUE(player_id)), not per (player, game_type) — join on
+            -- player_id alone.
+            LEFT JOIN bot_player_profiles bpp ON bpp.player_id = u.id
             WHERE u.is_bot = false AND u.status = 'active'
             """
 
             if player_id:
                 query += " AND u.id = %s"
-                query += " GROUP BY u.id, gp.game_type, gp.games_played, gp.total_bets, bpp.playstyle_cluster"
                 df = pd.read_sql_query(query, conn, params=(player_id,))
             else:
-                query += " GROUP BY u.id, gp.game_type, gp.games_played, gp.total_bets, bpp.playstyle_cluster"
                 df = pd.read_sql_query(query, conn)
 
             # Fill NaN values with defaults
@@ -382,7 +393,7 @@ class DifficultyPredictor:
             try:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT current_difficulty FROM bot_player_profiles WHERE player_id = %s AND game_type = %s",
+                    "SELECT current_difficulty FROM personalized_difficulty_predictions WHERE player_id = %s AND game_type = %s",
                     (player_id, game_type)
                 )
                 result = cursor.fetchone()
@@ -491,7 +502,9 @@ class DifficultyPredictor:
 
     def store_prediction(self, prediction: PredictionResult):
         """
-        Store prediction in bot_player_profiles table.
+        Store prediction in the personalized_difficulty_predictions table
+        (migration 090 — dedicated table, not bot_player_profiles, which is
+        a cross-game table owned by playstyle_clusterer.py).
 
         Args:
             prediction: PredictionResult to store
@@ -500,41 +513,25 @@ class DifficultyPredictor:
             conn = self.get_db_connection()
             try:
                 cursor = conn.cursor()
-
-                # Check if profile exists
                 cursor.execute(
-                    "SELECT id FROM bot_player_profiles WHERE player_id = %s AND game_type = %s",
-                    (prediction.player_id, prediction.game_type)
+                    """
+                    INSERT INTO personalized_difficulty_predictions
+                        (player_id, game_type, current_difficulty, recommended_difficulty, confidence_score)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (player_id, game_type) DO UPDATE SET
+                        current_difficulty = EXCLUDED.current_difficulty,
+                        recommended_difficulty = EXCLUDED.recommended_difficulty,
+                        confidence_score = EXCLUDED.confidence_score,
+                        updated_at = NOW()
+                    """,
+                    (
+                        prediction.player_id,
+                        prediction.game_type,
+                        prediction.current_difficulty or 'medium',
+                        prediction.recommended_difficulty,
+                        prediction.confidence_score,
+                    )
                 )
-
-                if cursor.fetchone():
-                    # Update existing
-                    cursor.execute(
-                        """
-                        UPDATE bot_player_profiles
-                        SET recommended_difficulty = %s, last_updated = NOW()
-                        WHERE player_id = %s AND game_type = %s
-                        """,
-                        (prediction.recommended_difficulty, prediction.player_id, prediction.game_type)
-                    )
-                else:
-                    # Insert new
-                    cursor.execute(
-                        """
-                        INSERT INTO bot_player_profiles
-                        (player_id, game_type, current_difficulty, recommended_difficulty, playstyle_cluster, win_rate, game_count)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            prediction.player_id,
-                            prediction.game_type,
-                            prediction.current_difficulty or 'medium',
-                            prediction.recommended_difficulty,
-                            0,
-                            0.0,
-                            0
-                        )
-                    )
 
                 conn.commit()
                 logger.info(f"Stored prediction for {prediction.player_id}")

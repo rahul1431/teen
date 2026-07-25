@@ -16,6 +16,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+from unittest.mock import patch, MagicMock
 from anomaly_detector import (
     PlayerAnomalyFeatures,
     AnomalyDetectionResult,
@@ -23,11 +24,42 @@ from anomaly_detector import (
     train_isolation_forest,
     calculate_zscore_statistics,
     score_player_anomalies,
+    extract_player_anomaly_features,
     ANOMALY_SCORE_THRESHOLD,
     ZSCORE_THRESHOLD,
     ISOLATION_FOREST_CONTAMINATION,
     ISOLATION_FOREST_N_ESTIMATORS
 )
+
+
+class TestExtractPlayerAnomalyFeaturesQuery:
+    """Regression: game_participants has no `game_type` column (it lives on
+    game_rooms, joined via room_id) — the original query referenced
+    `gp.game_type` directly and raised 'column gp.game_type does not exist'
+    against the real DB on every call. Never caught because every other
+    test in this file operates on already-constructed feature objects, not
+    the raw SQL."""
+
+    def test_query_joins_game_rooms_for_game_type(self):
+        captured = {}
+
+        def fake_read_sql_query(query, conn):
+            captured['query'] = query
+            return pd.DataFrame(columns=[
+                'player_id', 'recent_win_rate', 'hist_avg_session_length',
+                'recent_avg_session_length', 'bet_aggression_ratio',
+                'cohort_avg_profit', 'cohort_stddev_profit',
+                'cohort_avg_session_length', 'recent_game_count',
+                'hist_games_per_week', 'days_active_recent', 'cluster_id',
+            ])
+
+        with patch('anomaly_detector.pd.read_sql_query', side_effect=fake_read_sql_query):
+            extract_player_anomaly_features(MagicMock())
+
+        query = captured['query']
+        assert 'gp.game_type' not in query
+        assert 'gr.game_type' in query
+        assert 'JOIN game_rooms gr ON gr.id = gp.room_id' in query
 
 
 @pytest.fixture

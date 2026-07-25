@@ -6,7 +6,7 @@ import { RealtimeHub } from './realtime'
 import { GameWatchdog } from './watchdog'
 import { getBotProfile, pickBotAction, pickBotDelay } from './bot-profile'
 import { monitorEmitter } from './monitor-emitter'
-import { isInPersonalizationCanary, getPersonalizedDifficulty } from './personalized-difficulty-client'
+import { isInPersonalizationCanary, isInCanaryPercent, getPersonalizedDifficulty } from './personalized-difficulty-client'
 import { BotStatsLoader } from './botCoordination/botStatsLoader'
 import { ElectionAlgorithm, BotWithStats } from './botCoordination/electionAlgorithm'
 import { BotTrainingConfigRepository } from './repositories/botTrainingConfigRepository'
@@ -506,13 +506,15 @@ export class MatchmakingService {
     console.log(`[matchmaking] startGame room=${roomId} ${gameType}:${stake} real=${realPlayers.length} bots=${bots.length}`)
 
     let botDifficulty = 'medium'
+    let personalizationCanaryPct = 0
     try {
       const configRes = await this.db.query(
-        'SELECT bot_difficulty FROM game_configs WHERE game_type = $1',
+        'SELECT bot_difficulty, personalization_canary_pct FROM game_configs WHERE game_type = $1',
         [gameType]
       )
-      if (configRes.rows.length > 0 && configRes.rows[0].bot_difficulty) {
-        botDifficulty = configRes.rows[0].bot_difficulty
+      if (configRes.rows.length > 0) {
+        if (configRes.rows[0].bot_difficulty) botDifficulty = configRes.rows[0].bot_difficulty
+        personalizationCanaryPct = configRes.rows[0].personalization_canary_pct ?? 0
       }
     } catch (configErr) {
       console.error('[matchmaking] Failed to query bot_difficulty from game_configs', configErr)
@@ -521,8 +523,16 @@ export class MatchmakingService {
     // Personalized-difficulty canary (Task 18/19): the engines take one
     // difficulty per room, so this only applies cleanly to the common
     // "one real player + bot fill" case — not multi-real-player rooms.
+    // Ludo's rollout pct is DB-backed (admin-editable via the ML Training
+    // tab); every other game type keeps using the shared env-var-driven
+    // isInPersonalizationCanary exactly as before.
     let botDifficultySource: 'standard' | 'personalized' = 'standard'
-    if (realPlayers.length === 1 && isInPersonalizationCanary(realPlayers[0].userId, gameType)) {
+    const inCanary = realPlayers.length === 1 && (
+      gameType === 'ludo'
+        ? isInCanaryPercent(realPlayers[0].userId, personalizationCanaryPct)
+        : isInPersonalizationCanary(realPlayers[0].userId)
+    )
+    if (inCanary) {
       const prediction = await getPersonalizedDifficulty(realPlayers[0].userId, gameType)
       if (prediction) {
         botDifficulty = prediction.recommended_difficulty
