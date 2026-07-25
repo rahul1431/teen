@@ -31,6 +31,7 @@ import 'features/notifications/notifications_page.dart';
 import 'features/referral/referral_page.dart';
 import 'features/onboarding/language_selection_page.dart';
 import 'features/games/games_page.dart';
+import 'features/missions/missions_page.dart';
 import 'shared/widgets/app_shell.dart';
 import 'core/services/locale_service.dart';
 
@@ -131,6 +132,7 @@ final GoRouter _router = GoRouter(
     GoRoute(path: '/games/ludo/practice', builder: (_, __) => const LudoGamePage(offline: true)),
     GoRoute(path: '/games/ludo/play/:roomId', builder: (_, s) => LudoGamePage(roomId: s.pathParameters['roomId']!, initialData: s.extra as Map<String, dynamic>?)),
     GoRoute(path: '/referral', builder: (_, __) => const ReferralPage()),
+    GoRoute(path: '/missions', builder: (_, __) => const MissionsPage()),
     GoRoute(path: '/onboarding/language',
         builder: (_, __) => const LanguageSelectionPage(isOnboarding: true)),
   ],

@@ -612,6 +612,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
           children: [
             _promoCard(
+                '🎯',
+                'Weekly\nMissions',
+                'Earn Extra Rewards!',
+                [const Color(0xFF1A4C2E), const Color(0xFF0D2E19)],
+                AppColors.green,
+                onTap: () => context.push('/missions')),
+            _promoCard(
                 '👥',
                 'Refer &\nEarn',
                 'Get ₹50 Per Ref',
