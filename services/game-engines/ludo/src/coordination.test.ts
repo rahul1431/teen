@@ -132,6 +132,49 @@ describe('chooseBotTokenCoordinated', () => {
     // Should return 0 to clear the path (move token 0 out of the way)
     assert.equal(result, 0, 'priority 2 should trigger when aggressiveness > 0.2 and helper is blocking winner')
   })
+
+  test('priority 3.5 (throttle) stalls a helper materially ahead of the winner bot', () => {
+    // Helper (idx 1) total progress 40+3=43 vs winner (idx 2) total progress 5:
+    // a 38-point lead, past the 20-point throttle threshold. Neither blocking,
+    // clearing, nor sacrifice conditions are set up (aggressiveness is below
+    // all of their thresholds), so without the throttle this would fall
+    // through to normal best-move logic and advance the most-progressed
+    // token (0). The throttle should instead pick the least-progressed
+    // movable token (1) so the helper doesn't race ahead of the winner.
+    const state = makeState()
+    state.players[0].tokens = [-1, -1, -1, -1] // RP: no tokens in play
+    state.players[1].tokens = [40, 3, -1, -1] // Helper bot: far ahead
+    state.players[2].tokens = [5, -1, -1, -1] // Winner bot: far behind
+
+    const metadata: CoordinationMetadata = {
+      isHelper: true,
+      winnerBotIdx: 2,
+      aggressiveness: 0.1, // below every other priority's threshold
+    }
+
+    const result = chooseBotTokenCoordinated(state, 1, 3, metadata)
+    assert.equal(result, 1, 'throttle should move the least-progressed token instead of racing ahead')
+  })
+
+  test('priority 3.5 (throttle) does not trigger when the helper is not materially ahead', () => {
+    // Same shape as above, but the lead is only 10 points (5+3=8 helper vs 3
+    // winner... use values that keep the gap under THROTTLE_LEAD=20) so
+    // normal best-move logic should run instead, picking the most-progressed
+    // movable token (0).
+    const state = makeState()
+    state.players[0].tokens = [-1, -1, -1, -1]
+    state.players[1].tokens = [10, 3, -1, -1] // Helper bot: total 13
+    state.players[2].tokens = [5, -1, -1, -1] // Winner bot: total 5 (gap = 8)
+
+    const metadata: CoordinationMetadata = {
+      isHelper: true,
+      winnerBotIdx: 2,
+      aggressiveness: 0.1,
+    }
+
+    const result = chooseBotTokenCoordinated(state, 1, 3, metadata)
+    assert.equal(result, 0, 'below the throttle threshold, helper should play its normal best move')
+  })
 })
 
 describe('chooseWinnerBotToken (skill tiers)', () => {

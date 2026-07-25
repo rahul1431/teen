@@ -66,9 +66,44 @@ export function chooseBotTokenCoordinated(
     }
   }
 
+  // Priority 3.5: Throttle. Nothing above stops a helper from simply
+  // out-racing the winner bot to the finish line on an ordinary turn where
+  // none of the block/clear/sacrifice conditions happen to trigger — a
+  // helper is otherwise free to play at full strength and can legitimately
+  // win the room itself. Once a helper is materially ahead of the winner
+  // bot's own progress, make it advance its LEAST-progressed movable token
+  // (never one that would finish) instead of its best one, so it stops
+  // closing the gap to home without ever refusing to move (a move is
+  // mandatory whenever one is legal).
+  const winnerProgress = totalProgress(state, metadata.winnerBotIdx)
+  const myProgress = totalProgress(state, botIdx)
+  if (myProgress > winnerProgress + THROTTLE_LEAD) {
+    const movable = movableTokens(state, botIdx, dice)
+    if (movable.length > 0) {
+      const nonFinishing = movable.filter((t) => myTokens[t] + dice !== HOME_PROGRESS)
+      const pool = nonFinishing.length > 0 ? nonFinishing : movable
+      let worst = pool[0]
+      for (const t of pool) {
+        if (myTokens[t] < myTokens[worst]) worst = t
+      }
+      return worst
+    }
+  }
+
   // Priority 4: Normal best-move logic (fallback)
   return chooseBotToken(state, botIdx, dice)
 }
+
+/** Sum of a player's token progress (base = 0, finished = HOME_PROGRESS). Used
+ *  to compare a helper bot's race position against the winner bot's. */
+function totalProgress(state: LudoState, idx: number): number {
+  return state.players[idx].tokens.reduce((sum, t) => sum + Math.max(t, 0), 0)
+}
+
+// Roughly one token's worth of progress (main track is 51 cells long) —
+// small enough to kick in well before a helper could actually finish, large
+// enough that normal early-game jockeying doesn't trigger it constantly.
+const THROTTLE_LEAD = 20
 
 /**
  * Index of a token this bot can move `dice` steps to land exactly on a
