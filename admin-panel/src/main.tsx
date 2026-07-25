@@ -31,7 +31,6 @@ const Changelog = React.lazy(() => import('./pages/Changelog'))
 const AIControlCenter = React.lazy(() => import('./pages/AIControlCenter').then(module => ({ default: module.AIControlCenter })))
 const AppMonitor = React.lazy(() => import('./pages/AppMonitor'))
 const PlayerTracking = React.lazy(() => import('./pages/PlayerTracking'))
-const DailyBonus = React.lazy(() => import('./pages/DailyBonus'))
 const Banners = React.lazy(() => import('./pages/Banners'))
 const PromoCodes = React.lazy(() => import('./pages/PromoCodes'))
 const KYCPage = React.lazy(() => import('./pages/KYC'))
@@ -92,7 +91,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="changelog" element={<Changelog />} />
             <Route path="app-monitor" element={<AppMonitor />} />
             <Route path="player-tracking" element={<PlayerTracking />} />
-            <Route path="daily-bonus" element={<DailyBonus />} />
             <Route path="banners" element={<Banners />} />
             <Route path="promo-codes" element={<PromoCodes />} />
             <Route path="marketing" element={<Marketing />} />

@@ -16,7 +16,6 @@ const EXPECTED_KEYS = [
   '/admin/marketing',
   '/admin/promo-codes',
   '/admin/banners',
-  '/admin/daily-bonus',
   '/admin/marketing/cms',
   '/admin/kyc',
   '/admin/app-update',
