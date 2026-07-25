@@ -13,6 +13,7 @@ const PROOF_UPLOAD_DIR = process.env.MISSION_PROOF_UPLOAD_DIR || '/opt/teen/uplo
 const APP_URL = process.env.APP_URL || 'https://game.myonlinejoker.com'
 const WALLET_SERVICE_URL = process.env.WALLET_SERVICE_URL || 'http://127.0.0.1:3003'
 const INTERNAL_SERVICE_KEY = process.env.INTERNAL_SERVICE_KEY || ''
+const TELEGRAM_GROUP_INVITE_LINK = process.env.TELEGRAM_GROUP_INVITE_LINK || ''
 
 interface Mission {
   id: string
@@ -133,6 +134,7 @@ export function missionsPlugin(db: Pool) {
           target_value: target, reward_amount: reward, reward_wallet_type: mission.reward_wallet_type,
           progress_current: metricValue, progress_target: target,
           completions_available: completionsAvailable, state,
+          ...(mission.metric_type === 'telegram_join' ? { telegram_group_invite_link: TELEGRAM_GROUP_INVITE_LINK } : {}),
         }
       }))
 

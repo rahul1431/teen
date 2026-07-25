@@ -17,6 +17,7 @@ class _MissionsPageState extends State<MissionsPage> with SingleTickerProviderSt
   List<dynamic> _weekly = [];
   List<dynamic> _monthly = [];
   final Set<String> _busy = {};
+  final Set<String> _groupJoinTapped = {};
   final _picker = ImagePicker();
   late final TabController _tabController;
 
@@ -131,6 +132,15 @@ class _MissionsPageState extends State<MissionsPage> with SingleTickerProviderSt
     }
   }
 
+  Future<void> _joinGroup(String id, String inviteLink) async {
+    setState(() => _groupJoinTapped.add(id));
+    try {
+      await launchUrl(Uri.parse(inviteLink), mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (mounted) AppSnackBar.show(context, 'Could not open Telegram', error: true);
+    }
+  }
+
   Future<void> _connectTelegram(String id) async {
     setState(() => _busy.add(id));
     try {
@@ -155,7 +165,18 @@ class _MissionsPageState extends State<MissionsPage> with SingleTickerProviderSt
           child: busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Claim'),
         );
       case 'connect_telegram':
-        return OutlinedButton(onPressed: busy ? null : () => _connectTelegram(id), child: const Text('Connect Telegram'));
+        final inviteLink = m['telegram_group_invite_link'] as String?;
+        final joinTapped = _groupJoinTapped.contains(id) || inviteLink == null || inviteLink.isEmpty;
+        if (!joinTapped) {
+          return OutlinedButton(
+            onPressed: () => _joinGroup(id, inviteLink),
+            child: const Text('Join Group'),
+          );
+        }
+        return OutlinedButton(
+          onPressed: busy ? null : () => _connectTelegram(id),
+          child: busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Verify'),
+        );
       case 'submit_proof':
         return OutlinedButton(onPressed: busy ? null : () => _submitProof(id), child: const Text('I\'ve Done It'));
       case 'pending_review':
