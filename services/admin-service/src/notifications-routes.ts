@@ -69,6 +69,29 @@ export function registerNotificationRoutes(app: FastifyInstance, db: Pool, authe
     return reply.send({ success: true })
   })
 
+  // GET /api/admin/notifications/bell-trend?days=30 — daily alert volume by type,
+  // for spotting spikes (e.g. a run of payment issues) instead of reacting one at a time.
+  app.get('/api/admin/notifications/bell-trend', { onRequest: [authenticate] }, async (req: any, reply) => {
+    const me = req.user as any
+    const role = me?.role as string
+    const satisfiedRoles = satisfiedRolesFor(role)
+    const { days = '30' } = req.query as any
+    const daysInt = parseInt(days, 10) || 30
+
+    const rows = await db.query(
+      `SELECT date_trunc('day', created_at) AS day, type, COUNT(*)::int AS count
+       FROM admin_notifications
+       WHERE target_role = ANY($1) AND created_at >= NOW() - ($2 || ' days')::interval
+       GROUP BY day, type
+       ORDER BY day ASC`,
+      [satisfiedRoles, daysInt],
+    )
+
+    return reply.send({
+      trend: rows.rows.map((r: any) => ({ date: r.day, type: r.type, count: r.count })),
+    })
+  })
+
   // WebSocket push: one client per browser tab, filtered by role
   const wsClients = new Set<{ socket: any; role: string }>()
 
