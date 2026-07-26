@@ -6,7 +6,8 @@ const { Text } = Typography
 
 interface BotTrainingConfig {
   enabled: boolean
-  strategy: 'lifetime_winrate' | 'vs_rp_winrate' | 'rotation' | 'weakest_first'
+  strategy: 'lifetime_winrate' | 'vs_rp_winrate' | 'rotation' | 'weakest_first' | 'tiered_hard_wins'
+  fallbackStrategy: 'lifetime_winrate' | 'vs_rp_winrate' | 'rotation' | 'weakest_first'
   targetWinRate: number
   aggressiveness: number
   winnerBotSkill: 'casual' | 'skilled' | 'expert'
@@ -17,6 +18,14 @@ interface BotTrainingConfig {
 }
 
 const STRATEGY_OPTIONS = [
+  { label: 'Highest Lifetime Win Rate', value: 'lifetime_winrate' },
+  { label: 'Highest Win Rate vs RP', value: 'vs_rp_winrate' },
+  { label: 'Rotation', value: 'rotation' },
+  { label: 'Weakest Bot First', value: 'weakest_first' },
+  { label: 'Tiered Hard-Wins (hard-tier bot always wins)', value: 'tiered_hard_wins' },
+]
+
+const FALLBACK_STRATEGY_OPTIONS = [
   { label: 'Highest Lifetime Win Rate', value: 'lifetime_winrate' },
   { label: 'Highest Win Rate vs RP', value: 'vs_rp_winrate' },
   { label: 'Rotation', value: 'rotation' },
@@ -93,9 +102,26 @@ export const BotTrainingConfigPanel: React.FC = () => {
         <Form.Item
           name="strategy"
           label="Election Strategy"
+          help="Tiered Hard-Wins requires one easy-, one medium-, and one hard-tagged bot to be seated together (set per-bot via a bot's Difficulty Override) — falls back to the strategy below whenever a full set isn't available for a room. Uses its own maxed-out bias, independent of the sliders further down; real win rate realistically lands ~60-70%, not literally guaranteed."
           rules={[{ required: true }]}
         >
           <Select options={STRATEGY_OPTIONS} />
+        </Form.Item>
+
+        <Form.Item noStyle shouldUpdate={(prev, cur) => prev.strategy !== cur.strategy}>
+          {({ getFieldValue }) => {
+            if (getFieldValue('strategy') !== 'tiered_hard_wins') return null
+            return (
+              <Form.Item
+                name="fallbackStrategy"
+                label="Fallback Strategy"
+                help="Used only when a room can't be seated with one easy/medium/hard bot each"
+                rules={[{ required: true }]}
+              >
+                <Select options={FALLBACK_STRATEGY_OPTIONS} />
+              </Form.Item>
+            )
+          }}
         </Form.Item>
 
         <Form.Item
