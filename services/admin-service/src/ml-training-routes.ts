@@ -30,7 +30,7 @@ export async function registerMlTrainingRoutes(
   // GET /api/admin/ludo/ml-training/status
   app.get('/api/admin/ludo/ml-training/status', { onRequest: [authenticate] }, async (_req, reply) => {
     try {
-      const [configRes, volumeRes, healthRes] = await Promise.all([
+      const [configRes, volumeRes, healthRes, playstyleRes, decisionsLoggedRes] = await Promise.all([
         db.query(
           `SELECT personalization_canary_pct FROM game_configs WHERE game_type = 'ludo'`
         ),
@@ -44,6 +44,11 @@ export async function registerMlTrainingRoutes(
         fetch(`${CHURN_ML_SERVICE_URL}/health`, { signal: AbortSignal.timeout(3000) })
           .then((r) => (r.ok ? r.json() : null))
           .catch(() => null),
+        db.query(
+          `SELECT difficulty, capture_probability, safe_play_probability, sample_size
+           FROM bot_profiles WHERE game_type = 'ludo' ORDER BY difficulty`
+        ),
+        db.query(`SELECT COUNT(*)::int AS rows FROM ludo_move_decisions`),
       ])
 
       const postCutoverRows = volumeRes.rows[0]?.rows ?? 0
@@ -56,6 +61,13 @@ export async function registerMlTrainingRoutes(
         difficulty_model_trained: healthRes?.difficulty_model_trained ?? null,
         difficulty_model_test_accuracy: healthRes?.difficulty_model_test_accuracy ?? null,
         churn_ml_service_reachable: healthRes !== null,
+        playstyle_tiers: playstyleRes.rows.map((r) => ({
+          difficulty: r.difficulty,
+          capture_probability: r.capture_probability !== null ? parseFloat(r.capture_probability) : null,
+          safe_play_probability: r.safe_play_probability !== null ? parseFloat(r.safe_play_probability) : null,
+          sample_size: r.sample_size !== null ? parseInt(r.sample_size, 10) : null,
+        })),
+        move_decisions_logged: decisionsLoggedRes.rows[0]?.rows ?? 0,
       })
     } catch (err: any) {
       app.log.error(err, '[ml-training-routes] GET status error')

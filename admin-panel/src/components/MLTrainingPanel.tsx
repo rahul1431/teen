@@ -1,9 +1,16 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Slider, Button, Space, message, Statistic, Row, Col, Typography, Progress, Alert, Tag } from 'antd'
+import { Card, Slider, Button, Space, message, Statistic, Row, Col, Typography, Progress, Alert, Tag, Table } from 'antd'
 import { Link } from 'react-router-dom'
 import { adminApi } from '../api/client'
 
 const { Text, Paragraph } = Typography
+
+interface PlaystyleTier {
+  difficulty: string
+  capture_probability: number | null
+  safe_play_probability: number | null
+  sample_size: number | null
+}
 
 interface MlTrainingStatus {
   canary_pct: number
@@ -13,6 +20,8 @@ interface MlTrainingStatus {
   difficulty_model_trained: boolean | null
   difficulty_model_test_accuracy: number | null
   churn_ml_service_reachable: boolean
+  playstyle_tiers: PlaystyleTier[]
+  move_decisions_logged: number
 }
 
 export const MLTrainingPanel: React.FC = () => {
@@ -186,12 +195,40 @@ export const MLTrainingPanel: React.FC = () => {
       </Card>
 
       <Card title="Bot Playstyle ML" bordered={false}>
-        <Alert
-          type="info"
-          showIcon
-          message="Not yet built"
-          description="Having ML output bot behavior parameters (capture/safe-play probabilities) directly per opponent, instead of only picking an easy/medium/hard tier, needs its own design and training data before implementation. Today, difficulty tier still maps to a pre-set trained profile (see Bot Training tab)."
+        <Paragraph type="secondary">
+          Medium/hard Ludo bots take captures and avoid exposed tokens with a
+          probability learned from real players at that skill tier, instead
+          of always doing so — falling back to the old deterministic rule
+          (always take/avoid) whenever a tier has no trained data yet.
+        </Paragraph>
+        <Table
+          size="small"
+          pagination={false}
+          rowKey="difficulty"
+          dataSource={status.playstyle_tiers}
+          columns={[
+            { title: 'Tier', dataIndex: 'difficulty' },
+            {
+              title: 'Capture Probability',
+              dataIndex: 'capture_probability',
+              render: (v: number | null) => (v !== null ? `${(v * 100).toFixed(0)}%` : 'No trained data (default: always)'),
+            },
+            {
+              title: 'Safe-Play Probability',
+              dataIndex: 'safe_play_probability',
+              render: (v: number | null) => (v !== null ? `${(v * 100).toFixed(0)}%` : 'No trained data (default: hard-only)'),
+            },
+            {
+              title: 'Sample Size',
+              dataIndex: 'sample_size',
+              render: (v: number | null) => v ?? '—',
+            },
+          ]}
         />
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {status.move_decisions_logged} real-player move decisions logged
+          so far (see <Text code>ludo_move_decisions</Text>).
+        </Text>
       </Card>
     </div>
   )
