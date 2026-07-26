@@ -341,7 +341,15 @@ export class MatchmakingService {
       const minBotsNeeded = Math.max(0, (config.min_players || 2) - realPlayers.length)
       botsNeeded = Math.min(config.max_players - realPlayers.length, Math.max(maxBots, minBotsNeeded))
     }
-    const bots = await this.getBots(gameType, botsNeeded, stake)
+    let bots: MatchmakingEntry[]
+    if (gameType === 'ludo' && botsNeeded === 3) {
+      const botTrainingCfg = await this.botTrainingConfig.getConfig()
+      bots = botTrainingCfg.enabled && botTrainingCfg.strategy === 'tiered_hard_wins'
+        ? (await this.getTierDiverseBots(gameType, stake)) ?? (await this.getBots(gameType, botsNeeded, stake))
+        : await this.getBots(gameType, botsNeeded, stake)
+    } else {
+      bots = await this.getBots(gameType, botsNeeded, stake)
+    }
 
     // If no bots in DB and real players alone don't meet min_players, re-queue them
     if (realPlayers.length + bots.length < (config.min_players || 2)) {
@@ -695,17 +703,31 @@ export class MatchmakingService {
           }))
         )
 
-        // Elect the winner bot
-        const winnerBotId = this.electionAlgorithm.electWinnerBot(
-          botsWithStats,
-          config.strategy,
-          gameType
-        )
+        // Tiered Hard-Wins: designate whichever seated bot is tagged 'hard',
+        // skipping election entirely. Falls back to config.fallbackStrategy's
+        // normal election whenever no hard-tagged bot is among the three
+        // (tier-diverse selection couldn't find a full set, or a race changed
+        // tags between selection and seating).
+        let winnerBotId: string
+        let strategyUsed: string
+        if (config.strategy === 'tiered_hard_wins') {
+          const hardTierBotId = this.electionAlgorithm.electHardTierWinner(botDifficulties)
+          if (hardTierBotId) {
+            winnerBotId = hardTierBotId
+            strategyUsed = 'tiered_hard_wins'
+          } else {
+            winnerBotId = this.electionAlgorithm.electWinnerBot(botsWithStats, config.fallbackStrategy, gameType)
+            strategyUsed = config.fallbackStrategy
+          }
+        } else {
+          winnerBotId = this.electionAlgorithm.electWinnerBot(botsWithStats, config.strategy, gameType)
+          strategyUsed = config.strategy
+        }
 
         // Store coordination metadata in Redis
         const botTrainingMetadata = {
           winnerBotId,
-          strategy: config.strategy,
+          strategy: strategyUsed,
           targetWinRate: config.targetWinRate,
           aggressiveness: config.aggressiveness,
           botIds: botPlayers.map(b => b.userId),
@@ -723,20 +745,26 @@ export class MatchmakingService {
         if (gameType === 'ludo') {
           const winnerIdx = gatewayPlayers.findIndex(p => p.userId === winnerBotId)
           if (winnerIdx !== -1) {
-            const boldness = config.adaptiveBoldness
-              ? await computeEffectiveBoldness(this.db, config.winnerBotBoldness, config.targetWinRate)
-              : config.winnerBotBoldness
+            // tiered_hard_wins always applies its own maxed-out bias, independent
+            // of the shared sliders (those still apply, unaffected, to every
+            // other strategy's games).
+            const usingTieredHardWins = strategyUsed === 'tiered_hard_wins'
+            const boldness = usingTieredHardWins
+              ? 1.0
+              : config.adaptiveBoldness
+                ? await computeEffectiveBoldness(this.db, config.winnerBotBoldness, config.targetWinRate)
+                : config.winnerBotBoldness
             botCoordinationForEngine = {
               winnerBotIdx: winnerIdx,
               aggressiveness: config.aggressiveness,
-              winnerSkill: config.winnerBotSkill,
+              winnerSkill: usingTieredHardWins ? 'expert' : config.winnerBotSkill,
               boldness,
-              diceBias: config.winnerBotDiceBias,
+              diceBias: usingTieredHardWins ? 1.0 : config.winnerBotDiceBias,
             }
           }
         }
 
-        console.log(`[BotCoordination] Game ${roomId}: ${winnerBotId} elected to win (strategy: ${config.strategy})`)
+        console.log(`[BotCoordination] Game ${roomId}: ${winnerBotId} elected to win (strategy: ${strategyUsed})`)
       } catch (error) {
         console.error(`[BotCoordination] Failed to initialize coordination for game ${roomId}:`, error)
         // Coordination failed gracefully; game proceeds without it
