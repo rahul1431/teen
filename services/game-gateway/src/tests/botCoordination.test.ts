@@ -192,61 +192,19 @@ describe('BotCoordination - ElectionAlgorithm', () => {
     })
   })
 
-  describe('Test 4: isCoordinationSuccess probabilistic evaluation when elected bot loses', () => {
-    it('should use probability when elected bot loses', () => {
+  describe('Test 4: isCoordinationSuccess reflects the actual outcome, not targetWinRate', () => {
+    it('should return false when the elected bot loses, regardless of targetWinRate', () => {
       const electedBotId = 'bot-1'
       const actualWinnerId = 'bot-2'
-      const targetWinRate = 0.8
 
-      // Test multiple times to verify probability is used
-      const results: boolean[] = []
-      for (let i = 0; i < 100; i++) {
-        const success = algorithm.isCoordinationSuccess(actualWinnerId, electedBotId, targetWinRate)
-        results.push(success)
-      }
-
-      const successCount = results.filter(r => r).length
-      // With 0.8 probability, we expect roughly 80 successes out of 100
-      // Allow 20-point range for variance (60-100)
-      expect(successCount).toBeGreaterThanOrEqual(50)
-      expect(successCount).toBeLessThanOrEqual(100)
-
-      // At least some should be false and some should be true
-      const hasTrueValues = results.some(r => r === true)
-      const hasFalseValues = results.some(r => r === false)
-      expect(hasTrueValues || hasFalseValues).toBe(true)
-    })
-
-    it('should return mostly false with very low targetWinRate', () => {
-      const electedBotId = 'bot-1'
-      const actualWinnerId = 'bot-2'
-      const targetWinRate = 0.05
-
-      const results: boolean[] = []
-      for (let i = 0; i < 100; i++) {
-        const success = algorithm.isCoordinationSuccess(actualWinnerId, electedBotId, targetWinRate)
-        results.push(success)
-      }
-
-      const successCount = results.filter(r => r).length
-      // With 0.05 probability, expect very few successes
-      expect(successCount).toBeLessThanOrEqual(20)
-    })
-
-    it('should return mostly true with very high targetWinRate', () => {
-      const electedBotId = 'bot-1'
-      const actualWinnerId = 'bot-2'
-      const targetWinRate = 0.95
-
-      const results: boolean[] = []
-      for (let i = 0; i < 100; i++) {
-        const success = algorithm.isCoordinationSuccess(actualWinnerId, electedBotId, targetWinRate)
-        results.push(success)
-      }
-
-      const successCount = results.filter(r => r).length
-      // With 0.95 probability, expect many successes
-      expect(successCount).toBeGreaterThanOrEqual(80)
+      // A high targetWinRate must NOT paper over a real loss — this was the
+      // bug: at targetWinRate=1, every loss was being logged as a success,
+      // which blinded both the dashboard and computeEffectiveBoldness's
+      // adaptive-tuning loop to a real regression in win-steering.
+      expect(algorithm.isCoordinationSuccess(actualWinnerId, electedBotId, 0.05)).toBe(false)
+      expect(algorithm.isCoordinationSuccess(actualWinnerId, electedBotId, 0.5)).toBe(false)
+      expect(algorithm.isCoordinationSuccess(actualWinnerId, electedBotId, 0.95)).toBe(false)
+      expect(algorithm.isCoordinationSuccess(actualWinnerId, electedBotId, 1.0)).toBe(false)
     })
   })
 })
@@ -492,35 +450,26 @@ describe('BotCoordination - GameRecorder', () => {
       expect(params[9]).toBe(true) // coordination_success
     })
 
-    it('should record game with coordination_success based on probability when bot loses', async () => {
-      // Mock Math.random to return specific values
-      const originalRandom = Math.random
-      Math.random = vi.fn(() => 0.3)
-
-      try {
-        const outcome: GameOutcome = {
-          gameId: 'game-loss',
-          actualWinnerId: 'rp-100',
-          botTrainingMetadata: {
-            winnerBotId: 'bot-5',
-            strategy: 'rotation',
-            targetWinRate: 0.5, // 50% chance
-            aggressiveness: 0.7,
-            botIds: ['bot-5', 'bot-6'],
-            rpId: 'rp-200',
-          },
-          botPerformance: { 'bot-5': { blocks_on_rp: 1, move_efficiency: 0.6 } },
-          rpPerformance: { avg_response_time: 600 },
-        }
-
-        await recorder.recordCoordinatedGame(outcome)
-
-        const params = mockDb.lastQueries[0].params
-        // Random returned 0.3, targetWinRate is 0.5, so 0.3 < 0.5 = true
-        expect(params[9]).toBe(true)
-      } finally {
-        Math.random = originalRandom
+    it('should record coordination_success=false when the elected bot loses, regardless of targetWinRate', async () => {
+      const outcome: GameOutcome = {
+        gameId: 'game-loss',
+        actualWinnerId: 'rp-100',
+        botTrainingMetadata: {
+          winnerBotId: 'bot-5',
+          strategy: 'rotation',
+          targetWinRate: 0.5,
+          aggressiveness: 0.7,
+          botIds: ['bot-5', 'bot-6'],
+          rpId: 'rp-200',
+        },
+        botPerformance: { 'bot-5': { blocks_on_rp: 1, move_efficiency: 0.6 } },
+        rpPerformance: { avg_response_time: 600 },
       }
+
+      await recorder.recordCoordinatedGame(outcome)
+
+      const params = mockDb.lastQueries[0].params
+      expect(params[9]).toBe(false)
     })
 
     it('should skip non-coordinated games (no botTrainingMetadata)', async () => {

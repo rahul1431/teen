@@ -278,7 +278,6 @@ function chooseWinnerBotTokenExpert(
   const safetyPenaltyWeight = 0.3 + 0.7 * (1 - boldness)
   const CAPTURE_BONUS = 50
   const HOME_BONUS = 100
-  const EXPOSURE_PENALTY = 20
 
   let best = movable[0]
   let bestScore = -Infinity
@@ -288,7 +287,11 @@ function chooseWinnerBotTokenExpert(
     if (sim.reachesHome) score += HOME_BONUS
     if (sim.capturesOpponent) score += CAPTURE_BONUS
     if (rpIdx !== -1 && isExposedTo(state, sim.landedCell, rpIdx)) {
-      score -= EXPOSURE_PENALTY * safetyPenaltyWeight
+      // Getting captured here sends this token's whole newProgress back to
+      // base, not a flat amount — a flat penalty is trivial next to an
+      // advanced token's progress and fails to discourage exposing it. Scale
+      // the penalty by what's actually at stake.
+      score -= sim.newProgress * safetyPenaltyWeight
     }
     if (score > bestScore) {
       bestScore = score

@@ -221,4 +221,20 @@ describe('chooseWinnerBotToken (skill tiers)', () => {
     const result = chooseWinnerBotToken(state, 2, 5, 'expert', 0.1)
     assert.equal(result, 1, 'cautious expert tier should take the safer, lower-progress move')
   })
+
+  test('expert tier at boldness=0.85 still avoids a bad trade (flat exposure penalty ignores stakes)', () => {
+    // Same setup as the two tests above: exposed token0 reaches progress 25,
+    // safe token1 reaches progress 15 — a fairly close call. A flat
+    // exposure-penalty constant treats getting captured at progress 25 the
+    // same as getting captured at progress 5, so it underweights how much a
+    // near-tie decision should actually favour the safe route once the bot's
+    // own advanced progress is what's at stake. The winner bot should not
+    // need near-maximum caution (boldness=0.1) to make this call correctly.
+    const state = makeState()
+    state.players[0].tokens = [48, -1, -1, -1] // RP at abs cell 48
+    state.players[2].tokens = [20, 10, -1, -1] // Winner: token0 -> progress 25 (exposed), token1 -> progress 15 (safe)
+
+    const result = chooseWinnerBotToken(state, 2, 5, 'expert', 0.85)
+    assert.equal(result, 1, 'exposure penalty should scale with the progress actually at risk, not a flat constant')
+  })
 })

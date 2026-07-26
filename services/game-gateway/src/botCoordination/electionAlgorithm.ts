@@ -56,15 +56,13 @@ export class ElectionAlgorithm {
   }
 
   /**
-   * Determine if coordination succeeded based on target win rate.
-   * If the chosen bot actually won, success = true.
-   * Otherwise, success = rand() < targetWinRate (allows failures to count as "success" based on probability)
+   * Determine if coordination succeeded: true iff the elected bot actually
+   * won. This is a factual record, not a probabilistic estimate — it feeds
+   * both the admin dashboard and computeEffectiveBoldness's adaptive-tuning
+   * loop, so it must reflect what really happened or both go blind to a
+   * regression in the underlying win-steering logic.
    */
   isCoordinationSuccess(actualWinnerId: string | null, electedWinnerId: string, targetWinRate: number): boolean {
-    if (actualWinnerId === electedWinnerId) {
-      return true
-    }
-    // Coordination failed but randomness might say it's a "success" for stats
-    return Math.random() < targetWinRate
+    return actualWinnerId === electedWinnerId
   }
 }
