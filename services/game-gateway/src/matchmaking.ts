@@ -12,6 +12,7 @@ import { ElectionAlgorithm, BotWithStats } from './botCoordination/electionAlgor
 import { BotTrainingConfigRepository } from './repositories/botTrainingConfigRepository'
 import { GameRecorder } from './botCoordination/gameRecorder'
 import { computeEffectiveBoldness } from './botCoordination/adaptiveBoldness'
+import { decideBotWinner, buildEngineCoordination } from './botCoordination/winnerDecision'
 
 export interface MatchmakingEntry {
   userId: string
@@ -703,26 +704,21 @@ export class MatchmakingService {
           }))
         )
 
-        // Tiered Hard-Wins: designate whichever seated bot is tagged 'hard',
+        // Tiered Hard-Wins (Ludo-only — see decideBotWinner) designates
+        // whichever seated bot is genuinely tier-diverse and tagged 'hard',
         // skipping election entirely. Falls back to config.fallbackStrategy's
-        // normal election whenever no hard-tagged bot is among the three
-        // (tier-diverse selection couldn't find a full set, or a race changed
-        // tags between selection and seating).
-        let winnerBotId: string
-        let strategyUsed: string
-        if (config.strategy === 'tiered_hard_wins') {
-          const hardTierBotId = this.electionAlgorithm.electHardTierWinner(botDifficulties)
-          if (hardTierBotId) {
-            winnerBotId = hardTierBotId
-            strategyUsed = 'tiered_hard_wins'
-          } else {
-            winnerBotId = this.electionAlgorithm.electWinnerBot(botsWithStats, config.fallbackStrategy, gameType)
-            strategyUsed = config.fallbackStrategy
-          }
-        } else {
-          winnerBotId = this.electionAlgorithm.electWinnerBot(botsWithStats, config.strategy, gameType)
-          strategyUsed = config.strategy
-        }
+        // normal election on any other game type, or whenever the three
+        // seated bots aren't genuinely one-of-each tier (tier-diverse
+        // selection couldn't find a full set and the random fallback seated
+        // untagged bots instead, or a race changed tags between selection
+        // and seating).
+        const { winnerBotId, strategyUsed } = decideBotWinner(
+          this.electionAlgorithm,
+          config,
+          botDifficulties,
+          botsWithStats,
+          gameType
+        )
 
         // Store coordination metadata in Redis
         const botTrainingMetadata = {
@@ -747,20 +743,23 @@ export class MatchmakingService {
           if (winnerIdx !== -1) {
             // tiered_hard_wins always applies its own maxed-out bias, independent
             // of the shared sliders (those still apply, unaffected, to every
-            // other strategy's games).
+            // other strategy's games) — so skip resolving (and, when
+            // adaptive, hitting the DB for) the slider boldness entirely
+            // when it's about to be discarded anyway.
             const usingTieredHardWins = strategyUsed === 'tiered_hard_wins'
-            const boldness = usingTieredHardWins
-              ? 1.0
+            const resolvedSliderBoldness = usingTieredHardWins
+              ? config.winnerBotBoldness
               : config.adaptiveBoldness
                 ? await computeEffectiveBoldness(this.db, config.winnerBotBoldness, config.targetWinRate)
                 : config.winnerBotBoldness
-            botCoordinationForEngine = {
+            botCoordinationForEngine = buildEngineCoordination({
+              strategyUsed,
               winnerBotIdx: winnerIdx,
               aggressiveness: config.aggressiveness,
-              winnerSkill: usingTieredHardWins ? 'expert' : config.winnerBotSkill,
-              boldness,
-              diceBias: usingTieredHardWins ? 1.0 : config.winnerBotDiceBias,
-            }
+              winnerBotSkill: config.winnerBotSkill,
+              winnerBotDiceBias: config.winnerBotDiceBias,
+              resolvedSliderBoldness,
+            })
           }
         }
 
