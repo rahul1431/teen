@@ -427,6 +427,28 @@ export class MatchmakingService {
     return botRes.rows.map(b => ({ userId: b.id, username: b.username }))
   }
 
+  // Ludo-only, tiered_hard_wins strategy: fetches one bot per difficulty
+  // tier (easy, medium, hard). Returns null if any tier has no free bot —
+  // the caller (botFillRoom) falls back to the plain getBots selection.
+  private async getTierDiverseBots(gameType: string, stake: number): Promise<MatchmakingEntry[] | null> {
+    const tiers: Array<'easy' | 'medium' | 'hard'> = ['easy', 'medium', 'hard']
+    const picked: MatchmakingEntry[] = []
+    for (const tier of tiers) {
+      const res = await this.db.query(
+        `SELECT u.id, u.username
+       FROM users u
+       JOIN wallets w ON w.user_id = u.id
+       WHERE u.is_bot = true AND u.status = 'active' AND u.bot_difficulty = $1
+         AND u.preferred_game_type = $2 AND w.real_balance >= $3
+       ORDER BY RANDOM() LIMIT 1`,
+        [tier, gameType, stake]
+      )
+      if (res.rows.length === 0) return null
+      picked.push({ userId: res.rows[0].id, username: res.rows[0].username })
+    }
+    return picked
+  }
+
   // Resolves each bot's effective difficulty: its own users.bot_difficulty
   // tag if set, otherwise the room-wide default computed from game_configs.
   private async resolveBotDifficulties(botUserIds: string[], roomWideDefault: string): Promise<Map<string, string>> {
