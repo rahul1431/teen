@@ -3,7 +3,8 @@ import { Pool } from 'pg'
 
 export interface BotTrainingConfig {
   enabled: boolean
-  strategy: 'lifetime_winrate' | 'vs_rp_winrate' | 'rotation' | 'weakest_first'
+  strategy: 'lifetime_winrate' | 'vs_rp_winrate' | 'rotation' | 'weakest_first' | 'tiered_hard_wins'
+  fallbackStrategy: 'lifetime_winrate' | 'vs_rp_winrate' | 'rotation' | 'weakest_first' // used only when strategy is 'tiered_hard_wins' and no hard-tagged bot is among the seated bots
   targetWinRate: number // 0.5 - 1.0
   aggressiveness: number // 0.0 - 1.0
   winnerBotSkill: 'casual' | 'skilled' | 'expert'
@@ -18,6 +19,7 @@ const CONFIG_DB_KEY = 'ludo_bot_training_config'
 const DEFAULT_CONFIG: BotTrainingConfig = {
   enabled: false,
   strategy: 'lifetime_winrate',
+  fallbackStrategy: 'lifetime_winrate',
   targetWinRate: 0.95,
   aggressiveness: 0.4,
   winnerBotSkill: 'casual',
@@ -71,6 +73,9 @@ export class BotTrainingConfigRepository {
     }
     if (!['casual', 'skilled', 'expert'].includes(config.winnerBotSkill)) {
       throw new Error('winnerBotSkill must be one of casual, skilled, expert')
+    }
+    if (!['lifetime_winrate', 'vs_rp_winrate', 'rotation', 'weakest_first'].includes(config.fallbackStrategy)) {
+      throw new Error('fallbackStrategy must be one of lifetime_winrate, vs_rp_winrate, rotation, weakest_first')
     }
 
     // Update database
