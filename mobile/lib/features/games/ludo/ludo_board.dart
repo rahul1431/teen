@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import '../../../core/audio/sound_service.dart';
 import '../../../shared/theme/app_theme.dart';
@@ -241,12 +242,18 @@ class _LudoBoardState extends State<LudoBoard>
               builder: (context, _) {
                 final activeSeat =
                     widget.state.players[widget.state.currentTurn].seat - 1;
+                final finishedCounts = List<int>.filled(4, 0);
+                for (final p in widget.state.players) {
+                  final seatIdx = (p.seat - 1).clamp(0, 3);
+                  finishedCounts[seatIdx] = p.finished;
+                }
                 return CustomPaint(
                   size: Size(boardSize, boardSize),
                   painter: _BoardPainter(
                     activeSeatIndex: activeSeat,
                     breathing: _breathingCtrl.value,
                     mySeatIndex: widget.mySeatIndex,
+                    finishedCounts: finishedCounts,
                   ),
                 );
               },
@@ -839,11 +846,15 @@ class _BoardPainter extends CustomPainter {
   final int activeSeatIndex;
   final double breathing;
   final int? mySeatIndex;
+  // Finished-token count per seat (0=red, 1=green, 2=yellow, 3=blue),
+  // drawn as mini tokens in that seat's goal triangle at the board centre.
+  final List<int> finishedCounts;
 
   _BoardPainter(
       {required this.activeSeatIndex,
       required this.breathing,
-      this.mySeatIndex});
+      this.mySeatIndex,
+      this.finishedCounts = const [0, 0, 0, 0]});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1039,6 +1050,58 @@ class _BoardPainter extends CustomPainter {
         ..color = const Color(0xFF23233A)
         ..strokeWidth = 1.2,
     );
+
+    // Mini tokens for finished pieces, side-by-side in each seat's goal
+    // triangle, so players can see how many of each colour have reached home
+    // without leaving the board.
+    _drawFinishedTokens(canvas, s, finishedCounts[2], _seatColors[2], _GoalEdge.top);
+    _drawFinishedTokens(canvas, s, finishedCounts[3], _seatColors[3], _GoalEdge.right);
+    _drawFinishedTokens(canvas, s, finishedCounts[0], _seatColors[0], _GoalEdge.bottom);
+    _drawFinishedTokens(canvas, s, finishedCounts[1], _seatColors[1], _GoalEdge.left);
+  }
+
+  void _drawFinishedTokens(
+      Canvas canvas, double s, int count, Color color, _GoalEdge edge) {
+    final n = count.clamp(0, kTokensPerPlayer);
+    if (n == 0) return;
+
+    final cx = 6 * s, cy = 6 * s, cs = 3 * s;
+    final dotR = s * 0.11;
+    final spacing = dotR * 2.6;
+    final fillPaint = Paint()..color = color;
+    final strokePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.8
+      ..color = Colors.black.withValues(alpha: 0.3);
+
+    List<Offset> points;
+    switch (edge) {
+      case _GoalEdge.top:
+        final y = cy + cs * 0.30;
+        final startX = cx + cs / 2 - spacing * (n - 1) / 2;
+        points = [for (var i = 0; i < n; i++) Offset(startX + i * spacing, y)];
+        break;
+      case _GoalEdge.bottom:
+        final y = cy + cs - cs * 0.30;
+        final startX = cx + cs / 2 - spacing * (n - 1) / 2;
+        points = [for (var i = 0; i < n; i++) Offset(startX + i * spacing, y)];
+        break;
+      case _GoalEdge.left:
+        final x = cx + cs * 0.30;
+        final startY = cy + cs / 2 - spacing * (n - 1) / 2;
+        points = [for (var i = 0; i < n; i++) Offset(x, startY + i * spacing)];
+        break;
+      case _GoalEdge.right:
+        final x = cx + cs - cs * 0.30;
+        final startY = cy + cs / 2 - spacing * (n - 1) / 2;
+        points = [for (var i = 0; i < n; i++) Offset(x, startY + i * spacing)];
+        break;
+    }
+
+    for (final p in points) {
+      canvas.drawCircle(p, dotR, fillPaint);
+      canvas.drawCircle(p, dotR, strokePaint);
+    }
   }
 
   // ── 5-point star (safe / start cells) ────────────────────────────────────
@@ -1085,5 +1148,9 @@ class _BoardPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _BoardPainter old) =>
-      old.activeSeatIndex != activeSeatIndex || old.breathing != breathing;
+      old.activeSeatIndex != activeSeatIndex ||
+      old.breathing != breathing ||
+      !listEquals(old.finishedCounts, finishedCounts);
 }
+
+enum _GoalEdge { top, right, bottom, left }
