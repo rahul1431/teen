@@ -8,7 +8,7 @@ import 'dart:math';
 /// faithful port of `rules.ts` — keep them in sync.
 
 const int kMainTrack = 52;
-const int kHomeProgress = 56; // exact value a token must reach to finish (last square box)
+const int kHomeProgress = 57; // exact value a token must reach to finish (last square box)
 const int kTokensPerPlayer = 4;
 const List<int> kStartOffsets = [0, 13, 26, 39];
 const Set<int> kSafeCells = {0, 8, 13, 21, 26, 34, 39, 47};
