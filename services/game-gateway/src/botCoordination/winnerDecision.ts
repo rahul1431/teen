@@ -1,9 +1,11 @@
 import { ElectionAlgorithm, BotWithStats } from './electionAlgorithm'
 import { BotTrainingConfig } from '../repositories/botTrainingConfigRepository'
 
+type Strategy = BotTrainingConfig['strategy']
+
 export interface WinnerDecision {
   winnerBotId: string
-  strategyUsed: string
+  strategyUsed: Strategy
 }
 
 // True only when the seated bots' resolved difficulties are exactly one
@@ -72,7 +74,7 @@ export interface EngineCoordination {
 }
 
 export interface EngineCoordinationInputs {
-  strategyUsed: string
+  strategyUsed: Strategy
   winnerBotIdx: number
   aggressiveness: number
   winnerBotSkill: 'casual' | 'skilled' | 'expert'

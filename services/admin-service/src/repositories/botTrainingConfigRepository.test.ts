@@ -34,4 +34,12 @@ describe('BotTrainingConfigRepository - tiered_hard_wins (admin-service)', () =>
       repo.updateConfig({ ...config, fallbackStrategy: 'bogus' as any })
     ).rejects.toThrow('fallbackStrategy must be one of')
   })
+
+  it('rejects an invalid strategy value', async () => {
+    const repo = new BotTrainingConfigRepository(new MockRedis() as any, new MockDb() as any)
+    const config = await repo.getConfig()
+    await expect(
+      repo.updateConfig({ ...config, strategy: 'bogus' as any })
+    ).rejects.toThrow('strategy must be one of')
+  })
 })

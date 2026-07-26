@@ -1,19 +1,7 @@
 // services/game-gateway/src/matchmaking.tieredHardWins.test.ts
-// Run: npx tsx src/matchmaking.tieredHardWins.test.ts
+// Run: npx vitest run src/matchmaking.tieredHardWins.test.ts
+import { describe, it, expect } from 'vitest'
 import { MatchmakingService } from './matchmaking'
-
-let testsPassed = 0
-let testsFailed = 0
-
-function assert(label: string, condition: boolean, details?: string) {
-  if (condition) {
-    testsPassed++
-    console.log(`✓ ${label}`)
-  } else {
-    testsFailed++
-    console.error(`✗ ${label}${details ? ` — ${details}` : ''}`)
-  }
-}
 
 class MockPool {
   public queries: Array<{ sql: string; params: any[] }> = []
@@ -49,34 +37,31 @@ const TIER_QUERY = `SELECT u.id, u.username
          AND u.preferred_game_type = $2 AND w.real_balance >= $3
        ORDER BY RANDOM() LIMIT 1`
 
-async function run() {
-  const pool = new MockPool()
-  const mockRedis = new MockRedisCache() as any
-  const service = new MatchmakingService(mockRedis, pool as any, mockHub)
+describe('tiered hard-wins bot selection', () => {
+  it('returns exactly one bot per tier when all three exist', async () => {
+    const pool = new MockPool()
+    const mockRedis = new MockRedisCache() as any
+    const service = new MatchmakingService(mockRedis, pool as any, mockHub)
 
-  pool.setQueryResult(TIER_QUERY, ['easy', 'ludo', 10], [{ id: 'bot-easy', username: 'EasyBot' }])
-  pool.setQueryResult(TIER_QUERY, ['medium', 'ludo', 10], [{ id: 'bot-medium', username: 'MediumBot' }])
-  pool.setQueryResult(TIER_QUERY, ['hard', 'ludo', 10], [{ id: 'bot-hard', username: 'HardBot' }])
+    pool.setQueryResult(TIER_QUERY, ['easy', 'ludo', 10], [{ id: 'bot-easy', username: 'EasyBot' }])
+    pool.setQueryResult(TIER_QUERY, ['medium', 'ludo', 10], [{ id: 'bot-medium', username: 'MediumBot' }])
+    pool.setQueryResult(TIER_QUERY, ['hard', 'ludo', 10], [{ id: 'bot-hard', username: 'HardBot' }])
 
-  const bots = await (service as any).getTierDiverseBots('ludo', 10)
-  assert('returns exactly one bot per tier when all three exist', bots?.length === 3)
-  assert('easy tier resolved correctly', bots?.[0]?.userId === 'bot-easy')
-  assert('medium tier resolved correctly', bots?.[1]?.userId === 'bot-medium')
-  assert('hard tier resolved correctly', bots?.[2]?.userId === 'bot-hard')
+    const bots = await (service as any).getTierDiverseBots('ludo', 10)
+    expect(bots?.length).toBe(3)
+    expect(bots?.[0]?.userId).toBe('bot-easy')
+    expect(bots?.[1]?.userId).toBe('bot-medium')
+    expect(bots?.[2]?.userId).toBe('bot-hard')
+  })
 
-  const pool2 = new MockPool()
-  const service2 = new MatchmakingService(mockRedis, pool2 as any, mockHub)
-  pool2.setQueryResult(TIER_QUERY, ['easy', 'ludo', 10], [{ id: 'bot-easy', username: 'EasyBot' }])
-  pool2.setQueryResult(TIER_QUERY, ['medium', 'ludo', 10], [{ id: 'bot-medium', username: 'MediumBot' }])
-  // No hard-tier row seeded -> query returns { rows: [] } -> should yield null
-  const incomplete = await (service2 as any).getTierDiverseBots('ludo', 10)
-  assert('returns null when any tier is missing', incomplete === null)
-
-  if (testsFailed) {
-    console.error(`\n${testsFailed} test(s) FAILED`)
-    process.exit(1)
-  }
-  console.log(`\nAll ${testsPassed} tiered hard-wins bot-selection tests passed.`)
-}
-
-run()
+  it('returns null when any tier is missing', async () => {
+    const pool2 = new MockPool()
+    const mockRedis = new MockRedisCache() as any
+    const service2 = new MatchmakingService(mockRedis, pool2 as any, mockHub)
+    pool2.setQueryResult(TIER_QUERY, ['easy', 'ludo', 10], [{ id: 'bot-easy', username: 'EasyBot' }])
+    pool2.setQueryResult(TIER_QUERY, ['medium', 'ludo', 10], [{ id: 'bot-medium', username: 'MediumBot' }])
+    // No hard-tier row seeded -> query returns { rows: [] } -> should yield null
+    const incomplete = await (service2 as any).getTierDiverseBots('ludo', 10)
+    expect(incomplete).toBe(null)
+  })
+})

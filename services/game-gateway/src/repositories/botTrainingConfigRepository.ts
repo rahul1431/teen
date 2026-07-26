@@ -74,6 +74,9 @@ export class BotTrainingConfigRepository {
     if (!['casual', 'skilled', 'expert'].includes(config.winnerBotSkill)) {
       throw new Error('winnerBotSkill must be one of casual, skilled, expert')
     }
+    if (!['lifetime_winrate', 'vs_rp_winrate', 'rotation', 'weakest_first', 'tiered_hard_wins'].includes(config.strategy)) {
+      throw new Error('strategy must be one of lifetime_winrate, vs_rp_winrate, rotation, weakest_first, tiered_hard_wins')
+    }
     if (!['lifetime_winrate', 'vs_rp_winrate', 'rotation', 'weakest_first'].includes(config.fallbackStrategy)) {
       throw new Error('fallbackStrategy must be one of lifetime_winrate, vs_rp_winrate, rotation, weakest_first')
     }

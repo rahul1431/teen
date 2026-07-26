@@ -18,7 +18,7 @@ export async function computeEffectiveBoldness(
   targetWinRate: number,
 ): Promise<number> {
   const res = await db.query(
-    `SELECT coordination_success FROM bot_learning_sessions ORDER BY created_at DESC LIMIT $1`,
+    `SELECT coordination_success FROM bot_learning_sessions WHERE strategy_used <> 'tiered_hard_wins' ORDER BY created_at DESC LIMIT $1`,
     [SAMPLE_SIZE]
   )
   const rows = res.rows as { coordination_success: boolean }[]

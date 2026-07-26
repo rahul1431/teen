@@ -440,6 +440,8 @@ export class MatchmakingService {
   // tier (easy, medium, hard). Returns null if any tier has no free bot —
   // the caller (botFillRoom) falls back to the plain getBots selection.
   private async getTierDiverseBots(gameType: string, stake: number): Promise<MatchmakingEntry[] | null> {
+    await this.autoRefillBots(stake)
+
     const tiers: Array<'easy' | 'medium' | 'hard'> = ['easy', 'medium', 'hard']
     const picked: MatchmakingEntry[] = []
     for (const tier of tiers) {
