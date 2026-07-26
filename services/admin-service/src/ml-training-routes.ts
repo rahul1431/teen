@@ -35,7 +35,7 @@ export async function registerMlTrainingRoutes(
           `SELECT personalization_canary_pct FROM game_configs WHERE game_type = 'ludo'`
         ),
         db.query(
-          `SELECT COUNT(*)::int AS rows FROM game_participants gp
+          `SELECT COUNT(DISTINCT gp.user_id)::int AS rows FROM game_participants gp
            JOIN game_rooms gr ON gr.id = gp.room_id
            WHERE gr.game_type = 'ludo' AND gr.status = 'completed'
              AND gp.joined_at >= $1`,
