@@ -34,18 +34,22 @@ async function start() {
   const anomalyResponseHandler = new AnomalyResponseHandler(pool, logger)
   const streamingEvaluator = new StreamingEvaluator(pool, redis, logger)
 
-  // Schedule nightly rebuild at 2 AM (or configured hour)
+  // Schedule nightly rebuild at 2 AM IST (the business's operative timezone,
+  // not the VPS's UTC system clock -- an explicit timezone is required here,
+  // otherwise "2 AM" silently means 2 AM UTC = 7:30 AM IST).
   const cfg = await builder.getConfig().catch(() => ({ rebuild_hour: 2 }))
   cron.schedule(`0 ${cfg.rebuild_hour} * * *`, () => {
     builder.runRebuild().catch(err => logger.error({ err }, 'Nightly rebuild failed'))
-  })
-  logger.info({ hour: cfg.rebuild_hour }, 'Bot profile rebuild cron scheduled')
+  }, { timezone: 'Asia/Kolkata' })
+  logger.info({ hour: cfg.rebuild_hour, timezone: 'Asia/Kolkata' }, 'Bot profile rebuild cron scheduled')
 
-  // Schedule cohort target recalculation at 02:15 UTC (15 mins after nightly rebuild at 02:00)
+  // Schedule cohort target recalculation at 02:15 IST (15 mins after the
+  // nightly rebuild at 02:00 IST) -- must share the rebuild's timezone or it
+  // would race ahead of (or fall behind) the bot_profiles rows it reads.
   cron.schedule('15 2 * * *', () => {
     adaptiveThresholds.recalculateCohortTargetsDaily().catch(err => logger.error({ err }, 'Cohort target recalculation failed'))
-  })
-  logger.info('Cohort target recalculation cron scheduled (daily at 02:15 UTC)')
+  }, { timezone: 'Asia/Kolkata' })
+  logger.info('Cohort target recalculation cron scheduled (daily at 02:15 IST)')
 
   // Schedule 6-hourly incremental rebuild at 00:00, 06:00, 12:00, 18:00 UTC
   cron.schedule('0 0,6,12,18 * * *', () => {
