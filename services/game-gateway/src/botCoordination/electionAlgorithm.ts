@@ -56,6 +56,18 @@ export class ElectionAlgorithm {
   }
 
   /**
+   * Tiered Hard-Wins: the first bot among the seated bots' resolved
+   * difficulties that's tagged 'hard', or null if none exists — callers
+   * fall back to their own configured fallback strategy in that case.
+   */
+  electHardTierWinner(botDifficulties: Map<string, string>): string | null {
+    for (const [botId, tier] of botDifficulties) {
+      if (tier === 'hard') return botId
+    }
+    return null
+  }
+
+  /**
    * Determine if coordination succeeded: true iff the elected bot actually
    * won. This is a factual record, not a probabilistic estimate — it feeds
    * both the admin dashboard and computeEffectiveBoldness's adaptive-tuning

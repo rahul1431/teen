@@ -209,6 +209,43 @@ describe('BotCoordination - ElectionAlgorithm', () => {
   })
 })
 
+describe('BotCoordination - ElectionAlgorithm.electHardTierWinner', () => {
+  let algorithm: ElectionAlgorithm
+
+  beforeEach(() => {
+    algorithm = new ElectionAlgorithm()
+  })
+
+  it('should return the bot tagged hard', () => {
+    const difficulties = new Map([
+      ['bot-1', 'easy'],
+      ['bot-2', 'medium'],
+      ['bot-3', 'hard'],
+    ])
+    expect(algorithm.electHardTierWinner(difficulties)).toBe('bot-3')
+  })
+
+  it('should return null when no bot is tagged hard', () => {
+    const difficulties = new Map([
+      ['bot-1', 'easy'],
+      ['bot-2', 'medium'],
+    ])
+    expect(algorithm.electHardTierWinner(difficulties)).toBeNull()
+  })
+
+  it('should return the first hard-tagged bot when more than one exists', () => {
+    const difficulties = new Map([
+      ['bot-1', 'hard'],
+      ['bot-2', 'hard'],
+    ])
+    expect(algorithm.electHardTierWinner(difficulties)).toBe('bot-1')
+  })
+
+  it('should return null for an empty map', () => {
+    expect(algorithm.electHardTierWinner(new Map())).toBeNull()
+  })
+})
+
 describe('BotCoordination - BotStatsLoader', () => {
   let loader: BotStatsLoader
   let mockRedis: MockRedis
