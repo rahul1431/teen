@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'core/monitor/monitor_service.dart';
 import 'core/monitor/socket_monitor_wrapper.dart';
 import 'core/services/locale_service.dart';
+import 'core/services/config_reload_service.dart';
 import 'core/socket/socket_service.dart';
 import 'app.dart';
 
@@ -60,8 +62,16 @@ void main() async {
   try {
     await Firebase.initializeApp();
     firebaseReady = true;
+    
+    FlutterError.onError = (errorDetails) {
+      FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
+    };
+    PlatformDispatcher.instance.onError = (error, stack) {
+      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+      return true;
+    };
   } catch (_) {
-    // Firebase not configured — continue without push notifications.
+    // Firebase not configured — continue without push notifications/crashlytics.
   }
 
   if (firebaseReady) {
@@ -121,6 +131,9 @@ void main() async {
   // Attach WebSocket event monitoring (no changes to SocketService required)
   // ignore: unused_local_variable — listener is kept alive by ValueNotifier reference
   final socketMonitorWrapper = SocketMonitorWrapper(SocketService());
+
+  // Initialize config reload listener for game config updates from server
+  ConfigReloadService().init();
   // ─────────────────────────────────────────────────────────────────────────
 
   runApp(const MyOnlineJokerApp());

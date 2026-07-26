@@ -6,11 +6,15 @@ import 'package:hive/hive.dart';
 /// filename under `assets/sounds/`.
 enum Sfx {
   buttonTap('button_tap.mp3'),
-  // Ludo
-  diceRoll('dice_roll.mp3'),
-  tokenMove('token_move.mp3'),
-  tokenCapture('token_capture.mp3'),
-  tokenHome('token_home.mp3'),
+  // Ludo — licensed original sounds
+  diceRoll('Ludo King Orginal Sound With licensed/diceroll.mp3'),
+  tokenMove('Ludo King Orginal Sound With licensed/step.mp3'),
+  tokenCapture('Ludo King Orginal Sound With licensed/death.mp3'),
+  tokenHome('Ludo King Orginal Sound With licensed/panta.mp3'),
+  ludoWin('Ludo King Orginal Sound With licensed/congratulations.mp3'),
+  ludoStart('Ludo King Orginal Sound With licensed/gamestartsound.mp3'),
+  ludoSafe('Ludo King Orginal Sound With licensed/safe.mp3'),
+  ludoTap('Ludo King Orginal Sound With licensed/click.mp3'),
   // Teen Patti
   cardDeal('card_deal.mp3'),
   chipBet('chip_bet.mp3'),
@@ -110,6 +114,11 @@ class SoundService {
   Future<void> loopAmbience(String asset, {double volume = 0.4}) async {
     if (muted) return;
     try {
+      // Set explicitly right before play() instead of relying on init()'s
+      // setReleaseMode having already landed — init() isn't awaited by
+      // callers, so a race let ambience start in the default (non-looping)
+      // release mode and stop after one playthrough.
+      await _ambience.setReleaseMode(ReleaseMode.loop);
       await _ambience.play(AssetSource('sounds/$asset'), volume: volume);
     } catch (_) {/* ignore */}
   }

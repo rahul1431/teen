@@ -49,7 +49,8 @@ class _SupportTicketsPageState extends State<SupportTicketsPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.background,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) => _CreateTicketSheet(api: _api, onSuccess: _load),
     );
   }
@@ -72,9 +73,12 @@ class _SupportTicketsPageState extends State<SupportTicketsPage> {
   }
 
   Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator(color: AppColors.gold));
+    if (_loading)
+      return const Center(
+          child: CircularProgressIndicator(color: AppColors.gold));
     if (_hasError) {
-      return Center(child: ErrorRetry(message: 'Could not load tickets', onRetry: _load));
+      return Center(
+          child: ErrorRetry(message: 'Could not load tickets', onRetry: _load));
     }
     if (_tickets.isEmpty) {
       return Center(
@@ -116,7 +120,7 @@ class _SupportTicketsPageState extends State<SupportTicketsPage> {
           final status = t['status']?.toString() ?? 'open';
           final category = t['category']?.toString() ?? 'general';
           final count = t['message_count'] ?? 0;
-          
+
           Color badgeColor;
           if (status == 'resolved' || status == 'closed') {
             badgeColor = AppColors.green;
@@ -140,20 +144,26 @@ class _SupportTicketsPageState extends State<SupportTicketsPage> {
                   Expanded(
                     child: Text(
                       t['subject'] ?? 'No Subject',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 14),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: badgeColor.withOpacity(0.15),
+                      color: badgeColor.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: badgeColor.withOpacity(0.5), width: 0.5),
+                      border: Border.all(
+                          color: badgeColor.withValues(alpha: 0.5), width: 0.5),
                     ),
                     child: Text(
                       status.toUpperCase().replaceAll('_', ' '),
-                      style: TextStyle(color: badgeColor, fontSize: 9, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                          color: badgeColor,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold),
                     ),
                   ),
                 ],
@@ -165,15 +175,18 @@ class _SupportTicketsPageState extends State<SupportTicketsPage> {
                   children: [
                     Text(
                       'Category: ${category.toUpperCase()}',
-                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                      style: const TextStyle(
+                          color: AppColors.textSecondary, fontSize: 11),
                     ),
                     Row(
                       children: [
-                        const Icon(Icons.forum_outlined, size: 12, color: AppColors.textSecondary),
+                        const Icon(Icons.forum_outlined,
+                            size: 12, color: AppColors.textSecondary),
                         const SizedBox(width: 4),
                         Text(
                           '$count message${count != 1 ? 's' : ''}',
-                          style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                          style: const TextStyle(
+                              color: AppColors.textSecondary, fontSize: 11),
                         ),
                       ],
                     ),
@@ -211,7 +224,13 @@ class _CreateTicketSheetState extends State<_CreateTicketSheet> {
   String _category = 'general';
   bool _submitting = false;
 
-  final List<String> _categories = ['general', 'deposit', 'withdrawal', 'gameplay', 'other'];
+  final List<String> _categories = [
+    'general',
+    'deposit',
+    'withdrawal',
+    'gameplay',
+    'other'
+  ];
 
   Future<void> _submit() async {
     final subject = _subjectCtrl.text.trim();
@@ -236,11 +255,13 @@ class _CreateTicketSheetState extends State<_CreateTicketSheet> {
       if (mounted) {
         widget.onSuccess();
         Navigator.pop(context);
-        AppSnackBar.show(context, 'Support ticket created successfully', success: true);
+        AppSnackBar.show(context, 'Support ticket created successfully',
+            success: true);
       }
     } catch (_) {
       if (mounted) {
-        AppSnackBar.show(context, 'Failed to create support ticket', error: true);
+        AppSnackBar.show(context, 'Failed to create support ticket',
+            error: true);
       }
     } finally {
       if (mounted) setState(() => _submitting = false);
@@ -251,23 +272,29 @@ class _CreateTicketSheetState extends State<_CreateTicketSheet> {
   Widget build(BuildContext context) {
     final bottom = MediaQuery.of(context).viewInsets.bottom;
     return Padding(
-      padding: EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 20 + bottom),
+      padding:
+          EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 20 + bottom),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Raise Support Ticket', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text('Raise Support Ticket',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           TextField(
             controller: _subjectCtrl,
-            decoration: const InputDecoration(labelText: 'Subject', hintText: 'e.g. Deposit issue'),
+            decoration: const InputDecoration(
+                labelText: 'Subject', hintText: 'e.g. Deposit issue'),
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
-            value: _category,
+            initialValue: _category,
             dropdownColor: AppColors.surface,
             decoration: const InputDecoration(labelText: 'Category'),
-            items: _categories.map((c) => DropdownMenuItem(value: c, child: Text(c.toUpperCase()))).toList(),
+            items: _categories
+                .map((c) =>
+                    DropdownMenuItem(value: c, child: Text(c.toUpperCase())))
+                .toList(),
             onChanged: (val) {
               if (val != null) setState(() => _category = val);
             },
@@ -276,7 +303,9 @@ class _CreateTicketSheetState extends State<_CreateTicketSheet> {
           TextField(
             controller: _messageCtrl,
             maxLines: 4,
-            decoration: const InputDecoration(labelText: 'Describe your issue in detail', hintText: 'Provide transaction ID, game room ID, etc.'),
+            decoration: const InputDecoration(
+                labelText: 'Describe your issue in detail',
+                hintText: 'Provide transaction ID, game room ID, etc.'),
           ),
           const SizedBox(height: 20),
           SizedBox(
@@ -284,7 +313,11 @@ class _CreateTicketSheetState extends State<_CreateTicketSheet> {
             child: ElevatedButton(
               onPressed: _submitting ? null : _submit,
               child: _submitting
-                  ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                  ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.black))
                   : const Text('Submit Ticket'),
             ),
           ),
@@ -306,7 +339,7 @@ class _TicketChatPageState extends State<TicketChatPage> {
   final _api = ApiClient();
   final _msgCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
-  
+
   Map<String, dynamic>? _ticket;
   List<dynamic> _messages = [];
   bool _loading = true;
@@ -352,7 +385,8 @@ class _TicketChatPageState extends State<TicketChatPage> {
 
     setState(() => _sending = true);
     try {
-      await _api.dio.post('/api/support/tickets/${widget.ticketId}/messages', data: {'body': text});
+      await _api.dio.post('/api/support/tickets/${widget.ticketId}/messages',
+          data: {'body': text});
       _msgCtrl.clear();
       _scrollToBottom();
       await _load();
@@ -386,14 +420,20 @@ class _TicketChatPageState extends State<TicketChatPage> {
               padding: const EdgeInsets.only(right: 16),
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: isClosed ? AppColors.green.withOpacity(0.15) : AppColors.red.withOpacity(0.15),
+                    color: isClosed
+                        ? AppColors.green.withValues(alpha: 0.15)
+                        : AppColors.red.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
                     status.toUpperCase(),
-                    style: TextStyle(color: isClosed ? AppColors.green : AppColors.red, fontSize: 10, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                        color: isClosed ? AppColors.green : AppColors.red,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
@@ -405,9 +445,13 @@ class _TicketChatPageState extends State<TicketChatPage> {
   }
 
   Widget _buildBody(bool isClosed) {
-    if (_loading) return const Center(child: CircularProgressIndicator(color: AppColors.gold));
+    if (_loading)
+      return const Center(
+          child: CircularProgressIndicator(color: AppColors.gold));
     if (_hasError) {
-      return Center(child: ErrorRetry(message: 'Could not load ticket details', onRetry: _load));
+      return Center(
+          child: ErrorRetry(
+              message: 'Could not load ticket details', onRetry: _load));
     }
 
     return Column(
@@ -426,32 +470,49 @@ class _TicketChatPageState extends State<TicketChatPage> {
                 final m = _messages[idx];
                 final isAdmin = m['sender_type'] == 'admin';
                 final alignLeft = isAdmin;
-                final bubbleBg = alignLeft ? AppColors.surface : AppColors.gold.withOpacity(0.15);
-                final bubbleBorder = Border.all(color: alignLeft ? AppColors.border : AppColors.gold.withOpacity(0.3));
-                final align = alignLeft ? CrossAxisAlignment.start : CrossAxisAlignment.end;
-                
+                final bubbleBg = alignLeft
+                    ? AppColors.surface
+                    : AppColors.gold.withValues(alpha: 0.15);
+                final bubbleBorder = Border.all(
+                    color: alignLeft
+                        ? AppColors.border
+                        : AppColors.gold.withValues(alpha: 0.3));
+                final align = alignLeft
+                    ? CrossAxisAlignment.start
+                    : CrossAxisAlignment.end;
+
                 return Container(
                   margin: const EdgeInsets.only(bottom: 12),
                   child: Column(
                     crossAxisAlignment: align,
                     children: [
                       Row(
-                        mainAxisAlignment: alignLeft ? MainAxisAlignment.start : MainAxisAlignment.end,
+                        mainAxisAlignment: alignLeft
+                            ? MainAxisAlignment.start
+                            : MainAxisAlignment.end,
                         children: [
                           Text(
                             alignLeft ? 'Support Team' : 'You',
-                            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
+                            style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.textSecondary),
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            DateTime.parse(m['created_at']).toLocal().toString().substring(11, 16),
-                            style: const TextStyle(fontSize: 10, color: AppColors.textSecondary),
+                            DateTime.parse(m['created_at'])
+                                .toLocal()
+                                .toString()
+                                .substring(11, 16),
+                            style: const TextStyle(
+                                fontSize: 10, color: AppColors.textSecondary),
                           ),
                         ],
                       ),
                       const SizedBox(height: 4),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
                         decoration: BoxDecoration(
                           color: bubbleBg,
                           borderRadius: BorderRadius.circular(12),
@@ -480,7 +541,8 @@ class _TicketChatPageState extends State<TicketChatPage> {
                 SizedBox(width: 8),
                 Text(
                   'This ticket is closed. Reply to reopen.',
-                  style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                  style:
+                      TextStyle(color: AppColors.textSecondary, fontSize: 13),
                 ),
               ],
             ),

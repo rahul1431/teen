@@ -1,17 +1,27 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/audio/sound_service.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
+import '../../../core/network/api_client.dart';
+import '../../../core/constants/app_config.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'ludo_engine.dart';
 import 'ludo_board.dart';
+import 'package:lottie/lottie.dart';
 
 /// Ludo table. One widget serves both:
 ///  - **offline practice** (`offline: true`) — local [LudoEngine] vs 3 bots,
 ///  - **online** (`roomId` + `initialData` from room:joined) — server-driven
 ///    over /ws; this page only renders state and sends roll/move actions.
+class _ActivityRecord {
+  final int id;
+  final String text;
+  _ActivityRecord(this.id, this.text);
+}
+
 class LudoGamePage extends StatefulWidget {
   final bool offline;
   final String roomId;
@@ -31,26 +41,82 @@ class _LudoGamePageState extends State<LudoGamePage>
     with TickerProviderStateMixin {
   final _engine = LudoEngine();
   final _socket = SocketService();
+  final _api = ApiClient();
   final _subs = <StreamSubscription>[];
+
+  // ── Emoji reactions + dealer tips (online only) ────────────────────────────
+  static const List<int> _tipAmounts = [5, 10, 20, 50];
+  List<String> _quickEmojis = ['😀', '😂', '😎', '😮', '😭', '🔥', '👏', '🤔'];
+  bool _showEmojiTray = false;
+  int _reactionId = 0;
+  final List<_Reaction> _reactions = [];
+
+  bool _muted = false;
+
+  // Visible countdown while it's the local player's turn to roll — mirrors
+  // the server-side per-turn AFK auto-play window (LUDO_TURN_TIMEOUT_MS in
+  // game-gateway) so a slow player can actually see time running out
+  // instead of being surprised when their turn gets auto-played.
+  static const int _turnTimerSeconds = 30;
+  Timer? _turnTimer;
+  int _turnSecondsLeft = _turnTimerSeconds;
+
+  void _syncTurnTimer() {
+    final active =
+        _isMyTurn && _state?.awaiting == 'roll' && !_rolling && !_botBusy;
+    if (active) {
+      _turnTimer ??= Timer.periodic(const Duration(seconds: 1), (t) {
+        if (!mounted) {
+          t.cancel();
+          return;
+        }
+        setState(() {
+          _turnSecondsLeft--;
+          if (_turnSecondsLeft <= 0) {
+            _turnSecondsLeft = 0;
+            t.cancel();
+            _turnTimer = null;
+          }
+        });
+      });
+    } else {
+      _turnTimer?.cancel();
+      _turnTimer = null;
+      _turnSecondsLeft = _turnTimerSeconds;
+    }
+  }
 
   LudoState? _state;
   int _mySeatIndex = 0;
+  Map<String, dynamic>? _lastAction;
+  bool _onlineActionPending = false;
   bool _rolling = false;
   bool _botBusy = false;
   String? _banner;
   String? _rollNotif;
   bool _showRollNotif = false;
   int _lastDice = 1;
+  int _lastVersionId = -1;
   // Recent-events log — newest first, capped short. Fills the empty space
   // below the board (a fixed-size square inside an Expanded region) with
   // something useful instead of leaving it idle.
-  final List<String> _activityLog = [];
+  final List<_ActivityRecord> _activityLog = [];
   static const int _maxActivityLog = 6;
+  int _activityId = 0;
+  bool _isInitialState = true;
 
   void _logActivity(String entry) {
+    final id = ++_activityId;
+    final record = _ActivityRecord(id, entry);
     setState(() {
-      _activityLog.insert(0, entry);
+      _activityLog.insert(0, record);
       if (_activityLog.length > _maxActivityLog) _activityLog.removeLast();
+    });
+    Timer(const Duration(seconds: 10), () {
+      if (!mounted) return;
+      setState(() {
+        _activityLog.removeWhere((x) => x.id == id);
+      });
     });
   }
 
@@ -61,13 +127,48 @@ class _LudoGamePageState extends State<LudoGamePage>
   void initState() {
     super.initState();
     SoundService.instance.init();
+    _muted = SoundService.instance.muted;
     widget.offline ? _initOffline() : _initOnline();
-    SoundService.instance.loopAmbience('ludo_bgm.mp3', volume: 0.3);
+    // Game-start sting as the table opens, then the looping ambience under it.
+    SoundService.instance.play(Sfx.ludoStart);
+    SoundService.instance.loopAmbience(
+        'Ludo King Orginal Sound With licensed/music.mp3',
+        volume: 0.5);
+    if (!widget.offline) _loadEmojiConfig();
+  }
+
+  void _toggleMute() {
+    SoundService.instance.toggleMute();
+    final m = SoundService.instance.muted;
+    setState(() => _muted = m);
+    if (m) {
+      SoundService.instance.stopAmbience();
+    } else {
+      SoundService.instance.loopAmbience(
+          'Ludo King Orginal Sound With licensed/music.mp3',
+          volume: 0.5);
+    }
+  }
+
+  // Same admin-configurable emoji list already used on the Teen Patti table
+  // (/api/admin/config/emojis) — falls back to the hardcoded defaults on
+  // any failure so this never blocks the game from loading.
+  Future<void> _loadEmojiConfig() async {
+    try {
+      final res = await _api.dio.get('/api/admin/config/emojis');
+      final emojis = (res.data as List?)?.cast<String>();
+      if (emojis != null && emojis.isNotEmpty && mounted) {
+        setState(() => _quickEmojis = emojis);
+      }
+    } catch (_) {
+      /* keep defaults */
+    }
   }
 
   @override
   void dispose() {
     _diceCtrl.dispose();
+    _turnTimer?.cancel();
     for (final s in _subs) {
       s.cancel();
     }
@@ -127,7 +228,16 @@ class _LudoGamePageState extends State<LudoGamePage>
       _rolling = false;
       _banner = canMove ? 'Tap a token to move' : 'No valid move — passing';
     });
-    if (!canMove) _maybeDriveBots();
+    if (!canMove) {
+      _maybeDriveBots();
+      return;
+    }
+    // Auto-move when the roll leaves exactly one legal move (Ludo-King feel):
+    // no reason to make the player tap the only option.
+    if (s.movableTokens.length == 1) {
+      await Future.delayed(const Duration(milliseconds: 320));
+      if (mounted) _offlineMove(s.movableTokens.first);
+    }
   }
 
   Future<void> _offlineMove(int tokenIndex) async {
@@ -138,6 +248,12 @@ class _LudoGamePageState extends State<LudoGamePage>
     _playMoveSounds(res);
     setState(() {});
     if (res['win'] == true) return _finish(s.winnerId);
+    // Extra turn (6 / capture / home): the engine keeps the turn on me and
+    // resets to 'roll'. Surface it clearly instead of a generic prompt.
+    if (s.currentTurn == _mySeatIndex && s.awaiting == 'roll') {
+      setState(() => _banner = 'Roll again! 🎲');
+      return;
+    }
     _maybeDriveBots();
   }
 
@@ -148,18 +264,27 @@ class _LudoGamePageState extends State<LudoGamePage>
     while (mounted && s.status == 'active' && s.players[s.currentTurn].isBot) {
       setState(
           () => _banner = '${s.players[s.currentTurn].username} is playing…');
-      await Future.delayed(const Duration(milliseconds: 900));
+      await Future.delayed(
+          const Duration(milliseconds: 1500)); // Increased from 900
       final dice = _engine.rollDie();
-      SoundService.instance.play(Sfx.diceRoll);
       _diceCtrl.forward(from: 0);
-      await Future.delayed(const Duration(milliseconds: 450));
+      await Future.delayed(
+          const Duration(milliseconds: 800)); // Increased from 450
       final canMove = _engine.applyRoll(s, dice);
       _showRoll(s.players[s.currentTurn].username, dice);
       if (canMove) {
         final tok = _engine.chooseBotToken(s, s.currentTurn, dice);
-        await Future.delayed(const Duration(milliseconds: 350));
+        await Future.delayed(
+            const Duration(milliseconds: 1400)); // Increased from 350
         final res = _engine.applyMove(s, tok);
-        _playMoveSounds(res);
+        // Capture/home are rare, notable events worth hearing even for a
+        // bot's move — unlike plain tokenMove, which stays silent here to
+        // avoid the every-~1.3s repeat noise bots caused during their turns.
+        if (res['captured'] == true) {
+          SoundService.instance.play(Sfx.tokenCapture);
+        } else if (res['home'] == true) {
+          SoundService.instance.play(Sfx.tokenHome);
+        }
         if (res['win'] == true) {
           setState(() {});
           _botBusy = false;
@@ -171,12 +296,41 @@ class _LudoGamePageState extends State<LudoGamePage>
     _botBusy = false;
     if (mounted && s.status == 'active') {
       setState(() => _banner = 'Your turn — roll the dice');
-      SoundService.instance.play(Sfx.yourTurn);
     }
   }
 
   // ── Online ────────────────────────────────────────────────────────────────
   void _initOnline() {
+    // A fresh join from the lobby already hands us a full room:joined payload
+    // via initialData — re-emitting join_room here is redundant and makes the
+    // server push a SECOND full-state snapshot moments later (possibly already
+    // a bot turn or two ahead), which briefly re-renders the whole board right
+    // after it just rendered from initialData — a visible flash right at join.
+    // Only emit join_room when there's no initialData to seed from (a genuine
+    // reconnect or a direct/deep-link open).
+    final hasInitialState =
+        widget.initialData != null && widget.initialData!['state'] != null;
+    if (!hasInitialState) {
+      _socket.emit(SocketEvents.joinRoom, {'room_id': widget.roomId});
+    }
+    _subs.add(_socket.on('reconnect').listen((_) =>
+        _socket.emit(SocketEvents.joinRoom, {'room_id': widget.roomId})));
+
+    _subs.add(_socket.on(SocketEvents.roomJoined).listen((data) {
+      if (!mounted || data == null || data['state'] == null) return;
+      final newState =
+          LudoState.fromJson(Map<String, dynamic>.from(data['state']));
+      final yourSeat = data['your_seat'];
+      setState(() {
+        _state = newState;
+        if (yourSeat is int) {
+          _mySeatIndex = _state!.players.indexWhere((p) => p.seat == yourSeat);
+          if (_mySeatIndex < 0) _mySeatIndex = 0;
+        }
+        _banner = _isMyTurn ? 'Your turn — roll the dice' : 'Waiting…';
+      });
+    }));
+
     final data = widget.initialData;
     if (data != null && data['state'] != null) {
       _state = LudoState.fromJson(Map<String, dynamic>.from(data['state']));
@@ -190,18 +344,24 @@ class _LudoGamePageState extends State<LudoGamePage>
 
     _subs.add(_socket.on(SocketEvents.gameStateUpdate).listen((d) {
       if (!mounted || d == null || d['state'] == null) return;
+      final vid = d['version_id'] as int?;
+      if (vid != null && vid <= _lastVersionId) return; // drop stale state
+      if (vid != null) _lastVersionId = vid;
       final prevPlayers = _state?.players;
       final newState =
           LudoState.fromJson(Map<String, dynamic>.from(d['state']));
-      // Infer capture for SFX: a token went back to base since last update.
+      // Infer capture/home for SFX by diffing token state since last update.
       final captured = _detectCapture(prevPlayers, newState.players);
+      final homed = _detectHome(prevPlayers, newState.players);
+      final la = d['last_action'];
       setState(() {
         _state = newState;
+        _onlineActionPending = false;
+        _lastAction = la != null ? Map<String, dynamic>.from(la) : null;
         _banner = _isMyTurn
             ? (newState.awaiting == 'move' ? 'Tap a token' : 'Your turn — roll')
             : '${newState.players[newState.currentTurn].username} is playing…';
       });
-      final la = d['last_action'];
       // last_action.user_id is the authoritative actor (it's the request's own
       // conn.userId server-side, or the acting bot's user_id) — look up their
       // username directly instead of guessing from turn-index math, which
@@ -217,25 +377,59 @@ class _LudoGamePageState extends State<LudoGamePage>
                 : newState.currentTurn.clamp(0, newState.players.length - 1)]
             .username;
       }
-      if (la != null && la['dice'] != null) {
-        SoundService.instance.play(Sfx.diceRoll);
+      final isFirst = _isInitialState;
+      _isInitialState = false;
+      if (!isFirst && la != null && la['dice'] != null) {
         _diceCtrl.forward(from: 0);
         _showRoll(actorName!, (la['dice'] as num).toInt());
       }
+      // Gameplay-feel: on my turn, show a "Roll again!" cue after an extra-turn
+      // move (6 / capture / home) and auto-play the roll when only one legal
+      // move exists — mirrors the offline behaviour.
+      if (_isMyTurn) {
+        final iJustMoved = la != null &&
+            la['user_id'] == _myUserId &&
+            la['action'] == 'move_token';
+        if (newState.awaiting == 'roll' && iJustMoved) {
+          setState(() => _banner = 'Roll again! 🎲');
+        } else if (newState.awaiting == 'move' &&
+            newState.movableTokens.length == 1) {
+          Future.delayed(const Duration(milliseconds: 340), () {
+            if (mounted && _isMyTurn && _state?.awaiting == 'move') {
+              _onlineMove(newState.movableTokens.first);
+            }
+          });
+        }
+      }
+      // Plain-move sound only for the local player's own move_token action —
+      // the gateway includes a 'dice' field on every broadcast (roll AND
+      // move), so this used to fire unconditionally on every single state
+      // update from anyone at the table, which read as a non-stop bell in
+      // online games. Capture/home are rare, genuinely notable events
+      // (unlike every-broadcast dice noise) so those play for ANY player.
+      // Per-cell stepping "tik" is emitted by the token sprite itself as it
+      // travels (see _TokenSprite), so we only fire the rarer capture/home
+      // cues here — no more per-move bell on every broadcast.
       if (captured) {
         SoundService.instance.play(Sfx.tokenCapture);
         if (actorName != null) _logActivity('$actorName captured a token! 💥');
-      } else {
-        SoundService.instance.play(Sfx.tokenMove);
+      } else if (homed) {
+        SoundService.instance.play(Sfx.tokenHome);
       }
-      if (d['result'] != null) {
-        _finish(d['result']['winner_id'], rankings: d['result']['rankings']);
-      }
+      // NOTE: game-ending broadcasts always ALSO fire a dedicated game:result
+      // event (see the listener below) — the gateway sends both a
+      // game:state_update with an embedded `result` AND a separate
+      // game:result for the same finish. Acting on both here double-fired
+      // _finish() (double win/lose sound, double confetti, and two stacked
+      // result dialogs where closing one also popped the game page while the
+      // other was still showing). Teen Patti's client only reacts to the
+      // dedicated result event — mirror that here and ignore d['result'].
     }));
 
     _subs.add(_socket.on(SocketEvents.gameResult).listen((d) {
       if (!mounted) return;
-      _finish(d?['winner_id'], rankings: d?['rankings']);
+      _finish(d?['winner_id'],
+          rankings: d?['rankings'], prize: (d?['prize'] as num?)?.toDouble());
     }));
 
     // Server rejected an action (stale room, engine unavailable, not-your-turn
@@ -244,11 +438,58 @@ class _LudoGamePageState extends State<LudoGamePage>
     _subs.add(_socket.on(SocketEvents.errorEvent).listen((d) {
       if (!mounted) return;
       final msg = (d is Map ? d['message'] : d)?.toString() ?? 'Action failed';
-      setState(() => _banner = msg);
+      setState(() {
+        _onlineActionPending = false;
+        _banner = msg;
+      });
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(content: Text(msg)));
     }));
+
+    // Emoji reactions — room:chat/room:tip are generic room-scoped events
+    // (the gateway routes them purely by room_id, not game_type), so this
+    // reuses the exact same backend the Teen Patti table already uses.
+    _subs.add(_socket.on(SocketEvents.roomChatMsg).listen((data) {
+      if (!mounted || data is! Map) return;
+      final type = (data['type'] ?? 'text').toString();
+      final userId = data['user_id']?.toString() ?? '';
+      final msg = data['message']?.toString() ?? '';
+      if (userId != _myUserId && type == 'emoji') _spawnReaction(userId, msg);
+    }));
+
+    _subs.add(_socket.on('room:tip').listen((data) {
+      if (!mounted || data is! Map) return;
+      final userId = data['user_id']?.toString() ?? '';
+      final name = data['username']?.toString() ?? 'Player';
+      final amount = (data['amount'] as num?)?.toInt() ?? 0;
+      _spawnReaction(userId, '💰 ₹$amount', isTip: true);
+      final who = userId == _myUserId ? 'You' : name;
+      _logActivity('$who tipped the dealer ₹$amount');
+    }));
+  }
+
+  void _sendEmoji(String emoji) {
+    _socket.emit(SocketEvents.roomChat,
+        {'room_id': widget.roomId, 'message': emoji, 'type': 'emoji'});
+    _spawnReaction(_myUserId ?? '', emoji);
+    SoundService.instance.play(Sfx.ludoTap);
+  }
+
+  void _sendTip(int amount) {
+    // No optimistic reaction — the server only broadcasts room:tip after the
+    // wallet debit actually succeeds (mirrors the Teen Patti tip flow).
+    _socket.emit('room:tip', {'room_id': widget.roomId, 'amount': amount});
+  }
+
+  void _spawnReaction(String userId, String emoji, {bool isTip = false}) {
+    final r = _Reaction(
+        id: ++_reactionId, userId: userId, emoji: emoji, isTip: isTip);
+    setState(() => _reactions.add(r));
+    Timer(const Duration(milliseconds: 2400), () {
+      if (!mounted) return;
+      setState(() => _reactions.removeWhere((x) => x.id == r.id));
+    });
   }
 
   bool _detectCapture(List<LudoPlayer>? before, List<LudoPlayer> after) {
@@ -263,14 +504,31 @@ class _LudoGamePageState extends State<LudoGamePage>
     return afterBase > beforeBase;
   }
 
+  bool _detectHome(List<LudoPlayer>? before, List<LudoPlayer> after) {
+    if (before == null) return false;
+    var beforeFinished = 0, afterFinished = 0;
+    for (final p in before) {
+      beforeFinished += p.finished;
+    }
+    for (final p in after) {
+      afterFinished += p.finished;
+    }
+    return afterFinished > beforeFinished;
+  }
+
   void _onlineRoll() {
-    if (!_isMyTurn || _state?.awaiting != 'roll') return;
+    if (!_isMyTurn || _state?.awaiting != 'roll' || _onlineActionPending)
+      return;
+    setState(() => _onlineActionPending = true);
+    SoundService.instance.play(Sfx.diceRoll);
     _socket.emit(SocketEvents.gameAction,
         {'room_id': widget.roomId, 'action': 'roll_dice'});
   }
 
   void _onlineMove(int tokenIndex) {
-    if (!_isMyTurn || _state?.awaiting != 'move') return;
+    if (!_isMyTurn || _state?.awaiting != 'move' || _onlineActionPending)
+      return;
+    setState(() => _onlineActionPending = true);
     _socket.emit(SocketEvents.gameAction, {
       'room_id': widget.roomId,
       'action': 'move_token',
@@ -281,13 +539,25 @@ class _LudoGamePageState extends State<LudoGamePage>
   // ── Shared ────────────────────────────────────────────────────────────────
   bool get _isMyTurn => _state != null && _state!.currentTurn == _mySeatIndex;
 
+  // Amount the winner actually takes home: pot (stake × seats) minus the 5%
+  // platform rake — mirrors the server formula in
+  // services/game-engines/ludo/src/rules.ts (pot * 0.05 rake → pot * 0.95 prize)
+  // so the header matches the "You Won …" result exactly.
+  static const double _ludoRake = 0.05;
+  double get _winningAmount {
+    final s = _state;
+    if (s == null) return 0;
+    final pot = s.stake * s.players.length;
+    return (pot * (1 - _ludoRake) * 100).roundToDouble() / 100;
+  }
+
   void _playMoveSounds(Map<String, bool> res) {
+    // Per-cell stepping "tik" (and the safe-cell chime) are emitted by the
+    // token sprite as it travels — here we only add the rarer capture/home cues.
     if (res['captured'] == true) {
       SoundService.instance.play(Sfx.tokenCapture);
     } else if (res['home'] == true) {
       SoundService.instance.play(Sfx.tokenHome);
-    } else {
-      SoundService.instance.play(Sfx.tokenMove);
     }
   }
 
@@ -303,7 +573,6 @@ class _LudoGamePageState extends State<LudoGamePage>
       // back to a static "1" in that case.
       _lastDice = dice;
     });
-    _logActivity('$playerName rolled a $dice');
     Future.delayed(const Duration(milliseconds: 1600), () {
       if (mounted) setState(() => _showRollNotif = false);
     });
@@ -315,7 +584,21 @@ class _LudoGamePageState extends State<LudoGamePage>
     widget.offline ? _offlineMove(tokenIndex) : _onlineMove(tokenIndex);
   }
 
-  void _finish(String? winnerId, {List<dynamic>? rankings}) {
+  // Original confetti burst overlaid on the whole screen when the local player
+  // wins — the celebratory "fireworks" moment, drawn with a CustomPainter (no
+  // video asset). Self-removes when the animation finishes.
+  void _showWinBurst() {
+    final overlay = Overlay.of(context);
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => _WinBurst(onDone: () {
+        entry.remove();
+      }),
+    );
+    overlay.insert(entry);
+  }
+
+  void _finish(String? winnerId, {List<dynamic>? rankings, double? prize}) {
     final won = winnerId == (widget.offline ? 'me' : _myUserId);
     // Server computes full standings (rankings: [{user_id, finished}, ...],
     // already sorted best-first) but until now the dialog only ever showed a
@@ -329,11 +612,12 @@ class _LudoGamePageState extends State<LudoGamePage>
         if (idx >= 0) standings.add(players[idx].username);
       }
     }
-    SoundService.instance.play(won ? Sfx.win : Sfx.lose);
+    SoundService.instance.play(won ? Sfx.ludoWin : Sfx.lose);
+    if (won) _showWinBurst();
     showDialog(
       context: context,
       barrierDismissible: false,
-      barrierColor: Colors.black.withOpacity(0.85),
+      barrierColor: Colors.black.withValues(alpha: 0.85),
       builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.symmetric(horizontal: 28),
@@ -370,15 +654,15 @@ class _LudoGamePageState extends State<LudoGamePage>
               borderRadius: BorderRadius.circular(24),
               border: Border.all(
                 color: won
-                    ? AppColors.gold.withOpacity(0.6)
-                    : Colors.white.withOpacity(0.1),
+                    ? AppColors.gold.withValues(alpha: 0.6)
+                    : Colors.white.withValues(alpha: 0.1),
                 width: 1.5,
               ),
               boxShadow: [
                 BoxShadow(
                   color: won
-                      ? AppColors.gold.withOpacity(0.3)
-                      : Colors.blue.withOpacity(0.15),
+                      ? AppColors.gold.withValues(alpha: 0.3)
+                      : Colors.blue.withValues(alpha: 0.15),
                   blurRadius: 40,
                   spreadRadius: 5,
                 ),
@@ -413,6 +697,30 @@ class _LudoGamePageState extends State<LudoGamePage>
                     fontSize: 15,
                   ),
                 ),
+                if (won && prize != null && prize > 0) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 10),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Text(
+                      'You Won ${formatCurrency(prize)}',
+                      style: const TextStyle(
+                        color: Colors.black,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ),
+                ],
                 if (standings.isNotEmpty) ...[
                   const SizedBox(height: 20),
                   ...List.generate(standings.length, (i) {
@@ -457,7 +765,8 @@ class _LudoGamePageState extends State<LudoGamePage>
                           borderRadius: BorderRadius.circular(14)),
                       side: won
                           ? null
-                          : BorderSide(color: Colors.white.withOpacity(0.2)),
+                          : BorderSide(
+                              color: Colors.white.withValues(alpha: 0.2)),
                     ),
                     child: Text(
                       won ? 'Claim Victory' : 'Back to Lobby',
@@ -485,119 +794,138 @@ class _LudoGamePageState extends State<LudoGamePage>
   @override
   Widget build(BuildContext context) {
     final s = _state;
-    return Scaffold(
-      body: s == null
-          ? const Center(
-              child: CircularProgressIndicator(color: AppColors.gold))
-          : Container(
-              decoration: const BoxDecoration(
-                gradient: RadialGradient(
-                  center: Alignment(0, -0.15),
-                  radius: 1.35,
-                  colors: [
-                    Color(0xFF7A2CC4), // Bright purple spotlight
-                    Color(0xFF4A1B87), // Deep violet
-                    Color(0xFF23103E), // Dark purple corners
-                  ],
-                  stops: [0.0, 0.6, 1.0],
-                ),
-              ),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    _buildAppBar(context),
-                    _playersBar(s),
-                    Expanded(
-                      child: Column(
-                        children: [
-                          Expanded(
-                            child: Stack(
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 4),
-                                  child: AspectRatio(
-                                    aspectRatio: 1,
-                                    child: LudoBoard(
-                                      state: s,
-                                      mySeatIndex: _mySeatIndex,
-                                      onTokenTap: _onTokenTap,
-                                    ),
+    if (s != null) _syncTurnTimer();
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _confirmExit();
+      },
+      child: Scaffold(
+        // Same purple gradient behind both the loading spinner and the loaded
+        // board — the Scaffold otherwise falls back to the app's default dark
+        // background while s == null, so the instant state arrived read as a
+        // black-to-purple flash.
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: RadialGradient(
+              center: Alignment(0, -0.15),
+              radius: 1.35,
+              colors: [
+                Color(0xFF7A2CC4), // Bright purple spotlight
+                Color(0xFF4A1B87), // Deep violet
+                Color(0xFF23103E), // Dark purple corners
+              ],
+              stops: [0.0, 0.6, 1.0],
+            ),
+          ),
+          child: s == null
+              ? const Center(
+                  child: CircularProgressIndicator(color: AppColors.gold))
+              : SafeArea(
+                  child: Column(
+                    children: [
+                      _buildAppBar(context),
+
+                      // Top Row (Top-Left and Top-Right players)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            _buildCornerPlayer(
+                                s, widget.offline ? 1 : (_mySeatIndex + 1) % 4,
+                                isLeft: true),
+                            _buildCornerPlayer(
+                                s, widget.offline ? 2 : (_mySeatIndex + 2) % 4,
+                                isLeft: false),
+                          ],
+                        ),
+                      ),
+
+                      // Center Ludo Board
+                      Expanded(
+                        child: Center(
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal:
+                                        6), // Reduced padding to enlarge cells
+                                child: AspectRatio(
+                                  aspectRatio: 1,
+                                  child: LudoBoard(
+                                    state: s,
+                                    mySeatIndex:
+                                        widget.offline ? 0 : _mySeatIndex,
+                                    onTokenTap: _onTokenTap,
                                   ),
                                 ),
-                                // Dice roll notification overlay
-                                if (_rollNotif != null)
-                                  Positioned(
-                                    top: 16,
-                                    left: 0,
-                                    right: 0,
-                                    child: Center(
-                                      child: AnimatedOpacity(
-                                        opacity: _showRollNotif ? 1.0 : 0.0,
-                                        duration:
-                                            const Duration(milliseconds: 280),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 20, vertical: 10),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFF0F1322)
-                                                .withOpacity(0.92),
-                                            borderRadius:
-                                                BorderRadius.circular(24),
-                                            border: Border.all(
-                                                color: AppColors.gold
-                                                    .withOpacity(0.4)),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: Colors.black
-                                                    .withOpacity(0.5),
-                                                blurRadius: 12,
-                                                offset: const Offset(0, 4),
-                                              )
-                                            ],
-                                          ),
-                                          child: Text(
-                                            _rollNotif!,
-                                            style: const TextStyle(
-                                              color: AppColors.goldLight,
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w900,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
+                              ),
+                              // Floating reactions
+                              ..._reactions.map((r) => Positioned(
+                                    key: ValueKey('rx_${r.id}'),
+                                    left:
+                                        MediaQuery.of(context).size.width / 2 -
+                                            30 +
+                                            (r.id % 5 - 2) * 18.0,
+                                    top: MediaQuery.of(context).size.height *
+                                        0.22,
+                                    child: IgnorePointer(
+                                      child: _ReactionBubble(
+                                          emoji: r.emoji, isTip: r.isTip),
                                     ),
-                                  ),
-                              ],
-                            ),
+                                  )),
+                              if (_showEmojiTray)
+                                Positioned(
+                                  top: 4,
+                                  right: 4,
+                                  child: _buildEmojiTray(),
+                                ),
+                            ],
                           ),
-                          if (_activityLog.isNotEmpty) _activityPanel(),
-                        ],
+                        ),
                       ),
-                    ),
-                    _controlBar(s),
-                  ],
+
+                      // Bottom Row (Bottom-Left and Bottom-Right players)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            _buildCornerPlayer(
+                                s, widget.offline ? 0 : (_mySeatIndex) % 4,
+                                isLeft:
+                                    true), // Always local player at Bottom-Left
+                            _buildCornerPlayer(
+                                s, widget.offline ? 3 : (_mySeatIndex + 3) % 4,
+                                isLeft: false),
+                          ],
+                        ),
+                      ),
+
+                      if (_activityLog.isNotEmpty) _activityPanel(),
+                      _tipBar(),
+                      const SizedBox(height: 12),
+                    ],
+                  ),
                 ),
               ),
-            ),
+      ),
     );
   }
 
-  // Compact recent-events strip shown below the board. The board is a fixed
-  // square inside an Expanded column, which otherwise left a large idle gap
-  // beneath it on most phone aspect ratios — this fills it with something
-  // useful (who rolled what, who got captured) instead of empty space.
   Widget _activityPanel() {
-    // A plain Column child (sibling of the board's Expanded above it), not a
-    // Stack overlay — must not return a Positioned root widget.
     return Container(
-      margin: const EdgeInsets.fromLTRB(10, 6, 10, 8),
+      margin: const EdgeInsets.fromLTRB(16, 6, 16, 8),
       constraints: const BoxConstraints(maxHeight: 92),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF0F1322).withOpacity(0.55),
+        color: const Color(0xFF0F1322).withValues(alpha: 0.55),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
       ),
       child: ListView.builder(
         padding: EdgeInsets.zero,
@@ -607,7 +935,7 @@ class _LudoGamePageState extends State<LudoGamePage>
         itemBuilder: (context, i) => Padding(
           padding: const EdgeInsets.symmetric(vertical: 1.5),
           child: Text(
-            _activityLog[i],
+            _activityLog[i].text,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -621,15 +949,141 @@ class _LudoGamePageState extends State<LudoGamePage>
     );
   }
 
+  Widget _buildEmojiTray() {
+    return GestureDetector(
+      onTap: () {},
+      child: Container(
+        width: 220,
+        constraints: const BoxConstraints(maxHeight: 360),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.gold.withValues(alpha: 0.5)),
+        ),
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Text('Send an Emoji',
+                      style: TextStyle(
+                          color: AppColors.gold,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13)),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () => setState(() => _showEmojiTray = false),
+                    child: const Icon(Icons.close,
+                        color: Colors.white54, size: 18),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: _quickEmojis.map((e) {
+                  return GestureDetector(
+                    onTap: () {
+                      _sendEmoji(e);
+                      setState(() => _showEmojiTray = false);
+                    },
+                    child: _buildEmojiOrImage(e, size: 26),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _doExit() {
+    if (!widget.offline) {
+      _socket.emit('leave_room', {'room_id': widget.roomId});
+    }
+    Navigator.of(context).pop();
+  }
+
+  void _confirmExit() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(widget.offline ? 'Exit Practice Game?' : 'Leave Match?',
+            style: const TextStyle(
+                color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Text(
+            widget.offline
+                ? "Your progress in this game won't be saved."
+                : "You'll forfeit your stake and lose your progress in this game.",
+            style: const TextStyle(color: Colors.white70, fontSize: 14)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Stay', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _doExit();
+            },
+            child: Text(widget.offline ? 'Exit' : 'Leave',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAppBar(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: Row(
         children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-            onPressed: () => Navigator.of(context).pop(),
-          ),
+          if (widget.offline)
+            InkWell(
+              onTap: _confirmExit,
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.close_rounded, color: Colors.white, size: 16),
+                    SizedBox(width: 4),
+                    Text('Exit',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              ),
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+              onPressed: _confirmExit,
+            ),
           const SizedBox(width: 4),
           Text(
             widget.offline ? 'LUDO · PRACTICE' : 'LUDO LIVE',
@@ -641,20 +1095,53 @@ class _LudoGamePageState extends State<LudoGamePage>
             ),
           ),
           const Spacer(),
-          if (!widget.offline)
+          IconButton(
+            icon: Icon(
+              _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+              color: Colors.white70,
+              size: 20,
+            ),
+            onPressed: _toggleMute,
+          ),
+          if (!widget.offline) ...[
+            GestureDetector(
+              onTap: () => setState(() => _showEmojiTray = !_showEmojiTray),
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                        color: AppColors.gold.withValues(alpha: 0.4),
+                        blurRadius: 8,
+                        spreadRadius: 1),
+                  ],
+                ),
+                child: const Icon(Icons.emoji_emotions,
+                    color: Colors.black, size: 18),
+              ),
+            ),
+            const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
                 color: Colors.black38,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.gold.withOpacity(0.3)),
+                border:
+                    Border.all(color: AppColors.gold.withValues(alpha: 0.3)),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('🪙 ', style: TextStyle(fontSize: 11)),
+                  const Text('🏆 ', style: TextStyle(fontSize: 11)),
                   Text(
-                    formatCurrency(_state?.stake ?? 0),
+                    formatCurrency(_winningAmount),
                     style: const TextStyle(
                         color: AppColors.gold,
                         fontWeight: FontWeight.bold,
@@ -663,294 +1150,301 @@ class _LudoGamePageState extends State<LudoGamePage>
                 ],
               ),
             ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _playersBar(LudoState s) {
-    // Order matches the reskinned board: seat0 red, seat1 blue, seat2 yellow, seat3 green.
+  Widget _buildCornerPlayer(LudoState s, int seatIdx, {required bool isLeft}) {
+    final playerIndex =
+        s.players.indexWhere((p) => (p.seat - 1) % 4 == seatIdx);
+    if (playerIndex == -1) return const SizedBox(width: 140, height: 60);
+    final p = s.players[playerIndex];
+    final disconnected = p.status == 'disconnected';
+    final active = playerIndex == s.currentTurn && !disconnected;
+
     final seatColors = [
       AppColors.ludoRed,
-      AppColors.ludoBlue,
-      AppColors.ludoYellow,
       AppColors.ludoGreen,
+      AppColors.ludoYellow,
+      AppColors.ludoBlue
     ];
-    return Container(
-      height: 80,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: List.generate(s.players.length, (i) {
-          final p = s.players[i];
-          final active = i == s.currentTurn;
-          final color = seatColors[(p.seat - 1) % 4];
-          final initials = p.username.length > 1
-              ? p.username.substring(0, 2).toUpperCase()
-              : p.username.toUpperCase();
+    final color = seatColors[seatIdx % 4];
+    final initials = p.username.length > 1
+        ? p.username.substring(0, 2).toUpperCase()
+        : p.username.toUpperCase();
 
-          return AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            decoration: BoxDecoration(
-              color: active
-                  ? color.withOpacity(0.15)
-                  : Colors.white.withOpacity(0.03),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: active ? color.withOpacity(0.7) : Colors.transparent,
-                width: 1.5,
+    final isMe = playerIndex == (widget.offline ? 0 : _mySeatIndex);
+    final canRoll = isMe && s.awaiting == 'roll' && !_rolling && !_botBusy;
+
+    final justRolled = !widget.offline &&
+        _showRollNotif &&
+        _lastAction != null &&
+        _lastAction!['user_id'] == p.userId &&
+        _lastAction!['dice'] != null;
+
+    Widget? diceWidget;
+    if (active || justRolled) {
+      final isRoller = widget.offline
+          ? active
+          : (_lastAction != null &&
+              _lastAction!['user_id'] == p.userId &&
+              _lastAction!['dice'] != null);
+
+      diceWidget = GestureDetector(
+        onTap: canRoll ? _onRoll : null,
+        child: MouseRegion(
+          cursor: canRoll ? SystemMouseCursors.click : SystemMouseCursors.basic,
+          child: Stack(
+            alignment: Alignment.center,
+            clipBehavior: Clip.none,
+            children: [
+              _DiceWidget(
+                value: justRolled
+                    ? (_lastAction!['dice'] as num).toInt()
+                    : (s.dice ?? _lastDice),
+                controller: isRoller ? _diceCtrl : null,
               ),
-              boxShadow: active
-                  ? [
-                      BoxShadow(
-                          color: color.withOpacity(0.3),
-                          blurRadius: 12,
-                          spreadRadius: 1)
-                    ]
-                  : [],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Avatar
-                Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    Container(
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: RadialGradient(
-                          colors: [
-                            color.withOpacity(0.9),
-                            color.withOpacity(0.5)
-                          ],
-                        ),
-                        border: Border.all(
-                          color: active ? Colors.white : color.withOpacity(0.4),
-                          width: active ? 2.0 : 1.0,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                              color: color.withOpacity(0.5), blurRadius: 6),
-                        ],
-                      ),
-                      child: Center(
-                        child: Text(
-                          initials,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ),
+              if (canRoll)
+                Positioned(
+                  bottom: -6,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppColors.gold,
+                      borderRadius: BorderRadius.circular(6),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          blurRadius: 4,
+                        )
+                      ],
                     ),
-                    if (active)
-                      Positioned(
-                        bottom: 0,
-                        right: 0,
-                        child: Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            color: Colors.greenAccent,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.black, width: 1.5),
-                          ),
-                        ),
-                      ),
-                  ],
+                    child: const Text('ROLL',
+                        style: TextStyle(
+                            color: Colors.black,
+                            fontSize: 8,
+                            fontWeight: FontWeight.w900)),
+                  ),
                 ),
-                const SizedBox(height: 4),
-                // Token dots (4 slots)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: List.generate(4, (ti) {
-                    final home = ti < p.finished;
-                    final onBoard = !home && p.tokens[ti] != -1;
-                    return Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 1),
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: home
-                            ? color
-                            : onBoard
-                                ? color.withOpacity(0.5)
-                                : Colors.white.withOpacity(0.15),
-                        boxShadow: home
-                            ? [
-                                BoxShadow(
-                                    color: color.withOpacity(0.6),
-                                    blurRadius: 3)
-                              ]
-                            : [],
-                      ),
-                    );
-                  }),
-                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final avatar = Stack(
+      alignment: Alignment.center,
+      children: [
+        if (active)
+          SizedBox(
+            width: 48,
+            height: 48,
+            child: CircularProgressIndicator(
+              value: (playerIndex == s.currentTurn && _isMyTurn)
+                  ? (_turnSecondsLeft / _turnTimerSeconds).clamp(0.0, 1.0)
+                  : null,
+              strokeWidth: 3,
+              backgroundColor: color.withValues(alpha: 0.18),
+              valueColor: AlwaysStoppedAnimation<Color>(color),
+            ),
+          ),
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: RadialGradient(
+              colors: [
+                color.withValues(alpha: 0.95),
+                color.withValues(alpha: 0.65)
               ],
             ),
-          );
-        }),
-      ),
+            border: Border.all(
+              color: active ? Colors.white : color.withValues(alpha: 0.4),
+              width: active ? 2.0 : 1.0,
+            ),
+            boxShadow: [
+              BoxShadow(
+                  color: color.withValues(alpha: 0.5),
+                  blurRadius: 6,
+                  spreadRadius: 0.5),
+            ],
+          ),
+          child: Center(
+            child: Text(
+              initials,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ),
+        if (active)
+          Positioned(
+            bottom: 1,
+            right: 1,
+            child: Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: Colors.greenAccent,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.black, width: 1.5),
+              ),
+            ),
+          ),
+      ],
     );
-  }
 
-  Widget _controlBar(LudoState s) {
-    final canRoll = _isMyTurn && s.awaiting == 'roll' && !_rolling && !_botBusy;
-    final myTurn = _isMyTurn;
-    final turnIdx = s.currentTurn.clamp(0, s.players.length - 1);
-    final activePlayer = s.players[turnIdx];
-    // Must match _playersBar's order (seat0 red, seat1 blue, seat2 yellow, seat3
-    // green) — this array previously had green/blue swapped, so the active-turn
-    // border color didn't match the same player's color everywhere else on screen.
-    final seatColors = [
-      AppColors.ludoRed,
-      AppColors.ludoBlue,
-      AppColors.ludoYellow,
-      AppColors.ludoGreen
-    ];
-    final activeColor = seatColors[(activePlayer.seat - 1) % 4];
+    final infoColumn = Column(
+      crossAxisAlignment:
+          isLeft ? CrossAxisAlignment.start : CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          p.username,
+          style: TextStyle(
+            color: active ? Colors.white : Colors.white70,
+            fontWeight: active ? FontWeight.bold : FontWeight.w500,
+            fontSize: 12,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 3),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(4, (ti) {
+            final home = ti < p.finished;
+            final onBoard = !home && p.tokens[ti] != -1;
+            return Container(
+              margin: const EdgeInsets.symmetric(horizontal: 1),
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: home
+                    ? color
+                    : onBoard
+                        ? color.withValues(alpha: 0.5)
+                        : Colors.white.withValues(alpha: 0.15),
+                boxShadow: home
+                    ? [
+                        BoxShadow(
+                            color: color.withValues(alpha: 0.6), blurRadius: 3)
+                      ]
+                    : [],
+              ),
+            );
+          }),
+        ),
+      ],
+    );
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 22),
+      width: 140,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF0B0F1E),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-        border: Border(
-            top: BorderSide(color: activeColor.withOpacity(0.3), width: 1.5)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.5),
-            blurRadius: 16,
-            offset: const Offset(0, -4),
-          ),
-          if (myTurn)
-            BoxShadow(
-              color: AppColors.gold.withOpacity(0.08),
-              blurRadius: 20,
-              offset: const Offset(0, -2),
-            ),
-        ],
+        color: active
+            ? color.withValues(alpha: 0.12)
+            : Colors.black.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: active
+              ? color.withValues(alpha: 0.4)
+              : Colors.white.withValues(alpha: 0.05),
+          width: active ? 1.5 : 1.0,
+        ),
       ),
       child: Row(
         children: [
-          // Dice
-          _DiceWidget(value: s.dice ?? _lastDice, controller: _diceCtrl),
-          const SizedBox(width: 16),
-          // Middle info
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (myTurn)
-                  Row(
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                            color: Colors.greenAccent, shape: BoxShape.circle),
-                      ),
-                      const SizedBox(width: 6),
-                      const Text('YOUR TURN',
-                          style: TextStyle(
-                              color: Colors.greenAccent,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 12,
-                              letterSpacing: 1)),
-                    ],
-                  )
-                else
-                  Row(
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                            color: activeColor, shape: BoxShape.circle),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          '${activePlayer.username} playing…',
-                          style: TextStyle(
-                              color: activeColor,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 12),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                const SizedBox(height: 3),
-                Text(
-                  _banner ?? '',
-                  style: const TextStyle(
-                      color: AppColors.textSecondary, fontSize: 11),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
+          if (isLeft) ...[
+            avatar,
+            const SizedBox(width: 8),
+            Expanded(child: infoColumn),
+            if (diceWidget != null) ...[
+              const SizedBox(width: 8),
+              diceWidget,
+            ],
+          ] else ...[
+            if (diceWidget != null) ...[
+              diceWidget,
+              const SizedBox(width: 8),
+            ],
+            Expanded(child: infoColumn),
+            const SizedBox(width: 8),
+            avatar,
+          ]
+        ],
+      ),
+    );
+  }
+
+  Widget _tipBar() {
+    if (widget.offline) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.gold.withValues(alpha: 0.22)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.card_giftcard_rounded,
+                  color: AppColors.gold.withValues(alpha: 0.85), size: 14),
+              const SizedBox(width: 6),
+              const Text('TIP THE DEALER',
+                  style: TextStyle(
+                      color: AppColors.gold,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11,
+                      letterSpacing: 1.2)),
+            ],
           ),
-          const SizedBox(width: 12),
-          // Roll button
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 250),
-            decoration: canRoll
-                ? BoxDecoration(
-                    borderRadius: BorderRadius.circular(14),
+          const SizedBox(height: 8),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: _tipAmounts.map((amount) {
+              return GestureDetector(
+                onTap: () => _sendTip(amount),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFFE082), Color(0xFFD4AF37)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(20),
                     boxShadow: [
                       BoxShadow(
-                          color: AppColors.gold.withOpacity(0.4),
-                          blurRadius: 14,
-                          offset: const Offset(0, 3))
+                          color: AppColors.gold.withValues(alpha: 0.3),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2)),
                     ],
-                  )
-                : null,
-            child: myTurn && s.awaiting == 'move'
-                ? Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 18, vertical: 14),
-                    decoration: BoxDecoration(
-                      color: activeColor.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: activeColor.withOpacity(0.5)),
-                    ),
-                    child: Text(
-                      'TAP TOKEN',
-                      style: TextStyle(
-                          color: activeColor,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 12,
-                          letterSpacing: 0.5),
-                    ),
-                  )
-                : ElevatedButton.icon(
-                    onPressed: canRoll ? _onRoll : null,
-                    icon: const Icon(Icons.casino_rounded, size: 18),
-                    label: const Text('ROLL',
-                        style: TextStyle(
-                            fontWeight: FontWeight.w900, fontSize: 13)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.gold,
-                      foregroundColor: Colors.black,
-                      disabledBackgroundColor: Colors.white.withOpacity(0.04),
-                      disabledForegroundColor: Colors.white24,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 14),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      elevation: 0,
-                    ),
                   ),
+                  child: Text('₹$amount',
+                      style: const TextStyle(
+                          color: Colors.black,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12)),
+                ),
+              );
+            }).toList(),
           ),
         ],
       ),
@@ -962,22 +1456,30 @@ class _LudoGamePageState extends State<LudoGamePage>
 /// settles showing [value] pips.
 class _DiceWidget extends StatelessWidget {
   final int value;
-  final AnimationController controller;
-  const _DiceWidget({required this.value, required this.controller});
+  final AnimationController? controller;
+  const _DiceWidget({required this.value, this.controller});
 
   @override
   Widget build(BuildContext context) {
+    final ctrl = controller;
+    if (ctrl == null) {
+      return _face(value);
+    }
     return AnimatedBuilder(
-      animation: controller,
+      animation: ctrl,
       builder: (context, _) {
-        final t = controller.value;
+        final t = ctrl.value;
         final angle = t * 4 * 3.14159; // two full spins
         final scale = 1 + 0.25 * (t < 0.5 ? t * 2 : (1 - t) * 2);
+        // While tumbling, flip through faces so it reads as a real roll, then
+        // lock onto the settled value in the last stretch of the animation.
+        final rolling = ctrl.isAnimating && t < 0.82;
+        final shown = rolling ? (1 + ((t * 46).floor() % 6)) : value;
         return Transform.scale(
           scale: scale,
           child: Transform.rotate(
             angle: angle,
-            child: _face(value),
+            child: _face(shown),
           ),
         );
       },
@@ -1003,12 +1505,12 @@ class _DiceWidget extends StatelessWidget {
         border: Border.all(color: const Color(0xFFE0D8C8), width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.55),
+            color: Colors.black.withValues(alpha: 0.55),
             blurRadius: 8,
             offset: const Offset(1, 4),
           ),
           BoxShadow(
-            color: Colors.white.withOpacity(0.45),
+            color: Colors.white.withValues(alpha: 0.45),
             blurRadius: 2,
             offset: const Offset(-1, -1),
             spreadRadius: -0.5,
@@ -1020,8 +1522,8 @@ class _DiceWidget extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(10),
-            border:
-                Border.all(color: Colors.white.withOpacity(0.5), width: 1.0),
+            border: Border.all(
+                color: Colors.white.withValues(alpha: 0.5), width: 1.0),
           ),
           child: CustomPaint(painter: _PipsPainter(v)),
         ),
@@ -1078,4 +1580,219 @@ class _PipsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _PipsPainter old) => old.value != value;
+}
+
+// ── Emoji/tip reaction bubble ─────────────────────────────────────────────────
+class _Reaction {
+  final int id;
+  final String userId, emoji;
+  final bool isTip;
+  _Reaction(
+      {required this.id,
+      required this.userId,
+      required this.emoji,
+      this.isTip = false});
+}
+
+class _ReactionBubble extends StatefulWidget {
+  final String emoji;
+  final bool isTip;
+  const _ReactionBubble({required this.emoji, this.isTip = false});
+  @override
+  State<_ReactionBubble> createState() => _ReactionBubbleState();
+}
+
+class _ReactionBubbleState extends State<_ReactionBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 2400))
+    ..forward();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _c,
+        builder: (_, __) {
+          final t = _c.value;
+          return Transform.translate(
+            offset: Offset(math.sin(t * math.pi * 2) * 6, -50 * t),
+            child: Opacity(
+              opacity: (1 - t).clamp(0.0, 1.0),
+              child: Transform.scale(
+                scale: widget.isTip ? 1.0 + t * 0.5 : 1.0,
+                child: _buildEmojiOrImage(widget.emoji, size: 28),
+              ),
+            ),
+          );
+        },
+      );
+}
+
+/// Full-screen confetti celebration shown when the local player wins.
+/// A short one-shot particle burst rendered with a [CustomPainter]; calls
+/// [onDone] so its host [OverlayEntry] can remove itself.
+class _WinBurst extends StatefulWidget {
+  final VoidCallback onDone;
+  const _WinBurst({required this.onDone});
+
+  @override
+  State<_WinBurst> createState() => _WinBurstState();
+}
+
+class _WinBurstState extends State<_WinBurst>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2600),
+  );
+  late final List<_Confetto> _pieces;
+
+  static const _palette = [
+    AppColors.ludoRed,
+    AppColors.ludoGreen,
+    AppColors.ludoYellow,
+    AppColors.ludoBlue,
+    Color(0xFFFFFFFF),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    final rnd = math.Random();
+    // Two launch points near the top corners so the burst reads as fireworks
+    // fountaining inward across the screen.
+    _pieces = List.generate(90, (i) {
+      final fromLeft = i.isEven;
+      final ox = fromLeft ? 0.18 : 0.82;
+      final angle =
+          (fromLeft ? -0.15 : math.pi + 0.15) + (rnd.nextDouble() - 0.5) * 1.5;
+      final speed = 0.55 + rnd.nextDouble() * 0.75;
+      return _Confetto(
+        originX: ox,
+        vx: math.cos(angle) * speed,
+        vy: -(0.9 + rnd.nextDouble() * 0.9),
+        color: _palette[rnd.nextInt(_palette.length)],
+        size: 5 + rnd.nextDouble() * 7,
+        spin: (rnd.nextDouble() - 0.5) * 8,
+        delay: rnd.nextDouble() * 0.25,
+      );
+    });
+    _c.forward().whenComplete(widget.onDone);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) => CustomPaint(
+          size: Size.infinite,
+          painter: _ConfettiPainter(_pieces, _c.value),
+        ),
+      ),
+    );
+  }
+}
+
+class _Confetto {
+  final double originX; // 0..1 of width
+  final double vx, vy; // initial velocity (screen fractions/sec-ish)
+  final Color color;
+  final double size;
+  final double spin;
+  final double delay; // 0..1 of the timeline before this piece launches
+  const _Confetto({
+    required this.originX,
+    required this.vx,
+    required this.vy,
+    required this.color,
+    required this.size,
+    required this.spin,
+    required this.delay,
+  });
+}
+
+class _ConfettiPainter extends CustomPainter {
+  final List<_Confetto> pieces;
+  final double t; // 0..1
+  _ConfettiPainter(this.pieces, this.t);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final g = 1.8; // gravity
+    for (final p in pieces) {
+      final lt = ((t - p.delay) / (1 - p.delay)).clamp(0.0, 1.0);
+      if (lt <= 0) continue;
+      // Simple projectile: position integrated from initial velocity + gravity.
+      final x = size.width * p.originX + p.vx * size.width * 0.6 * lt;
+      final y = size.height * 0.16 +
+          (p.vy * lt + 0.5 * g * lt * lt) * size.height * 0.7;
+      final opacity = (1 - lt).clamp(0.0, 1.0);
+      canvas.save();
+      canvas.translate(x, y);
+      canvas.rotate(p.spin * lt);
+      final paint = Paint()..color = p.color.withValues(alpha: opacity);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromCenter(
+              center: Offset.zero, width: p.size, height: p.size * 0.6),
+          const Radius.circular(1.5),
+        ),
+        paint,
+      );
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ConfettiPainter old) => old.t != t;
+}
+
+// Admin-uploaded emojis (game_emojis table) can be a plain unicode glyph OR a
+// path/URL to an uploaded image/GIF/Lottie sticker — rendering those as plain
+// Text just showed the raw "/uploads/emojis/....gif" string instead of the
+// actual animated emoji. Mirrors _buildEmojiOrImage in the Teen Patti table.
+String _resolveUrl(String p) {
+  if (p.isEmpty) return '';
+  if (p.startsWith('http')) return p;
+  return '${AppConfig.apiBaseUrl}$p';
+}
+
+Widget _buildEmojiOrImage(String emoji, {double size = 28}) {
+  if (emoji.startsWith('/uploads/') || emoji.startsWith('http')) {
+    final url = _resolveUrl(emoji);
+    if (url.toLowerCase().endsWith('.json')) {
+      return Lottie.network(
+        url,
+        width: size + 8,
+        height: size + 8,
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) =>
+            Icon(Icons.broken_image_rounded, color: Colors.white60, size: size),
+      );
+    }
+    return Image.network(
+      url,
+      width: size + 8,
+      height: size + 8,
+      fit: BoxFit.contain,
+      errorBuilder: (context, error, stackTrace) =>
+          Icon(Icons.broken_image_rounded, color: Colors.white60, size: size),
+    );
+  }
+  return Text(
+    emoji,
+    style: TextStyle(fontSize: size),
+  );
 }

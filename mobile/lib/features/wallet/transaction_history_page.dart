@@ -29,18 +29,31 @@ class _TransactionHistoryPageState extends State<TransactionHistoryPage> {
   }
 
   Future<void> _load() async {
-    setState(() { _loading = true; _hasError = false; });
+    setState(() {
+      _loading = true;
+      _hasError = false;
+    });
     try {
       final res = await _api.dio.get('/api/wallet/transactions?limit=100');
       if (!mounted) return;
-      setState(() { _transactions = res.data as List? ?? []; _loading = false; });
+      setState(() {
+        _transactions = res.data as List? ?? [];
+        _loading = false;
+      });
     } catch (_) {
-      if (mounted) setState(() { _loading = false; _hasError = true; });
+      if (mounted)
+        setState(() {
+          _loading = false;
+          _hasError = true;
+        });
     }
   }
 
   bool _isCredit(String type) =>
-      type.contains('credit') || type == 'deposit' || type == 'bonus' || type == 'referral';
+      type.contains('credit') ||
+      type == 'deposit' ||
+      type == 'bonus' ||
+      type == 'referral';
 
   Widget _buildStatusBadge(String? status) {
     if (status == null || status == 'completed') return const SizedBox.shrink();
@@ -64,9 +77,9 @@ class _TransactionHistoryPageState extends State<TransactionHistoryPage> {
       margin: const EdgeInsets.only(left: 6),
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: color.withOpacity(0.5), width: 0.5),
+        border: Border.all(color: color.withValues(alpha: 0.5), width: 0.5),
       ),
       child: Text(
         label,
@@ -105,14 +118,16 @@ class _TransactionHistoryPageState extends State<TransactionHistoryPage> {
                     label: Text(e.value),
                     selected: selected,
                     onSelected: (_) => setState(() => _filter = e.key),
-                    selectedColor: AppColors.gold.withOpacity(0.2),
+                    selectedColor: AppColors.gold.withValues(alpha: 0.2),
                     backgroundColor: AppColors.surface,
                     labelStyle: TextStyle(
-                      color: selected ? AppColors.gold : AppColors.textSecondary,
+                      color:
+                          selected ? AppColors.gold : AppColors.textSecondary,
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                     ),
-                    side: BorderSide(color: selected ? AppColors.gold : AppColors.border),
+                    side: BorderSide(
+                        color: selected ? AppColors.gold : AppColors.border),
                   ),
                 );
               }).toList(),
@@ -125,9 +140,13 @@ class _TransactionHistoryPageState extends State<TransactionHistoryPage> {
   }
 
   Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator(color: AppColors.gold));
+    if (_loading)
+      return const Center(
+          child: CircularProgressIndicator(color: AppColors.gold));
     if (_hasError) {
-      return Center(child: ErrorRetry(message: 'Could not load transactions', onRetry: _load));
+      return Center(
+          child: ErrorRetry(
+              message: 'Could not load transactions', onRetry: _load));
     }
     final txns = _visible;
     if (txns.isEmpty) {
@@ -158,23 +177,29 @@ class _TransactionHistoryPageState extends State<TransactionHistoryPage> {
             ),
             child: ListTile(
               leading: CircleAvatar(
-                backgroundColor: color.withOpacity(0.15),
+                backgroundColor: color.withValues(alpha: 0.15),
                 child: Icon(credit ? Icons.add : Icons.remove, color: color),
               ),
               title: Row(
                 children: [
                   Text(type.replaceAll('_', ' ').toUpperCase(),
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600)),
                   _buildStatusBadge(txn['status']?.toString()),
                 ],
               ),
               subtitle: Text(
-                DateTime.parse(txn['created_at']).toLocal().toString().substring(0, 16),
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                DateTime.parse(txn['created_at'])
+                    .toLocal()
+                    .toString()
+                    .substring(0, 16),
+                style: const TextStyle(
+                    color: AppColors.textSecondary, fontSize: 11),
               ),
               trailing: Text(
                 '${credit ? '+' : '-'}₹${double.parse(txn['amount'].toString()).toStringAsFixed(2)}',
-                style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 14),
+                style: TextStyle(
+                    color: color, fontWeight: FontWeight.bold, fontSize: 14),
               ),
             ),
           );

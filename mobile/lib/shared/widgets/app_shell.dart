@@ -45,11 +45,17 @@ class AppShell extends StatelessWidget {
           selectedFontSize: 11,
           unselectedFontSize: 11,
           items: const [
-            BottomNavigationBarItem(icon: Icon(Icons.home_rounded), label: 'Home'),
-            BottomNavigationBarItem(icon: Icon(Icons.casino_rounded), label: 'Games'),
-            BottomNavigationBarItem(icon: Icon(Icons.account_balance_wallet_rounded), label: 'Wallet'),
-            BottomNavigationBarItem(icon: Icon(Icons.emoji_events_rounded), label: 'Leaders'),
-            BottomNavigationBarItem(icon: Icon(Icons.person_rounded), label: 'Profile'),
+            BottomNavigationBarItem(
+                icon: Icon(Icons.home_rounded), label: 'Home'),
+            BottomNavigationBarItem(
+                icon: Icon(Icons.casino_rounded), label: 'Games'),
+            BottomNavigationBarItem(
+                icon: Icon(Icons.account_balance_wallet_rounded),
+                label: 'Wallet'),
+            BottomNavigationBarItem(
+                icon: Icon(Icons.emoji_events_rounded), label: 'Leaders'),
+            BottomNavigationBarItem(
+                icon: Icon(Icons.person_rounded), label: 'Profile'),
           ],
         ),
       ),
@@ -88,9 +94,10 @@ class _TopBar extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                color: AppColors.gold.withOpacity(0.12),
+                color: AppColors.gold.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.gold.withOpacity(0.4)),
+                border:
+                    Border.all(color: AppColors.gold.withValues(alpha: 0.4)),
               ),
               child: Row(
                 children: [
@@ -114,7 +121,8 @@ class _TopBar extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 4),
-                  const Icon(Icons.add_circle_rounded, color: AppColors.gold, size: 15),
+                  const Icon(Icons.add_circle_rounded,
+                      color: AppColors.gold, size: 15),
                 ],
               ),
             ),
@@ -165,8 +173,10 @@ class _NotificationBellState extends State<_NotificationBell> {
               top: 4,
               child: IgnorePointer(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                  constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  constraints:
+                      const BoxConstraints(minWidth: 16, minHeight: 16),
                   decoration: BoxDecoration(
                     color: AppColors.red,
                     borderRadius: BorderRadius.circular(8),

@@ -24,7 +24,8 @@ class AviatorPage extends StatefulWidget {
   State<AviatorPage> createState() => _AviatorPageState();
 }
 
-class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin {
+class _AviatorPageState extends State<AviatorPage>
+    with TickerProviderStateMixin {
   final _aviator = AviatorSocketService();
   final _subs = <StreamSubscription>[];
 
@@ -32,9 +33,18 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   late final AnimationController _ticker;
   // Pulses the multiplier / plane glow.
   late final AnimationController _pulse;
+  // Persistent painter instance driven directly by the ticker/pulse Listenable
+  // (CustomPainter's `repaint:` param) — repaints the sky RenderObject each
+  // frame WITHOUT rebuilding any widgets, unlike an AnimatedBuilder wrapper.
+  late final _AviatorPainter _skyPainter;
+  // Rounded-to-cents multiplier shown on screen. Only notifies (and only
+  // triggers a Text rebuild) when the displayed value actually changes —
+  // most 16ms ticks during a slow climb round to the same 2 decimals.
+  final ValueNotifier<double> _displayMultiplier = ValueNotifier(0.0);
 
   String _phase = 'connecting'; // connecting, betting, flying, crashed
-  double _multiplier = 0.00;       // smoothed value shown on screen (climbs from 0x at takeoff)
+  double _multiplier =
+      0.00; // smoothed value shown on screen (climbs from 0x at takeoff)
   double _serverMultiplier = 1.00; // latest authoritative value from server
   double? _crashAt;
   List<double> _history = [];
@@ -42,6 +52,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   int _bettingSecondsLeft = 5;
   double? _balance;
   Timer? _bettingTimer;
+  int _lastSequenceId = -1;
 
   // Panel 1 State
   double _betAmount1 = 50;
@@ -52,7 +63,8 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   bool _autoCashout1 = false;
   double _autoTarget1 = 2.0;
   bool _autoBet1 = false;
-  bool _serverAuto1 = false; // server holds the auto-cashout target for this bet
+  bool _serverAuto1 =
+      false; // server holds the auto-cashout target for this bet
 
   // Panel 2 State
   double _betAmount2 = 50;
@@ -69,31 +81,44 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   double _lastWinPrize = 0.0;
 
   // My bet history (fetched from the engine over the WS). null = loading.
-  final ValueNotifier<List<Map<String, dynamic>>?> _myHistory = ValueNotifier(null);
+  final ValueNotifier<List<Map<String, dynamic>>?> _myHistory =
+      ValueNotifier(null);
 
   @override
   void initState() {
     super.initState();
-    _ticker = AnimationController(vsync: this, duration: const Duration(seconds: 1))
-      ..addListener(_onFrame)
-      ..repeat();
-    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 600))
+    _ticker =
+        AnimationController(vsync: this, duration: const Duration(seconds: 1))
+          ..addListener(_onFrame)
+          ..repeat();
+    _pulse = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 600))
       ..repeat(reverse: true);
+    _skyPainter = _AviatorPainter(
+      progress: () => _progress,
+      phase: () => _phase,
+      spin: () => _pulse.value,
+      repaint: Listenable.merge([_ticker, _pulse]),
+    );
     _loadBalance();
     _connect();
   }
 
   Future<void> _connect() async {
     await _aviator.connect();
-    _subs.add(_aviator.on(SocketEvents.aviatorRoundStart).listen(_onRoundStart));
-    _subs.add(_aviator.on(SocketEvents.aviatorFlyingStart).listen(_onFlyingStart));
+    _subs
+        .add(_aviator.on(SocketEvents.aviatorRoundStart).listen(_onRoundStart));
+    _subs.add(
+        _aviator.on(SocketEvents.aviatorFlyingStart).listen(_onFlyingStart));
     _subs.add(_aviator.on(SocketEvents.aviatorMultiplierTick).listen(_onTick));
     _subs.add(_aviator.on(SocketEvents.aviatorCrashed).listen(_onCrashed));
-    _subs.add(_aviator.on(SocketEvents.aviatorRoundState).listen(_onRoundState));
+    _subs
+        .add(_aviator.on(SocketEvents.aviatorRoundState).listen(_onRoundState));
     _subs.add(_aviator.on(SocketEvents.aviatorBetPlaced).listen(_onBetPlaced));
     _subs.add(_aviator.on(SocketEvents.aviatorCashedOut).listen(_onCashedOut));
     _subs.add(_aviator.on(SocketEvents.aviatorMyHistory).listen(_onMyHistory));
-    _subs.add(_aviator.on(SocketEvents.aviatorMaintenance).listen(_onMaintenance));
+    _subs.add(
+        _aviator.on(SocketEvents.aviatorMaintenance).listen(_onMaintenance));
     _subs.add(_aviator.on(SocketEvents.errorEvent).listen(_onError));
   }
 
@@ -101,7 +126,8 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     try {
       final res = await ApiClient().dio.get('/api/wallet/balance');
       if (!mounted) return;
-      setState(() => _balance = double.parse(res.data['real_balance'].toString()));
+      setState(
+          () => _balance = double.parse(res.data['real_balance'].toString()));
     } catch (_) {/* offline / no auth */}
   }
 
@@ -128,11 +154,13 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       _serverAuto2 = false;
       _multiplier = 0.00;
       _serverMultiplier = 1.00;
+      _displayMultiplier.value = 0.00;
       _crashAt = null;
       _history = _parseHistory(data?['history']);
       _bettingSecondsLeft = (ms / 1000).ceil();
       _showWinBurst = false;
       _lastWinPrize = 0.0;
+      _lastSequenceId = -1;
     });
     _startBettingCountdown(ms);
     // Auto-bet: re-stake the same amount for the new round hands-free.
@@ -148,9 +176,15 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     _bettingTimer?.cancel();
     final end = DateTime.now().millisecondsSinceEpoch + ms;
     _bettingTimer = Timer.periodic(const Duration(milliseconds: 200), (t) {
-      if (!mounted || _phase != 'betting') { t.cancel(); return; }
-      final left = ((end - DateTime.now().millisecondsSinceEpoch) / 1000).ceil().clamp(0, 99);
-      if (left != _bettingSecondsLeft) setState(() => _bettingSecondsLeft = left);
+      if (!mounted || _phase != 'betting') {
+        t.cancel();
+        return;
+      }
+      final left = ((end - DateTime.now().millisecondsSinceEpoch) / 1000)
+          .ceil()
+          .clamp(0, 99);
+      if (left != _bettingSecondsLeft)
+        setState(() => _bettingSecondsLeft = left);
       if (left <= 0) t.cancel();
     });
   }
@@ -165,21 +199,33 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       // eases the shown value 0 → 1.00+ in the first few frames.
       _multiplier = 0.00;
       _serverMultiplier = 1.00;
+      _displayMultiplier.value = 0.00;
     });
   }
 
   void _onTick(dynamic data) {
     final m = (data?['multiplier'] as num?)?.toDouble();
     if (m == null) return;
+    final seq = data?['sequence_id'] as int?;
+    if (seq != null && seq <= _lastSequenceId) return; // drop out-of-order tick
+    if (seq != null) _lastSequenceId = seq;
     _serverMultiplier = m;
     if (_phase != 'flying') setState(() => _phase = 'flying');
     // Auto-cashout normally executes SERVER-side (target sent with the bet),
     // immune to network lag. Fire from here only as a fallback when the user
     // enabled auto AFTER the bet was already placed.
-    if (_autoCashout1 && !_serverAuto1 && _betPlaced1 && !_cashedOut1 && m >= _autoTarget1) {
+    if (_autoCashout1 &&
+        !_serverAuto1 &&
+        _betPlaced1 &&
+        !_cashedOut1 &&
+        m >= _autoTarget1) {
       _cashout(1);
     }
-    if (_autoCashout2 && !_serverAuto2 && _betPlaced2 && !_cashedOut2 && m >= _autoTarget2) {
+    if (_autoCashout2 &&
+        !_serverAuto2 &&
+        _betPlaced2 &&
+        !_cashedOut2 &&
+        m >= _autoTarget2) {
       _cashout(2);
     }
   }
@@ -193,6 +239,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       _crashAt = crash;
       _multiplier = crash;
       _serverMultiplier = crash;
+      _displayMultiplier.value = crash;
       _history = [crash, ..._history].take(20).toList();
     });
     // Wallet settles on the server at crash time; refresh the balance.
@@ -203,9 +250,14 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     if (!mounted) return;
     final status = data?['status']?.toString() ?? 'betting';
     setState(() {
-      _phase = status == 'flying' ? 'flying' : status == 'crashed' ? 'crashed' : 'betting';
+      _phase = status == 'flying'
+          ? 'flying'
+          : status == 'crashed'
+              ? 'crashed'
+              : 'betting';
       _serverMultiplier = (data?['multiplier'] as num?)?.toDouble() ?? 1.00;
       _multiplier = _serverMultiplier;
+      _displayMultiplier.value = _multiplier;
       _history = _parseHistory(data?['history']);
     });
   }
@@ -253,8 +305,12 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
 
   void _onMyHistory(dynamic data) {
     final raw = data?['bets'];
-    if (raw is! List) { _myHistory.value = []; return; }
-    _myHistory.value = raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+    if (raw is! List) {
+      _myHistory.value = [];
+      return;
+    }
+    _myHistory.value =
+        raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
   }
 
   void _onMaintenance(dynamic data) {
@@ -266,7 +322,9 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     if (!mounted) return;
     final msg = data?['message']?.toString() ?? 'Something went wrong';
     setState(() => _errorMsg = msg);
-    Future.delayed(const Duration(seconds: 3), () { if (mounted) setState(() => _errorMsg = null); });
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _errorMsg = null);
+    });
   }
 
   // 60fps render loop: ease the displayed multiplier toward the server value
@@ -278,6 +336,8 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   void _onFrame() {
     if (_phase == 'flying') {
       _multiplier = _multiplier + (_serverMultiplier - _multiplier) * 0.25;
+      final rounded = (_multiplier * 100).roundToDouble() / 100;
+      if (_displayMultiplier.value != rounded) _displayMultiplier.value = rounded;
     }
   }
 
@@ -286,7 +346,9 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     final amount = betIndex == 1 ? _betAmount1 : _betAmount2;
     if (_balance != null && _balance! < amount) {
       setState(() => _errorMsg = 'Low balance — add money to play');
-      Future.delayed(const Duration(seconds: 3), () { if (mounted) setState(() => _errorMsg = null); });
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) setState(() => _errorMsg = null);
+      });
       return;
     }
     // Optimistic lock; server confirms via aviator:bet_placed or rejects via error.
@@ -335,14 +397,20 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
             children: [
               const SizedBox(height: 10),
               Container(
-                width: 40, height: 4,
+                width: 40,
+                height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2)),
               ),
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
                 child: Text('MY BETS',
-                    style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 2)),
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 2)),
               ),
               Expanded(
                 child: ValueListenableBuilder<List<Map<String, dynamic>>?>(
@@ -350,14 +418,18 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
                   builder: (_, items, __) {
                     if (items == null) {
                       return const Center(
-                        child: SizedBox(width: 28, height: 28,
-                            child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 3)),
+                        child: SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(
+                                color: AppColors.gold, strokeWidth: 3)),
                       );
                     }
                     if (items.isEmpty) {
                       return const Center(
                         child: Text('No bets yet — place your first bet!',
-                            style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                            style: TextStyle(
+                                color: AppColors.textSecondary, fontSize: 12)),
                       );
                     }
                     return ListView.builder(
@@ -381,20 +453,22 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     final cashoutM = (bet['cashout_multiplier'] as num?)?.toDouble();
     final crashAt = (bet['crash_at'] as num?)?.toDouble() ?? 0;
     final won = payout > 0;
-    final when = DateTime.tryParse(bet['created_at']?.toString() ?? '')?.toLocal();
+    final when =
+        DateTime.tryParse(bet['created_at']?.toString() ?? '')?.toLocal();
     final whenText = when == null
         ? ''
         : '${when.day.toString().padLeft(2, '0')}/${when.month.toString().padLeft(2, '0')} '
-          '${when.hour.toString().padLeft(2, '0')}:${when.minute.toString().padLeft(2, '0')}';
+            '${when.hour.toString().padLeft(2, '0')}:${when.minute.toString().padLeft(2, '0')}';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFF161F38).withOpacity(0.8),
+        color: const Color(0xFF161F38).withValues(alpha: 0.8),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-            color: (won ? AppColors.green : AppColors.red).withOpacity(0.25)),
+            color: (won ? AppColors.green : AppColors.red)
+                .withValues(alpha: 0.25)),
       ),
       child: Row(
         children: [
@@ -409,11 +483,15 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
                   won
                       ? 'Cashed out @ ${cashoutM?.toStringAsFixed(2) ?? '—'}x'
                       : 'Crashed @ ${crashAt.toStringAsFixed(2)}x',
-                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 2),
                 Text('Bet ₹${amount.toStringAsFixed(0)} · $whenText',
-                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 10)),
+                    style: const TextStyle(
+                        color: AppColors.textSecondary, fontSize: 10)),
               ],
             ),
           ),
@@ -432,15 +510,22 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   @override
   void dispose() {
     _bettingTimer?.cancel();
-    for (final s in _subs) { s.cancel(); }
+    for (final s in _subs) {
+      s.cancel();
+    }
     _aviator.disconnect();
     _ticker.dispose();
     _pulse.dispose();
     _myHistory.dispose();
+    _displayMultiplier.dispose();
     super.dispose();
   }
 
-  Color _historyColor(double v) => v < 2 ? AppColors.red : v < 5 ? AppColors.orange : AppColors.green;
+  Color _historyColor(double v) => v < 2
+      ? AppColors.red
+      : v < 5
+          ? AppColors.orange
+          : AppColors.green;
 
   // Map multiplier → 0..1 plane progress; asymptotic so the plane stays on screen.
   double get _progress => (1 - 1 / max(_multiplier, 1.0)).clamp(0.0, 1.0);
@@ -457,23 +542,41 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
         title: const Text('Aviator', style: TextStyle(color: Colors.white)),
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.history_rounded, color: Colors.white70),
-            tooltip: 'My History',
-            onPressed: _showMyHistory,
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: TextButton.icon(
+              onPressed: _showMyHistory,
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.gold,
+                backgroundColor: Colors.black26,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  side: BorderSide(color: AppColors.gold.withValues(alpha: 0.6)),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              icon: const Icon(Icons.history_rounded, size: 16),
+              label: const Text('History',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14),
             child: Center(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                 decoration: BoxDecoration(
                   color: Colors.black26,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.gold.withOpacity(0.6)),
+                  border:
+                      Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
                 ),
                 child: Text('₹${_balance?.toStringAsFixed(0) ?? '—'}',
-                    style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
+                    style: const TextStyle(
+                        color: AppColors.gold,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13)),
               ),
             ),
           ),
@@ -490,113 +593,118 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   }
 
   Widget _buildHistoryStrip() => SizedBox(
-    height: 38,
-    child: ListView.builder(
-      scrollDirection: Axis.horizontal,
-      reverse: true,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      itemCount: _history.length,
-      itemBuilder: (_, i) => Container(
-        margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-        decoration: BoxDecoration(
-          color: _historyColor(_history[i]).withOpacity(0.18),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: _historyColor(_history[i]).withOpacity(0.55)),
+        height: 38,
+        child: ListView.builder(
+          scrollDirection: Axis.horizontal,
+          reverse: true,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          itemCount: _history.length,
+          itemBuilder: (_, i) => Container(
+            margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            decoration: BoxDecoration(
+              color: _historyColor(_history[i]).withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                  color: _historyColor(_history[i]).withValues(alpha: 0.55)),
+            ),
+            child: Center(
+              child: Text('${_history[i].toStringAsFixed(2)}x',
+                  style: TextStyle(
+                      color: _historyColor(_history[i]),
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold)),
+            ),
+          ),
         ),
-        child: Center(
-          child: Text('${_history[i].toStringAsFixed(2)}x',
-              style: TextStyle(color: _historyColor(_history[i]), fontSize: 11, fontWeight: FontWeight.bold)),
-        ),
-      ),
-    ),
-  );
+      );
 
   Widget _buildSky(bool flying, bool crashed) => ClipRect(
-    child: Stack(
-      children: [
-        // Only this subtree repaints per frame (driven by the ticker), keeping
-        // the plane + climbing multiplier smooth without rebuilding the page.
-        Positioned.fill(
-          child: RepaintBoundary(
-            child: AnimatedBuilder(
-              animation: Listenable.merge([_ticker, _pulse]),
-              builder: (_, __) => CustomPaint(
-                painter: _AviatorPainter(
-                  progress: _progress,
-                  phase: _phase,
-                  spin: _pulse.value,
-                ),
+        child: Stack(
+          children: [
+            // Only this subtree repaints per frame. The painter is a single
+            // persistent instance whose `repaint:` Listenable (ticker + pulse)
+            // drives RenderCustomPaint.markNeedsPaint() directly — no widget
+            // rebuild happens here at all, unlike an AnimatedBuilder wrapper.
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: CustomPaint(painter: _skyPainter),
               ),
             ),
-          ),
-        ),
-        Center(
-          child: flying
-              ? AnimatedBuilder(
-                  animation: Listenable.merge([_ticker, _pulse]),
-                  builder: (_, __) => _buildCenterReadout(false),
-                )
-              : _buildCenterReadout(crashed),
-        ),
-        if (_showWinBurst && _lastWinPrize > 0)
-          Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF00E676), Color(0xFF00B0FF)],
-                ),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF00E676).withOpacity(0.4),
-                    blurRadius: 20,
-                    spreadRadius: 2,
+            Center(
+              child: flying ? _buildFlyingReadout() : _buildCenterReadout(crashed),
+            ),
+            if (_showWinBurst && _lastWinPrize > 0)
+              Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF00E676), Color(0xFF00B0FF)],
+                    ),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF00E676).withValues(alpha: 0.4),
+                        blurRadius: 20,
+                        spreadRadius: 2,
+                      ),
+                    ],
                   ),
-                ],
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('💥 CASH OUT 💥',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 2)),
+                      const SizedBox(height: 2),
+                      Text('+${formatCurrency(_lastWinPrize)}',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 32,
+                              fontWeight: FontWeight.w900)),
+                    ],
+                  ),
+                )
+                    .animate()
+                    .scale(
+                        begin: const Offset(0.4, 0.4),
+                        end: const Offset(1.1, 1.1),
+                        duration: 400.ms,
+                        curve: Curves.elasticOut)
+                    .fadeOut(delay: 1100.ms, duration: 400.ms)
+                    .moveY(begin: 0, end: -70, duration: 1500.ms),
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('💥 CASH OUT 💥', 
-                      style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 2)),
-                  const SizedBox(height: 2),
-                  Text('+${formatCurrency(_lastWinPrize)}',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 32,
-                          fontWeight: FontWeight.w900)),
-                ],
-              ),
-            )
-                .animate()
-                .scale(
-                    begin: const Offset(0.4, 0.4),
-                    end: const Offset(1.1, 1.1),
-                    duration: 400.ms,
-                    curve: Curves.elasticOut)
-                .fadeOut(delay: 1100.ms, duration: 400.ms)
-                .moveY(begin: 0, end: -70, duration: 1500.ms),
-          ),
-        if (_errorMsg != null)
-          Positioned(
-            bottom: 12, left: 16, right: 16,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                decoration: BoxDecoration(
-                  color: AppColors.red.withOpacity(0.22),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.red.withOpacity(0.6)),
+            if (_errorMsg != null)
+              Positioned(
+                bottom: 12,
+                left: 16,
+                right: 16,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.red.withValues(alpha: 0.22),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                          color: AppColors.red.withValues(alpha: 0.6)),
+                    ),
+                    child: Text(_errorMsg!,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12)),
+                  ),
                 ),
-                child: Text(_errorMsg!, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
               ),
-            ),
-          ),
-      ],
-    ),
-  );
+          ],
+        ),
+      );
 
   Widget _buildCenterReadout(bool crashed) {
     if (_phase == 'maintenance') {
@@ -606,10 +714,17 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
           const Icon(Icons.build_rounded, color: AppColors.orange, size: 36),
           const SizedBox(height: 12),
           Text('UNDER MAINTENANCE'.toUpperCase(),
-              style: const TextStyle(color: AppColors.orange, letterSpacing: 2, fontSize: 13, fontWeight: FontWeight.w900)),
+              style: const TextStyle(
+                  color: AppColors.orange,
+                  letterSpacing: 2,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900)),
           const SizedBox(height: 6),
           const Text('Aviator is temporarily unavailable — back soon',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
+              style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold)),
         ],
       );
     }
@@ -617,10 +732,18 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const SizedBox(width: 32, height: 32, child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 3)),
+          const SizedBox(
+              width: 32,
+              height: 32,
+              child: CircularProgressIndicator(
+                  color: AppColors.gold, strokeWidth: 3)),
           const SizedBox(height: 16),
-          Text('Connecting to Live Room…'.toUpperCase(), 
-              style: const TextStyle(color: AppColors.textSecondary, letterSpacing: 2, fontSize: 11, fontWeight: FontWeight.bold)),
+          Text('Connecting to Live Room…'.toUpperCase(),
+              style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  letterSpacing: 2,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold)),
         ],
       );
     }
@@ -628,31 +751,41 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('FLEW AWAY!', style: TextStyle(color: AppColors.red, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 3)),
+          const Text('FLEW AWAY!',
+              style: TextStyle(
+                  color: AppColors.red,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 3)),
           const SizedBox(height: 6),
           Text('${(_crashAt ?? _multiplier).toStringAsFixed(2)}x',
               style: const TextStyle(
-                color: AppColors.red, 
-                fontSize: 68, 
+                color: AppColors.red,
+                fontSize: 68,
                 fontWeight: FontWeight.w900,
                 shadows: [
                   Shadow(color: Colors.red, blurRadius: 16),
                 ],
               )),
         ],
-      )
-      .animate()
-      .shake(duration: 400.ms, hz: 6, curve: Curves.easeInOut);
+      ).animate().shake(duration: 400.ms, hz: 6, curve: Curves.easeInOut);
     }
     if (_phase == 'betting') {
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('ROUND STARTS IN'.toUpperCase(), 
-              style: const TextStyle(color: AppColors.textSecondary, letterSpacing: 2, fontSize: 11, fontWeight: FontWeight.bold)),
+          Text('ROUND STARTS IN'.toUpperCase(),
+              style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  letterSpacing: 2,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
-          Text('${_bettingSecondsLeft}s', 
-              style: const TextStyle(color: Colors.white, fontSize: 52, fontWeight: FontWeight.w900)),
+          Text('${_bettingSecondsLeft}s',
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 52,
+                  fontWeight: FontWeight.w900)),
           const SizedBox(height: 12),
           SizedBox(
             width: 160,
@@ -660,7 +793,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
               borderRadius: BorderRadius.circular(6),
               child: LinearProgressIndicator(
                 value: (_bettingSecondsLeft / 5).clamp(0.0, 1.0),
-                backgroundColor: Colors.white.withOpacity(0.08),
+                backgroundColor: Colors.white.withValues(alpha: 0.08),
                 color: AppColors.gold,
                 minHeight: 6,
               ),
@@ -669,59 +802,90 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
         ],
       );
     }
-    // flying / waiting
-    final scale = _phase == 'flying' ? 1.0 + _pulse.value * 0.05 : 1.0;
-    
-    // Gradient coloring according to the height of the multiplier
-    final hot = _multiplier >= 10.0;
-    final medium = _multiplier >= 2.0;
-    
-    final Color multColor = hot 
-        ? const Color(0xFFE040FB) // Pulsing purple
-        : medium 
-            ? AppColors.aviatorGreen 
-            : Colors.white;
+    // Any other phase reaching here (defensive default; flying is handled by
+    // _buildFlyingReadout instead).
+    return const SizedBox.shrink();
+  }
 
-    return Transform.scale(
-      scale: scale,
+  // Flying-phase readout, split out from _buildCenterReadout so its 60fps
+  // pulse animation touches only a thin Transform.scale layer per frame —
+  // the Column/badges subtree is built once and passed as `child` (not
+  // rebuilt every tick), and the multiplier Text lives in its own
+  // RepaintBoundary + ValueListenableBuilder that only rebuilds when the
+  // displayed (rounded) value actually changes, not on every 16ms tick.
+  Widget _buildFlyingReadout() {
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (_, child) => Transform.scale(
+        scale: 1.0 + _pulse.value * 0.05,
+        child: child,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('${_multiplier.toStringAsFixed(2)}x',
-            style: TextStyle(
-              fontSize: 72, 
-              fontWeight: FontWeight.w900,
-              color: multColor,
-              shadows: [
-                Shadow(color: multColor.withOpacity(0.65), blurRadius: 28),
-              ],
-            )),
+          RepaintBoundary(
+            child: ValueListenableBuilder<double>(
+              valueListenable: _displayMultiplier,
+              builder: (_, m, __) {
+                final hot = m >= 10.0;
+                final medium = m >= 2.0;
+                final Color multColor = hot
+                    ? const Color(0xFFE040FB) // Pulsing purple
+                    : medium
+                        ? AppColors.aviatorGreen
+                        : Colors.white;
+                return Text('${m.toStringAsFixed(2)}x',
+                    style: TextStyle(
+                      fontSize: 72,
+                      fontWeight: FontWeight.w900,
+                      color: multColor,
+                      shadows: [
+                        Shadow(
+                            color: multColor.withValues(alpha: 0.65),
+                            blurRadius: 28),
+                      ],
+                    ));
+              },
+            ),
+          ),
           const SizedBox(height: 6),
           Column(
             children: [
               if (_cashedOut1 && _myMultiplier1 != null)
                 Container(
                   margin: const EdgeInsets.only(top: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
                   decoration: BoxDecoration(
-                    color: AppColors.green.withOpacity(0.12), 
-                    borderRadius: BorderRadius.circular(20), 
-                    border: Border.all(color: AppColors.green.withOpacity(0.6)),
+                    color: AppColors.green.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: AppColors.green.withValues(alpha: 0.6)),
                   ),
-                  child: Text('Bet 1 Out @ ${_myMultiplier1!.toStringAsFixed(2)}x · +${formatCurrency(_prize1)}',
-                      style: const TextStyle(color: AppColors.green, fontSize: 11, fontWeight: FontWeight.bold)),
+                  child: Text(
+                      'Bet 1 Out @ ${_myMultiplier1!.toStringAsFixed(2)}x · +${formatCurrency(_prize1)}',
+                      style: const TextStyle(
+                          color: AppColors.green,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold)),
                 ),
               if (_cashedOut2 && _myMultiplier2 != null)
                 Container(
                   margin: const EdgeInsets.only(top: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
                   decoration: BoxDecoration(
-                    color: AppColors.green.withOpacity(0.12), 
-                    borderRadius: BorderRadius.circular(20), 
-                    border: Border.all(color: AppColors.green.withOpacity(0.6)),
+                    color: AppColors.green.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: AppColors.green.withValues(alpha: 0.6)),
                   ),
-                  child: Text('Bet 2 Out @ ${_myMultiplier2!.toStringAsFixed(2)}x · +${formatCurrency(_prize2)}',
-                      style: const TextStyle(color: AppColors.green, fontSize: 11, fontWeight: FontWeight.bold)),
+                  child: Text(
+                      'Bet 2 Out @ ${_myMultiplier2!.toStringAsFixed(2)}x · +${formatCurrency(_prize2)}',
+                      style: const TextStyle(
+                          color: AppColors.green,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold)),
                 ),
             ],
           ),
@@ -731,28 +895,28 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
   }
 
   Widget _buildBetPanel() => Container(
-    padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
-    decoration: BoxDecoration(
-      color: const Color(0xFF0F1322),
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      border: Border.all(color: Colors.white.withOpacity(0.04)),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.4),
-          blurRadius: 16,
-          offset: const Offset(0, -4),
-        )
-      ],
-    ),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _buildIndividualBetPanel(1),
-        const SizedBox(height: 12),
-        _buildIndividualBetPanel(2),
-      ],
-    ),
-  );
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F1322),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.4),
+              blurRadius: 16,
+              offset: const Offset(0, -4),
+            )
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildIndividualBetPanel(1),
+            const SizedBox(height: 12),
+            _buildIndividualBetPanel(2),
+          ],
+        ),
+      );
 
   Widget _buildIndividualBetPanel(int betIndex) {
     final amount = betIndex == 1 ? _betAmount1 : _betAmount2;
@@ -762,12 +926,15 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFF161F38).withOpacity(0.8), // Glassy dark navy
+        color:
+            const Color(0xFF161F38).withValues(alpha: 0.8), // Glassy dark navy
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: placed 
-              ? (cashed ? AppColors.green.withOpacity(0.4) : AppColors.gold.withOpacity(0.4)) 
-              : Colors.white.withOpacity(0.06),
+          color: placed
+              ? (cashed
+                  ? AppColors.green.withValues(alpha: 0.4)
+                  : AppColors.gold.withValues(alpha: 0.4))
+              : Colors.white.withValues(alpha: 0.06),
           width: placed ? 1.5 : 1.0,
         ),
       ),
@@ -786,33 +953,43 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
                     final locked = placed || _phase == 'flying';
                     return Expanded(
                       child: GestureDetector(
-                        onTap: locked ? null : () => setState(() {
-                          if (betIndex == 1) {
-                            _betAmount1 = v.toDouble();
-                          } else {
-                            _betAmount2 = v.toDouble();
-                          }
-                        }),
+                        onTap: locked
+                            ? null
+                            : () => setState(() {
+                                  if (betIndex == 1) {
+                                    _betAmount1 = v.toDouble();
+                                  } else {
+                                    _betAmount2 = v.toDouble();
+                                  }
+                                }),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
                           margin: const EdgeInsets.symmetric(horizontal: 2),
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           decoration: BoxDecoration(
-                            gradient: sel 
+                            gradient: sel
                                 ? const LinearGradient(
-                                    colors: [Color(0xFFFFD54F), Color(0xFFFFA000)], // gold gradient
+                                    colors: [
+                                      Color(0xFFFFD54F),
+                                      Color(0xFFFFA000)
+                                    ], // gold gradient
                                   )
                                 : null,
-                            color: sel ? null : Colors.white.withOpacity(0.05),
+                            color: sel
+                                ? null
+                                : Colors.white.withValues(alpha: 0.05),
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(
-                              color: sel ? Colors.transparent : Colors.white.withOpacity(0.05),
+                              color: sel
+                                  ? Colors.transparent
+                                  : Colors.white.withValues(alpha: 0.05),
                             ),
                           ),
-                          child: Text('₹$v', textAlign: TextAlign.center,
+                          child: Text('₹$v',
+                              textAlign: TextAlign.center,
                               style: TextStyle(
-                                  color: sel ? Colors.black : Colors.white70, 
-                                  fontWeight: FontWeight.bold, 
+                                  color: sel ? Colors.black : Colors.white70,
+                                  fontWeight: FontWeight.bold,
                                   fontSize: 12)),
                         ),
                       ),
@@ -863,10 +1040,14 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: autoCash ? AppColors.green.withOpacity(0.12) : Colors.white.withOpacity(0.05),
+              color: autoCash
+                  ? AppColors.green.withValues(alpha: 0.12)
+                  : Colors.white.withValues(alpha: 0.05),
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                  color: autoCash ? AppColors.green.withOpacity(0.6) : Colors.white.withOpacity(0.05)),
+                  color: autoCash
+                      ? AppColors.green.withValues(alpha: 0.6)
+                      : Colors.white.withValues(alpha: 0.05)),
             ),
             child: Row(
               children: [
@@ -887,17 +1068,24 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
                         color: autoCash ? AppColors.green : Colors.white30),
                     const SizedBox(width: 4),
                     const Text('Auto Out',
-                        style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
+                        style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold)),
                   ]),
                 ),
                 const Spacer(),
-                _stepBtn(Icons.remove, () => setState(() {
-                  if (betIndex == 1) {
-                    _autoTarget1 = (_autoTarget1 - 0.5).clamp(1.5, 50.0);
-                  } else {
-                    _autoTarget2 = (_autoTarget2 - 0.5).clamp(1.5, 50.0);
-                  }
-                })),
+                _stepBtn(
+                    Icons.remove,
+                    () => setState(() {
+                          if (betIndex == 1) {
+                            _autoTarget1 =
+                                (_autoTarget1 - 0.5).clamp(1.5, 50.0);
+                          } else {
+                            _autoTarget2 =
+                                (_autoTarget2 - 0.5).clamp(1.5, 50.0);
+                          }
+                        })),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 6),
                   child: Text('${target.toStringAsFixed(1)}x',
@@ -906,13 +1094,17 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
                           fontWeight: FontWeight.w900,
                           fontSize: 11)),
                 ),
-                _stepBtn(Icons.add, () => setState(() {
-                  if (betIndex == 1) {
-                    _autoTarget1 = (_autoTarget1 + 0.5).clamp(1.5, 50.0);
-                  } else {
-                    _autoTarget2 = (_autoTarget2 + 0.5).clamp(1.5, 50.0);
-                  }
-                })),
+                _stepBtn(
+                    Icons.add,
+                    () => setState(() {
+                          if (betIndex == 1) {
+                            _autoTarget1 =
+                                (_autoTarget1 + 0.5).clamp(1.5, 50.0);
+                          } else {
+                            _autoTarget2 =
+                                (_autoTarget2 + 0.5).clamp(1.5, 50.0);
+                          }
+                        })),
               ],
             ),
           ),
@@ -921,16 +1113,24 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     );
   }
 
-  Widget _autoChip({required String label, required bool on, required VoidCallback onTap}) =>
+  Widget _autoChip(
+          {required String label,
+          required bool on,
+          required VoidCallback onTap}) =>
       GestureDetector(
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 6),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: on ? AppColors.gold.withOpacity(0.12) : Colors.white.withOpacity(0.05),
+            color: on
+                ? AppColors.gold.withValues(alpha: 0.12)
+                : Colors.white.withValues(alpha: 0.05),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: on ? AppColors.gold.withOpacity(0.6) : Colors.white.withOpacity(0.05)),
+            border: Border.all(
+                color: on
+                    ? AppColors.gold.withValues(alpha: 0.6)
+                    : Colors.white.withValues(alpha: 0.05)),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -954,7 +1154,8 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
           width: 22,
           height: 22,
           decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(6)),
+              color: Colors.white.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(6)),
           child: Icon(icon, size: 13, color: Colors.white),
         ),
       );
@@ -970,7 +1171,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
           borderRadius: BorderRadius.circular(10),
           boxShadow: [
             BoxShadow(
-              color: AppColors.gold.withOpacity(0.3),
+              color: AppColors.gold.withValues(alpha: 0.3),
               blurRadius: 8,
               offset: const Offset(0, 2),
             )
@@ -979,13 +1180,18 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
         child: ElevatedButton(
           onPressed: () => _placeBet(betIndex),
           style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.gold, 
-              foregroundColor: Colors.black,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              padding: EdgeInsets.zero,
-              elevation: 0,
+            backgroundColor: AppColors.gold,
+            foregroundColor: Colors.black,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            padding: EdgeInsets.zero,
+            elevation: 0,
           ),
-          child: Text('BET ₹${amount.toInt()}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5)),
+          child: Text('BET ₹${amount.toInt()}',
+              style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  letterSpacing: 0.5)),
         ),
       );
     }
@@ -995,7 +1201,7 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
           borderRadius: BorderRadius.circular(10),
           boxShadow: [
             BoxShadow(
-              color: AppColors.green.withOpacity(0.4),
+              color: AppColors.green.withValues(alpha: 0.4),
               blurRadius: 10,
               offset: const Offset(0, 2),
             )
@@ -1004,18 +1210,32 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
         child: ElevatedButton(
           onPressed: () => _cashout(betIndex),
           style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.green, 
-              foregroundColor: Colors.black,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              padding: EdgeInsets.zero,
-              elevation: 0,
+            backgroundColor: AppColors.green,
+            foregroundColor: Colors.black,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            padding: EdgeInsets.zero,
+            elevation: 0,
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('CASH OUT', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 9, letterSpacing: 0.5)),
-              Text(formatCurrency(amount * _multiplier),
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+              const Text('CASH OUT',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 9,
+                      letterSpacing: 0.5)),
+              // Live payout: this button lives in the state-managed subtree
+              // (rebuilds only on real setState, not the 60fps ticker), so
+              // reading _multiplier directly here would freeze the shown
+              // amount at whatever it was on the last socket event. Scope
+              // just this Text to the per-frame notifier instead.
+              ValueListenableBuilder<double>(
+                valueListenable: _displayMultiplier,
+                builder: (_, m, __) => Text(formatCurrency(amount * m),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 11)),
+              ),
             ],
           ),
         ),
@@ -1024,64 +1244,99 @@ class _AviatorPageState extends State<AviatorPage> with TickerProviderStateMixin
     return ElevatedButton(
       onPressed: null,
       style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.white.withOpacity(0.05),
-        disabledBackgroundColor: Colors.white.withOpacity(0.05),
+        backgroundColor: Colors.white.withValues(alpha: 0.05),
+        disabledBackgroundColor: Colors.white.withValues(alpha: 0.05),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         padding: EdgeInsets.zero,
       ),
       child: Text(
-        placed && !cashed ? 'Placed' :
-        cashed ? 'Cashed ✓' :
-        _phase == 'crashed' ? 'Ended' : 'Wait…',
+        placed && !cashed
+            ? 'Placed'
+            : cashed
+                ? 'Cashed ✓'
+                : _phase == 'crashed'
+                    ? 'Ended'
+                    : 'Wait…',
         style: TextStyle(
-            color: cashed ? AppColors.green : Colors.white30, 
-            fontSize: 12, 
+            color: cashed ? AppColors.green : Colors.white30,
+            fontSize: 12,
             fontWeight: FontWeight.w600),
       ),
     );
   }
+}
 
+class _Star {
+  final double fx, fy, radius; // fractional position (0..1) + dot radius
+  const _Star(this.fx, this.fy, this.radius);
 }
 
 class _AviatorPainter extends CustomPainter {
-  final double progress; // 0..1 along the flight
-  final String phase;
-  final double spin;     // 0..1 propeller / glow pulse
-  _AviatorPainter({required this.progress, required this.phase, required this.spin});
+  // Live-value getters (not snapshotted fields) — the SAME painter instance
+  // is reused for the whole page lifetime and repainted via the `repaint:`
+  // Listenable below, so paint() always reads the current value instead of
+  // needing a fresh painter/widget constructed every frame.
+  final double Function() progress; // 0..1 along the flight
+  final String Function() phase;
+  final double Function() spin; // 0..1 propeller / glow pulse
+
+  _AviatorPainter({
+    required this.progress,
+    required this.phase,
+    required this.spin,
+    required Listenable repaint,
+  }) : super(repaint: repaint);
+
+  // Star field is deterministic (fixed seed) and independent of canvas size,
+  // so it's generated ONCE for the whole app run instead of re-running
+  // Random.nextDouble() 84 times every single frame.
+  static final List<_Star> _stars = _generateStars();
+  static List<_Star> _generateStars() {
+    final random = Random(42);
+    return List.generate(28, (_) {
+      final fx = random.nextDouble();
+      final fy = random.nextDouble() * 0.85;
+      final radius = 1.0 + random.nextDouble() * 1.5;
+      return _Star(fx, fy, radius);
+    });
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
+    final p = progress();
+    final ph = phase();
+    final s = spin();
+
     _drawGrid(canvas, size);
-    
+
     // Draw background overhead spotlight glow
     final bgGlow = Paint()
       ..shader = RadialGradient(
         center: const Alignment(0, -0.3),
         radius: 1.2,
         colors: [
-          const Color(0xFF1E2D5A).withOpacity(0.65), // Spotlight center
-          const Color(0xFF0F1736).withOpacity(0.4),
-          const Color(0xFF060A1A).withOpacity(0),
+          const Color(0xFF1E2D5A).withValues(alpha: 0.65), // Spotlight center
+          const Color(0xFF0F1736).withValues(alpha: 0.4),
+          const Color(0xFF060A1A).withValues(alpha: 0),
         ],
         stops: const [0.0, 0.6, 1.0],
       ).createShader(Offset.zero & size);
     canvas.drawRect(Offset.zero & size, bgGlow);
 
     // Draw sliding dust stars to feel velocity
-    final starPaint = Paint()..color = Colors.white.withOpacity(0.18);
-    final random = Random(42); // fixed seed for consistency
-    for (int i = 0; i < 28; i++) {
-      final rx = random.nextDouble() * size.width;
-      final ry = random.nextDouble() * size.height * 0.85;
+    final starPaint = Paint()..color = Colors.white.withValues(alpha: 0.18);
+    for (final star in _stars) {
+      final rx = star.fx * size.width;
+      final ry = star.fy * size.height;
       // Scroll speed based on height to create parallax feel
       final speed = 1.0 + (ry / size.height) * 1.5;
-      final dx = (rx - spin * speed * size.width) % size.width;
-      canvas.drawCircle(Offset(dx, ry), 1.0 + random.nextDouble() * 1.5, starPaint);
+      final dx = (rx - s * speed * size.width) % size.width;
+      canvas.drawCircle(Offset(dx, ry), star.radius, starPaint);
     }
 
-    if (phase != 'flying' && phase != 'crashed') return;
+    if (ph != 'flying' && ph != 'crashed') return;
 
-    final crashed = phase == 'crashed';
+    final crashed = ph == 'crashed';
     final main = crashed ? AppColors.red : AppColors.aviatorGreen;
 
     // Build the exponential flight path.
@@ -1089,11 +1344,12 @@ class _AviatorPainter extends CustomPainter {
     final steps = 60;
     double px = 0, py = size.height;
     for (int i = 0; i <= steps; i++) {
-      final t = i / steps * progress;
+      final t = i / steps * p;
       final x = t * size.width;
       final y = size.height - pow(t, 1.6).toDouble() * size.height * 0.82;
       path.lineTo(x, y);
-      px = x; py = y;
+      px = x;
+      py = y;
     }
 
     // Area fill under the curve.
@@ -1105,8 +1361,9 @@ class _AviatorPainter extends CustomPainter {
       fill,
       Paint()
         ..shader = LinearGradient(
-          begin: Alignment.topCenter, end: Alignment.bottomCenter,
-          colors: [main.withOpacity(0.24), main.withOpacity(0.01)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [main.withValues(alpha: 0.24), main.withValues(alpha: 0.01)],
         ).createShader(Offset.zero & size),
     );
 
@@ -1122,11 +1379,13 @@ class _AviatorPainter extends CustomPainter {
     );
 
     // The plane at the tip.
-    _drawPlane(canvas, Offset(px, py), main, crashed);
+    _drawPlane(canvas, Offset(px, py), main, crashed, s);
   }
 
   void _drawGrid(Canvas canvas, Size size) {
-    final p = Paint()..color = Colors.white.withOpacity(0.03)..strokeWidth = 1;
+    final p = Paint()
+      ..color = Colors.white.withValues(alpha: 0.03)
+      ..strokeWidth = 1;
     for (double x = 0; x < size.width; x += size.width / 6) {
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), p);
     }
@@ -1135,22 +1394,30 @@ class _AviatorPainter extends CustomPainter {
     }
   }
 
-  void _drawPlane(Canvas canvas, Offset c, Color glow, bool crashed) {
+  void _drawPlane(Canvas canvas, Offset c, Color glow, bool crashed, double spin) {
     // 1. Double outer soft glow aura
-    canvas.drawCircle(c, 26, Paint()
-      ..color = glow.withOpacity(0.15)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12));
-    canvas.drawCircle(c, 16, Paint()
-      ..color = glow.withOpacity(0.3)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
+    canvas.drawCircle(
+        c,
+        26,
+        Paint()
+          ..color = glow.withValues(alpha: 0.15)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12));
+    canvas.drawCircle(
+        c,
+        16,
+        Paint()
+          ..color = glow.withValues(alpha: 0.3)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
 
     // 2. Jet Thruster Fire (exhaust)
     if (!crashed) {
       final thrusterPaint = Paint()
         ..shader = RadialGradient(
-          colors: [Colors.orangeAccent, Colors.redAccent.withOpacity(0)],
-        ).createShader(Rect.fromCircle(center: Offset(c.dx - 14, c.dy + 4), radius: 10 + spin * 5));
-      canvas.drawCircle(Offset(c.dx - 14, c.dy + 4), 10 + spin * 5, thrusterPaint);
+          colors: [Colors.orangeAccent, Colors.redAccent.withValues(alpha: 0)],
+        ).createShader(Rect.fromCircle(
+            center: Offset(c.dx - 14, c.dy + 4), radius: 10 + spin * 5));
+      canvas.drawCircle(
+          Offset(c.dx - 14, c.dy + 4), 10 + spin * 5, thrusterPaint);
     }
 
     // 3. Draw Plane Fuselage & Wings (3D/Glossy shading using paths)
@@ -1158,9 +1425,12 @@ class _AviatorPainter extends CustomPainter {
       ..shader = LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
-        colors: crashed 
+        colors: crashed
             ? [const Color(0xFFFF5252), const Color(0xFFC62828)]
-            : [const Color(0xFFFF2A4B), const Color(0xFF9E0018)], // Rich candy red
+            : [
+                const Color(0xFFFF2A4B),
+                const Color(0xFF9E0018)
+              ], // Rich candy red
       ).createShader(Rect.fromCircle(center: c, radius: 18));
 
     // Fuselage path (sleek aerodynamical body)
@@ -1202,7 +1472,7 @@ class _AviatorPainter extends CustomPainter {
 
     // Cockpit windshield (Glass glow)
     final glassPaint = Paint()
-      ..color = Colors.cyanAccent.withOpacity(0.85)
+      ..color = Colors.cyanAccent.withValues(alpha: 0.85)
       ..style = PaintingStyle.fill;
     final cockpit = Path()
       ..moveTo(c.dx + 4, c.dy - 2)
@@ -1214,17 +1484,18 @@ class _AviatorPainter extends CustomPainter {
     // 4. Spinning Propeller circle at nose
     if (!crashed) {
       final propPaint = Paint()
-        ..color = Colors.white.withOpacity(0.3)
+        ..color = Colors.white.withValues(alpha: 0.3)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.0;
       canvas.drawOval(
-        Rect.fromCenter(center: Offset(c.dx + 18, c.dy - 2), width: 3, height: 22),
+        Rect.fromCenter(
+            center: Offset(c.dx + 18, c.dy - 2), width: 3, height: 22),
         propPaint,
       );
       // Propeller spin blades
       final angle = spin * 2 * pi;
       final propBladesPaint = Paint()
-        ..color = Colors.white.withOpacity(0.65)
+        ..color = Colors.white.withValues(alpha: 0.65)
         ..strokeWidth = 1.2;
       final cosA = cos(angle);
       canvas.drawLine(
@@ -1236,6 +1507,5 @@ class _AviatorPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_AviatorPainter old) =>
-      old.progress != progress || old.phase != phase || old.spin != spin;
+  bool shouldRepaint(_AviatorPainter old) => true; // driven by `repaint:` above
 }

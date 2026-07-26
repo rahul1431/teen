@@ -33,7 +33,11 @@ class _KycPageState extends State<KycPage> {
     setState(() => _loading = true);
     try {
       final res = await _api.dio.get('/api/users/kyc/status');
-      if (mounted) setState(() { _status = res.data; _loading = false; });
+      if (mounted)
+        setState(() {
+          _status = res.data;
+          _loading = false;
+        });
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -43,22 +47,26 @@ class _KycPageState extends State<KycPage> {
     final src = await showModalBottomSheet<ImageSource>(
       context: context,
       backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Choose source', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const Text('Choose source',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               const SizedBox(height: 16),
               ListTile(
-                leading: const Icon(Icons.camera_alt_rounded, color: AppColors.gold),
+                leading:
+                    const Icon(Icons.camera_alt_rounded, color: AppColors.gold),
                 title: const Text('Camera'),
                 onTap: () => Navigator.pop(ctx, ImageSource.camera),
               ),
               ListTile(
-                leading: const Icon(Icons.photo_library_rounded, color: AppColors.gold),
+                leading: const Icon(Icons.photo_library_rounded,
+                    color: AppColors.gold),
                 title: const Text('Gallery'),
                 onTap: () => Navigator.pop(ctx, ImageSource.gallery),
               ),
@@ -68,7 +76,8 @@ class _KycPageState extends State<KycPage> {
       ),
     );
     if (src == null || !mounted) return;
-    final picked = await _picker.pickImage(source: src, maxWidth: 1600, imageQuality: 85);
+    final picked =
+        await _picker.pickImage(source: src, maxWidth: 1600, imageQuality: 85);
     if (picked == null || !mounted) return;
     setState(() {
       if (slot == 'front') _frontFile = File(picked.path);
@@ -85,13 +94,17 @@ class _KycPageState extends State<KycPage> {
     setState(() => _submitting = true);
     try {
       final formData = FormData.fromMap({
-        'aadhaar_front': await MultipartFile.fromFile(_frontFile!.path, filename: 'aadhaar_front.jpg'),
-        'aadhaar_back':  await MultipartFile.fromFile(_backFile!.path,  filename: 'aadhaar_back.jpg'),
-        'selfie':        await MultipartFile.fromFile(_selfieFile!.path, filename: 'selfie.jpg'),
+        'aadhaar_front': await MultipartFile.fromFile(_frontFile!.path,
+            filename: 'aadhaar_front.jpg'),
+        'aadhaar_back': await MultipartFile.fromFile(_backFile!.path,
+            filename: 'aadhaar_back.jpg'),
+        'selfie': await MultipartFile.fromFile(_selfieFile!.path,
+            filename: 'selfie.jpg'),
       });
       await _api.dio.post('/api/users/kyc/submit', data: formData);
       if (!mounted) return;
-      AppSnackBar.show(context, 'Documents submitted for review!', success: true);
+      AppSnackBar.show(context, 'Documents submitted for review!',
+          success: true);
       await _loadStatus();
     } catch (e) {
       if (!mounted) return;
@@ -106,7 +119,8 @@ class _KycPageState extends State<KycPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('KYC Verification')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.gold))
           : _buildBody(),
     );
   }
@@ -125,7 +139,8 @@ class _KycPageState extends State<KycPage> {
         const SizedBox(height: 24),
         _buildInfoCard(),
         const SizedBox(height: 24),
-        const Text('Upload Documents', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+        const Text('Upload Documents',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
         const SizedBox(height: 4),
         const Text('Clear photos required · Max 10MB each',
             style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
@@ -159,21 +174,27 @@ class _KycPageState extends State<KycPage> {
           child: ElevatedButton.icon(
             onPressed: _submitting ? null : _submit,
             icon: _submitting
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.black))
                 : const Icon(Icons.upload_rounded, size: 20),
             label: Text(_submitting ? 'Submitting...' : 'Submit for Review'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.gold,
               foregroundColor: Colors.black,
               padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
             ),
           ),
         ),
         const SizedBox(height: 16),
         const Text(
           '⚠️ Your documents are encrypted and stored securely. KYC is required for withdrawals above ₹10,000.',
-          style: TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.5),
+          style: TextStyle(
+              color: AppColors.textSecondary, fontSize: 12, height: 1.5),
           textAlign: TextAlign.center,
         ),
       ],
@@ -185,9 +206,9 @@ class _KycPageState extends State<KycPage> {
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: AppColors.red.withOpacity(0.1),
+          color: AppColors.red.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.red.withOpacity(0.4)),
+          border: Border.all(color: AppColors.red.withValues(alpha: 0.4)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -196,13 +217,18 @@ class _KycPageState extends State<KycPage> {
               children: [
                 Icon(Icons.cancel_rounded, color: AppColors.red, size: 18),
                 SizedBox(width: 8),
-                Text('KYC Rejected', style: TextStyle(color: AppColors.red, fontWeight: FontWeight.bold, fontSize: 14)),
+                Text('KYC Rejected',
+                    style: TextStyle(
+                        color: AppColors.red,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14)),
               ],
             ),
             if (doc?['rejection_reason'] != null) ...[
               const SizedBox(height: 6),
               Text('Reason: ${doc!['rejection_reason']}',
-                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                  style: const TextStyle(
+                      color: AppColors.textSecondary, fontSize: 13)),
             ],
             const SizedBox(height: 8),
             const Text('Please re-upload your documents below.',
@@ -215,21 +241,25 @@ class _KycPageState extends State<KycPage> {
   }
 
   Widget _buildInfoCard() => Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: AppColors.cardBg,
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: AppColors.border),
-    ),
-    child: const Column(
-      children: [
-        _InfoRow(Icons.check_circle_rounded, AppColors.green, 'Required for withdrawals above ₹10,000'),
-        _InfoRow(Icons.check_circle_rounded, AppColors.green, 'Verified within 24-48 hours'),
-        _InfoRow(Icons.check_circle_rounded, AppColors.green, 'Documents encrypted & stored securely'),
-        _InfoRow(Icons.check_circle_rounded, AppColors.green, 'Only Aadhaar card required'),
-      ],
-    ),
-  );
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.cardBg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: const Column(
+          children: [
+            _InfoRow(Icons.check_circle_rounded, AppColors.green,
+                'Required for withdrawals above ₹10,000'),
+            _InfoRow(Icons.check_circle_rounded, AppColors.green,
+                'Verified within 24-48 hours'),
+            _InfoRow(Icons.check_circle_rounded, AppColors.green,
+                'Documents encrypted & stored securely'),
+            _InfoRow(Icons.check_circle_rounded, AppColors.green,
+                'Only Aadhaar card required'),
+          ],
+        ),
+      );
 
   Widget _docSlot({
     required String label,
@@ -258,27 +288,35 @@ class _KycPageState extends State<KycPage> {
                   children: [
                     Image.file(file, fit: BoxFit.cover),
                     Positioned(
-                      top: 8, right: 8,
+                      top: 8,
+                      right: 8,
                       child: Container(
                         padding: const EdgeInsets.all(4),
                         decoration: const BoxDecoration(
                             color: Colors.black54, shape: BoxShape.circle),
-                        child: const Icon(Icons.check_rounded, color: AppColors.green, size: 16),
+                        child: const Icon(Icons.check_rounded,
+                            color: AppColors.green, size: 16),
                       ),
                     ),
                     Positioned(
-                      bottom: 0, left: 0, right: 0,
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 6),
                         decoration: const BoxDecoration(
                           gradient: LinearGradient(
                             colors: [Colors.black87, Colors.transparent],
                             begin: Alignment.bottomCenter,
                             end: Alignment.topCenter,
                           ),
-                          borderRadius: BorderRadius.vertical(bottom: Radius.circular(13)),
+                          borderRadius: BorderRadius.vertical(
+                              bottom: Radius.circular(13)),
                         ),
-                        child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        child: Text(label,
+                            style: const TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ],
@@ -293,17 +331,27 @@ class _KycPageState extends State<KycPage> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                      Text(hint, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                      Text(label,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 14)),
+                      Text(hint,
+                          style: const TextStyle(
+                              color: AppColors.textSecondary, fontSize: 12)),
                       const SizedBox(height: 4),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 3),
                         decoration: BoxDecoration(
-                          color: AppColors.gold.withOpacity(0.1),
+                          color: AppColors.gold.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: AppColors.gold.withOpacity(0.4)),
+                          border: Border.all(
+                              color: AppColors.gold.withValues(alpha: 0.4)),
                         ),
-                        child: const Text('Tap to upload', style: TextStyle(color: AppColors.gold, fontSize: 11, fontWeight: FontWeight.bold)),
+                        child: const Text('Tap to upload',
+                            style: TextStyle(
+                                color: AppColors.gold,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold)),
                       ),
                     ],
                   ),
@@ -314,58 +362,67 @@ class _KycPageState extends State<KycPage> {
   }
 
   Widget _buildUnderReview(Map<String, dynamic>? doc) => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text('⏳', style: TextStyle(fontSize: 60)),
-          const SizedBox(height: 20),
-          const Text('Under Review', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
-          const SizedBox(height: 8),
-          const Text(
-            'Your documents have been submitted and are under review.\nThis usually takes 24-48 hours.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 14, height: 1.5),
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('⏳', style: TextStyle(fontSize: 60)),
+              const SizedBox(height: 20),
+              const Text('Under Review',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 8),
+              const Text(
+                'Your documents have been submitted and are under review.\nThis usually takes 24-48 hours.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: AppColors.textSecondary, fontSize: 14, height: 1.5),
+              ),
+              if (doc?['submitted_at'] != null) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.cardBg,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'Submitted: ${_formatDate(doc!['submitted_at'])}',
+                    style: const TextStyle(
+                        color: AppColors.textSecondary, fontSize: 13),
+                  ),
+                ),
+              ],
+            ],
           ),
-          if (doc?['submitted_at'] != null) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                color: AppColors.cardBg,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                'Submitted: ${_formatDate(doc!['submitted_at'])}',
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
-              ),
-            ),
-          ],
-        ],
-      ),
-    ),
-  );
+        ),
+      );
 
   Widget _buildApproved() => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: const [
-          Text('✅', style: TextStyle(fontSize: 60)),
-          SizedBox(height: 20),
-          Text('KYC Verified!', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: AppColors.green)),
-          SizedBox(height: 8),
-          Text(
-            'Your identity has been verified.\nYou can now make withdrawals without any limits.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 14, height: 1.5),
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Text('✅', style: TextStyle(fontSize: 60)),
+              SizedBox(height: 20),
+              Text('KYC Verified!',
+                  style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.green)),
+              SizedBox(height: 8),
+              Text(
+                'Your identity has been verified.\nYou can now make withdrawals without any limits.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: AppColors.textSecondary, fontSize: 14, height: 1.5),
+              ),
+            ],
           ),
-        ],
-      ),
-    ),
-  );
+        ),
+      );
 
   String _formatDate(String? iso) {
     if (iso == null) return '—';
@@ -386,13 +443,16 @@ class _InfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 4),
-    child: Row(
-      children: [
-        Icon(icon, color: color, size: 16),
-        const SizedBox(width: 10),
-        Expanded(child: Text(text, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary))),
-      ],
-    ),
-  );
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 16),
+            const SizedBox(width: 10),
+            Expanded(
+                child: Text(text,
+                    style: const TextStyle(
+                        fontSize: 13, color: AppColors.textSecondary))),
+          ],
+        ),
+      );
 }

@@ -18,6 +18,10 @@ class SocketEvents {
   static const String roomChatMsg = 'room:chat';
   static const String errorEvent = 'error';
 
+  // Config reload
+  static const String configVersion = 'config:version';
+  static const String configReload = 'config:reload';
+
   // Aviator specific
   static const String aviatorPlaceBet = 'aviator:place_bet';
   static const String aviatorCashout = 'aviator:cashout';

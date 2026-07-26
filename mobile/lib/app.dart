@@ -20,6 +20,8 @@ import 'features/games/aviator/aviator_page.dart';
 import 'features/games/ludo/ludo_modes_page.dart';
 import 'features/games/ludo/ludo_lobby_page.dart';
 import 'features/games/ludo/ludo_game_page.dart';
+import 'features/games/ludo/ludo_friends_page.dart';
+import 'features/games/ludo/ludo_history_page.dart';
 import 'features/games/betting/matka_page.dart';
 import 'features/games/betting/lottery_page.dart';
 import 'features/games/betting/cricket_page.dart';
@@ -27,9 +29,9 @@ import 'features/leaderboard/leaderboard_page.dart';
 import 'features/profile/profile_page.dart';
 import 'features/notifications/notifications_page.dart';
 import 'features/referral/referral_page.dart';
-import 'features/daily_bonus/daily_bonus_page.dart';
 import 'features/onboarding/language_selection_page.dart';
 import 'features/games/games_page.dart';
+import 'features/missions/missions_page.dart';
 import 'shared/widgets/app_shell.dart';
 import 'core/services/locale_service.dart';
 
@@ -48,7 +50,6 @@ final GoRouter _router = GoRouter(
     final isPublic = state.matchedLocation.startsWith('/auth') ||
         state.matchedLocation == '/splash' ||
         state.matchedLocation.startsWith('/onboarding') ||
-        state.matchedLocation.endsWith('/demo') ||
         state.matchedLocation.endsWith('/practice');
     if (!isAuth && !isPublic) return '/auth/login';
     // Register/refresh FCM push token on every authenticated navigation
@@ -120,18 +121,18 @@ final GoRouter _router = GoRouter(
         ),
       ),
     ),
-    GoRoute(
-      path: '/games/teen-patti/demo',
-      pageBuilder: (context, state) => const NoTransitionPage(
-        child: TeenPattiGamePage(roomId: 'DEMO', demo: true),
-      ),
-    ),
     GoRoute(path: '/games/aviator', builder: (_, __) => const AviatorPage()),
     GoRoute(path: '/games/ludo/lobby', builder: (_, s) => LudoLobbyPage(privateMode: s.uri.queryParameters['private'], privateCode: s.uri.queryParameters['code'])),
+    GoRoute(path: '/games/ludo/friends', builder: (_, s) => LudoFriendsPage(
+      mode: s.uri.queryParameters['mode'] ?? 'join',
+      stake: double.tryParse(s.uri.queryParameters['stake'] ?? '') ?? 50,
+      code: s.uri.queryParameters['code'],
+    )),
+    GoRoute(path: '/games/ludo/history', builder: (_, __) => const LudoHistoryPage()),
     GoRoute(path: '/games/ludo/practice', builder: (_, __) => const LudoGamePage(offline: true)),
     GoRoute(path: '/games/ludo/play/:roomId', builder: (_, s) => LudoGamePage(roomId: s.pathParameters['roomId']!, initialData: s.extra as Map<String, dynamic>?)),
     GoRoute(path: '/referral', builder: (_, __) => const ReferralPage()),
-    GoRoute(path: '/daily-bonus', builder: (_, __) => const DailyBonusPage()),
+    GoRoute(path: '/missions', builder: (_, __) => const MissionsPage()),
     GoRoute(path: '/onboarding/language',
         builder: (_, __) => const LanguageSelectionPage(isOnboarding: true)),
   ],

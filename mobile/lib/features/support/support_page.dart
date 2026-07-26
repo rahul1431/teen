@@ -42,11 +42,13 @@ class SupportPage extends StatelessWidget {
                 Text('🎧', style: TextStyle(fontSize: 44)),
                 SizedBox(height: 10),
                 Text('We\'re here to help',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
                 SizedBox(height: 4),
                 Text('Reach out any time — support is available 24×7.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                    style: TextStyle(
+                        color: AppColors.textSecondary, fontSize: 13)),
               ],
             ),
           ),
@@ -59,7 +61,8 @@ class SupportPage extends StatelessWidget {
             subtitle: _whatsapp,
             onTap: () => _open(
               context,
-              Uri.parse('https://wa.me/${_whatsapp.replaceAll(RegExp(r'[^\d]'), '')}'),
+              Uri.parse(
+                  'https://wa.me/${_whatsapp.replaceAll(RegExp(r'[^\d]'), '')}'),
               _whatsapp,
             ),
           ),
@@ -94,7 +97,8 @@ class SupportPage extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Common questions',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+                    style:
+                        TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
                 SizedBox(height: 10),
                 _Faq('Deposit not credited?',
                     'Deposits are reviewed by our team and usually credit within 30 minutes.'),
@@ -125,12 +129,16 @@ class SupportPage extends StatelessWidget {
       ),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: color.withOpacity(0.15),
+          backgroundColor: color.withValues(alpha: 0.15),
           child: Icon(icon, color: color, size: 20),
         ),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-        subtitle: Text(subtitle, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-        trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.textSecondary),
+        title: Text(title,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+        subtitle: Text(subtitle,
+            style:
+                const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+        trailing: const Icon(Icons.chevron_right_rounded,
+            color: AppColors.textSecondary),
         onTap: onTap,
       ),
     );
@@ -149,9 +157,15 @@ class _Faq extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(q, style: const TextStyle(color: AppColors.gold, fontSize: 13, fontWeight: FontWeight.w700)),
+          Text(q,
+              style: const TextStyle(
+                  color: AppColors.gold,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700)),
           const SizedBox(height: 2),
-          Text(a, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.4)),
+          Text(a,
+              style: const TextStyle(
+                  color: AppColors.textSecondary, fontSize: 12, height: 1.4)),
         ],
       ),
     );

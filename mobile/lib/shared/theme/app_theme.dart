@@ -29,10 +29,10 @@ class AppColors {
   // Ludo token colours (seat order). Values match the board's tuned "reference
   // board" palette in ludo_board.dart so avatars/chips/borders elsewhere on the
   // Ludo screen always match the actual tokens on the board.
-  static const ludoRed    = Color(0xFFE33B3B);
-  static const ludoGreen  = Color(0xFF1FA855);
-  static const ludoYellow = Color(0xFFF7C815);
-  static const ludoBlue   = Color(0xFF1E7FD6);
+  static const ludoRed    = Color(0xFFEC2D2D);
+  static const ludoGreen  = Color(0xFF1BA64F);
+  static const ludoYellow = Color(0xFFFCC900);
+  static const ludoBlue   = Color(0xFF29ABE2);
 
   // Table felt
   static const feltDark    = Color(0xFF0A1428);
