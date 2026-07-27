@@ -170,31 +170,29 @@ Offset tokenPosition(int seatIndex, int tokenIndex, int progress, double size) {
     final cell = _homeLanes[seatIndex % 4][progress - 51];
     return _cellCenter(cell[0], cell[1], size);
   }
-  // Finished: rest inside this seat's own goal triangle at the board centre,
-  // side-by-side with any other finished tokens of the same colour, instead
-  // of every colour converging on the identical centre point.
-  return _goalTokenOffset(seatIndex, tokenIndex, size);
+  // Finished: rest at the centroid of this seat's own goal triangle. When
+  // several of the same colour finish, _buildTokens clusters them with the
+  // same tight diamond offsets used everywhere else tokens share a cell —
+  // so the goal looks like every other stack on the board, not a spread-out
+  // row that can crowd toward the triangle's edge.
+  return _goalCentroid(seatIndex, size);
 }
 
-// Goal-triangle anchor points, matching _drawCenter's triangle assignment
-// (top=seat2 yellow, right=seat3 blue, bottom=seat0 red, left=seat1 green).
-// Up to 4 finished tokens per seat spread along the triangle's own
-// edge-parallel axis so they're visible side-by-side, not stacked.
-Offset _goalTokenOffset(int seatIndex, int tokenIndex, double size) {
+// Centroid of this seat's own goal triangle, matching _drawCenter's
+// triangle assignment (top=seat2 yellow, right=seat3 blue, bottom=seat0
+// red, left=seat1 green). Staying at the centroid keeps clustered tokens
+// well inside the coloured area regardless of how many share it.
+Offset _goalCentroid(int seatIndex, double size) {
   final s = size / 15.0;
-  final cx = 6 * s, cy = 6 * s, cs = 3 * s;
-  final spacing = s * 0.30;
-  final along = (tokenIndex % 4 - 1.5) * spacing;
-
   switch (seatIndex % 4) {
     case 0: // red — bottom triangle
-      return Offset(cx + cs / 2 + along, cy + cs - cs * 0.30);
+      return Offset(7.5 * s, 8.5 * s);
     case 1: // green — left triangle
-      return Offset(cx + cs * 0.30, cy + cs / 2 + along);
+      return Offset(6.5 * s, 7.5 * s);
     case 2: // yellow — top triangle
-      return Offset(cx + cs / 2 + along, cy + cs * 0.30);
+      return Offset(7.5 * s, 6.5 * s);
     default: // blue — right triangle
-      return Offset(cx + cs - cs * 0.30, cy + cs / 2 + along);
+      return Offset(8.5 * s, 7.5 * s);
   }
 }
 
@@ -296,13 +294,15 @@ class _LudoBoardState extends State<LudoBoard>
       final seatIdx = (player.seat - 1).clamp(0, 3);
       for (var ti = 0; ti < player.tokens.length; ti++) {
         final prog = player.tokens[ti];
-        if (prog == -1 || prog >= kHomeProgress) continue;
+        if (prog == -1) continue;
 
         String cellKey;
         if (prog <= 50) {
           cellKey = 'track_${absoluteCell(seatIdx, prog)}';
-        } else {
+        } else if (prog < kHomeProgress) {
           cellKey = 'home_${seatIdx}_$prog';
+        } else {
+          cellKey = 'goal_$seatIdx';
         }
         cellGroups.putIfAbsent(cellKey, () => []).add(MapEntry(pi, ti));
       }
@@ -327,12 +327,14 @@ class _LudoBoardState extends State<LudoBoard>
         Offset offset = Offset.zero;
         double scale = 1.0;
 
-        if (progress != -1 && progress < kHomeProgress) {
+        if (progress != -1) {
           String cellKey;
           if (progress <= 50) {
             cellKey = 'track_${absoluteCell(seatIdx, progress)}';
-          } else {
+          } else if (progress < kHomeProgress) {
             cellKey = 'home_${seatIdx}_$progress';
+          } else {
+            cellKey = 'goal_$seatIdx';
           }
           final list = cellGroups[cellKey] ?? [];
           final count = list.length;
