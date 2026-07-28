@@ -517,6 +517,18 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
+		// Turn-order enforcement lives here now, not just on the gateway side:
+		// this engine is the actual source of truth for game state, so it must
+		// not trust a caller to have already checked whose turn it is.
+		// out-of-turn allow-list mirrors game-gateway/src/index.ts:808 exactly:
+		// "see" is always answerable off-turn, and sideshow_accept/reject are
+		// answered by the target, whose turn it structurally isn't.
+		outOfTurnOK := req.Action == "see" || req.Action == "sideshow_accept" || req.Action == "sideshow_reject"
+		if !outOfTurnOK && state.CurrentTurn != playerIdx {
+			http.Error(w, "not your turn", 400)
+			return nil
+		}
+
 		response := map[string]interface{}{"status": "ok", "action": req.Action}
 
 		// While a sideshow awaits a response, the game is frozen: only the target
@@ -884,6 +896,28 @@ func (s *Server) getState(w http.ResponseWriter, r *http.Request) {
 	w.Write(rawState)
 }
 
+// requireInternalKey gates a handler behind the same shared-secret header
+// every other inter-service call in this codebase uses (x-internal-key vs
+// INTERNAL_SERVICE_KEY). Without it, this engine — the actual source of
+// truth for game state and hole cards — trusted whatever called it with no
+// credentials at all, reachable by anything that could reach the port.
+func requireInternalKey(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		expected := os.Getenv("INTERNAL_SERVICE_KEY")
+		if expected == "" {
+			log.Printf("[auth] INTERNAL_SERVICE_KEY not configured")
+			http.Error(w, "unauthorized", 401)
+			return
+		}
+		if r.Header.Get("x-internal-key") != expected {
+			log.Printf("[auth] invalid or missing x-internal-key from %s", r.RemoteAddr)
+			http.Error(w, "unauthorized", 401)
+			return
+		}
+		next(w, r)
+	}
+}
+
 func main() {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -910,9 +944,9 @@ func main() {
 	srv := &Server{db: pool, redis: rdb}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/start", srv.startGame)
-	mux.HandleFunc("/action", srv.processAction)
-	mux.HandleFunc("/state", srv.getState)
+	mux.HandleFunc("/start", requireInternalKey(srv.startGame))
+	mux.HandleFunc("/action", requireInternalKey(srv.processAction))
+	mux.HandleFunc("/state", requireInternalKey(srv.getState))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok","service":"teen-patti-engine"}`))
 	})
@@ -921,6 +955,6 @@ func main() {
 	if port == "" {
 		port = "3010"
 	}
-	log.Printf("Teen Patti engine running on port %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	log.Printf("Teen Patti engine running on 127.0.0.1:%s", port)
+	log.Fatal(http.ListenAndServe("127.0.0.1:"+port, mux))
 }

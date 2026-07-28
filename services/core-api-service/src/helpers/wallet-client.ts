@@ -20,6 +20,34 @@ export async function debitStake(opts: {
   }
 }
 
+export async function creditBonus(opts: {
+  userId: string; amount: number; type?: 'bonus' | 'referral'; idempotencyKey: string; notification?: { title: string; body: string }
+}): Promise<boolean> {
+  if (opts.amount <= 0) return true
+  try {
+    const res = await fetch(`${WALLET_URL}/internal/wallet/credit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': KEY },
+      body: JSON.stringify({ user_id: opts.userId, amount: opts.amount, type: opts.type || 'bonus', idempotency_key: opts.idempotencyKey }),
+    })
+    if (res.ok && opts.notification) {
+      fetch('http://127.0.0.1:3001/internal/notifications/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': KEY },
+        body: JSON.stringify({
+          user_id: opts.userId,
+          title: opts.notification.title,
+          body: opts.notification.body,
+          type: 'leaderboard_reward',
+        }),
+      }).catch(err => console.error('[creditBonus] notification trigger failed:', err?.message))
+    }
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 export async function creditPrize(opts: {
   userId: string; amount: number; referenceId: string; idempotencyKey: string; notification?: { title: string; body: string }
 }): Promise<boolean> {

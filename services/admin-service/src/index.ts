@@ -3489,7 +3489,7 @@ async function start() {
   const KYC_UPLOAD_DIR = process.env.KYC_UPLOAD_DIR || '/opt/teen/uploads/kyc'
   const KYC_FILE_KEYS: Record<string, string> = { front: 'aadhaar_front', back: 'aadhaar_back', selfie: 'selfie' }
   const KYC_MIME_TYPES: Record<string, string> = { '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' }
-  app.get('/api/admin/kyc/:userId/file/:type', { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.get('/api/admin/kyc/:userId/file/:type', { onRequest: [app.authenticate, app.requireRole('support')] }, async (req, reply) => {
     const { userId, type } = req.params as any
     const key = KYC_FILE_KEYS[type]
     if (!key) return reply.code(400).send({ error: 'Invalid document type' })

@@ -864,7 +864,7 @@ async function start() {
     try {
       const res = await fetch(`${engineUrl}/action`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
         body: JSON.stringify({ room_id, user_id: conn.userId, action, amount: amount ?? 0, sequence_num: sequence_num ?? 0 }),
       })
       if (!res.ok) {
@@ -985,7 +985,7 @@ async function start() {
     const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
     const res = await fetch(`${engineUrl}/action`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
       body: JSON.stringify({
         room_id,
         user_id: botUserId,

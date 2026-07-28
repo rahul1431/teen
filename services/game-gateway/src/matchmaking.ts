@@ -801,7 +801,7 @@ export class MatchmakingService {
       const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
       const callTeenPattiStart = () => fetch(`${engineUrl}/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
         body: JSON.stringify({
           room_id: roomId,
           stake,
@@ -1120,7 +1120,7 @@ export class MatchmakingService {
 
         const res = await fetch(`${engineUrl}/action`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
           body: JSON.stringify({
             room_id: roomId,
             user_id: userId,
@@ -1291,7 +1291,7 @@ export class MatchmakingService {
     try {
       const res = await fetch(`${engineUrl}/action`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
         body: JSON.stringify({ room_id: roomId, user_id: userId, action: 'fold', amount: 0, sequence_num: 0 }),
         signal: AbortSignal.timeout(5000),
       })
