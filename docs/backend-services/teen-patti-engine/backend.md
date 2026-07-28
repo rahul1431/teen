@@ -2,7 +2,7 @@
 
 ## HTTP surface (`main.go:860-866`)
 
-All four routes are plain `net/http.ServeMux` handlers with **no authentication middleware of any kind** — no `x-internal-key` header check (unlike every inter-service call documented elsewhere in this codebase — wallet-service, admin-service, etc.), no JWT, nothing. See `docs/Bugs/teen-patti-engine-no-auth-or-turn-enforcement.md`.
+Three of the four routes (`/start`, `/action`, `/state`) now require an `x-internal-key` header matching `INTERNAL_SERVICE_KEY` (fixed 2026-07-29, `requireInternalKey()` — matches the pattern used by every other inter-service call in this codebase). `/health` remains open, matching the convention elsewhere (health checks don't carry credentials).
 
 | Route | Handler | Purpose |
 |---|---|---|
@@ -89,9 +89,9 @@ What **is** a bug is the fallback path: on any transient error reading `bot_prof
 
 Reads `game_configs.rake_percent` (a plain percentage column, e.g. `5` = 5%) fresh from Postgres on **every** showdown (no caching) — falls back to `5%` if the query errors or the value is outside `[0, 50]`. `determineWinner` computes `rake := state.Pot * rakePct` and `prize := state.Pot - rake` in `float64` throughout — see the note in `docs/Bugs/` risk register below for why real-money arithmetic staying in `float64` end-to-end (rather than integer paise/cents or `decimal`) is worth periodic scrutiny, though no concrete rounding-drift bug was demonstrated in this pass.
 
-## No authentication, no server-side turn enforcement (new finding)
+## Authentication and server-side turn enforcement (fixed 2026-07-29)
 
-Every action handler except `"sideshow"` mutates state for whichever `user_id` the caller supplies, without checking `state.CurrentTurn == playerIdx` — that check is normally enforced by `game-gateway`'s `handleGameAction` (`index.ts:542`) before it ever calls this engine, but this engine has no way to know or verify that the caller *is* the gateway, because none of its endpoints check any credential at all, and it listens on all interfaces (`overview.md`). Combined, this means the gateway's turn-order and out-of-turn allowlist (`"see"`/`"sideshow_accept"`/`"sideshow_reject"` only) is **not actually enforced by the source of truth** — it's enforced by a cooperating caller that happens to check first. See `docs/Bugs/teen-patti-engine-no-auth-or-turn-enforcement.md`.
+Every action handler except `"sideshow"` used to mutate state for whichever `user_id` the caller supplied, without checking `state.CurrentTurn == playerIdx` at all — that check was only ever enforced by `game-gateway`'s `handleGameAction` (`index.ts:542`) before it called this engine, with the engine itself having no way to verify the caller was actually the gateway (no credential check on any endpoint, listening on all interfaces). `processAction` now enforces `state.CurrentTurn == playerIdx` for every action except the same out-of-turn allowlist the gateway uses (`"see"`/`"sideshow_accept"`/`"sideshow_reject"`), and the engine binds `127.0.0.1` with `requireInternalKey()` on its state-mutating routes (see above) — the source of truth now enforces its own rules instead of trusting a cooperating caller.
 
 ## Concurrency (cross-reference)
 
@@ -116,9 +116,9 @@ The missing lock around `/action`'s Redis read-modify-write is fixed 2026-07-29 
 
 **Not covered by any test**: the HTTP handlers themselves (`startGame`/`processAction`/`getState` are never invoked via `httptest` or otherwise — every test calls the underlying pure functions directly with hand-built `GameState`/`Player` values); the real `winRateTarget` DB-lookup-with-fallback path (including the `hard`→100% fallback); the sideshow request/accept/reject/freeze flow; raise's missing upper bound / pot-limit-mid-action interaction; `loadRakePct`'s DB read or bounds-clamping; `saveCompletedGame`'s DB write-back; any concurrency/race scenario; and multi-wild-card (2–3 simultaneous wilds) evaluation performance or correctness.
 
-## New findings from this pass
+## Bug references
 
-- `docs/Bugs/teen-patti-engine-no-auth-or-turn-enforcement.md` — Critical: no request authentication on any endpoint, and no server-side turn-order check except for `sideshow`.
+The no-request-authentication / no-server-side-turn-order-check finding from this pass was fixed 2026-07-29 — see the section above.
 - `docs/Bugs/teen-patti-unbounded-raise-forces-bot-fold.md` — High: `raise` has no upper bound, letting a human force every bot at the table to auto-fold in one action.
 - `docs/Bugs/teen-patti-dda-hard-fallback-100-percent.md` — Medium-High: transient `bot_profiles` read errors silently jump the `hard`-difficulty DDA swap target from the seeded 65% to a hardcoded 100%.
 - `docs/Bugs/teen-patti-dda-admin-control-gap.md` — Medium: no admin-panel control actually reaches `win_rate_target`, the real DDA lever, despite two UI surfaces that look like they should.

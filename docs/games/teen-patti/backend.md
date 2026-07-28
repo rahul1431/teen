@@ -66,9 +66,9 @@ Runs once per hand, only if the room has ≥1 bot and ≥1 human. Looks up `winR
 
 **No per-turn timeout anywhere server-side.** The engine stores no per-turn timestamp (`CreatedAt` is the only time field, set once at deal). The gateway has a 25s AFK auto-play timer for Ludo (`LUDO_TURN_TIMEOUT_MS`) but **no equivalent for Teen Patti** — a stuck human's turn is only ever unstuck by the room-level 15-minute `GameWatchdog` (which refunds *everyone* at the table, not just the stuck player) or an admin's `force-action` call. See `../../Bugs/teen-patti-no-turn-timeout.md`.
 
-## No authentication, no server-side turn enforcement
+## Authentication and turn enforcement (fixed 2026-07-29)
 
-Every engine action handler except `sideshow` mutates state for whatever `user_id` the caller supplies, with no check that the caller *is* the gateway (no header, no JWT, nothing) and no independent verification of `state.CurrentTurn`. The gateway's turn-order/allow-list checks (`index.ts:541`) are enforced by a cooperating caller, not by the source of truth. The engine also binds `:3010` on all interfaces, not `127.0.0.1`. See `../../Bugs/teen-patti-engine-no-auth-or-turn-enforcement.md`.
+Every engine action handler except `sideshow` used to mutate state for whatever `user_id` the caller supplied, with no check that the caller *was* the gateway (no header, no JWT, nothing) and no independent verification of `state.CurrentTurn` — the gateway's turn-order/allow-list checks (`index.ts:808`) were enforced by a cooperating caller, not by the source of truth, and the engine bound all interfaces instead of `127.0.0.1`. `processAction` now enforces `state.CurrentTurn == playerIdx` itself (same out-of-turn allowlist as the gateway: `see`/`sideshow_accept`/`sideshow_reject`), the engine binds `127.0.0.1`, and `/start`/`/action`/`/state` all require `x-internal-key`.
 
 ## Engine-start failure now retries and tears down the room (fixed 2026-07-29)
 
@@ -89,6 +89,6 @@ Not covered by any test: the HTTP handlers themselves (no `httptest` usage anywh
 
 ## Bug references
 
-Already filed (not re-filed here): `../../Bugs/teen-patti-engine-no-auth-or-turn-enforcement.md`, `../../Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`, `../../Bugs/teen-patti-dda-hard-fallback-100-percent.md`, `../../Bugs/teen-patti-dda-admin-control-gap.md`, `../../Bugs/teen-patti-no-turn-timeout.md`, `../../Bugs/teen-patti-engine-url-env-example-broken.md`.
+Already filed (not re-filed here): `../../Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`, `../../Bugs/teen-patti-dda-hard-fallback-100-percent.md`, `../../Bugs/teen-patti-dda-admin-control-gap.md`, `../../Bugs/teen-patti-no-turn-timeout.md`, `../../Bugs/teen-patti-engine-url-env-example-broken.md`.
 
-The engine-start-failure gap and the missing per-room lock noted in this pass were both fixed 2026-07-29 — see the sections above.
+The engine-start-failure gap, the missing per-room lock, and the missing authentication/turn-enforcement noted in this pass were all fixed 2026-07-29 — see the sections above.
