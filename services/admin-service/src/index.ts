@@ -3574,7 +3574,7 @@ async function start() {
   // ── Bank Details Admin Routes ──────────────────────────────────────────────
 
   // GET /api/admin/bank-details — list all submitted bank accounts
-  app.get('/api/admin/bank-details', { onRequest: [authenticate] }, async (_req, reply) => {
+  app.get('/api/admin/bank-details', { onRequest: [authenticate, requireRole('finance')] }, async (_req, reply) => {
     const res = await db.query(
       `SELECT bd.*, u.username, u.phone, u.email
        FROM bank_details bd
