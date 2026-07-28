@@ -24,7 +24,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/deposit-promo-used-count-race-allows-double-bonus.md`
 - `docs/Bugs/duplicate-unauthenticated-bank-details-routes.md`
 - `docs/Bugs/entry-fee-deducted-update-silently-swallowed.md`
-- `docs/Bugs/failed-settle-game-consume-permanently-strands-locked-funds.md`
 - `docs/Bugs/kyc-file-proxy-no-role-gate.md`
 - `docs/Bugs/kyc-review-endpoint-skips-audit-log-and-notification.md`
 - `docs/Bugs/leaderboard-top3-reward-never-paid.md`
@@ -116,7 +115,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/risk-center-win-rate-threshold-mismatch.md`
 - `docs/Bugs/risk-service-http-api-orphaned-and-duplicated.md`
 - `docs/Bugs/risk-service-ml-config-hot-reload-noop.md`
-- `docs/Bugs/fraud-action-never-enforced.md`
 - `docs/Bugs/dashboard-fraud-alerts-hardcoded-zero.md`
 - `docs/Bugs/product-analytics-endpoints-missing.md`
 - → background: `docs/backend-services/{app-monitor-service,churn-service,churn-ml-service,risk-service}/*.md`, `docs/admin-panel/{ai-control-center,risk-center,ml-churn-bot-learning,dashboard}/*.md`, `docs/app/monitoring-sdk/*.md`
