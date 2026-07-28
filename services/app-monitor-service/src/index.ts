@@ -25,6 +25,21 @@ const ingestor = new MonitorIngestor(pool, redis, logger)
 const geoLookup = new GeoLookup(process.env.GEOLITE2_CITY_PATH)
 new AlertEngine(pool, redis, ingestor, logger).start()
 
+// Every route except the public mobile-app ingest endpoint and /health
+// requires the shared internal-service key — this data (live player GPS,
+// phone numbers, IPs, PM2/Docker process state) must never be reachable
+// without it. See docs/Bugs/app-monitor-read-endpoints-publicly-unauthenticated.md.
+const INTERNAL_SERVICE_KEY = process.env.INTERNAL_SERVICE_KEY
+const PUBLIC_PATHS = new Set(['/health', '/api/monitor/events'])
+app.addHook('onRequest', async (req, reply) => {
+  const path = req.url.split('?')[0]
+  if (PUBLIC_PATHS.has(path)) return
+  const key = req.headers['x-internal-key']
+  if (!INTERNAL_SERVICE_KEY || key !== INTERNAL_SERVICE_KEY) {
+    return reply.code(403).send({ success: false, error: 'Forbidden' })
+  }
+})
+
 // ── Alerts (raised by AlertEngine, shown in the admin AI Control Center) ──
 app.get<{ Querystring: { limit?: string } }>('/api/monitor/alerts', async (req, reply) => {
   try {

@@ -1939,7 +1939,7 @@ async function start() {
   // The admin panel manages these here; write actions proxy to the
   // betting-service internal endpoints (which hold the result-settlement
   // logic and wallet payouts) using the shared internal key.
-  const BETTING_URL = process.env.BETTING_SERVICE_URL || 'http://127.0.0.1:3012'
+  const BETTING_URL = process.env.BETTING_SERVICE_URL || 'http://127.0.0.1:3001'
   const callBetting = async (path: string, body: any, method: string = 'POST') => {
     const res = await fetch(`${BETTING_URL}${path}`, {
       method,

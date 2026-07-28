@@ -159,15 +159,18 @@ async function runHealthCheck(): Promise<UptimeStatus> {
     const services: Record<string, ServiceStatus> = {}
     const ports = [
       { name: 'core-api', port: 3001 },
-      { name: 'notification', port: 3001 },
-      { name: 'leaderboard', port: 3001 },
+      { name: 'wallet', port: 3003 },
       { name: 'gateway', port: 3004 },
       { name: 'aviator', port: 3005 },
+      { name: 'risk', port: 3006 },
+      { name: 'admin-svc', port: 3008 },
       { name: 'tp-engine', port: 3010 },
       { name: 'ludo-engine', port: 3011 },
-      { name: 'betting', port: 3012 },
-      { name: 'admin-svc', port: 3000 },
+      { name: 'churn', port: 3013 },
+      { name: 'bot-learning', port: 3014 },
       { name: 'app-monitor', port: 3015 },
+      { name: 'monitoring', port: 3017 },
+      { name: 'churn-ml', port: 3020 },
     ]
 
     for (const { name, port } of ports) {

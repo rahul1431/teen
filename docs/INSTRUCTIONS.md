@@ -61,7 +61,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 ### Aviator
 - `docs/Bugs/aviator-mobile-betting-progress-bar-hardcoded-5s.md`
 - `docs/Bugs/aviator-restart-recovery-discards-confirmed-cashout-winnings.md`
-- `docs/Bugs/aviator-websocket-misrouted-to-monitoring-service-port.md`
 - → background: `docs/games/aviator/*.md`
 
 ### Cricket / Lottery / Matka (betting games in `core-api-service`)
@@ -92,14 +91,12 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 
 ### Admin panel / RBAC / auth / security
 - `docs/Bugs/admin-deactivation-does-not-revoke-active-sessions.md`
-- `docs/Bugs/admin-notification-betting-urls-point-to-dead-ports.md`
 - `docs/Bugs/admin-panel-no-401-session-expiry-handling.md`
 - `docs/Bugs/ai-control-center-churn-prediction-config-unused.md`
 - `docs/Bugs/ai-control-center-missing-role-gates.md`
 - `docs/Bugs/ai-control-center-refresh-button-partial.md`
 - `docs/Bugs/ai-workflow-dashboard-hardcoded-model-jobs.md`
 - `docs/Bugs/audit-log-ip-address-never-recorded.md`
-- `docs/Bugs/login-page-exposes-seed-credentials.md`
 - `docs/Bugs/logout-does-not-call-backend.md`
 - `docs/Bugs/otp-dev-mode-master-code-bypass.md`
 - `docs/Bugs/orphaned-admin-pages.md`
@@ -147,8 +144,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/nginx-hestia-config-filename-drift-across-deploy-scripts.md`
 - `docs/Bugs/nginx-join-table-download-routes-missing-in-production.md`
 - `docs/Bugs/nginx-protect-cron-never-installed.md`
-- `docs/Bugs/uptime-bot-internal-port-table-stale.md`
-- `docs/Bugs/uptime-bot-source-not-tracked-on-branch.md`
 - `docs/Bugs/vps-optimizations-script-deletes-active-bot-learning-service.md`
 - `docs/Bugs/app-update-version-history-downloads-wrong-apk.md`
 - → background: `docs/infra/{deploy-pipeline,nginx,pm2-ecosystem,db-migrations}.md`, `docs/backend-services/uptime-bot/*.md`, `docs/admin-panel/app-update/*.md`
