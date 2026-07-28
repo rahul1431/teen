@@ -4,15 +4,15 @@ Request route in `services/wallet-service/src/index.ts`; admin state machine in 
 
 ## `POST /wallet/withdraw/request` (`wallet-service/src/index.ts:441-499`)
 
-Player, JWT auth. `{ amount: 100–50000, bank_account?: string, upi_id?: string }` — both destination fields are optional and, critically, **not cross-checked against the `bank_details` table at all**; whatever the client sends (or doesn't) is stored verbatim in `payment_orders.metadata`. See `docs/Bugs/withdrawal-destination-account-never-recorded-or-verified-server-side.md`.
+Player, JWT auth. `{ amount: 100–50000 }` — no client-supplied destination fields at all; the client cannot influence where the money goes.
 
-The only gate enforced: `SELECT kyc_status FROM users WHERE id = $1`, must equal `'approved'` or 403 `KYC verification required before withdrawal`. No check of `bank_details.verified`, no check of time-of-day (`docs/Bugs/withdrawal-hours-restriction-is-client-side-only.md`).
+Gates enforced, in order: `SELECT kyc_status FROM users WHERE id = $1` must equal `'approved'` (else 403); a `fraud:flagged:<userId>` Redis check (403 if flagged, enforced 2026-07-28); and a `SELECT ... FROM bank_details WHERE user_id = $1` lookup that requires a row to exist with `verified = true` (else 400 `Add and verify your bank details before withdrawing`) — no check of time-of-day (`docs/Bugs/withdrawal-hours-restriction-is-client-side-only.md`).
 
 Then, in one transaction:
 1. `SELECT real_balance FROM wallets WHERE user_id = $1 FOR UPDATE`.
 2. If `real_balance < amount`: rollback, 400 `Insufficient balance`.
 3. `UPDATE wallets SET real_balance -= amount, locked_balance += amount`.
-4. `INSERT INTO payment_orders (..., type='withdrawal', status='created', metadata)`.
+4. `INSERT INTO payment_orders (..., type='withdrawal', status='created', metadata)` — `metadata` is a **server-side snapshot** of the verified `bank_details` row (`holder_name`, `bank_name`, `account_number`, `ifsc_code`, `upi_id`), not client input.
 5. `INSERT INTO wallet_transactions (..., status='pending', idempotency_key: 'withdraw:<orderId>')` — logs the lock itself as a ledger row, separate from the `WalletService.lockForGame` path (this route builds its own transaction inline rather than calling a shared `WalletService` method for the lock).
 
 No idempotency protection against a double-submit from the client: two rapid requests each acquire the `FOR UPDATE` lock in turn (they serialize, they don't race incorrectly against each other), but if the balance is sufficient for both, two independent withdrawal orders and two independent locks are created — the mobile client's `_submitting` flag (`wallet_page.dart:939`) is the only thing preventing this in practice.

@@ -60,7 +60,7 @@ Runs once per hand, only if the room has ≥1 bot and ≥1 human. Looks up `winR
 
 ## Concurrency / locking
 
-**No lock in the engine.** `/action`'s Redis read-modify-write (`main.go:455-462, 687-689`) has no mutex, no `WATCH`, no `SET NX`. Compare to the Ludo engine's explicit `withRoomLock()` (Redis `SET NX PX` mutex). Two calls for the same room close together — e.g. a scheduled bot-turn timer firing at the same moment a human sends an out-of-turn `see`/`sideshow_accept` (both explicitly allowed out-of-turn by the gateway) — can silently clobber each other. See `../../Bugs/teen-patti-engine-no-room-lock.md`.
+**Per-room lock added 2026-07-29.** `/action`'s Redis read-modify-write used to have no mutex, no `WATCH`, no `SET NX` — two calls for the same room close together (e.g. a scheduled bot-turn timer firing at the same moment a human sends an out-of-turn `see`/`sideshow_accept`, both explicitly allowed out-of-turn by the gateway) could silently clobber each other. `processAction` is now wrapped in its own `withRoomLock()` (Redis `SET NX PX` mutex keyed `tp:lock:<roomId>`), mirroring the Ludo engine's equivalent.
 
 **Bot-turn retry-once-then-abort** (`matchmaking.ts:678-690`): if a scheduled bot action throws (engine unreachable, lock exception, etc.), it's retried once after 2s; if that also throws, the game is force-ended via `handleGameEnd(roomId, {winner_id: null, prize: 0}, ...)` — no winner, zero prize, purely to unblock the table. A genuinely stuck bot turn forfeits the pot rather than refunding it.
 
@@ -89,6 +89,6 @@ Not covered by any test: the HTTP handlers themselves (no `httptest` usage anywh
 
 ## Bug references
 
-Already filed (not re-filed here): `../../Bugs/teen-patti-engine-no-auth-or-turn-enforcement.md`, `../../Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`, `../../Bugs/teen-patti-dda-hard-fallback-100-percent.md`, `../../Bugs/teen-patti-dda-admin-control-gap.md`, `../../Bugs/teen-patti-engine-no-room-lock.md`, `../../Bugs/teen-patti-no-turn-timeout.md`, `../../Bugs/teen-patti-engine-url-env-example-broken.md`.
+Already filed (not re-filed here): `../../Bugs/teen-patti-engine-no-auth-or-turn-enforcement.md`, `../../Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`, `../../Bugs/teen-patti-dda-hard-fallback-100-percent.md`, `../../Bugs/teen-patti-dda-admin-control-gap.md`, `../../Bugs/teen-patti-no-turn-timeout.md`, `../../Bugs/teen-patti-engine-url-env-example-broken.md`.
 
-The engine-start-failure gap noted in this pass (`teen-patti-engine-start-failure-strands-locked-funds`) was fixed 2026-07-29 — see the section above.
+The engine-start-failure gap and the missing per-room lock noted in this pass were both fixed 2026-07-29 — see the sections above.

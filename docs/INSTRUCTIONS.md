@@ -20,13 +20,11 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 ## "I have issue X, which file do I check?" — bug index by area
 
 ### Payments / Wallet / KYC
-- `docs/Bugs/duplicate-unauthenticated-bank-details-routes.md`
 - `docs/Bugs/entry-fee-deducted-update-silently-swallowed.md`
 - `docs/Bugs/kyc-file-proxy-no-role-gate.md`
 - `docs/Bugs/kyc-review-endpoint-skips-audit-log-and-notification.md`
 - `docs/Bugs/leaderboard-top3-reward-never-paid.md`
 - `docs/Bugs/wallet-service-deposit-withdrawal-limit-env-vars-are-dead-config.md`
-- `docs/Bugs/withdrawal-destination-account-never-recorded-or-verified-server-side.md`
 - `docs/Bugs/withdrawal-hours-restriction-is-client-side-only.md`
 - `docs/Bugs/daily-bonus-claim-reports-success-even-if-wallet-credit-fails.md`
 - `docs/Bugs/daily-bonus-remove-day-does-not-persist.md`
@@ -37,7 +35,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/teen-patti-dda-hard-fallback-100-percent.md`
 - `docs/Bugs/teen-patti-emoji-config-shared-across-games.md`
 - `docs/Bugs/teen-patti-engine-no-auth-or-turn-enforcement.md`
-- `docs/Bugs/teen-patti-engine-no-room-lock.md`
 - `docs/Bugs/teen-patti-engine-url-env-example-broken.md`
 - `docs/Bugs/teen-patti-lobby-fee-percent-hardcoded.md`
 - `docs/Bugs/teen-patti-no-turn-timeout.md`

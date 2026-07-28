@@ -8,7 +8,6 @@ Withdrawals are a two-phase, admin-mediated process: the player requests one (fu
 
 ## Where this is weaker than it looks
 
-- **The destination bank account is never captured or validated server-side.** The mobile app only ever sends `{ amount }` to `/wallet/withdraw/request` — no bank account or UPI ID, despite the route accepting optional `bank_account`/`upi_id` fields. The "must have a verified bank account" rule is a pure client-side UI gate (`_bankVerified`, disables the submit button); nothing on the backend checks `bank_details.verified`, or even that a `bank_details` row exists, before locking funds and creating the order. See `docs/Bugs/withdrawal-destination-account-never-recorded-or-verified-server-side.md`.
 - **The 10 AM–9 PM withdrawal window is client-side only** (`docs/Bugs/withdrawal-hours-restriction-is-client-side-only.md`) — the backend accepts a withdrawal request at any hour.
 - **Wallet-service call failures during admin approval used to be silently ignored** — fixed 2026-07-28: the admin panel now aborts the status transition with a clear error if the underlying wallet-service call that was supposed to move the money failed, instead of reporting "paid"/"refunded" success and notifying the user anyway.
 
