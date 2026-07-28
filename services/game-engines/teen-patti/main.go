@@ -4,6 +4,7 @@ import (
 	"context"
 	cryptoRand "crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -275,6 +276,48 @@ type Server struct {
 	redis *redis.Client
 }
 
+// /start and /action both do a load (or blind-write for /start) -> mutate ->
+// save against Redis with no atomicity of their own. Two near-simultaneous
+// /action calls for the same room (index.ts:541 explicitly allows out-of-turn
+// see/sideshow_accept/sideshow_reject, and the bot-turn scheduler's retry path
+// can overlap a human's own action) can otherwise both load the same state
+// and the second Set silently clobbers the first. A short-lived Redis lock
+// per room_id serializes those calls, mirroring the Ludo engine's
+// withRoomLock (services/game-engines/ludo/src/index.ts).
+const (
+	lockTTL     = 5 * time.Second
+	lockRetry   = 100 * time.Millisecond
+	lockMaxWait = 3 * time.Second
+)
+
+var errRoomBusy = errors.New("room busy, try again")
+
+func (s *Server) withRoomLock(ctx context.Context, roomID string, fn func() error) error {
+	token := uuid.NewString()
+	lockKey := fmt.Sprintf("tp:lock:%s", roomID)
+	deadline := time.Now().Add(lockMaxWait)
+	acquired := false
+	for time.Now().Before(deadline) {
+		ok, err := s.redis.SetNX(ctx, lockKey, token, lockTTL).Result()
+		if err == nil && ok {
+			acquired = true
+			break
+		}
+		time.Sleep(lockRetry)
+	}
+	if !acquired {
+		return errRoomBusy
+	}
+	defer func() {
+		// Best-effort release only if we still hold it (avoid deleting a lock
+		// acquired by someone else after our TTL expired).
+		if cur, err := s.redis.Get(ctx, lockKey).Result(); err == nil && cur == token {
+			s.redis.Del(ctx, lockKey)
+		}
+	}()
+	return fn()
+}
+
 type StartGameReq struct {
 	RoomID        string   `json:"room_id"`
 	Players       []Player `json:"players"`
@@ -452,250 +495,256 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := context.Background()
-	rawState, err := s.redis.Get(ctx, fmt.Sprintf("tp:game:%s", req.RoomID)).Bytes()
-	if err != nil {
-		http.Error(w, "game not found", 404)
-		return
-	}
-
-	var state GameState
-	json.Unmarshal(rawState, &state)
-
-	playerIdx := -1
-	for i, p := range state.Players {
-		if p.UserID == req.UserID {
-			playerIdx = i
-			break
+	err := s.withRoomLock(ctx, req.RoomID, func() error {
+		rawState, err := s.redis.Get(ctx, fmt.Sprintf("tp:game:%s", req.RoomID)).Bytes()
+		if err != nil {
+			http.Error(w, "game not found", 404)
+			return nil
 		}
-	}
-	if playerIdx == -1 {
-		http.Error(w, "player not in game", 400)
-		return
-	}
 
-	response := map[string]interface{}{"status": "ok", "action": req.Action}
+		var state GameState
+		json.Unmarshal(rawState, &state)
 
-	// While a sideshow awaits a response, the game is frozen: only the target
-	// may accept/reject, and only the requester may fold (e.g. turn-timer
-	// auto-fold). Everything else must wait for resolution.
-	if state.PendingSideshow != nil {
-		ps := state.PendingSideshow
-		isTargetResponse := (req.Action == "sideshow_accept" || req.Action == "sideshow_reject") && req.UserID == ps.TargetID
-		isRequesterFold := req.Action == "fold" && req.UserID == ps.RequesterID
-		if !isTargetResponse && !isRequesterFold {
-			http.Error(w, "waiting for sideshow response", 400)
-			return
+		playerIdx := -1
+		for i, p := range state.Players {
+			if p.UserID == req.UserID {
+				playerIdx = i
+				break
+			}
 		}
-	}
+		if playerIdx == -1 {
+			http.Error(w, "player not in game", 400)
+			return nil
+		}
 
-	switch req.Action {
-	case "fold":
-		state.Players[playerIdx].Status = "folded"
-		// A fold by either party of a pending sideshow cancels it.
-		if state.PendingSideshow != nil &&
-			(req.UserID == state.PendingSideshow.RequesterID || req.UserID == state.PendingSideshow.TargetID) {
+		response := map[string]interface{}{"status": "ok", "action": req.Action}
+
+		// While a sideshow awaits a response, the game is frozen: only the target
+		// may accept/reject, and only the requester may fold (e.g. turn-timer
+		// auto-fold). Everything else must wait for resolution.
+		if state.PendingSideshow != nil {
+			ps := state.PendingSideshow
+			isTargetResponse := (req.Action == "sideshow_accept" || req.Action == "sideshow_reject") && req.UserID == ps.TargetID
+			isRequesterFold := req.Action == "fold" && req.UserID == ps.RequesterID
+			if !isTargetResponse && !isRequesterFold {
+				http.Error(w, "waiting for sideshow response", 400)
+				return nil
+			}
+		}
+
+		switch req.Action {
+		case "fold":
+			state.Players[playerIdx].Status = "folded"
+			// A fold by either party of a pending sideshow cancels it.
+			if state.PendingSideshow != nil &&
+				(req.UserID == state.PendingSideshow.RequesterID || req.UserID == state.PendingSideshow.TargetID) {
+				state.PendingSideshow = nil
+			}
+		case "call":
+			callAmount := state.MinBet
+			if state.Players[playerIdx].IsSeen {
+				callAmount = state.MinBet * 2
+			}
+			state.Players[playerIdx].Bet += callAmount
+			state.Pot += callAmount
+		case "raise":
+			raiseAmount := req.Amount
+			isSeen := state.Players[playerIdx].IsSeen
+			if isSeen {
+				if raiseAmount < state.MinBet*2 {
+					http.Error(w, "raise amount too small for seen player", 400)
+					return nil
+				}
+				state.Players[playerIdx].Bet += raiseAmount
+				state.Pot += raiseAmount
+				state.MinBet = raiseAmount / 2.0
+			} else {
+				if raiseAmount < state.MinBet {
+					http.Error(w, "raise amount too small for blind player", 400)
+					return nil
+				}
+				state.Players[playerIdx].Bet += raiseAmount
+				state.Pot += raiseAmount
+				state.MinBet = raiseAmount
+			}
+		case "show":
+			activeCount := 0
+			for _, p := range state.Players {
+				if p.Status != "folded" {
+					activeCount++
+				}
+			}
+			if activeCount != 2 {
+				http.Error(w, "Show is only allowed when exactly 2 active players remain", 400)
+				return nil
+			}
+			showCost := state.MinBet
+			if state.Players[playerIdx].IsSeen {
+				showCost = state.MinBet * 2
+			}
+			state.Players[playerIdx].Bet += showCost
+			state.Pot += showCost
+			state.Players[playerIdx].IsSeen = true
+		case "see":
+			state.Players[playerIdx].IsSeen = true
+		case "sideshow":
+			// A seen player, on their turn, asks the previous active player to
+			// privately compare cards. Costs a seen chaal (2x current stake).
+			// Only meaningful with 3+ active players — with 2 you use "show".
+			if state.CurrentTurn != playerIdx {
+				http.Error(w, "not your turn", 400)
+				return nil
+			}
+			if !state.Players[playerIdx].IsSeen {
+				http.Error(w, "you must see your cards before asking for a sideshow", 400)
+				return nil
+			}
+			if state.Players[playerIdx].Status != "active" {
+				http.Error(w, "player not active", 400)
+				return nil
+			}
+			activeCount := 0
+			for _, p := range state.Players {
+				if p.Status == "active" {
+					activeCount++
+				}
+			}
+			if activeCount < 3 {
+				http.Error(w, "sideshow needs at least 3 active players", 400)
+				return nil
+			}
+			// Previous active player is the target
+			prev := (playerIdx - 1 + len(state.Players)) % len(state.Players)
+			for state.Players[prev].Status != "active" {
+				prev = (prev - 1 + len(state.Players)) % len(state.Players)
+			}
+			cost := state.MinBet * 2
+			state.Players[playerIdx].Bet += cost
+			state.Pot += cost
+			state.PendingSideshow = &SideshowState{
+				RequesterID: req.UserID,
+				TargetID:    state.Players[prev].UserID,
+				RequestedAt: time.Now().Unix(),
+			}
+			response["sideshow_request"] = map[string]interface{}{
+				"requester_id":       req.UserID,
+				"requester_username": state.Players[playerIdx].Username,
+				"target_id":          state.Players[prev].UserID,
+				"target_username":    state.Players[prev].Username,
+			}
+		case "sideshow_accept":
+			ps := state.PendingSideshow
+			if ps == nil || req.UserID != ps.TargetID {
+				http.Error(w, "no sideshow to accept", 400)
+				return nil
+			}
+			reqIdx, tgtIdx := -1, -1
+			for i, p := range state.Players {
+				if p.UserID == ps.RequesterID {
+					reqIdx = i
+				}
+				if p.UserID == ps.TargetID {
+					tgtIdx = i
+				}
+			}
+			if reqIdx == -1 || tgtIdx == -1 {
+				state.PendingSideshow = nil
+				http.Error(w, "sideshow players missing", 400)
+				return nil
+			}
+			// Both players now see each other's cards privately; the requester's
+			// turn resumes and they decide chaal or pack with that knowledge.
+			state.Players[reqIdx].IsSeen = true
+			state.Players[tgtIdx].IsSeen = true
 			state.PendingSideshow = nil
-		}
-	case "call":
-		callAmount := state.MinBet
-		if state.Players[playerIdx].IsSeen {
-			callAmount = state.MinBet * 2
-		}
-		state.Players[playerIdx].Bet += callAmount
-		state.Pot += callAmount
-	case "raise":
-		raiseAmount := req.Amount
-		isSeen := state.Players[playerIdx].IsSeen
-		if isSeen {
-			if raiseAmount < state.MinBet*2 {
-				http.Error(w, "raise amount too small for seen player", 400)
-				return
+			response["sideshow_reveal"] = map[string]interface{}{
+				"requester_id":       ps.RequesterID,
+				"requester_username": state.Players[reqIdx].Username,
+				"target_id":          ps.TargetID,
+				"target_username":    state.Players[tgtIdx].Username,
+				"requester_cards":    state.Players[reqIdx].Cards,
+				"target_cards":       state.Players[tgtIdx].Cards,
 			}
-			state.Players[playerIdx].Bet += raiseAmount
-			state.Pot += raiseAmount
-			state.MinBet = raiseAmount / 2.0
-		} else {
-			if raiseAmount < state.MinBet {
-				http.Error(w, "raise amount too small for blind player", 400)
-				return
+		case "sideshow_reject":
+			ps := state.PendingSideshow
+			if ps == nil || req.UserID != ps.TargetID {
+				http.Error(w, "no sideshow to reject", 400)
+				return nil
 			}
-			state.Players[playerIdx].Bet += raiseAmount
-			state.Pot += raiseAmount
-			state.MinBet = raiseAmount
-		}
-	case "show":
-		activeCount := 0
-		for _, p := range state.Players {
-			if p.Status != "folded" {
-				activeCount++
+			state.PendingSideshow = nil
+			response["sideshow_rejected"] = map[string]interface{}{
+				"requester_id": ps.RequesterID,
+				"target_id":    ps.TargetID,
 			}
+		default:
+			// Unknown actions used to fall through and silently burn the turn.
+			http.Error(w, "unknown action: "+req.Action, 400)
+			return nil
 		}
-		if activeCount != 2 {
-			http.Error(w, "Show is only allowed when exactly 2 active players remain", 400)
-			return
-		}
-		showCost := state.MinBet
-		if state.Players[playerIdx].IsSeen {
-			showCost = state.MinBet * 2
-		}
-		state.Players[playerIdx].Bet += showCost
-		state.Pot += showCost
-		state.Players[playerIdx].IsSeen = true
-	case "see":
-		state.Players[playerIdx].IsSeen = true
-	case "sideshow":
-		// A seen player, on their turn, asks the previous active player to
-		// privately compare cards. Costs a seen chaal (2x current stake).
-		// Only meaningful with 3+ active players — with 2 you use "show".
-		if state.CurrentTurn != playerIdx {
-			http.Error(w, "not your turn", 400)
-			return
-		}
-		if !state.Players[playerIdx].IsSeen {
-			http.Error(w, "you must see your cards before asking for a sideshow", 400)
-			return
-		}
-		if state.Players[playerIdx].Status != "active" {
-			http.Error(w, "player not active", 400)
-			return
-		}
-		activeCount := 0
+
+		// Advance turn
+		activePlayers := 0
 		for _, p := range state.Players {
 			if p.Status == "active" {
-				activeCount++
+				activePlayers++
 			}
 		}
-		if activeCount < 3 {
-			http.Error(w, "sideshow needs at least 3 active players", 400)
-			return
+
+		var gameResult *GameResult
+
+		// Actions that leave the turn where it is: seeing your own cards, and the
+		// whole sideshow exchange (the requester's turn is frozen during it and
+		// resumes with chaal/pack after accept/reject).
+		holdsTurn := map[string]bool{
+			"see": true, "sideshow": true, "sideshow_accept": true, "sideshow_reject": true,
 		}
-		// Previous active player is the target
-		prev := (playerIdx - 1 + len(state.Players)) % len(state.Players)
-		for state.Players[prev].Status != "active" {
-			prev = (prev - 1 + len(state.Players)) % len(state.Players)
+
+		// Pot limit: once the pot reaches the cap for this boot amount, betting
+		// stops and the hand goes straight to showdown among unfolded players.
+		// No-limit tables are exempt. Games dealt before these fields existed
+		// have PotLimit 0 without NoLimit — derive their cap from the stake.
+		potLimit := state.PotLimit
+		if potLimit <= 0 && !state.NoLimit {
+			potLimit = potLimitFor(state.Stake)
 		}
-		cost := state.MinBet * 2
-		state.Players[playerIdx].Bet += cost
-		state.Pot += cost
-		state.PendingSideshow = &SideshowState{
-			RequesterID: req.UserID,
-			TargetID:    state.Players[prev].UserID,
-			RequestedAt: time.Now().Unix(),
-		}
-		response["sideshow_request"] = map[string]interface{}{
-			"requester_id":       req.UserID,
-			"requester_username": state.Players[playerIdx].Username,
-			"target_id":          state.Players[prev].UserID,
-			"target_username":    state.Players[prev].Username,
-		}
-	case "sideshow_accept":
-		ps := state.PendingSideshow
-		if ps == nil || req.UserID != ps.TargetID {
-			http.Error(w, "no sideshow to accept", 400)
-			return
-		}
-		reqIdx, tgtIdx := -1, -1
-		for i, p := range state.Players {
-			if p.UserID == ps.RequesterID {
-				reqIdx = i
+		potLimitHit := potLimit > 0 && state.Pot >= potLimit
+
+		if activePlayers <= 1 || req.Action == "show" || potLimitHit {
+			if potLimitHit && activePlayers > 1 && req.Action != "show" {
+				state.PendingSideshow = nil
+				response["pot_limit_reached"] = true
 			}
-			if p.UserID == ps.TargetID {
-				tgtIdx = i
+			// Determine winner
+			gameResult = s.determineWinner(&state)
+			state.Status = "completed"
+			log.Printf("[teen-patti] Game completed: room=%s winner=%s prize=%.2f action=%s", req.RoomID, gameResult.WinnerID, gameResult.Prize, req.Action)
+
+			// Save completed game to DB
+			go s.saveCompletedGame(req.RoomID, gameResult)
+		} else if !holdsTurn[req.Action] {
+			// Next active player
+			next := (state.CurrentTurn + 1) % len(state.Players)
+			for state.Players[next].Status != "active" {
+				next = (next + 1) % len(state.Players)
 			}
+			state.CurrentTurn = next
 		}
-		if reqIdx == -1 || tgtIdx == -1 {
-			state.PendingSideshow = nil
-			http.Error(w, "sideshow players missing", 400)
-			return
+
+		stateJSON, _ := json.Marshal(state)
+		s.redis.Set(ctx, fmt.Sprintf("tp:game:%s", req.RoomID), stateJSON, 2*time.Hour)
+
+		response["state"] = state
+		if gameResult != nil {
+			response["result"] = gameResult
 		}
-		// Both players now see each other's cards privately; the requester's
-		// turn resumes and they decide chaal or pack with that knowledge.
-		state.Players[reqIdx].IsSeen = true
-		state.Players[tgtIdx].IsSeen = true
-		state.PendingSideshow = nil
-		response["sideshow_reveal"] = map[string]interface{}{
-			"requester_id":       ps.RequesterID,
-			"requester_username": state.Players[reqIdx].Username,
-			"target_id":          ps.TargetID,
-			"target_username":    state.Players[tgtIdx].Username,
-			"requester_cards":    state.Players[reqIdx].Cards,
-			"target_cards":       state.Players[tgtIdx].Cards,
-		}
-	case "sideshow_reject":
-		ps := state.PendingSideshow
-		if ps == nil || req.UserID != ps.TargetID {
-			http.Error(w, "no sideshow to reject", 400)
-			return
-		}
-		state.PendingSideshow = nil
-		response["sideshow_rejected"] = map[string]interface{}{
-			"requester_id": ps.RequesterID,
-			"target_id":    ps.TargetID,
-		}
-	default:
-		// Unknown actions used to fall through and silently burn the turn.
-		http.Error(w, "unknown action: "+req.Action, 400)
-		return
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return nil
+	})
+	if err == errRoomBusy {
+		http.Error(w, err.Error(), 409)
 	}
-
-	// Advance turn
-	activePlayers := 0
-	for _, p := range state.Players {
-		if p.Status == "active" {
-			activePlayers++
-		}
-	}
-
-	var gameResult *GameResult
-
-	// Actions that leave the turn where it is: seeing your own cards, and the
-	// whole sideshow exchange (the requester's turn is frozen during it and
-	// resumes with chaal/pack after accept/reject).
-	holdsTurn := map[string]bool{
-		"see": true, "sideshow": true, "sideshow_accept": true, "sideshow_reject": true,
-	}
-
-	// Pot limit: once the pot reaches the cap for this boot amount, betting
-	// stops and the hand goes straight to showdown among unfolded players.
-	// No-limit tables are exempt. Games dealt before these fields existed
-	// have PotLimit 0 without NoLimit — derive their cap from the stake.
-	potLimit := state.PotLimit
-	if potLimit <= 0 && !state.NoLimit {
-		potLimit = potLimitFor(state.Stake)
-	}
-	potLimitHit := potLimit > 0 && state.Pot >= potLimit
-
-	if activePlayers <= 1 || req.Action == "show" || potLimitHit {
-		if potLimitHit && activePlayers > 1 && req.Action != "show" {
-			state.PendingSideshow = nil
-			response["pot_limit_reached"] = true
-		}
-		// Determine winner
-		gameResult = s.determineWinner(&state)
-		state.Status = "completed"
-		log.Printf("[teen-patti] Game completed: room=%s winner=%s prize=%.2f action=%s", req.RoomID, gameResult.WinnerID, gameResult.Prize, req.Action)
-
-		// Save completed game to DB
-		go s.saveCompletedGame(req.RoomID, gameResult)
-	} else if !holdsTurn[req.Action] {
-		// Next active player
-		next := (state.CurrentTurn + 1) % len(state.Players)
-		for state.Players[next].Status != "active" {
-			next = (next + 1) % len(state.Players)
-		}
-		state.CurrentTurn = next
-	}
-
-	stateJSON, _ := json.Marshal(state)
-	s.redis.Set(ctx, fmt.Sprintf("tp:game:%s", req.RoomID), stateJSON, 2*time.Hour)
-
-	response["state"] = state
-	if gameResult != nil {
-		response["result"] = gameResult
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
 }
 
 // startPotLimit resolves the pot cap for a new game: 0 (uncapped) for
@@ -836,8 +885,6 @@ func (s *Server) getState(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	_ = uuid.New() // ensure import used
-
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		dbURL = "postgresql://teen:teen_secret_2024@localhost:5432/teen_db"

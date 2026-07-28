@@ -227,26 +227,6 @@ export function usersPlugin(db: Pool) {
       })
     })
 
-    // ── Admin: Bank Details ───────────────────────────────────────────────────
-    app.get('/admin/bank-details', async (_req, reply) => {
-      const res = await db.query(
-        `SELECT bd.*, u.username, u.phone, u.email
-         FROM bank_details bd
-         JOIN users u ON u.id = bd.user_id
-         ORDER BY bd.updated_at DESC`,
-      )
-      return reply.send({ bank_details: res.rows })
-    })
-
-    app.patch('/admin/bank-details/:userId/verify', async (req, reply) => {
-      const { userId } = req.params as any
-      const { verified } = req.body as any
-      await db.query(
-        `UPDATE bank_details SET verified = $1, verified_at = $2, updated_at = NOW() WHERE user_id = $3`,
-        [verified, verified ? new Date() : null, userId],
-      )
-      return reply.send({ success: true })
-    })
   }
 }
 
