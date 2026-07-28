@@ -3497,8 +3497,13 @@ async function start() {
 
   // ── App Version / In-App Update ──────────────────────────────────────────
   const APK_DIR = process.env.APK_DIR || '/opt/teen/downloads'
-  const APK_FILENAME = 'app-release.apk'
-  const APK_PUBLIC_URL = process.env.APK_PUBLIC_URL || 'https://game.myonlinejoker.com/downloads/app-release.apk'
+  // Each version gets its own on-disk file and its own download_url — never
+  // shared/overwritten — so old Version History rows keep pointing at the
+  // APK they actually represent instead of silently serving the latest
+  // upload. See docs/Bugs/app-update-version-history-downloads-wrong-apk.md.
+  const APK_PUBLIC_BASE_URL = (process.env.APK_PUBLIC_BASE_URL || 'https://game.myonlinejoker.com/downloads').replace(/\/+$/, '')
+  const apkFilename = (versionCode: number) => `app-release-${versionCode}.apk`
+  const apkPublicUrl = (versionCode: number) => `${APK_PUBLIC_BASE_URL}/${apkFilename(versionCode)}`
   fs.mkdirSync(APK_DIR, { recursive: true })
 
   // Public: GET /api/app/version — no auth, called by the Flutter app on startup
@@ -3506,21 +3511,24 @@ async function start() {
     const res = await db.query(
       'SELECT version_name, version_code, download_url, release_notes, force_update FROM app_versions ORDER BY version_code DESC LIMIT 1'
     )
-    if (!res.rows.length) return reply.send({ version_code: 0, version_name: '1.0.0', force_update: false, download_url: APK_PUBLIC_URL })
+    if (!res.rows.length) return reply.send({ version_code: 0, version_name: '1.0.0', force_update: false, download_url: apkPublicUrl(0) })
     return reply.send(res.rows[0])
   })
 
   // Admin: POST /api/admin/app/upload — upload APK and set new version info
   app.post('/api/admin/app/upload', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const parts = (req as any).parts()
-    const dest = path.join(APK_DIR, APK_FILENAME)
-    const tmpDest = path.join(APK_DIR, `.${APK_FILENAME}.uploading-${Date.now()}`)
+    // version_code isn't known until its field part is read, and the admin
+    // panel appends the file part first — so the file streams to a
+    // version-agnostic temp name and is only renamed to its permanent,
+    // version-specific filename once version_code has been validated below.
+    const tmpDest = path.join(APK_DIR, `.upload-${Date.now()}-${crypto.randomUUID()}.tmp`)
     let versionName = '', versionCode = 0, releaseNotes = '', forceUpdate = false, fileWritten = false
 
     try {
       for await (const part of parts) {
         if (part.type === 'file' && part.fieldname === 'apk') {
-          // Stream to a temp file first — never touch the live APK until the
+          // Stream to a temp file first — never touch a live APK until the
           // whole upload has succeeded and validation has passed, so a
           // truncated/oversized/invalid upload can't corrupt production.
           await pipeline(part.file, fs.createWriteStream(tmpDest))
@@ -3537,15 +3545,18 @@ async function start() {
       if (!fileWritten) return reply.code(400).send({ error: 'No APK file provided' })
       if (!versionName || versionCode < 1) return reply.code(400).send({ error: 'version_name and version_code are required' })
 
+      const downloadUrl = apkPublicUrl(versionCode)
       await db.query(
         `INSERT INTO app_versions (version_name, version_code, download_url, release_notes, force_update)
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (version_code) DO UPDATE SET version_name=$1, download_url=$3, release_notes=$4, force_update=$5, created_at=NOW()`,
-        [versionName, versionCode, APK_PUBLIC_URL, releaseNotes || null, forceUpdate]
+        [versionName, versionCode, downloadUrl, releaseNotes || null, forceUpdate]
       )
-      // Only now — after the DB write succeeded — promote the temp file to the live path.
-      await fs.promises.rename(tmpDest, dest)
-      return reply.send({ success: true, version_name: versionName, version_code: versionCode, download_url: APK_PUBLIC_URL })
+      // Only now — after the DB write succeeded — promote the temp file to
+      // its permanent, version-specific path (re-uploading the same
+      // version_code intentionally overwrites just that version's file).
+      await fs.promises.rename(tmpDest, path.join(APK_DIR, apkFilename(versionCode)))
+      return reply.send({ success: true, version_name: versionName, version_code: versionCode, download_url: downloadUrl })
     } catch (err: any) {
       await fs.promises.unlink(tmpDest).catch(() => {})
       const statusCode = err?.statusCode === 413 ? 413 : 500
