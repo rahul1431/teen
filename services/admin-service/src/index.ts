@@ -3359,7 +3359,7 @@ async function start() {
     const res = await db.query(
       `UPDATE home_banners SET
          title = COALESCE($1, title), subtitle = COALESCE($2, subtitle),
-         click_url = $3, click_type = COALESCE($4, click_type),
+         click_url = COALESCE($3, click_url), click_type = COALESCE($4, click_type),
          sort_order = COALESCE($5, sort_order), is_active = COALESCE($6, is_active),
          updated_at = NOW()
        WHERE id = $7 RETURNING *`,
@@ -3418,13 +3418,13 @@ async function start() {
     const body = req.body as any
     const res = await db.query(
       `UPDATE promo_codes SET
-         code = COALESCE($1, code), description = $2,
+         code = COALESCE($1, code), description = COALESCE($2, description),
          discount_type = COALESCE($3, discount_type),
          discount_value = COALESCE($4, discount_value),
          min_deposit = COALESCE($5, min_deposit),
-         max_discount = $6, usage_limit = $7,
+         max_discount = COALESCE($6, max_discount), usage_limit = COALESCE($7, usage_limit),
          per_user_limit = COALESCE($8, per_user_limit),
-         is_active = COALESCE($9, is_active), expires_at = $10
+         is_active = COALESCE($9, is_active), expires_at = COALESCE($10, expires_at)
        WHERE id = $11 RETURNING *`,
       [body.code?.toUpperCase() ?? null, body.description ?? null, body.discount_type ?? null,
        body.discount_value ?? null, body.min_deposit ?? null, body.max_discount ?? null,

@@ -157,6 +157,15 @@ async function start() {
 
     ws.on('close', () => {
       hub.remove(conn)
+      // Only dequeue once the user's *last* live connection is gone — a
+      // second connected device shouldn't get kicked out of a shared
+      // matchmaking search just because one tab/session closed. See
+      // docs/Bugs/matchmaking-queue-orphaned-on-disconnect.md.
+      if (!hub.hasUser(conn.userId)) {
+        matchmaking.leaveQueueOnDisconnect(conn.userId).catch((err) =>
+          console.error(`[ws] leaveQueueOnDisconnect failed for user=${conn.userId}:`, err)
+        )
+      }
       console.log(`[ws] disconnected: user=${userId}`)
     })
 

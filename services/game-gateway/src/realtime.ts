@@ -29,6 +29,15 @@ export class RealtimeHub {
     set.add(conn)
   }
 
+  // Whether this user has any other live connection right now — used on
+  // disconnect to decide whether it's safe to treat them as fully gone (e.g.
+  // drop a matchmaking queue entry) without kicking a still-connected second
+  // device off the same queue.
+  hasUser(userId: string): boolean {
+    const set = this.byUser.get(userId)
+    return !!set && set.size > 0
+  }
+
   remove(conn: Conn): void {
     const userSet = this.byUser.get(conn.userId)
     if (userSet) {

@@ -61,6 +61,14 @@ export function planTeenPattiSeats(
 }
 
 export class MatchmakingService {
+  // Tracks each user's most recent join_matchmaking attempt so a dropped
+  // connection can be dequeued without the client ever sending
+  // leave_matchmaking — see leaveQueueOnDisconnect() below and
+  // docs/Bugs/matchmaking-queue-orphaned-on-disconnect.md. Safe to be stale:
+  // leaveQueue() is a no-op if the user isn't actually in that queue anymore
+  // (already matched into a room, or queued for something else since).
+  private lastQueued = new Map<string, { gameType: string; stake: number; variation: string }>()
+
   private timers = new Map<string, NodeJS.Timeout>()
   private botTimers = new Map<string, { timer: NodeJS.Timeout; turnIdx: number }>()
   private ludoAfkTimers = new Map<string, NodeJS.Timeout>()
@@ -161,6 +169,7 @@ export class MatchmakingService {
     const key = this.queueKey(gameType, stake, variation)
     const member = JSON.stringify(entry)
     await this.redis.zadd(key, Date.now(), member)
+    this.lastQueued.set(entry.userId, { gameType, stake, variation })
 
     const configRes = await this.db.query(
       'SELECT min_players, max_players, bot_fill_enabled, bot_fill_delay_seconds, max_bot_ratio, bot_fill_table_size FROM game_configs WHERE game_type = $1',
@@ -206,6 +215,19 @@ export class MatchmakingService {
         break
       }
     }
+    this.lastQueued.delete(userId)
+  }
+
+  // Called from the gateway's ws 'close' handler once a user's last live
+  // connection has dropped — dequeues whatever matchmaking search they were
+  // most recently in, so a backgrounded/killed app or a lost signal doesn't
+  // leave a phantom entry that later gets matched into a real game with
+  // nobody there to receive it. No-ops if they were never queued, already
+  // matched, or already left explicitly.
+  async leaveQueueOnDisconnect(userId: string): Promise<void> {
+    const q = this.lastQueued.get(userId)
+    if (!q) return
+    await this.leaveQueue(q.gameType, q.stake, userId, q.variation)
   }
 
   private async tryCreateRoom(gameType: string, stake: number, config: any, variation = 'classic'): Promise<void> {
