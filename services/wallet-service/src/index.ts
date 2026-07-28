@@ -467,6 +467,21 @@ async function start() {
       return reply.code(403).send({ error: 'KYC verification required before withdrawal' })
     }
 
+    // risk-service sets fraud:flagged:<userId> (auto, 24h TTL, on a 'block'
+    // verdict; or manually via admin, 7d TTL) but nothing previously read it
+    // back anywhere — the entire fraud-detection pipeline was observational
+    // only. Withdrawal is the highest-leverage, lowest-collateral-damage
+    // enforcement point: it holds real money movement without preventing
+    // the user from playing or contesting the flag, and the key self-expires
+    // (or an admin can clear it via risk-service's setUserFlag). See
+    // docs/Bugs/fraud-action-never-enforced.md.
+    if (redis) {
+      const flagged = await redis.exists(`fraud:flagged:${user.sub}`)
+      if (flagged) {
+        return reply.code(403).send({ error: 'Withdrawals are on hold pending a security review. Contact support if you believe this is a mistake.' })
+      }
+    }
+
     // Payout destination must be the user's own admin-verified bank account —
     // never trust client-supplied account details for where money is sent.
     const bankRes = await db.query(

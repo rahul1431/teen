@@ -188,6 +188,14 @@ async function start() {
           return hub.send(conn, 'error', { message: 'Game not available' })
         }
 
+        // risk-service's fraud verdict was previously never enforced anywhere
+        // — see docs/Bugs/fraud-action-never-enforced.md. Block-level users
+        // can't join a new real-money room until the flag clears (self-expires
+        // or an admin lifts it); doesn't touch a room they're already in.
+        if (await redis.exists(`fraud:flagged:${conn.userId}`)) {
+          return hub.send(conn, 'error', { message: 'Matchmaking is on hold pending a security review. Contact support if you believe this is a mistake.' })
+        }
+
         // Ludo only: don't let a user queue into a second table while still
         // a live participant of one — see findActiveLudoRoomForUser for why.
         if (game_type === 'ludo') {
@@ -404,6 +412,11 @@ async function start() {
         if (!cfg.rows.length || !cfg.rows[0].is_active) {
           return hub.send(conn, 'error', { message: 'Game not available' })
         }
+        // See the identical check in join_matchmaking — same enforcement,
+        // same reasoning. docs/Bugs/fraud-action-never-enforced.md.
+        if (await redis.exists(`fraud:flagged:${conn.userId}`)) {
+          return hub.send(conn, 'error', { message: 'Creating tables is on hold pending a security review. Contact support if you believe this is a mistake.' })
+        }
         const code = await generatePrivateCode()
         const table = {
           code,
@@ -434,6 +447,10 @@ async function start() {
         }
         if (table.players.length >= table.maxPlayers) {
           return hub.send(conn, 'error', { message: 'Table is full' })
+        }
+        // See join_matchmaking — docs/Bugs/fraud-action-never-enforced.md.
+        if (await redis.exists(`fraud:flagged:${conn.userId}`)) {
+          return hub.send(conn, 'error', { message: 'Joining tables is on hold pending a security review. Contact support if you believe this is a mistake.' })
         }
         table.players.push({ userId: conn.userId, username: conn.username })
         await redis.setex(`private:table:${code}`, PRIVATE_TABLE_TTL, JSON.stringify(table))
