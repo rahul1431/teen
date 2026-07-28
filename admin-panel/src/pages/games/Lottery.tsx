@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Divider, Popconfirm, Drawer, Statistic, Radio, Tabs, Grid
+  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Popconfirm, Drawer, Statistic, Radio, Tabs, Grid
 } from 'antd'
 import {
   ReloadOutlined, DeleteOutlined, TrophyOutlined, WalletOutlined,
@@ -350,23 +350,6 @@ export default function Lottery() {
                 </Form.Item>
                 <Form.Item name="rake_percent" label={<span style={{ color: '#d1d5db' }}>Rake % (Platform Fee)</span>}>
                   <InputNumber min={0} max={20} step={0.5} suffix="%" style={{ width: '100%', borderRadius: '6px' }} />
-                </Form.Item>
-                <Divider style={{ borderColor: '#374151', margin: '20px 0' }}><span style={{ color: '#9ca3af', fontSize: '12px' }}>Bot Auto-Fill Rules</span></Divider>
-                <Form.Item name="bot_fill_enabled" label={<span style={{ color: '#d1d5db' }}>Bot Fill Enabled</span>} valuePropName="checked">
-                  <Switch checkedChildren="Yes" unCheckedChildren="No" />
-                </Form.Item>
-                <Form.Item name="bot_fill_delay_seconds" label={<span style={{ color: '#d1d5db' }}>Bot Fill Delay (seconds)</span>}>
-                  <InputNumber min={5} max={60} style={{ width: '100%', borderRadius: '6px' }} />
-                </Form.Item>
-                <Form.Item name="max_bot_ratio" label={<span style={{ color: '#d1d5db' }}>Max Bot Ratio (0-1)</span>}>
-                  <InputNumber min={0} max={1} step={0.1} style={{ width: '100%', borderRadius: '6px' }} />
-                </Form.Item>
-                <Form.Item name="bot_difficulty" label={<span style={{ color: '#d1d5db' }}>Bot Difficulty</span>}>
-                  <Select style={{ borderRadius: '6px' }}>
-                    <Select.Option value="easy">Easy</Select.Option>
-                    <Select.Option value="medium">Medium</Select.Option>
-                    <Select.Option value="hard">Hard</Select.Option>
-                  </Select>
                 </Form.Item>
                 <Form.Item style={{ marginBottom: 0 }}>
                   <Button 

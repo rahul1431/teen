@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  Card, Form, Switch, InputNumber, Select, Button, message, Divider, Row, Col, Tag,
+  Card, Form, Switch, InputNumber, Button, message, Divider, Row, Col, Tag,
   Statistic, Table
 } from 'antd'
 import { adminApi } from '../../api/client'
@@ -161,24 +161,6 @@ export default function Aviator() {
                 </Form.Item>
                 <Form.Item name="betting_time_ms" label="Betting Window (ms)">
                   <InputNumber min={2000} max={15000} step={500} style={{ width: '100%' }} />
-                </Form.Item>
-
-                <Divider>Bot Settings</Divider>
-                <Form.Item name="bot_fill_enabled" label="Bot Fill Enabled" valuePropName="checked">
-                  <Switch checkedChildren="Yes" unCheckedChildren="No" />
-                </Form.Item>
-                <Form.Item name="bot_fill_delay_seconds" label="Bot Fill Delay (seconds)">
-                  <InputNumber min={5} max={60} style={{ width: '100%' }} />
-                </Form.Item>
-                <Form.Item name="max_bot_ratio" label="Max Bot Ratio (0-1)">
-                  <InputNumber min={0} max={1} step={0.1} style={{ width: '100%' }} />
-                </Form.Item>
-                <Form.Item name="bot_difficulty" label="Bot Difficulty">
-                  <Select>
-                    <Select.Option value="easy">Easy</Select.Option>
-                    <Select.Option value="medium">Medium</Select.Option>
-                    <Select.Option value="hard">Hard</Select.Option>
-                  </Select>
                 </Form.Item>
 
                 <Form.Item>

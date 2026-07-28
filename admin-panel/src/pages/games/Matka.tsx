@@ -338,16 +338,6 @@ export default function Matka() {
                   <Form.Item name="rake_percent" label="Rake %">
                     <InputNumber min={0} max={20} step={0.5} suffix="%" style={{ width: '100%' }} />
                   </Form.Item>
-                  <Divider>Bot Settings</Divider>
-                  <Form.Item name="bot_fill_enabled" label="Bot Fill" valuePropName="checked">
-                    <Switch checkedChildren="Yes" unCheckedChildren="No" />
-                  </Form.Item>
-                  <Form.Item name="bot_fill_delay_seconds" label="Delay (sec)">
-                    <InputNumber min={5} max={60} style={{ width: '100%' }} />
-                  </Form.Item>
-                  <Form.Item name="max_bot_ratio" label="Max Bot Ratio">
-                    <InputNumber min={0} max={1} step={0.1} style={{ width: '100%' }} />
-                  </Form.Item>
                   <Form.Item>
                     <Button type="primary" htmlType="submit" block loading={savingConfig}>Save Config</Button>
                   </Form.Item>
