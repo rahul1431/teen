@@ -1550,6 +1550,14 @@ export class MatchmakingService {
         } catch (redisErr) {
           console.error(`[RECONCILE-NEEDED] Could not record settle-game failure for room=${roomId}`, redisErr)
         }
+      } else {
+        // A 200 doesn't mean every player's stake was collected — see the
+        // identical note in handleGameEnd. GameWatchdog's completed-room
+        // reconcile sweep retries these; this is just visibility.
+        const settleBody = await settleRes.json().catch(() => null) as { consume_errors?: string[] } | null
+        if (settleBody?.consume_errors?.length) {
+          console.error(`[gateway] settle-game Ludo room=${roomId}: consume failed for users [${settleBody.consume_errors.join(', ')}] — funds stranded in locked_balance until reconciled`)
+        }
       }
 
       // Persist the exact finishing order and payout per player. The wallet
@@ -1661,6 +1669,15 @@ export class MatchmakingService {
         console.error(`[gateway] settle-game failed ${settleRes.status} for room ${roomId}:`, errBody)
       } else {
         console.log(`[gateway] settle-game succeeded for room=${roomId} winner=${effectiveWinnerId} prize=${effectivePrize}`)
+        // A 200 doesn't mean every player's stake was collected — settle-game
+        // treats each player's consume independently and reports failures
+        // here rather than failing the whole call. GameWatchdog's completed-
+        // room reconcile sweep will retry these automatically; this is just
+        // visibility so an operator isn't relying on that sweep silently.
+        const settleBody = await settleRes.json().catch(() => null) as { consume_errors?: string[] } | null
+        if (settleBody?.consume_errors?.length) {
+          console.error(`[gateway] settle-game room=${roomId}: consume failed for users [${settleBody.consume_errors.join(', ')}] — funds stranded in locked_balance until reconciled`)
+        }
       }
     } catch (e) {
       console.error('[gateway] Failed to settle Teen Patti game', e)

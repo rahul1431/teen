@@ -3279,12 +3279,16 @@ async function start() {
         `SELECT id, room_id, game_type, action, refunds, total_refunded, created_at
          FROM watchdog_events ORDER BY created_at DESC LIMIT 100`
       ),
+      // Scoped to action='reaped' so these specifically-named "reaped"/
+      // "refunded" counters keep meaning what they say — the completed-room
+      // reconcile sweep logs a different action ('reconciled_stranded_consume')
+      // into the same table, and that money was collected, not refunded.
       db.query(
         `SELECT count(*)::int AS total_reaped,
                 COALESCE(sum(total_refunded), 0) AS total_refunded,
                 count(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS reaped_24h,
                 COALESCE(sum(total_refunded) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours'), 0) AS refunded_24h
-         FROM watchdog_events`
+         FROM watchdog_events WHERE action = 'reaped'`
       ),
       db.query(
         `SELECT count(*)::int AS active_rooms FROM game_rooms WHERE status IN ('waiting','active')`
