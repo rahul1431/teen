@@ -17,7 +17,7 @@ There is no automatic verification of the UTR/screenshot — approval is entirel
 
 ## Promo codes
 
-Both deposit paths can carry a promo code: `POST /wallet/promo/validate` gives a live preview (dry-run, no usage recorded) and `POST /wallet/deposit/submit` re-validates and re-computes the bonus server-side before storing it in the order's `metadata`, actually credited only on admin approval. See `docs/Bugs/deposit-promo-used-count-race-allows-double-bonus.md` for a race in this bookkeeping.
+Both deposit paths can carry a promo code: `POST /wallet/promo/validate` gives a live preview (dry-run, no usage recorded) and `POST /wallet/deposit/submit` re-validates and re-computes the bonus server-side before storing it in the order's `metadata`, actually credited only on admin approval. The usage-bookkeeping race that used to let racing submits double the bonus is fixed (2026-07-29, see `deposit/backend.md`).
 
 ## Referral trigger
 
@@ -25,6 +25,5 @@ Every successful deposit credit (manual-approved or Razorpay-verified) calls `tr
 
 ## Known issues
 
-- `docs/Bugs/deposit-promo-used-count-race-allows-double-bonus.md` (new, this pass) — racing submits can double the bonus and inflate a promo's global usage count.
 - Deposit approval's wallet credit call is checked before marking the order `'paid'`, and the withdrawal state machine's 6 wallet calls (fixed 2026-07-28) now all check the response and abort the status transition on failure — both previously shared the unchecked-`fetch` root cause.
 - `docs/Bugs/wallet-service-deposit-withdrawal-limit-env-vars-are-dead-config.md` — the ₹10–₹100,000 Razorpay-path range is hardcoded in the Zod schema, not read from any env var despite `.env.example` suggesting otherwise.

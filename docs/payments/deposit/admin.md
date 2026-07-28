@@ -11,4 +11,4 @@ Finance page, **Deposits** tab (`admin-panel/src/pages/Finance.tsx`, `finance`-r
 ## Known issues
 
 - Both the deposit-approval and withdrawal-state-machine unchecked-wallet-call issues are fixed: deposit approval calls wallet-service and checks the response *before* marking `payment_orders` `'paid'` (aborts with a clear error otherwise), and the withdrawal state machine's 6 wallet calls (fixed 2026-07-28) now all check `res.ok` and abort the status transition on failure.
-- `docs/Bugs/deposit-promo-used-count-race-allows-double-bonus.md` — an admin approving two racing deposit orders from the same user (each looking like an independent, legitimately-proofed deposit) can pay out a promo bonus twice.
+- The promo double-bonus race (racing deposit orders from the same user each independently earning a promo bonus) is fixed 2026-07-29 — see `../deposit/backend.md`.

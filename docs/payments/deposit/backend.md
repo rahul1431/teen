@@ -17,9 +17,9 @@ Player, JWT auth, multipart body. Streams the proof file to `UPLOAD_DIR` (`/opt/
 Validation order:
 1. `amount >= 1` and `referenceNumber` (UTR) non-empty — else 400.
 2. If `payment_method_id` given: re-check the method exists, is active, and `amount` is within its `min_amount`/`max_amount` — else 400. (If no method ID is given, this check is skipped entirely — the field is optional in the multipart body.)
-3. If `promo_code` given: full independent server-side re-validation and re-computation of the bonus (never trusts a client-supplied number) — see `docs/Bugs/deposit-promo-used-count-race-allows-double-bonus.md` for the concurrency gap in the usage bookkeeping that follows.
+3. If `promo_code` given: full independent server-side re-validation and re-computation of the bonus (never trusts a client-supplied number).
 
-Inserts `payment_orders` (`gateway='manual'`, `type='deposit'`, `status='created'`, `reference_number`, `screenshot_url`, `payment_method_id`, `metadata: { submitted_at, promo_code, promo_bonus }`). **Does not touch the wallet at all** — the balance only changes once an admin approves it. Promo usage bookkeeping (insert into `promo_code_usages`, increment `promo_codes.used_count`) happens here, at submit time, wrapped in its own try/catch marked non-fatal — a failure here doesn't fail the deposit submission, it just silently skips recording the promo usage.
+Inserts `payment_orders` (`gateway='manual'`, `type='deposit'`, `status='created'`, `reference_number`, `screenshot_url`, `payment_method_id`, `metadata: { submitted_at, promo_code, promo_bonus }`). **Does not touch the wallet at all** — the balance only changes once an admin approves it. Promo usage bookkeeping now happens *before* the order insert and *before* the bonus is computed (fixed 2026-07-29): the `promo_code_usages` row is reserved inside a transaction via `INSERT ... ON CONFLICT DO NOTHING RETURNING id` against the table's `UNIQUE(promo_id, user_id)` constraint, and `promoBonus`/`used_count` are only set/incremented if that insert actually returned a row. Two racing submissions with the same user+promo therefore can't both compute a nonzero bonus — only whichever request wins the insert does, closing the previous double-bonus/inflated-`used_count` race.
 
 ## `PATCH /api/admin/finance/deposits/:id` (`admin-service/src/index.ts:788-856`) — the credit path
 
