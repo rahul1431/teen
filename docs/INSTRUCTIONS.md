@@ -136,7 +136,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/nginx-join-table-download-routes-missing-in-production.md`
 - `docs/Bugs/nginx-protect-cron-never-installed.md`
 - `docs/Bugs/vps-optimizations-script-deletes-active-bot-learning-service.md`
-- `docs/Bugs/app-update-version-history-downloads-wrong-apk.md`
 - → background: `docs/infra/{deploy-pipeline,nginx,pm2-ecosystem,db-migrations}.md`, `docs/backend-services/uptime-bot/*.md`, `docs/admin-panel/app-update/*.md`
 - → **live VPS access**: `docs/ops/vps-access.local.md` (gitignored, local only — see below)
 
