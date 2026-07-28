@@ -104,7 +104,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - → background: `docs/admin-panel/{security,login-auth,admin-users,ai-control-center}/*.md`, `docs/backend-services/admin-service/*.md`, `docs/backend-services/risk-service/*.md`
 
 ### App-monitor / churn / ML / risk services
-- `docs/Bugs/app-monitor-read-endpoints-publicly-unauthenticated.md`
 - `docs/Bugs/churn-ml-database-url-env-inheritance.md`
 - `docs/Bugs/churn-ml-model-label-leakage-not-real-prediction.md`
 - `docs/Bugs/churn-ml-model-never-retrains.md`
