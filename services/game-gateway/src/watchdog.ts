@@ -205,6 +205,15 @@ export class GameWatchdog {
       }
       const { room_id, winner_id, prize, reason } = entry
 
+      // room_id must be a real UUID (game_rooms.id's column type) — a
+      // malformed value (e.g. a manually-pushed smoke-test entry) can never
+      // resolve, and re-queueing it on every failed lookup below would
+      // retry-forever and spam errors every sweep. Drop it once, loudly.
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(room_id || '')) {
+        console.error(`[watchdog] ludo reconcile: room_id "${room_id}" is not a valid UUID — dropping unrecoverable queue entry (reason: ${reason})`)
+        continue
+      }
+
       try {
         const parts = await this.db.query(
           'SELECT user_id, entry_fee_deducted FROM game_participants WHERE room_id = $1',
