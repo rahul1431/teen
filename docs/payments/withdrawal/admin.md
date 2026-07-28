@@ -17,5 +17,5 @@ Finance page, **Withdrawals** tab (`admin-panel/src/pages/Finance.tsx`) and **Ba
 ## Known issues
 
 - `docs/Bugs/withdrawal-destination-account-never-recorded-or-verified-server-side.md` (new, this pass) — no system link between a withdrawal order and the verified bank account it should be paid to.
-- `docs/Bugs/withdrawal-state-machine-ignores-wallet-service-failures.md` — status transitions here can silently diverge from actual wallet state.
+- Status transitions here used to be able to silently diverge from actual wallet state on a wallet-service failure — fixed 2026-07-28.
 - `docs/Bugs/duplicate-unauthenticated-bank-details-routes.md` — a dead-but-reachable-if-misrouted duplicate of the bank-details routes with zero auth, sitting in `core-api-service`.

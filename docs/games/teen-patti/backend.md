@@ -56,7 +56,7 @@ Runs once per hand, only if the room has ≥1 bot and ≥1 human. Looks up `winR
 - **Stake lock** — `wallet-service` `/internal/wallet/lock`, called once per real player inside the room-creation transaction, *before* the engine's `/start` is ever called.
 - **Per-action lock** — for bot turns, the gateway computes `extraBet` (call/raise/show/sideshow all charge different amounts; sideshow always charges "seen chaal" = `minBet*2`) and locks it via `wallet-service` before calling the engine's `/action`; a lock failure **forces the bot to fold** rather than erroring the table.
 - **Settlement** — `wallet-service` `/internal/wallet/settle-game`, idempotency-keyed `settle_<roomId>` (safe to retry, but the gateway never retries it for Teen Patti — see above).
-- **Dealer tips** (`room:tip`, `index.ts:240-287`) — the **only** money-moving path that does **not** go through wallet-service: the gateway opens its own Postgres transaction directly against `wallets`/`wallet_transactions` (`SELECT ... FOR UPDATE`, balance check, insert `tip_dealer` row, decrement balance). `TIP_AMOUNTS = [5,10,20,50]` must be kept in sync with the mobile tip tray by hand, no shared config. See `../../Bugs/dealer-tip-idempotency-key-is-not-actually-idempotent.md`.
+- **Dealer tips** (`room:tip`) — the **only** money-moving path that does **not** go through wallet-service: the gateway opens its own Postgres transaction directly against `wallets`/`wallet_transactions` (`SELECT ... FOR UPDATE`, balance check, insert `tip_dealer` row, decrement balance). `TIP_AMOUNTS = [5,10,20,50]` must be kept in sync with the mobile tip tray by hand, no shared config. Its idempotency key used to regenerate on every message (never deduping a double-tap/retry) — fixed 2026-07-28 with a 3-second cross-instance Redis lock plus a deterministic key.
 
 ## Concurrency / locking
 
@@ -89,6 +89,6 @@ Not covered by any test: the HTTP handlers themselves (no `httptest` usage anywh
 
 ## Bug references
 
-Already filed (not re-filed here): `../../Bugs/teen-patti-engine-no-auth-or-turn-enforcement.md`, `../../Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`, `../../Bugs/teen-patti-dda-hard-fallback-100-percent.md`, `../../Bugs/teen-patti-dda-admin-control-gap.md`, `../../Bugs/teen-patti-engine-no-room-lock.md`, `../../Bugs/teen-patti-no-turn-timeout.md`, `../../Bugs/teen-patti-engine-url-env-example-broken.md`, `../../Bugs/dealer-tip-idempotency-key-is-not-actually-idempotent.md`, `../../Bugs/matchmaking-queue-orphaned-on-disconnect.md`.
+Already filed (not re-filed here): `../../Bugs/teen-patti-engine-no-auth-or-turn-enforcement.md`, `../../Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`, `../../Bugs/teen-patti-dda-hard-fallback-100-percent.md`, `../../Bugs/teen-patti-dda-admin-control-gap.md`, `../../Bugs/teen-patti-engine-no-room-lock.md`, `../../Bugs/teen-patti-no-turn-timeout.md`, `../../Bugs/teen-patti-engine-url-env-example-broken.md`, `../../Bugs/matchmaking-queue-orphaned-on-disconnect.md`.
 
 New from this pass: `../../Bugs/teen-patti-engine-start-failure-strands-locked-funds.md` (see the "New finding" section above; full writeup in the final report of this pass).

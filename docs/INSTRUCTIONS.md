@@ -20,7 +20,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 ## "I have issue X, which file do I check?" — bug index by area
 
 ### Payments / Wallet / KYC
-- `docs/Bugs/dealer-tip-idempotency-key-is-not-actually-idempotent.md`
 - `docs/Bugs/deposit-promo-used-count-race-allows-double-bonus.md`
 - `docs/Bugs/duplicate-unauthenticated-bank-details-routes.md`
 - `docs/Bugs/entry-fee-deducted-update-silently-swallowed.md`
@@ -29,11 +28,9 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/leaderboard-top3-reward-never-paid.md`
 - `docs/Bugs/promo-codes-toggle-wipes-limits.md`
 - `docs/Bugs/referral-reward-claims-real-balance-but-credits-bonus.md`
-- `docs/Bugs/users-page-debit-wallet-missing-request-id.md`
 - `docs/Bugs/wallet-service-deposit-withdrawal-limit-env-vars-are-dead-config.md`
 - `docs/Bugs/withdrawal-destination-account-never-recorded-or-verified-server-side.md`
 - `docs/Bugs/withdrawal-hours-restriction-is-client-side-only.md`
-- `docs/Bugs/withdrawal-state-machine-ignores-wallet-service-failures.md`
 - `docs/Bugs/daily-bonus-claim-reports-success-even-if-wallet-credit-fails.md`
 - `docs/Bugs/daily-bonus-remove-day-does-not-persist.md`
 - → background: `docs/payments/*/overview.md`, `docs/backend-services/wallet-service/*.md`, `docs/admin-panel/finance/*.md`
@@ -134,7 +131,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/deploy-backend-health-check-checks-nothing.md`
 - `docs/Bugs/deploy-pipeline-live-path-skips-most-pm2-services.md`
 - `docs/Bugs/docker-compose-db-redis-exposed-with-hardcoded-credentials.md`
-- `docs/Bugs/migrate-sh-missing-on-error-stop.md`
 - `docs/Bugs/nginx-fallback-config-http-only-and-unhardened.md`
 - `docs/Bugs/nginx-hestia-config-filename-drift-across-deploy-scripts.md`
 - `docs/Bugs/nginx-join-table-download-routes-missing-in-production.md`
