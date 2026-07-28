@@ -118,7 +118,6 @@ export default function Bots() {
                     layout="vertical"
                     size="small"
                     initialValues={{
-                      is_active: config.is_active,
                       bot_fill_enabled: config.bot_fill_enabled,
                       bot_fill_delay_seconds: config.bot_fill_delay_seconds,
                       max_bot_ratio: config.max_bot_ratio,

@@ -1204,16 +1204,44 @@ async function start() {
   app.patch('/api/admin/game-configs/:gameType', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const admin = req.user as any
     const { gameType } = req.params as any
-    const body = req.body as any
+    const body = z.object({
+      is_active: z.boolean().optional(),
+      rake_percent: z.number().optional(),
+      bot_fill_enabled: z.boolean().optional(),
+      bot_fill_delay_seconds: z.number().optional(),
+      max_bot_ratio: z.number().optional(),
+      bot_difficulty: z.string().optional(),
+      bot_fill_table_size: z.number().optional(),
+      special_rules: z.record(z.any()).optional(),
+    }).parse(req.body)
+
+    const existing = await db.query('SELECT * FROM game_configs WHERE game_type=$1', [gameType])
+    if (!existing.rows.length) return reply.code(404).send({ error: 'Game config not found' })
+    const current = existing.rows[0]
     // Merge any provided economics into special_rules (e.g. Aviator house edge,
-    // max win, bet limits) without clobbering other keys.
-    const existing = await db.query('SELECT special_rules FROM game_configs WHERE game_type=$1', [gameType])
-    const currentRules = existing.rows[0]?.special_rules || {}
-    const specialRules = body.special_rules ? { ...currentRules, ...body.special_rules } : currentRules
+    // max win, bet limits) without clobbering other keys. Every other field
+    // falls back to its current value (via ??, not ||, so `false`/`0` survive)
+    // when the request omits it — a form that never submits a given field
+    // (e.g. Bots.tsx's per-game panel never sends is_active) must not
+    // silently null out an existing setting. See
+    // docs/Bugs/CRITICAL-bot-config-save-can-disable-live-game.md.
+    const specialRules = body.special_rules ? { ...current.special_rules, ...body.special_rules } : current.special_rules
+
     await db.query(
       `UPDATE game_configs SET is_active=$1, rake_percent=$2, bot_fill_enabled=$3, bot_fill_delay_seconds=$4, max_bot_ratio=$5, bot_difficulty=$6, special_rules=$7, bot_fill_table_size=$8, updated_by=$9, updated_at=NOW()
        WHERE game_type=$10`,
-      [body.is_active, body.rake_percent, body.bot_fill_enabled, body.bot_fill_delay_seconds, body.max_bot_ratio, body.bot_difficulty, JSON.stringify(specialRules), body.bot_fill_table_size ?? null, admin.sub, gameType]
+      [
+        body.is_active ?? current.is_active,
+        body.rake_percent ?? current.rake_percent,
+        body.bot_fill_enabled ?? current.bot_fill_enabled,
+        body.bot_fill_delay_seconds ?? current.bot_fill_delay_seconds,
+        body.max_bot_ratio ?? current.max_bot_ratio,
+        body.bot_difficulty ?? current.bot_difficulty,
+        JSON.stringify(specialRules),
+        body.bot_fill_table_size ?? current.bot_fill_table_size,
+        admin.sub,
+        gameType,
+      ]
     )
     await redis.publish('config:updated', JSON.stringify({ gameType, updatedAt: new Date().toISOString() }))
     return reply.send({ success: true })
