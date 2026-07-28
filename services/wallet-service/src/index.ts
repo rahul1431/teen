@@ -366,7 +366,14 @@ async function start() {
       }
     }
 
-    // Validate promo code if provided
+    // Validate promo code if provided. The usage row is reserved with
+    // INSERT ... ON CONFLICT DO NOTHING inside a transaction *before* the
+    // bonus is computed/stored — this is what makes it race-safe: only the
+    // request that actually inserts the (promo_id, user_id) row (the DB's
+    // UNIQUE constraint is the single source of truth) gets to claim a
+    // bonus and increment used_count. A losing racer sees zero rows
+    // affected and silently gets no bonus, instead of both racers reading
+    // "eligible" before either has committed.
     let promoRow: any = null
     let promoBonus = 0
     if (promoCode) {
@@ -379,16 +386,33 @@ async function start() {
       if (pr.rows.length) {
         promoRow = pr.rows[0]
         if (amount >= parseFloat(promoRow.min_deposit)) {
-          const used = await db.query(
-            `SELECT COUNT(*) as cnt FROM promo_code_usages WHERE promo_id = $1 AND user_id = $2`,
-            [promoRow.id, user.sub]
-          )
-          if (parseInt(used.rows[0].cnt) < promoRow.per_user_limit) {
-            promoBonus = promoRow.discount_type === 'percent'
-              ? (amount * parseFloat(promoRow.discount_value)) / 100
-              : parseFloat(promoRow.discount_value)
-            if (promoRow.max_discount) promoBonus = Math.min(promoBonus, parseFloat(promoRow.max_discount))
-            promoBonus = Math.round(promoBonus * 100) / 100
+          const client = await db.connect()
+          try {
+            await client.query('BEGIN')
+            const used = await client.query(
+              `SELECT COUNT(*) as cnt FROM promo_code_usages WHERE promo_id = $1 AND user_id = $2`,
+              [promoRow.id, user.sub]
+            )
+            if (parseInt(used.rows[0].cnt) < promoRow.per_user_limit) {
+              const reserved = await client.query(
+                `INSERT INTO promo_code_usages (promo_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING id`,
+                [promoRow.id, user.sub]
+              )
+              if (reserved.rows.length) {
+                promoBonus = promoRow.discount_type === 'percent'
+                  ? (amount * parseFloat(promoRow.discount_value)) / 100
+                  : parseFloat(promoRow.discount_value)
+                if (promoRow.max_discount) promoBonus = Math.min(promoBonus, parseFloat(promoRow.max_discount))
+                promoBonus = Math.round(promoBonus * 100) / 100
+                await client.query(`UPDATE promo_codes SET used_count = used_count + 1 WHERE id = $1`, [promoRow.id])
+              }
+            }
+            await client.query('COMMIT')
+          } catch (e) {
+            await client.query('ROLLBACK')
+            throw e
+          } finally {
+            client.release()
           }
         }
       }
@@ -403,15 +427,9 @@ async function start() {
        JSON.stringify({ submitted_at: new Date().toISOString(), promo_code: promoCode, promo_bonus: promoBonus })]
     )
 
-    // Record promo usage (non-fatal)
     if (promoRow && promoBonus > 0) {
-      try {
-        await db.query(
-          `INSERT INTO promo_code_usages (promo_id, user_id, deposit_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
-          [promoRow.id, user.sub, ins.rows[0].id]
-        )
-        await db.query(`UPDATE promo_codes SET used_count = used_count + 1 WHERE id = $1`, [promoRow.id])
-      } catch (e) { /* non-fatal */ }
+      await db.query(`UPDATE promo_code_usages SET deposit_id = $1 WHERE promo_id = $2 AND user_id = $3`,
+        [ins.rows[0].id, promoRow.id, user.sub]).catch(() => {})
     }
 
     return reply.send({

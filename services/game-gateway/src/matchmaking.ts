@@ -799,23 +799,66 @@ export class MatchmakingService {
     // Call Teen Patti Go engine to deal cards
     if (gameType === 'teen_patti') {
       const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
+      const callTeenPattiStart = () => fetch(`${engineUrl}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          room_id: roomId,
+          stake,
+          bot_difficulty: botDifficulty,
+          no_limit: variation === 'no_limit',
+          variation,
+          players: gatewayPlayers.map(p => ({ user_id: p.userId, username: p.username, seat: p.seat, is_bot: p.isBot, status: 'active', bet: 0, is_seen: false })),
+        }),
+        signal: AbortSignal.timeout(5000),
+      })
       try {
-        const res = await fetch(`${engineUrl}/start`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            room_id: roomId,
-            stake,
-            bot_difficulty: botDifficulty,
-            no_limit: variation === 'no_limit',
-            variation,
-            players: gatewayPlayers.map(p => ({ user_id: p.userId, username: p.username, seat: p.seat, is_bot: p.isBot, status: 'active', bet: 0, is_seen: false })),
-          }),
-          signal: AbortSignal.timeout(5000),
-        })
+        const res = await callTeenPattiStart()
         if (res.ok) engineState = await res.json()
+        else console.error(`Teen Patti engine /start returned ${res.status}`)
       } catch (e) {
-        console.error('Teen Patti engine unavailable, using fallback state', e)
+        console.error('Teen Patti engine unavailable, will retry once', e)
+      }
+
+      // Retry once before giving up (mirrors the Ludo branch below). Without a
+      // confirmed engine response there is no tp:game:<roomId> Redis key, so
+      // every future /action call 404s forever and the table is permanently
+      // frozen while every seat's stake stays locked (reproduced live).
+      if (!engineState) {
+        await new Promise(r => setTimeout(r, 1500))
+        try {
+          const res = await callTeenPattiStart()
+          if (res.ok) engineState = await res.json()
+          else console.error(`Teen Patti engine /start retry returned ${res.status}`)
+        } catch (e) {
+          console.error('Teen Patti engine still unavailable after retry', e)
+        }
+      }
+
+      if (!engineState) {
+        // Give up immediately instead of handing players a cardless, unplayable
+        // table: unlock stakes, mark the room cancelled, and tell real players.
+        if (stake > 0) {
+          for (const p of allPlayers) {
+            try {
+              await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+                body: JSON.stringify({ user_id: p.userId, amount: stake, room_id: roomId }),
+              })
+            } catch (unlockErr) {
+              console.error(`Failed to unlock wallet for user=${p.userId} after Teen Patti engine start failure:`, unlockErr)
+            }
+          }
+        }
+        await this.db.query("UPDATE game_rooms SET status = 'cancelled' WHERE id = $1", [roomId])
+          .catch(e => console.error('Failed to mark cancelled Teen Patti room', e))
+        for (const p of realPlayers) {
+          this.hub.sendToUser(p.userId, 'error', {
+            message: 'Could not start the table — your stake has been refunded. Please try again.',
+          })
+        }
+        return roomId
       }
     }
 
