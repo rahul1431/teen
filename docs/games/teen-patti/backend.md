@@ -89,6 +89,6 @@ Not covered by any test: the HTTP handlers themselves (no `httptest` usage anywh
 
 ## Bug references
 
-Already filed (not re-filed here): `../../Bugs/teen-patti-engine-no-auth-or-turn-enforcement.md`, `../../Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`, `../../Bugs/teen-patti-dda-hard-fallback-100-percent.md`, `../../Bugs/teen-patti-dda-admin-control-gap.md`, `../../Bugs/teen-patti-engine-no-room-lock.md`, `../../Bugs/teen-patti-no-turn-timeout.md`, `../../Bugs/teen-patti-engine-url-env-example-broken.md`, `../../Bugs/matchmaking-queue-orphaned-on-disconnect.md`.
+Already filed (not re-filed here): `../../Bugs/teen-patti-engine-no-auth-or-turn-enforcement.md`, `../../Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`, `../../Bugs/teen-patti-dda-hard-fallback-100-percent.md`, `../../Bugs/teen-patti-dda-admin-control-gap.md`, `../../Bugs/teen-patti-engine-no-room-lock.md`, `../../Bugs/teen-patti-no-turn-timeout.md`, `../../Bugs/teen-patti-engine-url-env-example-broken.md`.
 
 New from this pass: `../../Bugs/teen-patti-engine-start-failure-strands-locked-funds.md` (see the "New finding" section above; full writeup in the final report of this pass).

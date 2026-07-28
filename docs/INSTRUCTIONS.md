@@ -26,7 +26,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/kyc-file-proxy-no-role-gate.md`
 - `docs/Bugs/kyc-review-endpoint-skips-audit-log-and-notification.md`
 - `docs/Bugs/leaderboard-top3-reward-never-paid.md`
-- `docs/Bugs/promo-codes-toggle-wipes-limits.md`
 - `docs/Bugs/referral-reward-claims-real-balance-but-credits-bonus.md`
 - `docs/Bugs/wallet-service-deposit-withdrawal-limit-env-vars-are-dead-config.md`
 - `docs/Bugs/withdrawal-destination-account-never-recorded-or-verified-server-side.md`
@@ -69,14 +68,12 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/lottery-admin-config-panel-not-wired-to-gameplay.md`
 - `docs/Bugs/lottery-mobile-category-tiers-schema-mismatch.md`
 - `docs/Bugs/lottery-ticket-digits-limit-not-enforced.md`
-- `docs/Bugs/lottery-ticket-number-race-no-unique-constraint.md`
 - `docs/Bugs/matka-close-declared-before-open-corrupts-jodi.md`
 - `docs/Bugs/matka-game-config-rake-and-active-toggle-not-enforced.md`
 - `docs/Bugs/matka-sangam-bet-type-not-supported-by-backend.md`
 - → background: `docs/games/{cricket,lottery,matka}/*.md`, `docs/backend-services/core-api-service/*.md`
 
 ### Matchmaking / game-gateway / bots
-- `docs/Bugs/matchmaking-queue-orphaned-on-disconnect.md`
 - `docs/Bugs/config-reload-dead-feature.md`
 - `docs/Bugs/game-events-table-has-no-retention-cleanup.md`
 - `docs/Bugs/bots-page-fake-personality-skill.md`
@@ -119,7 +116,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 ### CMS / notifications / banners / content / missions
 - `docs/Bugs/cms-banners-never-displayed.md`
 - `docs/Bugs/home-banner-external-url-does-nothing.md`
-- `docs/Bugs/home-banners-toggle-wipes-click-url.md`
 - `docs/Bugs/home-page-fake-live-data.md`
 - `docs/Bugs/push-notification-read-by-campaign-missing.md`
 - `docs/Bugs/telugu-translations-mixed-script.md`
