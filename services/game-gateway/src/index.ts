@@ -29,6 +29,12 @@ const INSTANCE_ID = `gateway-${crypto.randomUUID().substring(0, 8)}`
 
 // Dealer-tip presets; must match the mobile tip tray.
 const TIP_AMOUNTS = [5, 10, 20, 50]
+// Minimum gap between two tips from the same user in the same room. The
+// mobile client has no in-flight guard on the tip button, and the previous
+// per-tip idempotency key was time-based (fresh on every message, so a
+// double-tap or reconnect replay could never be deduped) — see
+// docs/Bugs/dealer-tip-idempotency-key-is-not-actually-idempotent.md.
+const TIP_DEBOUNCE_MS = 3000
 
 async function start() {
   // Validate environment variables early
@@ -357,6 +363,18 @@ async function start() {
         if (!room_id || !TIP_AMOUNTS.includes(tip)) {
           return hub.send(conn, 'error', { message: 'Invalid tip amount' })
         }
+        // Cross-instance lock (gateway runs 3 fork instances behind nginx, so
+        // an in-memory guard wouldn't survive a retry landing on a different
+        // process) — blocks a double-tap or reconnect replay from debiting
+        // twice. The stored idempotency_key is deterministic within the same
+        // window as a DB-level backstop if the lock is ever bypassed (e.g.
+        // Redis unavailable).
+        const tipWindow = Math.floor(Date.now() / TIP_DEBOUNCE_MS)
+        const lockKey = `tip:lock:${conn.userId}:${room_id}`
+        const acquired = await redis.set(lockKey, '1', 'EX', Math.ceil(TIP_DEBOUNCE_MS / 1000), 'NX')
+        if (!acquired) {
+          return hub.send(conn, 'error', { message: 'Please wait a moment before tipping again' })
+        }
         const client = await db.connect()
         try {
           await client.query('BEGIN')
@@ -371,7 +389,7 @@ async function start() {
             // matches that phrase to pop the low-balance game dialog.
             return hub.send(conn, 'error', { message: 'Not enough balance to tip the dealer' })
           }
-          const ikey = `tip:${conn.userId}:${room_id}:${Date.now()}`
+          const ikey = `tip:${conn.userId}:${room_id}:${tipWindow}`
           await client.query(
             `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
              VALUES ($1, 'tip_dealer', 'real', $2, $3, $4, $5, $6, 'completed', 'Dealer tip')`,

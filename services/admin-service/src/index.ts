@@ -736,90 +736,97 @@ async function start() {
       return reply.send({ success: true })
     }
 
+    // Every wallet-service call below must actually succeed before the status
+    // transition is considered to have happened — fetch() only rejects on
+    // network-level failure, never on a 4xx/5xx, so the previous
+    // fire-and-forget .catch() let the DB update / audit log / user
+    // notification below all claim success even when the money movement
+    // silently failed server-side. See
+    // docs/Bugs/withdrawal-state-machine-ignores-wallet-service-failures.md.
+    const callWallet = async (path: string, body: any, label: string): Promise<string | null> => {
+      try {
+        const res = await fetch(`${process.env.WALLET_SERVICE_URL}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) {
+          const errBody: any = await res.json().catch(() => ({}))
+          console.error(`[admin-service] wallet ${label} failed for withdrawal ${id}: ${res.status}`, errBody)
+          return errBody?.error || `wallet ${label} failed (HTTP ${res.status})`
+        }
+        return null
+      } catch (e: any) {
+        console.error(`[admin-service] wallet ${label} error for withdrawal ${id}:`, e?.message)
+        return `wallet service unreachable during ${label}`
+      }
+    }
+
+    let walletError: string | null = null
     // Handle wallet balance adjustments based on the transition
     if (oldStatus === 'created' && newStatus === 'paid') {
       // 1. created -> paid: Consume locked funds
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/consume`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
-          user_id: row.rows[0].user_id,
-          amount: parseFloat(row.rows[0].amount),
-          room_id: `withdrawal:${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet consume:', e?.message))
+      walletError = await callWallet('/internal/wallet/consume', {
+        user_id: row.rows[0].user_id,
+        amount: parseFloat(row.rows[0].amount),
+        room_id: `withdrawal:${id}`,
+      }, 'consume')
     } else if (oldStatus === 'created' && newStatus === 'refunded') {
       // 2. created -> refunded: Unlock locked funds (refund to real balance)
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
-          user_id: row.rows[0].user_id,
-          amount: parseFloat(row.rows[0].amount),
-          room_id: `withdrawal:${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet unlock:', e?.message))
+      walletError = await callWallet('/internal/wallet/unlock', {
+        user_id: row.rows[0].user_id,
+        amount: parseFloat(row.rows[0].amount),
+        room_id: `withdrawal:${id}`,
+      }, 'unlock')
     } else if (oldStatus === 'paid' && newStatus === 'refunded') {
       // 3. paid -> refunded: Funds already consumed, must credit real balance directly
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
-          user_id: row.rows[0].user_id,
-          amount: parseFloat(row.rows[0].amount),
-          type: 'manual_credit',
-          idempotency_key: `withdrawal_refund_paid_${id}`,
-          reference_id: `withdrawal:${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet credit:', e?.message))
+      walletError = await callWallet('/internal/wallet/credit', {
+        user_id: row.rows[0].user_id,
+        amount: parseFloat(row.rows[0].amount),
+        type: 'manual_credit',
+        idempotency_key: `withdrawal_refund_paid_${id}`,
+        reference_id: `withdrawal:${id}`,
+      }, 'credit')
     } else if (oldStatus === 'refunded' && newStatus === 'paid') {
       // 4. refunded -> paid: Funds were refunded to real balance, must debit real balance directly
-      await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/debit/manual`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
-          user_id: row.rows[0].user_id,
-          amount: parseFloat(row.rows[0].amount),
-          request_id: `withdrawal_debit_refunded_${id}`,
-          description: `Withdrawal marked paid (previously rejected): ${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet manual debit:', e?.message))
+      walletError = await callWallet('/wallet/debit/manual', {
+        user_id: row.rows[0].user_id,
+        amount: parseFloat(row.rows[0].amount),
+        request_id: `withdrawal_debit_refunded_${id}`,
+        description: `Withdrawal marked paid (previously rejected): ${id}`,
+      }, 'debit')
     } else if (oldStatus === 'paid' && newStatus === 'created') {
-      // 5. paid -> created: Restore funds to real balance, then lock them
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
-          user_id: row.rows[0].user_id,
-          amount: parseFloat(row.rows[0].amount),
-          type: 'manual_credit',
-          idempotency_key: `withdrawal_restore_paid_${id}`,
-          reference_id: `withdrawal:${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet credit:', e?.message))
-
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
+      // 5. paid -> created: Restore funds to real balance, then lock them.
+      // Both idempotency keys are deterministic per order id, so if this
+      // fails after the credit but before the lock, retrying the same PATCH
+      // is safe — the credit becomes a no-op and only the lock is retried.
+      walletError = await callWallet('/internal/wallet/credit', {
+        user_id: row.rows[0].user_id,
+        amount: parseFloat(row.rows[0].amount),
+        type: 'manual_credit',
+        idempotency_key: `withdrawal_restore_paid_${id}`,
+        reference_id: `withdrawal:${id}`,
+      }, 'credit')
+      if (!walletError) {
+        walletError = await callWallet('/internal/wallet/lock', {
           user_id: row.rows[0].user_id,
           amount: parseFloat(row.rows[0].amount),
           room_id: `withdrawal:${id}`,
           lock_id: `withdraw:${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet lock:', e?.message))
+        }, 'lock')
+      }
     } else if (oldStatus === 'refunded' && newStatus === 'created') {
       // 6. refunded -> created: Funds are in real balance, lock them again
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
-          user_id: row.rows[0].user_id,
-          amount: parseFloat(row.rows[0].amount),
-          room_id: `withdrawal:${id}`,
-          lock_id: `withdraw:${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet lock:', e?.message))
+      walletError = await callWallet('/internal/wallet/lock', {
+        user_id: row.rows[0].user_id,
+        amount: parseFloat(row.rows[0].amount),
+        room_id: `withdrawal:${id}`,
+        lock_id: `withdraw:${id}`,
+      }, 'lock')
+    }
+
+    if (walletError) {
+      return reply.code(502).send({ error: `Could not change withdrawal status — money movement failed: ${walletError}` })
     }
 
     const meta = { ...(row.rows[0].metadata || {}) }
