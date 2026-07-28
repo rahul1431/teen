@@ -83,7 +83,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/matchmaking-queue-orphaned-on-disconnect.md`
 - `docs/Bugs/config-reload-dead-feature.md`
 - `docs/Bugs/game-events-table-has-no-retention-cleanup.md`
-- `docs/Bugs/CRITICAL-bot-config-save-can-disable-live-game.md`
 - `docs/Bugs/bots-page-fake-personality-skill.md`
 - `docs/Bugs/bot-learning-service-builds-dead-aviator-bot-profiles.md`
 - `docs/Bugs/bot-learning-service-no-authentication.md`
@@ -113,7 +112,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/monitor-events-batch-size-mismatch.md`
 - `docs/Bugs/monitor-heartbeat-interval-exceeds-active-session-window.md`
 - `docs/Bugs/monitor-ws-message-event-type-not-persisted.md`
-- `docs/Bugs/risk-center-suspicious-status-enum-never-created.md`
 - `docs/Bugs/risk-center-user-deeplink-broken.md`
 - `docs/Bugs/risk-center-win-rate-threshold-mismatch.md`
 - `docs/Bugs/risk-service-http-api-orphaned-and-duplicated.md`
