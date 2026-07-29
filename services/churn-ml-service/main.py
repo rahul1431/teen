@@ -13,7 +13,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
 from dotenv import load_dotenv
 from synthetic_data import generate_synthetic_training_data, validate_synthetic_data
-from model_versioning import save_model_versioned, activate_model, get_active_model_path
+from model_versioning import save_model_versioned, activate_model, get_active_model_path, list_model_versions, get_active_model_metadata
 from src.difficulty_predictor import get_predictor as get_difficulty_predictor
 from src.anomaly_detector import run_anomaly_detection_pipeline
 
@@ -52,19 +52,25 @@ class DifficultyPredictRequest(BaseModel):
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
 
-def get_user_features(user_id: str = None) -> pd.DataFrame:
+def get_user_features(user_id: str = None, cutoff_days: int = 14) -> pd.DataFrame:
+    # cutoff_days backs the "churned" label and the recent-vs-prior deposit windows.
+    # Cast to int and clamp before splicing into the SQL string below — psycopg2 can't
+    # bind a parameter inside an INTERVAL literal, so this must stay a validated literal,
+    # never raw user input. Comes from admin-service's ml:config churnPrediction.daysSinceLastPlay
+    # (see POST /train below), default 14 preserves the historical hardcoded behavior.
+    cutoff_days = max(1, min(int(cutoff_days), 365))
     conn = get_db_connection()
     try:
-        query = """
-        SELECT 
+        query = f"""
+        SELECT
           u.id as user_id,
           COALESCE(EXTRACT(EPOCH FROM (NOW() - MAX(wt.created_at))) / 86400, 30.0) as days_since_deposit,
           COUNT(wt.id)::float as total_deposits,
-          COUNT(CASE WHEN wt.created_at > NOW() - INTERVAL '14 days' THEN 1 END)::float as deposits_last_14,
-          COUNT(CASE WHEN wt.created_at > NOW() - INTERVAL '28 days' AND wt.created_at <= NOW() - INTERVAL '14 days' THEN 1 END)::float as deposits_prior_14,
+          COUNT(CASE WHEN wt.created_at > NOW() - INTERVAL '{cutoff_days} days' THEN 1 END)::float as deposits_last_14,
+          COUNT(CASE WHEN wt.created_at > NOW() - INTERVAL '{cutoff_days * 2} days' AND wt.created_at <= NOW() - INTERVAL '{cutoff_days} days' THEN 1 END)::float as deposits_prior_14,
           COALESCE(gp.games_played, 0)::float as total_games,
           COALESCE(gp.total_profit, 0)::float as net_profit,
-          CASE WHEN MAX(wt.created_at) < NOW() - INTERVAL '14 days' OR MAX(wt.created_at) IS NULL THEN 1 ELSE 0 END as churned
+          CASE WHEN MAX(wt.created_at) < NOW() - INTERVAL '{cutoff_days} days' OR MAX(wt.created_at) IS NULL THEN 1 ELSE 0 END as churned
         FROM users u
         LEFT JOIN wallet_transactions wt ON wt.user_id = u.id AND wt.type = 'deposit' AND wt.status = 'completed'
         LEFT JOIN (
@@ -223,10 +229,14 @@ def startup_event():
 
 
 @app.post("/train")
-def train_model() -> Dict[str, Any]:
+def train_model(days_since_last_play: Optional[int] = None) -> Dict[str, Any]:
+    # days_since_last_play is admin-service's ml:config churnPrediction.daysSinceLastPlay
+    # (POST /api/admin/ml/config), forwarded here by churn-service's retrain cron —
+    # see docs/Bugs/ai-control-center-churn-prediction-config-unused.md.
+    started = time.time()
     try:
-        logger.info("Starting model training cycle...")
-        df = get_user_features()
+        logger.info(f"Starting model training cycle (cutoff_days={days_since_last_play or 14})...")
+        df = get_user_features(cutoff_days=days_since_last_play or 14)
 
         if len(df) < 5:
             # Insufficient data, fallback to training with synthetic data to avoid failing
@@ -239,6 +249,7 @@ def train_model() -> Dict[str, Any]:
 
         # Train model with train/test split and cross-validation
         result = train_churn_model(X, y)
+        duration_ms = round((time.time() - started) * 1000, 1)
 
         # Save model with versioning system
         version = save_model_versioned(
@@ -246,7 +257,9 @@ def train_model() -> Dict[str, Any]:
             train_acc=result.train_accuracy,
             test_acc=result.test_accuracy,
             cv_mean=result.cv_mean,
-            cv_std=result.cv_std
+            cv_std=result.cv_std,
+            duration_ms=duration_ms,
+            samples=len(df),
         )
 
         # Activate the new model version
@@ -264,7 +277,7 @@ def train_model() -> Dict[str, Any]:
         logger.info(
             f"Model trained successfully. Train Acc: {result.train_accuracy:.4f}, "
             f"Test Acc: {result.test_accuracy:.4f}, CV Mean: {result.cv_mean:.4f}, "
-            f"CV Std: {result.cv_std:.4f}, samples: {len(df)}, version: {version}"
+            f"CV Std: {result.cv_std:.4f}, samples: {len(df)}, version: {version}, duration_ms: {duration_ms}"
         )
         return {
             "success": True,
@@ -273,7 +286,8 @@ def train_model() -> Dict[str, Any]:
             "cv_mean": round(result.cv_mean, 4),
             "cv_std": round(result.cv_std, 4),
             "samples": len(df),
-            "version": version
+            "version": version,
+            "duration_ms": duration_ms,
         }
     except ValueError as e:
         logger.error(f"Training failed (quality gate): {e}")
@@ -401,6 +415,19 @@ def run_anomaly_detection() -> Dict[str, Any]:
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Anomaly detection failed"))
     return result
+
+@app.get("/status")
+def status() -> Dict[str, Any]:
+    """Real model status for admin-service's Real-Time Workflow dashboard
+    (GET /api/admin/ml/metrics) — replaces the permanently-hardcoded
+    churn_model accuracy/lastRetrain that used to sit there. See
+    docs/Bugs/ai-workflow-dashboard-hardcoded-model-jobs.md."""
+    active = get_active_model_metadata()
+    return {
+        "active_model": active,
+        "training_in_progress": training_in_progress,
+        "recent_versions": list_model_versions(limit=5),
+    }
 
 @app.get("/health")
 def health():

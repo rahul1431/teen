@@ -38,7 +38,12 @@ export function BotLearningSection() {
   const [saving, setSaving] = useState(false)
   const [configForm] = Form.useForm()
 
-  useEffect(() => { loadProfiles(); loadConfig() }, [])
+  useEffect(() => {
+    loadProfiles(); loadConfig()
+    const handleRefresh = () => { loadProfiles(); loadConfig() }
+    window.addEventListener('aiDashboardRefresh', handleRefresh)
+    return () => window.removeEventListener('aiDashboardRefresh', handleRefresh)
+  }, [])
 
   const loadProfiles = async () => {
     setLoading(true)

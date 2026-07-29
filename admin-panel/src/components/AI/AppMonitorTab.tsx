@@ -200,7 +200,11 @@ export function AppMonitorTab() {
   useEffect(() => {
     load()
     const interval = setInterval(load, 30_000)
-    return () => clearInterval(interval)
+    window.addEventListener('aiDashboardRefresh', load)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('aiDashboardRefresh', load)
+    }
   }, [load])
 
   const errorRowColor = (count: number) => {

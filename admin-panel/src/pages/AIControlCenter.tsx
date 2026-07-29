@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Tabs, Card, Alert, Button, Space, Tag, Divider } from 'antd'
+import { Tabs, Card, Alert, Button, Space, Tag, Divider, Tooltip } from 'antd'
 import { RobotOutlined, SettingOutlined, DashboardOutlined, SyncOutlined, AlertOutlined, AimOutlined, SafetyOutlined, MonitorOutlined } from '@ant-design/icons'
 import { AIPromptConsole } from '../components/AI/AIPromptConsole'
 import { MLConfigPanel } from '../components/AI/MLConfigPanel'
@@ -111,14 +111,17 @@ export function AIControlCenter() {
         }
         extra={
           <Space>
-            <Button
-              type="primary"
-              icon={<SyncOutlined spin={refreshing} />}
-              onClick={handleRefresh}
-              loading={refreshing}
-            >
-              Refresh
-            </Button>
+            <Tooltip title={activeTab === '1' ? 'AI Prompt Console has no server data to refresh — it keeps its own local chat history' : undefined}>
+              <Button
+                type="primary"
+                icon={<SyncOutlined spin={refreshing} />}
+                onClick={handleRefresh}
+                loading={refreshing}
+                disabled={activeTab === '1'}
+              >
+                Refresh
+              </Button>
+            </Tooltip>
           </Space>
         }
       >

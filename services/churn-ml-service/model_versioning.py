@@ -23,7 +23,9 @@ def save_model_versioned(
     train_acc: float,
     test_acc: float,
     cv_mean: float,
-    cv_std: float
+    cv_std: float,
+    duration_ms: Optional[float] = None,
+    samples: Optional[int] = None,
 ) -> Optional[str]:
     """
     Save a model in a versioned directory with metadata.
@@ -34,6 +36,9 @@ def save_model_versioned(
         test_acc: Test accuracy
         cv_mean: Cross-validation mean score
         cv_std: Cross-validation standard deviation
+        duration_ms: Wall-clock time the training run took, for admin-service's
+            Real-Time Workflow dashboard (see GET /api/admin/ml/metrics)
+        samples: Row count the model was trained on, same consumer as above
 
     Returns:
         Version string (e.g., "model_v1234567890.123") if successful and test_acc >= 0.65
@@ -72,7 +77,9 @@ def save_model_versioned(
             "test_accuracy": test_acc,
             "cv_mean": cv_mean,
             "cv_std": cv_std,
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.now().isoformat(),
+            "duration_ms": duration_ms,
+            "samples": samples,
         }
 
         metadata_path = os.path.join(version_dir, "metadata.json")

@@ -154,6 +154,16 @@ export class ProfileBuilder {
   }
 
   async runRebuild(): Promise<void> {
+    // Job status for admin-service's Real-Time Workflow dashboard (GET
+    // /api/admin/ml/metrics) — previously a permanently-hardcoded fake job entry,
+    // see docs/Bugs/ai-workflow-dashboard-hardcoded-model-jobs.md. No dedicated
+    // job-history table exists for rebuilds, so this tracks just the most recent
+    // run in Redis (self-refreshes every rebuild — nightly,
+    // manual, and startup all call this method).
+    const jobStartedAt = new Date().toISOString()
+    const jobStart = Date.now()
+    await this.redis.set('bot:rebuild:last_job', JSON.stringify({ status: 'running', startedAt: jobStartedAt }))
+
     this.logger.info('Bot profile rebuild started')
     const cfg = await this.getConfig()
     const nextVersion = await this.getNextProfileVersion()
@@ -161,9 +171,11 @@ export class ProfileBuilder {
     // Step 1: Create new versioned table
     await this.createProfileVersionTable(nextVersion)
 
+    let processed = 0
     for (const gameType of GAME_TYPES) {
       try {
         await this.buildProfiles(gameType, cfg, nextVersion)
+        processed++
       } catch (err) {
         this.logger.error({ err, gameType }, 'Rebuild failed for game type')
       }
@@ -183,6 +195,14 @@ export class ProfileBuilder {
     }
 
     await this.redis.publish('bot:profiles:rebuilt', JSON.stringify({ timestamp: new Date().toISOString(), version: nextVersion }))
+    await this.redis.set('bot:rebuild:last_job', JSON.stringify({
+      status: processed > 0 ? 'completed' : 'failed',
+      startedAt: jobStartedAt,
+      completedAt: new Date().toISOString(),
+      latencyMs: Date.now() - jobStart,
+      processed,
+      total: GAME_TYPES.length,
+    }))
     this.logger.info({ version: nextVersion }, 'Bot profile rebuild complete')
   }
 

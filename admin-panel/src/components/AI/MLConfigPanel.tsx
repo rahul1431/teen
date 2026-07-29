@@ -43,6 +43,8 @@ export function MLConfigPanel() {
 
   useEffect(() => {
     loadConfig()
+    window.addEventListener('aiDashboardRefresh', loadConfig)
+    return () => window.removeEventListener('aiDashboardRefresh', loadConfig)
   }, [])
 
   const loadConfig = async () => {
@@ -156,11 +158,11 @@ export function MLConfigPanel() {
           <Row gutter={24}>
             <Col xs={24} sm={12}>
               <Form.Item
-                label="Days Since Last Play (weight)"
-                name={['churnPrediction', 'daysSinceLastPlayWeight']}
-                tooltip="How much to weight inactivity in churn score"
+                label="Days Since Last Play"
+                name={['churnPrediction', 'daysSinceLastPlay']}
+                tooltip="Inactivity cutoff used as the churn-model's training label and retrain cadence"
               >
-                <Slider min={0} max={1} step={0.1} />
+                <InputNumber min={1} max={60} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>

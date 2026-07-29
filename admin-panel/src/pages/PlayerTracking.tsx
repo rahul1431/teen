@@ -40,7 +40,11 @@ export default function PlayerTracking() {
   useEffect(() => {
     load()
     const t = setInterval(load, 30_000)
-    return () => clearInterval(t)
+    window.addEventListener('aiDashboardRefresh', load)
+    return () => {
+      clearInterval(t)
+      window.removeEventListener('aiDashboardRefresh', load)
+    }
   }, [load])
 
   const openDetail = async (userId: string | null) => {

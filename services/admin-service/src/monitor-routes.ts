@@ -194,7 +194,7 @@ export async function registerMonitorRoutes(
     })
 
   app.post<{ Params: { id: string } }>('/api/admin/monitor/alerts/:id/ack',
-    { onRequest: [authenticate] }, async (req, reply) => {
+    { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
       try {
         const res = await axios.post(`${MONITOR_URL}/api/monitor/alerts/${encodeURIComponent(req.params.id)}/ack`, {}, { timeout: MONITOR_TIMEOUT_MS, ...MONITOR_INTERNAL_HEADERS })
         return reply.send(res.data)

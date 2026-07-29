@@ -4,6 +4,7 @@ import Redis from 'ioredis'
 import os from 'os'
 
 const ML_CONFIG_KEY = 'ml:config'
+const CHURN_ML_SERVICE_URL = process.env.CHURN_ML_SERVICE_URL || 'http://127.0.0.1:3020'
 
 const DEFAULT_CONFIG = {
   fraudDetection: {
@@ -41,6 +42,7 @@ export async function registerMLRoutes(
   redis: Redis,
   db: Pool,
   authenticate: any,
+  requireRole: any,
 ) {
   // GET /api/admin/ml/config
   app.get('/api/admin/ml/config', { onRequest: [authenticate] }, async (_req, reply) => {
@@ -58,7 +60,7 @@ export async function registerMLRoutes(
   })
 
   // POST /api/admin/ml/config
-  app.post('/api/admin/ml/config', { onRequest: [authenticate] }, async (req, reply) => {
+  app.post('/api/admin/ml/config', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const config = req.body as any
     try {
       await redis.set(ML_CONFIG_KEY, JSON.stringify(config), 'EX', 86400)
@@ -74,10 +76,10 @@ export async function registerMLRoutes(
     }
   })
 
-  // GET /api/admin/ml/metrics — real stats from DB + mock model status
+  // GET /api/admin/ml/metrics — real stats from DB + real model/job status
   app.get('/api/admin/ml/metrics', { onRequest: [authenticate] }, async (_req, reply) => {
     try {
-      const [fraud, bots, churn, games, churnAlerts, fraudAlerts, botAlerts] = await Promise.allSettled([
+      const [fraud, bots, churn, games, churnAlerts, fraudAlerts, botAlerts, churnMlStatus, botRebuildJobRaw] = await Promise.allSettled([
         db.query(`SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status != 'active') as flagged FROM users WHERE is_bot = false`),
         db.query(`SELECT COUNT(*) as total, ROUND(AVG(CASE WHEN prize_won > 0 THEN 100.0 ELSE 0 END)::numeric, 1) as win_rate
                   FROM game_participants gp JOIN users u ON u.id = gp.user_id WHERE u.is_bot = true`),
@@ -86,7 +88,29 @@ export async function registerMLRoutes(
                   FROM game_rooms WHERE created_at > NOW() - INTERVAL '24 hours'`),
         db.query(`SELECT user_id as id, 'churn' as type, user_id as target, (score::float / 100.0) as score, 0.85 as confidence, updated_at as timestamp, risk_level as action FROM user_churn_scores ORDER BY updated_at DESC LIMIT 10`),
         db.query(`SELECT id::text, 'fraud' as type, user_id as target, fraud_score::float as score, confidence::float as confidence, created_at as timestamp, action FROM fraud_events ORDER BY created_at DESC LIMIT 10`),
-        db.query(`SELECT gp.id::text, 'bot_decision' as type, u.username as target, 0.90 as score, 0.95 as confidence, gp.joined_at as timestamp, 'join_room' as action FROM game_participants gp JOIN users u ON u.id = gp.user_id WHERE u.is_bot = true ORDER BY gp.joined_at DESC LIMIT 10`),
+        // Score/confidence are derived from the joining bot's actual trained profile
+        // (bot_profiles, keyed by game_type + the bot user's own bot_difficulty) —
+        // real trained win_rate_target and sample_size, not fixed placeholders.
+        db.query(`
+          SELECT gp.id::text, 'bot_decision' as type, u.username as target,
+                 (COALESCE(bp.win_rate_target, 50)::float / 100.0) as score,
+                 LEAST(COALESCE(bp.sample_size, 0)::float / 200.0, 1.0) as confidence,
+                 gp.joined_at as timestamp, 'join_room' as action
+          FROM game_participants gp
+          JOIN users u ON u.id = gp.user_id
+          JOIN game_rooms gr ON gr.id = gp.room_id
+          LEFT JOIN bot_profiles bp ON bp.game_type = gr.game_type AND bp.difficulty = u.bot_difficulty
+          WHERE u.is_bot = true ORDER BY gp.joined_at DESC LIMIT 10
+        `),
+        // churn-ml-service's real model-version metadata (accuracy, last retrain) —
+        // was previously a hardcoded fake entry, see
+        // docs/Bugs/ai-workflow-dashboard-hardcoded-model-jobs.md.
+        fetch(`${CHURN_ML_SERVICE_URL}/status`, { signal: AbortSignal.timeout(3000) })
+          .then(r => (r.ok ? r.json() : null))
+          .catch(() => null),
+        // bot-learning-service's most recent rebuild run (services/bot-learning-service/src/profile-builder.ts:runRebuild) —
+        // same Redis instance, written directly by that service, no HTTP hop needed.
+        redis.get('bot:rebuild:last_job'),
       ])
 
       const f = fraud.status === 'fulfilled' ? fraud.value.rows[0] : { total: 0, flagged: 0 }
@@ -96,6 +120,12 @@ export async function registerMLRoutes(
       const ca = churnAlerts.status === 'fulfilled' ? churnAlerts.value.rows : []
       const fa = fraudAlerts.status === 'fulfilled' ? fraudAlerts.value.rows : []
       const ba = botAlerts.status === 'fulfilled' ? botAlerts.value.rows : []
+      const churnMl: any = churnMlStatus.status === 'fulfilled' ? churnMlStatus.value : null
+      const activeModel = churnMl?.active_model ?? null
+      let rebuildJob: any = null
+      if (botRebuildJobRaw.status === 'fulfilled' && botRebuildJobRaw.value) {
+        try { rebuildJob = JSON.parse(botRebuildJobRaw.value) } catch { rebuildJob = null }
+      }
 
       const formattedChurn = ca.map((row: any) => ({
         id: row.id,
@@ -121,8 +151,8 @@ export async function registerMLRoutes(
         id: row.id,
         type: 'bot_decision',
         target: `Bot: ${row.target}`,
-        score: 0.90,
-        confidence: 0.95,
+        score: parseFloat(row.score) || 0.5,
+        confidence: parseFloat(row.confidence) || 0,
         timestamp: row.timestamp,
         action: 'Join Room'
       }))
@@ -135,6 +165,44 @@ export async function registerMLRoutes(
       const cores = os.cpus().length || 1
       const cpuUsage = Math.min(Math.round((load[0] / cores) * 100), 100)
 
+      // Real model/job status. Only churn_model exists — bot behavior is
+      // profile-derived (not a trained classifier) and fraud detection is a
+      // rules engine (see WorkflowDashboard's own "Rules Engine" banner), so
+      // there is nothing real to report for a "bot_tree" or "fraud_scorer"
+      // model; the old entries for those were fabricated. See
+      // docs/Bugs/ai-workflow-dashboard-hardcoded-model-jobs.md.
+      const models = [{
+        name: 'churn_model',
+        status: churnMl?.training_in_progress ? 'training' : (activeModel ? 'completed' : 'queued'),
+        accuracy: activeModel?.test_accuracy ?? 0,
+        lastRetrain: activeModel?.created_at ?? null,
+      }]
+
+      const jobs: any[] = []
+      if (churnMl?.training_in_progress) {
+        jobs.push({ id: 'job-churn-train', name: 'Train Churn RandomForest', status: 'running', progress: 0, processed: 0, total: activeModel?.samples ?? 0, startTime: new Date().toISOString() })
+      } else if (activeModel?.duration_ms != null) {
+        // duration_ms/samples are only present on models trained after this fix
+        // shipped — older metadata.json files predate those fields, in which case
+        // we have no real per-run numbers to show, so skip the job entry entirely
+        // rather than rendering "undefined / undefined".
+        jobs.push({
+          id: 'job-churn-train', name: 'Train Churn RandomForest', status: 'completed', progress: 100,
+          processed: activeModel.samples ?? 0, total: activeModel.samples ?? 0,
+          latency: activeModel.duration_ms, startTime: activeModel.created_at,
+        })
+      }
+      if (rebuildJob) {
+        const total = rebuildJob.total || 0
+        jobs.push({
+          id: 'job-bot-rebuild', name: 'Rebuild Bot Profiles',
+          status: rebuildJob.status === 'running' ? 'running' : rebuildJob.status === 'failed' ? 'failed' : 'completed',
+          progress: rebuildJob.status === 'running' ? 0 : (total ? Math.round(((rebuildJob.processed ?? 0) / total) * 100) : 0),
+          processed: rebuildJob.processed ?? 0, total,
+          latency: rebuildJob.latencyMs, startTime: rebuildJob.startedAt,
+        })
+      }
+
       return reply.send({
         success: true,
         data: {
@@ -142,15 +210,8 @@ export async function registerMLRoutes(
           bots: { totalParticipations: parseInt(b.total) || 0, avgWinRate: parseFloat(b.win_rate) || 0 },
           churn: { atRiskUsers: parseInt(c.at_risk) || 0 },
           games: { roomsLast24h: parseInt(g.total) || 0, avgPotSize: parseFloat(g.avg_pot) || 0 },
-          models: [
-            { name: 'churn_model', status: 'completed', accuracy: 0.88, lastRetrain: new Date(Date.now() - 86400000).toISOString() },
-            { name: 'bot_tree', status: 'completed', accuracy: 0.78, lastRetrain: new Date(Date.now() - 172800000).toISOString() },
-            { name: 'fraud_scorer', status: 'completed', accuracy: 0.91, lastRetrain: new Date(Date.now() - 3600000).toISOString() },
-          ],
-          jobs: [
-            { id: 'job-1', name: 'Rebuild Bot Profiles', status: 'completed', progress: 100, processed: 9, total: 9, latency: 1540, startTime: new Date(Date.now() - 3600000 * 2).toISOString() },
-            { id: 'job-2', name: 'Train Churn RandomForest', status: 'completed', progress: 100, processed: 12, total: 12, latency: 340, startTime: new Date(Date.now() - 3600000 * 4).toISOString() }
-          ],
+          models,
+          jobs,
           predictions: [...formattedChurn, ...formattedFraud, ...formattedBot],
           system: {
             cpu: cpuUsage,

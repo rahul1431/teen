@@ -153,7 +153,7 @@ async function start() {
   })
 
   // Register ML routes
-  await registerMLRoutes(app, redis, db, authenticate)
+  await registerMLRoutes(app, redis, db, authenticate, requireRole)
 
   // Register Churn proxy routes
   await registerChurnRoutes(app, authenticate, requireRole)

@@ -46,7 +46,11 @@ export function ChurnTab() {
   const [riskFilter, setRiskFilter] = useState<string | undefined>(undefined)
   const [form] = Form.useForm()
 
-  useEffect(() => { loadAll() }, [])
+  useEffect(() => {
+    loadAll()
+    window.addEventListener('aiDashboardRefresh', loadAll)
+    return () => window.removeEventListener('aiDashboardRefresh', loadAll)
+  }, [])
   useEffect(() => { loadUsers() }, [riskFilter])
 
   const loadAll = async () => {

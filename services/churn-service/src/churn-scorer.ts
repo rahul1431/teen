@@ -26,6 +26,15 @@ export interface ChurnScore {
   lastDepositAt: string | null
 }
 
+// admin-service's ml:config `churnPrediction` block (POST /api/admin/ml/config) — previously
+// edited in the admin panel but read by nothing. See
+// docs/Bugs/ai-control-center-churn-prediction-config-unused.md.
+interface ChurnPredictionWeights {
+  avgLossStreakWeight: number
+  bonusBalanceWeight: number
+}
+const DEFAULT_ML_WEIGHTS: ChurnPredictionWeights = { avgLossStreakWeight: 0.4, bonusBalanceWeight: 0.2 }
+
 export class ChurnScorer {
   constructor(
     private pool: Pool,
@@ -69,14 +78,37 @@ export class ChurnScorer {
     }
   }
 
+  // Reads the admin-configured avgLossStreakWeight/bonusBalanceWeight fresh every
+  // cycle rather than caching — cheap (one Redis GET per cron tick, not per-user)
+  // and means a config save takes effect on the very next scoring cycle with no
+  // separate cache-invalidation path to keep in sync.
+  private async getMlWeights(): Promise<ChurnPredictionWeights> {
+    try {
+      const raw = await this.redis.get('ml:config')
+      if (!raw) return DEFAULT_ML_WEIGHTS
+      const parsed = JSON.parse(raw)?.churnPrediction
+      return {
+        avgLossStreakWeight: typeof parsed?.avgLossStreakWeight === 'number' ? parsed.avgLossStreakWeight : DEFAULT_ML_WEIGHTS.avgLossStreakWeight,
+        bonusBalanceWeight: typeof parsed?.bonusBalanceWeight === 'number' ? parsed.bonusBalanceWeight : DEFAULT_ML_WEIGHTS.bonusBalanceWeight,
+      }
+    } catch {
+      return DEFAULT_ML_WEIGHTS
+    }
+  }
+
   async runScoringCycle(): Promise<void> {
     this.logger.info('Churn scoring cycle started')
     const cfg = await this.getConfig()
+    const mlWeights = await this.getMlWeights()
 
     // C2: parseInt ensures only an integer can enter the SQL INTERVAL literal
     const graceDays = parseInt(String(cfg.grace_period_days), 10)
 
-    // Fetch all eligible users: active, not suspended/banned, account older than grace period, has made at least 1 deposit
+    // Fetch all eligible users: active, not suspended/banned, account older than grace period, has made at least 1 deposit.
+    // bonus_balance and loss_streak feed the avgLossStreakWeight/bonusBalanceWeight
+    // scoring adjustment below — bonus_balance is the wallet's unspent bonus (an
+    // incentive to return), loss_streak is how many of the user's most recent
+    // games (up to 20) were losses in a row, counting back from the most recent.
     const usersRes = await this.pool.query(
       `SELECT
          u.id,
@@ -85,13 +117,27 @@ export class ChurnScorer {
          COUNT(wt.id)::int AS total_deposits,
          COUNT(CASE WHEN wt.created_at > NOW() - INTERVAL '14 days' THEN 1 END)::int AS deposits_last_14,
          COUNT(CASE WHEN wt.created_at > NOW() - INTERVAL '28 days'
-                     AND wt.created_at <= NOW() - INTERVAL '14 days' THEN 1 END)::int AS deposits_prior_14
+                     AND wt.created_at <= NOW() - INTERVAL '14 days' THEN 1 END)::int AS deposits_prior_14,
+         COALESCE(w.bonus_balance, 0)::float AS bonus_balance,
+         COALESCE(streak.loss_streak, 0)::int AS loss_streak
        FROM users u
        JOIN wallet_transactions wt ON wt.user_id = u.id AND wt.type = 'deposit'
+       LEFT JOIN wallets w ON w.user_id = u.id
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) AS loss_streak FROM (
+           SELECT
+             SUM(CASE WHEN gp.prize_won > 0 THEN 1 ELSE 0 END) OVER (ORDER BY gp.joined_at DESC) AS wins_so_far
+           FROM game_participants gp
+           WHERE gp.user_id = u.id
+           ORDER BY gp.joined_at DESC
+           LIMIT 20
+         ) recent
+         WHERE wins_so_far = 0
+       ) streak ON true
        WHERE u.status = 'active'
          AND u.is_bot = false
          AND u.created_at < NOW() - INTERVAL '${graceDays} days'
-       GROUP BY u.id, u.created_at
+       GROUP BY u.id, u.created_at, w.bonus_balance, streak.loss_streak
        HAVING COUNT(wt.id) > 0`,
       []
     )
@@ -100,7 +146,7 @@ export class ChurnScorer {
 
     for (const user of usersRes.rows) {
       try {
-        await this.scoreAndActOnUser(user, cfg)
+        await this.scoreAndActOnUser(user, cfg, mlWeights)
       } catch (err) {
         this.logger.error({ err, userId: user.id }, 'Failed to score user')
       }
@@ -109,7 +155,7 @@ export class ChurnScorer {
     this.logger.info('Churn scoring cycle complete')
   }
 
-  private async scoreAndActOnUser(user: any, cfg: ChurnConfig): Promise<void> {
+  private async scoreAndActOnUser(user: any, cfg: ChurnConfig, mlWeights: ChurnPredictionWeights): Promise<void> {
     const lastDepositAt = user.last_deposit_at ? new Date(user.last_deposit_at) : null
     const daysSinceDeposit = lastDepositAt
       ? (Date.now() - lastDepositAt.getTime()) / (1000 * 60 * 60 * 24)
@@ -160,11 +206,23 @@ export class ChurnScorer {
       }
 
       totalScore = Math.min(Math.round(inactivityScore + frequencyScore), 100)
-      riskLevel = 'none'
-      if (totalScore >= 80) riskLevel = 'high'
-      else if (totalScore >= 60) riskLevel = 'medium'
-      else if (totalScore >= 30) riskLevel = 'low'
     }
+
+    // Config-driven adjustment (avgLossStreakWeight/bonusBalanceWeight), applied
+    // uniformly whether the base score above came from the ML model or the
+    // heuristic fallback — neither accounts for loss streaks or unspent bonus
+    // balance on its own. A longer current losing streak raises risk (capped at
+    // 30 points before weighting); a larger unspent bonus balance lowers it
+    // (capped at 20 points before weighting) since it's an incentive to return.
+    const lossStreak = (user.loss_streak as number) || 0
+    const bonusBalance = (user.bonus_balance as number) || 0
+    const lossStreakAdjustment = Math.min(lossStreak * 5, 30) * mlWeights.avgLossStreakWeight
+    const bonusBalanceRelief = Math.min(bonusBalance / 10, 20) * mlWeights.bonusBalanceWeight
+    totalScore = Math.max(0, Math.min(100, Math.round(totalScore + lossStreakAdjustment - bonusBalanceRelief)))
+    riskLevel = 'none'
+    if (totalScore >= 80) riskLevel = 'high'
+    else if (totalScore >= 60) riskLevel = 'medium'
+    else if (totalScore >= 30) riskLevel = 'low'
 
     // Upsert score
     await this.pool.query(
