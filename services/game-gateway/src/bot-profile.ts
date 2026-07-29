@@ -57,6 +57,7 @@ export async function getBotProfile(
     const res = await axios.get(`${BOT_LEARNING_URL}/api/bots/profile`, {
       params: { game_type: gameType, difficulty: validDifficulty },
       timeout: 500,
+      headers: { 'x-internal-key': process.env.INTERNAL_SERVICE_KEY || '' },
     })
     if (res.data?.success && res.data?.data) {
       const p = res.data.data

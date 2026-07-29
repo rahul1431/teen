@@ -234,3 +234,25 @@ func TestStartPotLimit(t *testing.T) {
 	}
 }
 
+func TestMaxRaiseFor(t *testing.T) {
+	// Stake 1000 * maxChaalMultiplier(4) = 4000, well under the bots' flat
+	// 10000 balance — this is the exploit's actual fix: a raise this size
+	// can no longer force every bot at the table to fold.
+	if got := maxRaiseFor(1000, 0, 20000, false); got != 4000 {
+		t.Errorf("maxRaiseFor(stake=1000, pot=0, potLimit=20000) = %v, want 4000 (chaal-multiplier capped)", got)
+	}
+	// Pot already close to its cap: remaining headroom (3000) is smaller than
+	// the chaal-multiplier cap (1000*4=4000), so headroom wins.
+	if got := maxRaiseFor(1000, 17000, 20000, false); got != 3000 {
+		t.Errorf("maxRaiseFor(stake=1000, pot=17000, potLimit=20000) = %v, want 3000 (pot-headroom capped)", got)
+	}
+	// No-limit table: no pot cap, so only the chaal-multiplier bound applies.
+	if got := maxRaiseFor(1000, 50000, 0, true); got != 4000 {
+		t.Errorf("maxRaiseFor(stake=1000, pot=50000, noLimit) = %v, want 4000 (chaal-multiplier only)", got)
+	}
+	// Pot has already reached/exceeded its cap: no headroom left for a raise.
+	if got := maxRaiseFor(10, 500, 500, false); got != 0 {
+		t.Errorf("maxRaiseFor(stake=10, pot=500, potLimit=500) = %v, want 0 (no headroom)", got)
+	}
+}
+

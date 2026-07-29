@@ -562,6 +562,16 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 		case "raise":
 			raiseAmount := req.Amount
 			isSeen := state.Players[playerIdx].IsSeen
+
+			potLimit := state.PotLimit
+			if potLimit <= 0 && !state.NoLimit {
+				potLimit = potLimitFor(state.Stake)
+			}
+			if raiseAmount > maxRaiseFor(state.Stake, state.Pot, potLimit, state.NoLimit) {
+				http.Error(w, "raise amount exceeds table maximum", 400)
+				return nil
+			}
+
 			if isSeen {
 				if raiseAmount < state.MinBet*2 {
 					http.Error(w, "raise amount too small for seen player", 400)
@@ -784,6 +794,30 @@ func potLimitFor(stake float64) float64 {
 	default:
 		return 20000
 	}
+}
+
+// maxChaalMultiplier caps a single raise at this multiple of the table's
+// boot amount (mirrors resources/game-configs/teen-patti.json's
+// betting.maxChaalMultiplier). Without this, a raise was bounded only by
+// the raising player's own wallet balance.
+const maxChaalMultiplier = 4
+
+// maxRaiseFor returns the largest raise allowed right now: the smaller of
+// the chaal-multiplier cap (stake * maxChaalMultiplier) and the pot's
+// remaining headroom under potLimit (unbounded when potLimit is 0, i.e. a
+// no-limit table). Never negative — a pot already at/over its cap returns 0.
+func maxRaiseFor(stake, pot, potLimit float64, noLimit bool) float64 {
+	max := stake * maxChaalMultiplier
+	if !noLimit && potLimit > 0 {
+		headroom := potLimit - pot
+		if headroom < 0 {
+			headroom = 0
+		}
+		if headroom < max {
+			max = headroom
+		}
+	}
+	return max
 }
 
 // loadRakePct reads the admin-configured platform fee for Teen Patti from

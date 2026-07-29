@@ -21,6 +21,16 @@ const logger = pino()
 async function start() {
   const app = Fastify({ logger: true })
 
+  // Every route below drives real-money bot behavior (win-rate targets,
+  // fold/call/raise probabilities) or triggers a full profile rebuild, so
+  // this mirrors risk-service/wallet-service's INTERNAL_SERVICE_KEY check
+  // rather than leaving the service open to anything that can reach its port.
+  const authenticateInternal = async (req: any, reply: any) => {
+    const key = req.headers['x-internal-key']
+    const expected = process.env.INTERNAL_SERVICE_KEY
+    if (!expected || key !== expected) return reply.code(403).send({ error: 'Forbidden' })
+  }
+
   const pool = new Pool({ connectionString: process.env.DATABASE_URL })
   const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
   if (redis.status === 'wait') await redis.connect()
@@ -113,6 +123,7 @@ async function start() {
   // GET /api/bots/profile?game_type=&difficulty=
   app.get<{ Querystring: { game_type?: string; difficulty?: string } }>(
     '/api/bots/profile',
+    { onRequest: [authenticateInternal] },
     async (request, reply) => {
       const { game_type, difficulty } = request.query
       if (!game_type || !difficulty) {
@@ -130,7 +141,7 @@ async function start() {
   )
 
   // GET /api/bots/profiles
-  app.get('/api/bots/profiles', async (_req, reply) => {
+  app.get('/api/bots/profiles', { onRequest: [authenticateInternal] }, async (_req, reply) => {
     try {
       const profiles = await builder.getProfiles()
       return reply.send({ success: true, data: { profiles, count: profiles.length } })
@@ -141,14 +152,14 @@ async function start() {
   })
 
   // POST /api/bots/rebuild
-  app.post('/api/bots/rebuild', async (_req, reply) => {
+  app.post('/api/bots/rebuild', { onRequest: [authenticateInternal] }, async (_req, reply) => {
     // Non-blocking: start rebuild in background, return immediately
     builder.runRebuild().catch(err => logger.error({ err }, 'Manual rebuild failed'))
     return reply.send({ success: true, data: { status: 'started', game_types: ['teen_patti', 'ludo', 'aviator'] } })
   })
 
   // GET /api/bots/config
-  app.get('/api/bots/config', async (_req, reply) => {
+  app.get('/api/bots/config', { onRequest: [authenticateInternal] }, async (_req, reply) => {
     try {
       const config = await builder.getConfig()
       return reply.send({ success: true, data: config })
@@ -159,7 +170,7 @@ async function start() {
   })
 
   // PATCH /api/bots/config
-  app.patch<{ Body: Record<string, string> }>('/api/bots/config', async (request, reply) => {
+  app.patch<{ Body: Record<string, string> }>('/api/bots/config', { onRequest: [authenticateInternal] }, async (request, reply) => {
     try {
       await builder.updateConfig(request.body)
       const updated = await builder.getConfig()
@@ -174,7 +185,7 @@ async function start() {
   app.patch<{
     Params: { gameType: string; difficulty: string }
     Body: Record<string, number>
-  }>('/api/bots/profiles/:gameType/:difficulty', async (request, reply) => {
+  }>('/api/bots/profiles/:gameType/:difficulty', { onRequest: [authenticateInternal] }, async (request, reply) => {
     try {
       await builder.overrideProfile(request.params.gameType, request.params.difficulty, request.body)
       const profile = await builder.getProfile(request.params.gameType, request.params.difficulty)
@@ -186,7 +197,7 @@ async function start() {
   })
 
   // POST /internal/metrics/aggregate (called by cron or admin)
-  app.post('/internal/metrics/aggregate', async (_req, reply) => {
+  app.post('/internal/metrics/aggregate', { onRequest: [authenticateInternal] }, async (_req, reply) => {
     try {
       const results = await metricsAggregator.aggregateHourlyMetrics()
       return reply.send({
@@ -204,7 +215,7 @@ async function start() {
   })
 
   // POST /internal/anomalies/process (called by cron or admin to manually trigger anomaly response processing)
-  app.post('/internal/anomalies/process', async (_req, reply) => {
+  app.post('/internal/anomalies/process', { onRequest: [authenticateInternal] }, async (_req, reply) => {
     try {
       const stats = await anomalyResponseHandler.processAnomalies()
       return reply.send({
@@ -221,7 +232,7 @@ async function start() {
   })
 
   // GET /internal/anomalies/report (get daily anomaly report)
-  app.get('/internal/anomalies/report', async (_req, reply) => {
+  app.get('/internal/anomalies/report', { onRequest: [authenticateInternal] }, async (_req, reply) => {
     try {
       const report = await anomalyResponseHandler.generateDailyReport()
       return reply.send({
@@ -235,7 +246,7 @@ async function start() {
   })
 
   // GET /internal/streaming-evaluator/metrics (get streaming evaluator metrics)
-  app.get('/internal/streaming-evaluator/metrics', async (_req, reply) => {
+  app.get('/internal/streaming-evaluator/metrics', { onRequest: [authenticateInternal] }, async (_req, reply) => {
     try {
       const metrics = streamingEvaluator.getMetrics()
       return reply.send({
@@ -251,8 +262,11 @@ async function start() {
     }
   })
 
+  // No legitimate caller reaches this service from outside the host (both
+  // admin-service and game-gateway default to localhost:3014) — loopback-only
+  // binding is defense in depth on top of the x-internal-key check above.
   const port = parseInt(process.env.PORT ?? '3014')
-  await app.listen({ port, host: '0.0.0.0' })
+  await app.listen({ port, host: '127.0.0.1' })
   logger.info(`Bot learning service started on :${port}`)
 
   // Run initial rebuild on startup (non-blocking)
