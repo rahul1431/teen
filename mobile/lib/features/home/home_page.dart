@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shimmer/shimmer.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/network/api_client.dart';
 import '../../core/constants/app_config.dart';
 import '../../core/services/balance_service.dart';
@@ -13,14 +14,6 @@ import '../../core/monitor/monitor_service.dart';
 import '../../core/monitor/location_consent_service.dart';
 import '../../core/services/locale_service.dart';
 import '../../shared/widgets/cms_banner_strip.dart';
-
-// ── Fake live counters (replace with real WebSocket data later) ──────────────
-const _kLiveOnline = {
-  'teen-patti': 15842,
-  'aviator': 9231,
-  'ludo': 10477,
-  'cricket': 6120
-};
 
 String _resolveImageUrl(String? p) {
   if (p == null || p.isEmpty) return '';
@@ -46,6 +39,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   Timer? _bannerTimer;
   final PageController _bannerCtrl = PageController();
 
+  // Real "X online" counts per game, from /api/users/live-counts.
+  Map<String, int> _liveCounts = {};
+
+  // Real Matka markets, from /api/betting/matka/markets.
+  List<dynamic> _matkaMarkets = [];
+  Map<String, dynamic>? _featuredMatkaMarket;
+
   // Animations
   late final AnimationController _pulseCtrl;
   late final AnimationController _heroCtrl;
@@ -54,17 +54,51 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late final AnimationController _balanceCtrl;
   late final Animation<double> _balanceFade;
 
-  // Next draw countdown
-  DateTime _nextDraw = _nextDrawTime();
+  // Next draw countdown — driven by the featured Matka market's real
+  // open_time/close_time, not a fixed clock time.
+  DateTime? _matkaCountdownTarget;
   Timer? _ticker;
   Duration _timeToNextDraw = Duration.zero;
 
-  static DateTime _nextDrawTime() {
+  DateTime? _parseTimeToday(String? hms) {
+    if (hms == null) return null;
+    final parts = hms.split(':');
+    if (parts.length < 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return null;
+    final s = parts.length > 2 ? (int.tryParse(parts[2]) ?? 0) : 0;
     final now = DateTime.now();
-    final candidate = DateTime(now.year, now.month, now.day, 14, 30);
-    return candidate.isBefore(now)
-        ? candidate.add(const Duration(days: 1))
-        : candidate;
+    return DateTime(now.year, now.month, now.day, h, m, s);
+  }
+
+  // Picks the market whose next pending deadline (open if not yet declared,
+  // else close) comes soonest, so the countdown always points at something
+  // real instead of a single fabricated daily draw time.
+  void _recomputeMatka() {
+    final now = DateTime.now();
+    DateTime? bestTarget;
+    Map<String, dynamic>? bestMarket;
+    for (final raw in _matkaMarkets) {
+      final m = raw as Map<String, dynamic>;
+      if (m['close_panna'] != null) continue; // fully declared for today
+      final timeStr = m['open_panna'] == null
+          ? m['open_time'] as String?
+          : m['close_time'] as String?;
+      final parsed = _parseTimeToday(timeStr);
+      if (parsed == null) continue;
+      final effective =
+          parsed.isAfter(now) ? parsed : parsed.add(const Duration(days: 1));
+      if (bestTarget == null || effective.isBefore(bestTarget)) {
+        bestTarget = effective;
+        bestMarket = m;
+      }
+    }
+    _matkaCountdownTarget = bestTarget;
+    _featuredMatkaMarket = bestMarket ??
+        (_matkaMarkets.isNotEmpty
+            ? _matkaMarkets.first as Map<String, dynamic>
+            : null);
   }
 
   @override
@@ -87,6 +121,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         Timer.periodic(const Duration(seconds: 1), (_) => _updateCountdown());
     _loadData();
     _loadBanners();
+    _loadLiveCounts();
+    _loadMatka();
     // Check for app update after a short delay so the home screen renders first.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(seconds: 2), () {
@@ -133,22 +169,53 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     } catch (_) {}
   }
 
-  void _onBannerTap(Map<String, dynamic> banner) {
+  Future<void> _loadLiveCounts() async {
+    try {
+      final res = await ApiClient().dio.get('/api/users/live-counts');
+      if (!mounted) return;
+      final data = res.data as Map? ?? {};
+      setState(() {
+        _liveCounts = data.map(
+            (k, v) => MapEntry(k.toString(), (v as num?)?.toInt() ?? 0));
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _loadMatka() async {
+    try {
+      final res = await ApiClient().dio.get('/api/betting/matka/markets');
+      if (!mounted) return;
+      final markets = (res.data['markets'] as List?) ?? [];
+      setState(() => _matkaMarkets = markets);
+      _recomputeMatka();
+      _updateCountdown();
+    } catch (_) {}
+  }
+
+  Future<void> _onBannerTap(Map<String, dynamic> banner) async {
     final url = banner['click_url'] as String? ?? '';
     final type = banner['click_type'] as String? ?? 'none';
     if (url.isEmpty || type == 'none') return;
-    if (type == 'route') {
+    if (type == 'route' || url.startsWith('/')) {
       context.push(url);
-    } else {
-      // External URL — could open browser, for now navigate as route if starts with /
-      if (url.startsWith('/')) context.push(url);
+      return;
+    }
+    final uri = Uri.tryParse(url);
+    if (uri != null) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
   }
 
   void _updateCountdown() {
-    final diff = _nextDraw.difference(DateTime.now());
+    final target = _matkaCountdownTarget;
+    if (target == null) {
+      if (mounted) setState(() => _timeToNextDraw = Duration.zero);
+      return;
+    }
+    var diff = target.difference(DateTime.now());
     if (diff.isNegative) {
-      _nextDraw = _nextDrawTime();
+      _recomputeMatka();
+      diff = _matkaCountdownTarget?.difference(DateTime.now()) ?? Duration.zero;
     }
     if (mounted)
       setState(() => _timeToNextDraw = diff.isNegative ? Duration.zero : diff);
@@ -723,7 +790,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   title: locale.t('teen_patti'),
                   emoji: '🃏',
                   subtitle:
-                      '${_formatOnline(_kLiveOnline["teen-patti"]!)} ${locale.t('online')}',
+                      '${_formatOnline(_liveCounts['teen_patti'] ?? 0)} ${locale.t('online')}',
                   ctaLabel: locale.t('play_now'),
                   gradient: const [
                     Color(0xFFB11226),
@@ -759,7 +826,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     child: _richGameCard(
                   title: locale.t('ludo'),
                   emoji: '🎲',
-                  subtitle: '${_formatOnline(_kLiveOnline["ludo"]!)} ${locale.t('online')}',
+                  subtitle: '${_formatOnline(_liveCounts['ludo'] ?? 0)} ${locale.t('online')}',
                   ctaLabel: locale.t('start_game'),
                   gradient: const [
                     Color(0xFF6A1B9A),
@@ -774,7 +841,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     child: _richGameCard(
                   title: locale.t('cricket'),
                   emoji: '🏏',
-                  subtitle: '${_formatOnline(_kLiveOnline["cricket"]!)} ${locale.t('online')}',
+                  subtitle: '${_formatOnline(_liveCounts['cricket'] ?? 0)} ${locale.t('online')}',
                   ctaLabel: locale.t('bet_now'),
                   gradient: const [
                     Color(0xFF15803D),
@@ -950,7 +1017,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         ),
       );
 
-  Widget _matkaCard() => GestureDetector(
+  Widget _matkaCard() {
+    final market = _featuredMatkaMarket;
+    final openDigit = market?['open_digit']?.toString() ?? '*';
+    final closeDigit = market?['close_digit']?.toString() ?? '*';
+    final drawLabel = _matkaCountdownTarget != null
+        ? 'Next Draw: $_countdownStr'
+        : (_matkaMarkets.isEmpty ? 'Loading…' : 'Results declared');
+    return GestureDetector(
         onTap: () => context.push('/games/matka'),
         child: Container(
           padding: const EdgeInsets.all(18),
@@ -990,17 +1064,17 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         const Icon(Icons.timer_outlined,
                             color: AppColors.orange, size: 12),
                         const SizedBox(width: 4),
-                        Text('Next Draw: $_countdownStr',
+                        Text(drawLabel,
                             style: const TextStyle(
                                 color: AppColors.orange,
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold)),
                       ],
                     ),
-                    // Number balls
+                    // Number balls — real open/close digits once declared, '*' until then.
                     const SizedBox(height: 8),
                     Row(
-                      children: ['3', '7', '9', '0']
+                      children: [openDigit, closeDigit]
                           .map((n) => Container(
                                 margin: const EdgeInsets.only(right: 5),
                                 width: 26,
@@ -1039,6 +1113,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           ),
         ),
       );
+  }
 
   Widget _matkaBtn(String label, Color color, VoidCallback onTap) =>
       GestureDetector(

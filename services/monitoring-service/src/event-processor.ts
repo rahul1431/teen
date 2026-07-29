@@ -17,9 +17,22 @@ export interface NormalizedEvent {
 const BATCH_SIZE = 100
 const FLUSH_INTERVAL_MS = 1000
 
+// README documents a 30-day retention policy for game_events, but nothing
+// ever deleted from it — every event since deploy stayed forever (see
+// docs/Bugs/game-events-table-has-no-retention-cleanup.md). Sweep daily,
+// deleting in small batches so a table with millions of rows doesn't hold
+// a long lock / generate a huge WAL spike in one shot.
+const RETENTION_DAYS = Number(process.env.GAME_EVENTS_RETENTION_DAYS) || 30
+const RETENTION_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000
+const RETENTION_FIRST_SWEEP_DELAY_MS = 60 * 1000
+const RETENTION_BATCH_SIZE = 5000
+const RETENTION_BATCH_PAUSE_MS = 100
+
 export class EventProcessor {
   private eventBuffer: NormalizedEvent[] = []
   private flushTimer: ReturnType<typeof setInterval>
+  private retentionTimer: ReturnType<typeof setInterval>
+  private retentionStartTimer: ReturnType<typeof setTimeout>
 
   constructor(
     private redis: Redis,
@@ -29,10 +42,39 @@ export class EventProcessor {
     this.flushTimer = setInterval(() => {
       this.flushEvents().catch(err => this.logger.error({ err }, 'Batch flush failed'))
     }, FLUSH_INTERVAL_MS)
+
+    const runSweep = () => this.runRetentionSweep().catch(err => this.logger.error({ err }, 'game_events retention sweep failed'))
+    this.retentionStartTimer = setTimeout(runSweep, RETENTION_FIRST_SWEEP_DELAY_MS)
+    this.retentionTimer = setInterval(runSweep, RETENTION_SWEEP_INTERVAL_MS)
   }
 
   destroy() {
     clearInterval(this.flushTimer)
+    clearInterval(this.retentionTimer)
+    clearTimeout(this.retentionStartTimer)
+  }
+
+  /**
+   * Delete game_events rows older than the retention window, in bounded
+   * batches, until none remain.
+   */
+  private async runRetentionSweep(): Promise<void> {
+    const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000)
+    let totalDeleted = 0
+    for (;;) {
+      const result = await this.pool.query(
+        `DELETE FROM game_events WHERE id IN (
+           SELECT id FROM game_events WHERE created_at < $1 LIMIT $2
+         )`,
+        [cutoff, RETENTION_BATCH_SIZE],
+      )
+      totalDeleted += result.rowCount ?? 0
+      if (!result.rowCount || result.rowCount < RETENTION_BATCH_SIZE) break
+      await new Promise(r => setTimeout(r, RETENTION_BATCH_PAUSE_MS))
+    }
+    if (totalDeleted > 0) {
+      this.logger.info({ totalDeleted, retentionDays: RETENTION_DAYS }, 'game_events retention sweep completed')
+    }
   }
 
   private async flushEvents(): Promise<void> {

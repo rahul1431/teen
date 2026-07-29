@@ -40,8 +40,8 @@ Fraud Detection (Anomaly alerts)
 ### 3. PostgreSQL Persistence
 - Table: `game_events` (1.5M+ rows expected at scale)
 - Indexed by game_type, user_id, room_id, created_at
-- Materialized view for minute-level aggregates
-- Retention policy: Keep 30 days (configurable)
+- No materialized view — `getAggregatedMetrics()` queries `game_events` directly (60s Redis cache); the view from an early migration was dropped as dead schema, see migration `027_game_events_fixed.sql`
+- Retention policy: `EventProcessor` sweeps daily, deleting rows older than 30 days (`GAME_EVENTS_RETENTION_DAYS`, batched to avoid long lock/WAL spikes)
 
 ### 4. HTTP Endpoints
 
@@ -323,11 +323,11 @@ ORDER BY action_count DESC;
 ### Indexing
 - Game events indexed on: game_type, user_id, room_id, created_at
 - Queries filter by created_at for fast scans
-- Materialized view refreshed every 5 minutes
+- No materialized view (removed — see Features above); every query hits `game_events` directly, cached in Redis for 60s
 
 ### Retention
-- Keep 30 days of detailed events in PostgreSQL
-- Archive older events to S3/cold storage (future)
+- `EventProcessor` runs a daily sweep (first run ~1 minute after startup) deleting rows with `created_at` older than `GAME_EVENTS_RETENTION_DAYS` (default 30), in batches of 5,000 to avoid long lock/WAL spikes on a large table
+- No S3/cold-storage archival before deletion — old rows are dropped, not moved
 - Redis Streams auto-expire after 2 days
 
 ### Scaling

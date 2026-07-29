@@ -13,6 +13,7 @@ import { BotTrainingConfigRepository } from './repositories/botTrainingConfigRep
 import { GameRecorder } from './botCoordination/gameRecorder'
 import { computeEffectiveBoldness } from './botCoordination/adaptiveBoldness'
 import { decideBotWinner, buildEngineCoordination } from './botCoordination/winnerDecision'
+import { applyEntryFeeDelta } from './entry-fee-reconcile'
 
 export interface MatchmakingEntry {
   userId: string
@@ -1112,10 +1113,7 @@ export class MatchmakingService {
         }
 
         if (locked) {
-          await this.db.query(
-            'UPDATE game_participants SET entry_fee_deducted = entry_fee_deducted + $1 WHERE room_id = $2 AND user_id = $3',
-            [extraBet, roomId, userId]
-          ).catch(e => console.error('[gateway] Failed to update bot entry_fee_deducted in DB', e))
+          await applyEntryFeeDelta(this.db, this.redis, { room_id: roomId, user_id: userId, delta: extraBet, isBot: true })
         }
 
         const res = await fetch(`${engineUrl}/action`, {

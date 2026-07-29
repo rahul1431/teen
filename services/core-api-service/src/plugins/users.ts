@@ -109,6 +109,33 @@ export function usersPlugin(db: Pool) {
       return reply.send(res.rows)
     })
 
+    // GET /users/live-counts — real "X online" numbers for the home screen
+    // game cards. Previously the mobile app showed a hardcoded constant
+    // (see docs/Bugs/home-page-fake-live-data.md); this computes actual
+    // distinct-player counts from the same tables the rest of the platform
+    // already treats as authoritative: real players (not bots) currently
+    // seated in a non-finished room for teen_patti/ludo, and real players
+    // who placed a cricket session (fancy) bet recently for cricket, which
+    // has no "room" concept.
+    app.get('/users/live-counts', async (_req, reply) => {
+      const [roomsRes, cricketRes] = await Promise.all([
+        db.query(
+          `SELECT gr.game_type::text AS game_type, COUNT(DISTINCT gp.user_id) AS count
+           FROM game_participants gp
+           JOIN game_rooms gr ON gr.id = gp.room_id
+           WHERE gr.status IN ('waiting', 'active') AND gp.is_bot = false
+           GROUP BY gr.game_type`,
+        ),
+        db.query(
+          `SELECT COUNT(DISTINCT user_id) AS count FROM cricket_session_bets WHERE created_at > NOW() - INTERVAL '15 minutes'`,
+        ),
+      ])
+      const counts: Record<string, number> = { teen_patti: 0, ludo: 0, aviator: 0 }
+      for (const r of roomsRes.rows) counts[r.game_type] = Number(r.count) || 0
+      counts.cricket = Number(cricketRes.rows[0]?.count) || 0
+      return reply.send(counts)
+    })
+
     // GET /users/cms-banners — public read of admin-authored cms_banners
     // (Support & CMS → Banners tab), separate from the home_banners table
     // above. Filtered by placement (home/lobby/wallet/promo) and the

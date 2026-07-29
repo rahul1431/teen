@@ -13,6 +13,7 @@ import { RealtimeHub, Conn } from './realtime'
 import { monitorEmitter } from './monitor-emitter'
 import { SessionManager } from './session-manager'
 import { createRateLimiter } from './middleware/rate-limiter'
+import { applyEntryFeeDelta } from './entry-fee-reconcile'
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
@@ -891,10 +892,7 @@ async function start() {
       })
 
       if (locked) {
-        await db.query(
-          'UPDATE game_participants SET entry_fee_deducted = entry_fee_deducted + $1 WHERE room_id = $2 AND user_id = $3',
-          [extraBet, room_id, conn.userId]
-        ).catch(e => console.error('[gateway] Failed to update entry_fee_deducted in DB', e))
+        await applyEntryFeeDelta(db, redis, { room_id, user_id: conn.userId, delta: extraBet, isBot: false })
       }
 
       await matchmaking.setRoomState(room_id, { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) })

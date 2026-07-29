@@ -8,15 +8,21 @@ import { Pool } from 'pg'
 // rate-limited, instead of the whole sync just failing for the day.
 //
 // Configure via game_configs.special_rules.api_keys: string[] (falls back
-// to the legacy single api_key, then to the original hardcoded free key).
+// to the legacy single api_key). In non-production environments only, a
+// shared dev key is used as a last resort so local setups work without
+// admin config; production must never silently fall back to a shared key
+// (it was previously hardcoded here and committed to git — see
+// docs/Bugs/hardcoded-cricapi-fallback-key.md).
 let rrIndex = 0
+const DEV_ONLY_FALLBACK_KEY = 'dd511ce4-aeb7-4e1f-86f4-1160404b2776'
 
 async function getKeyPool(db: Pool): Promise<string[]> {
   const res = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
   const rules = res.rows[0]?.special_rules
   if (Array.isArray(rules?.api_keys) && rules.api_keys.length) return rules.api_keys
   if (rules?.api_key) return [rules.api_key]
-  return ['dd511ce4-aeb7-4e1f-86f4-1160404b2776']
+  if (process.env.NODE_ENV !== 'production') return [DEV_ONLY_FALLBACK_KEY]
+  return []
 }
 
 function isRateLimited(data: any): boolean {
@@ -29,7 +35,7 @@ function isRateLimited(data: any): boolean {
 export async function cricApiFetch(db: Pool, buildUrl: (apiKey: string) => string): Promise<any> {
   const keys = await getKeyPool(db)
   const startIndex = rrIndex
-  let lastResult: any = { status: 'failure', reason: 'No CricAPI keys configured' }
+  let lastResult: any = { status: 'failure', reason: 'No CricAPI key configured — set special_rules.api_key (or api_keys) in Game Config for cricket' }
   for (let i = 0; i < keys.length; i++) {
     const key = keys[(startIndex + i) % keys.length]
     try {
