@@ -311,21 +311,27 @@ export function bettingPlugin(db: Pool) {
       const mRes = await db.query('SELECT status FROM cricket_matches WHERE id = $1', [body.match_id])
       if (!mRes.rows.length) return reply.code(404).send({ error: 'Match not found' })
       if (mRes.rows[0].status !== 'upcoming') return reply.code(400).send({ error: 'Cannot submit team: Match has already started or settled' })
-      const playersRes = await db.query('SELECT id, role, credits FROM cricket_fantasy_players WHERE id = ANY($1)', [body.player_ids])
+      const playersRes = await db.query('SELECT id, role, credits, team_name FROM cricket_fantasy_players WHERE id = ANY($1)', [body.player_ids])
       if (playersRes.rows.length !== 11) return reply.code(400).send({ error: 'One or more selected players do not exist' })
       let totalCredits = 0, wk = 0, bat = 0, ar = 0, bowl = 0
+      const teamCounts: Record<string, number> = {}
       for (const p of playersRes.rows) {
         totalCredits += Number(p.credits)
         if (p.role === 'wicket_keeper') wk++
         else if (p.role === 'batsman') bat++
         else if (p.role === 'all_rounder') ar++
         else if (p.role === 'bowler') bowl++
+        teamCounts[p.team_name] = (teamCounts[p.team_name] || 0) + 1
       }
       if (totalCredits > 120.0) return reply.code(400).send({ error: `Roster exceeds budget cap: ${totalCredits.toFixed(1)}/120 credits` })
       if (wk < 1 || wk > 4) return reply.code(400).send({ error: 'Roster must contain between 1 and 4 Wicket Keepers' })
       if (bat < 3 || bat > 6) return reply.code(400).send({ error: 'Roster must contain between 3 and 6 Batsmen' })
       if (ar < 1 || ar > 4) return reply.code(400).send({ error: 'Roster must contain between 1 and 4 All-Rounders' })
       if (bowl < 3 || bowl > 6) return reply.code(400).send({ error: 'Roster must contain between 3 and 6 Bowlers' })
+      // Mirrors the mobile client's per-team-representation cap (cricket_page.dart)
+      // — enforce server-side too so it can't be bypassed via direct API calls.
+      const overTeam = Object.entries(teamCounts).find(([, count]) => count > 7)
+      if (overTeam) return reply.code(400).send({ error: `Roster cannot include more than 7 players from a single team (${overTeam[0]})` })
       const teamRes = await db.query(`INSERT INTO user_fantasy_teams (user_id, match_id, player_ids, captain_id, vice_captain_id) VALUES ($1, $2, $3, $4, $5) RETURNING id`, [uid(req), body.match_id, body.player_ids, body.captain_id, body.vice_captain_id])
       return { success: true, team_id: teamRes.rows[0].id }
     })

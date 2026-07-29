@@ -11,6 +11,7 @@ import '../../core/constants/app_config.dart';
 import '../../core/services/balance_service.dart';
 import '../../core/analytics/product_analytics.dart';
 import '../../shared/theme/app_theme.dart';
+import '../../shared/widgets/cms_banner_strip.dart';
 import '../profile/kyc_page.dart';
 import '../profile/bank_details_page.dart';
 
@@ -260,7 +261,9 @@ class _WalletPageState extends State<WalletPage> {
                 ),
               ],
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
+            const CmsBannerStrip(placement: 'wallet'),
+            const SizedBox(height: 8),
 
             // Transaction history
             const Text('Recent Transactions',

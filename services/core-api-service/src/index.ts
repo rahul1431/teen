@@ -19,6 +19,7 @@ import { analyticsPlugin } from './plugins/analytics'
 import { referralPlugin } from './plugins/referral'
 import { missionsPlugin } from './plugins/missions'
 import { telegramPlugin } from './plugins/telegram'
+import { gameConfigsPlugin } from './plugins/game-configs'
 import { FantasyScoringPoller } from './helpers/fantasy-scoring-poller'
 import { MatchStatusPoller } from './helpers/match-status-poller'
 
@@ -84,6 +85,7 @@ async function start() {
   await app.register(referralPlugin(db))
   await app.register(missionsPlugin(db))
   await app.register(telegramPlugin(db))
+  await app.register(gameConfigsPlugin(db))
 
   app.get('/health', async () => ({
     status: 'ok',

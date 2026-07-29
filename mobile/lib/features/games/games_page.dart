@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../shared/theme/app_theme.dart';
+import '../../shared/widgets/cms_banner_strip.dart';
 import '../../core/services/locale_service.dart';
 
 /// Games tab — every game on the platform in one grid.
@@ -31,16 +32,26 @@ class GamesPage extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: GridView.builder(
-        padding: const EdgeInsets.all(16),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: 0.95,
-        ),
-        itemCount: games.length,
-        itemBuilder: (_, i) => _GameCard(game: games[i]),
+      body: Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 12),
+            child: CmsBannerStrip(placement: 'lobby'),
+          ),
+          Expanded(
+            child: GridView.builder(
+              padding: const EdgeInsets.all(16),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 0.95,
+              ),
+              itemCount: games.length,
+              itemBuilder: (_, i) => _GameCard(game: games[i]),
+            ),
+          ),
+        ],
       ),
     );
   }

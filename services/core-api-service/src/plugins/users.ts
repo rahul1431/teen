@@ -109,6 +109,43 @@ export function usersPlugin(db: Pool) {
       return reply.send(res.rows)
     })
 
+    // GET /users/cms-banners — public read of admin-authored cms_banners
+    // (Support & CMS → Banners tab), separate from the home_banners table
+    // above. Filtered by placement (home/lobby/wallet/promo) and the
+    // active date window; same "no auth required" contract as /users/banners
+    // since this feeds unauthenticated/first-run mobile screens too.
+    app.get('/users/cms-banners', async (req, reply) => {
+      const { placement } = req.query as { placement?: string }
+      const now = new Date().toISOString()
+      const params: any[] = [now]
+      let where = `is_active = true AND (starts_at IS NULL OR starts_at <= $1) AND (ends_at IS NULL OR ends_at >= $1)`
+      if (placement) {
+        params.push(placement)
+        where += ` AND placement = $${params.length}`
+      }
+      const res = await db.query(
+        `SELECT id, title, body, image_url, cta_label, cta_url, placement, priority
+         FROM cms_banners
+         WHERE ${where}
+         ORDER BY priority DESC, created_at DESC`,
+        params,
+      )
+      return reply.send(res.rows)
+    })
+
+    // GET /users/pages/:slug — public read of admin-authored cms_pages
+    // (Support & CMS → CMS Pages tab), for static content screens like
+    // Terms/Privacy/FAQ. Published rows only.
+    app.get('/users/pages/:slug', async (req, reply) => {
+      const { slug } = req.params as { slug: string }
+      const res = await db.query(
+        `SELECT slug, title, body_md, updated_at FROM cms_pages WHERE slug = $1 AND is_published = true`,
+        [slug],
+      )
+      if (!res.rows.length) return reply.code(404).send({ error: 'Page not found' })
+      return reply.send(res.rows[0])
+    })
+
     app.post('/users/me/avatar', { onRequest: [app.authenticate] }, async (req, reply) => {
       const user = req.user as any
       const data = await (req as any).file()

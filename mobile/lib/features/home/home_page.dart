@@ -12,6 +12,7 @@ import '../../core/storage/secure_storage.dart';
 import '../../core/monitor/monitor_service.dart';
 import '../../core/monitor/location_consent_service.dart';
 import '../../core/services/locale_service.dart';
+import '../../shared/widgets/cms_banner_strip.dart';
 
 // ── Fake live counters (replace with real WebSocket data later) ──────────────
 const _kLiveOnline = {
@@ -204,6 +205,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverToBoxAdapter(child: _buildHeroBanner()),
+            const SliverToBoxAdapter(
+                child: Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: CmsBannerStrip(placement: 'home'),
+            )),
             SliverToBoxAdapter(child: _buildBalanceSection()),
             SliverToBoxAdapter(child: _buildPromoStrip()),
             SliverToBoxAdapter(

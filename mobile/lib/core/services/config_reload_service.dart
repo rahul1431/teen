@@ -1,10 +1,9 @@
 import 'dart:async';
-import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import '../network/api_client.dart';
 import '../socket/socket_service.dart';
 import '../constants/socket_events.dart';
-import '../storage/secure_storage.dart';
 
 /// Listens for game config reload events from the server and triggers
 /// a refresh of cached game configurations.
@@ -91,23 +90,16 @@ class ConfigReloadService {
   }
 
   /// Fetch fresh game config from the backend REST API.
+  ///
+  /// Uses the app's shared ApiClient (built on AppConfig.apiBaseUrl, with an
+  /// auth interceptor that attaches the bearer token and handles 401
+  /// refresh) rather than a bare Dio() instance — a fresh Dio() has no
+  /// baseUrl configured, so a relative path like '/api/game-configs/...'
+  /// never resolves to a real request. See
+  /// docs/Bugs/config-reload-dead-feature.md.
   Future<void> _refreshGameConfig(String gameType) async {
     try {
-      final token = await SecureStorage.getAccessToken();
-      if (token == null) {
-        if (kDebugMode) {
-          print('[ConfigReload] No token available, skipping refresh');
-        }
-        return;
-      }
-
-      final dio = Dio();
-      final response = await dio.get(
-        '/api/game-configs/$gameType',
-        options: Options(
-          headers: {'Authorization': 'Bearer $token'},
-        ),
-      );
+      final response = await ApiClient().dio.get('/api/game-configs/$gameType');
 
       if (response.statusCode == 200) {
         final box = await Hive.openBox('game_configs');
