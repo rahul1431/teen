@@ -32,7 +32,7 @@ The client never talks to the Go engine directly — every payload it consumes o
 
 ### Sending actions (`_sendAction`, `:773+`)
 
-Emits `game:action` with `{room_id, action, amount, sequence_num}` — the engine decodes `sequence_num` but never uses it (`backend.md`), so it has no server-side effect. `_actionCost()` (`:680-695`) mirrors the engine's own cost rules purely for the client pre-flight balance check and must be kept manually in sync with `main.go`'s `processAction` arithmetic — there's no shared source. Because `raise` has no upper bound either client-side (`_actionCost`'s `raise` case just echoes back whatever the bet slider produced, `:686-687`) or server-side, the mobile UI itself imposes no ceiling on a raise — see `../../Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`.
+Emits `game:action` with `{room_id, action, amount, sequence_num}` — the engine decodes `sequence_num` but never uses it (`backend.md`), so it has no server-side effect. `_actionCost()` (`:680-695`) mirrors the engine's own cost rules purely for the client pre-flight balance check and must be kept manually in sync with `main.go`'s `processAction` arithmetic — there's no shared source. The mobile UI still imposes no ceiling on a raise client-side (`_actionCost`'s `raise` case just echoes back whatever the bet slider produced, `:686-687`), but the engine now rejects an oversized raise server-side as of 2026-07-29 (`maxRaiseFor`, `backend.md`) — the exploit this used to enable (`../../Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`) is fixed.
 
 ### Sideshow flow
 
@@ -61,6 +61,6 @@ Emits `game:action` with `{room_id, action, amount, sequence_num}` — the engin
 
 ## Bug references
 
-Already filed (not re-filed here): `../../Bugs/teen-patti-no-turn-timeout.md`, `../../Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`.
+Already filed (not re-filed here): `../../Bugs/teen-patti-no-turn-timeout.md`.
 
 New from this pass: `../../Bugs/teen-patti-lobby-fee-percent-hardcoded.md` (see the lobby section above; full writeup in the final report of this pass).

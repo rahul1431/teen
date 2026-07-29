@@ -35,7 +35,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/teen-patti-engine-url-env-example-broken.md`
 - `docs/Bugs/teen-patti-lobby-fee-percent-hardcoded.md`
 - `docs/Bugs/teen-patti-no-turn-timeout.md`
-- `docs/Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`
 - → background: `docs/games/teen-patti/*.md`, `docs/backend-services/teen-patti-engine/*.md`
 
 ### Ludo
@@ -69,7 +68,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/game-events-table-has-no-retention-cleanup.md`
 - `docs/Bugs/bots-page-fake-personality-skill.md`
 - `docs/Bugs/bot-learning-service-builds-dead-aviator-bot-profiles.md`
-- `docs/Bugs/bot-learning-service-no-authentication.md`
 - → background: `docs/backend-services/game-gateway/*.md`, `docs/backend-services/bot-learning-service/*.md`, `docs/admin-panel/bots/*.md`
 
 ### Admin panel / RBAC / auth / security

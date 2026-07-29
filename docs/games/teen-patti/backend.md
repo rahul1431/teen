@@ -33,7 +33,7 @@ Four plain `net/http.ServeMux` routes, no auth middleware, no JWT, no `x-interna
 
 **Sideshow sub-state machine** (`PendingSideshow`, `:546-590`): a seen player can ask the previous active player for a private card comparison (costs `MinBet*2`, needs 3+ active players). While pending, `processAction`'s top-of-function gate (`:481-489`) only allows the target's accept/reject or the requester's fold — this is the **one** action (`sideshow`, `:550-552`) that checks `state.CurrentTurn == playerIdx` at the engine level.
 
-**Pot limits** (`potLimitFor`, `startPotLimit`, `:700-725`): ₹10 stake→₹500 cap, ₹50→₹1000, ₹100→₹1500, ₹500→₹10000, ₹1000+→₹20000; uncapped for `no_limit`. Once `state.Pot >= potLimit`, the *next* action forces a showdown. **The cap is checked only after an action is applied, not before** — `raise` has no upper bound at all (only a minimum, `:509-524`), so a single raise can blow past the tier cap in one action; see `../../Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`.
+**Pot limits** (`potLimitFor`, `startPotLimit`, `:700-725`): ₹10 stake→₹500 cap, ₹50→₹1000, ₹100→₹1500, ₹500→₹10000, ₹1000+→₹20000; uncapped for `no_limit`. Once `state.Pot >= potLimit`, the *next* action forces a showdown. A `raise` is now also capped up front (fixed 2026-07-29, `maxRaiseFor`) at the smaller of 4x the current stake or the pot's remaining headroom under its tier cap — previously only a minimum was enforced (`:509-524`), so a single raise could blow past the tier cap in one action and, since bots carry a flat ₹10,000 bankroll, force every bot at the table to auto-fold regardless of hand strength.
 
 ## Hand evaluation and variants
 
@@ -85,10 +85,10 @@ Every engine action handler except `sideshow` used to mutate state for whatever 
 | `TestJokerWildSubstitution` / `TestAK47WildSubstitution` | Single wild-card substitution only |
 | `TestPotLimitFor` / `TestStartPotLimit` | All stake tiers + no-limit |
 
-Not covered by any test: the HTTP handlers themselves (no `httptest` usage anywhere), the DB-backed `winRateTarget` lookup/fallback path, the sideshow flow, raise's missing upper bound, `loadRakePct`'s DB read, `saveCompletedGame`'s write-back, any concurrency scenario, and 2-3 simultaneous wild cards.
+Not covered by any test: the HTTP handlers themselves (no `httptest` usage anywhere), the DB-backed `winRateTarget` lookup/fallback path, the sideshow flow, `loadRakePct`'s DB read, `saveCompletedGame`'s write-back, any concurrency scenario, and 2-3 simultaneous wild cards.
 
 ## Bug references
 
-Already filed (not re-filed here): `../../Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`, `../../Bugs/teen-patti-dda-hard-fallback-100-percent.md`, `../../Bugs/teen-patti-dda-admin-control-gap.md`, `../../Bugs/teen-patti-no-turn-timeout.md`, `../../Bugs/teen-patti-engine-url-env-example-broken.md`.
+Already filed (not re-filed here): `../../Bugs/teen-patti-dda-hard-fallback-100-percent.md`, `../../Bugs/teen-patti-dda-admin-control-gap.md`, `../../Bugs/teen-patti-no-turn-timeout.md`, `../../Bugs/teen-patti-engine-url-env-example-broken.md`.
 
-The engine-start-failure gap, the missing per-room lock, and the missing authentication/turn-enforcement noted in this pass were all fixed 2026-07-29 — see the sections above.
+The engine-start-failure gap, the missing per-room lock, the missing authentication/turn-enforcement, and the unbounded raise noted in this pass were all fixed 2026-07-29 — see the sections above.

@@ -37,7 +37,7 @@ A seen player on their turn can ask the previous active player for a private car
 
 Tiered by stake, uncapped for `no_limit` tables: ₹10 stake → ₹500 cap, ₹50 → ₹1000, ₹100 → ₹1500, ₹500 → ₹10000, ₹1000+ → ₹20000 (`potLimitFor`, tested exhaustively by `TestPotLimitFor` including the between-tier and above-top-tier cases). Once `state.Pot >= potLimit`, the *next* qualifying action forces a showdown among remaining unfolded players (`potLimitHit`, `:666-672`) rather than continuing to bet. Games dealt before `PotLimit`/`NoLimit` existed on the struct fall back to deriving the limit from `stake` (`:662-665`).
 
-**The cap is only checked after an action has already been applied, not before it.** `raise`'s `Amount` comes from the caller with **no upper bound anywhere** — the engine only validates a *minimum* (`raiseAmount < state.MinBet` for a blind player, `< state.MinBet*2` for seen, `:509-524`); there is no check against the pot limit, the player's own balance (that's the wallet-service lock's job, upstream in the gateway), or any per-raise ceiling. A single raise can therefore blow the pot far past its configured tier cap in one action; the "forced showdown" only kicks in on the *following* action, after the overshoot has already happened. See `docs/Bugs/teen-patti-unbounded-raise-forces-bot-fold.md` for the concrete exploit this enables against bot opponents.
+A `raise`'s `Amount` is now capped before it's applied (fixed 2026-07-29, `maxRaiseFor`): the smaller of `maxChaalMultiplier`(4) `* state.Stake` and the pot's remaining headroom under `potLimit` (unbounded on `no_limit` tables). Previously the engine only validated a *minimum* (`raiseAmount < state.MinBet` for a blind player, `< state.MinBet*2` for seen, `:509-524`) — a single raise could blow the pot far past its configured tier cap in one action, and since bots are refilled to a flat ₹10,000 balance, any raise above that forced every bot at the table to auto-fold regardless of hand strength (`docs/Bugs/teen-patti-unbounded-raise-forces-bot-fold.md`, now fixed — see below).
 
 ## Hand evaluation
 
@@ -113,12 +113,12 @@ The missing lock around `/action`'s Redis read-modify-write is fixed 2026-07-29 
 | `TestAK47WildSubstitution` | Fixed AK47 wild set upgrades Pair→Trail; classic evaluation of the same cards stays Pair |
 | `TestPotLimitFor` | All stake tiers, including between-tier and above-top-tier cases |
 | `TestStartPotLimit` | No-limit table returns uncapped (`0`) |
+| `TestMaxRaiseFor` | Chaal-multiplier cap, pot-headroom cap (whichever is smaller), no-limit tables, and zero headroom once the pot is already at its cap |
 
-**Not covered by any test**: the HTTP handlers themselves (`startGame`/`processAction`/`getState` are never invoked via `httptest` or otherwise — every test calls the underlying pure functions directly with hand-built `GameState`/`Player` values); the real `winRateTarget` DB-lookup-with-fallback path (including the `hard`→100% fallback); the sideshow request/accept/reject/freeze flow; raise's missing upper bound / pot-limit-mid-action interaction; `loadRakePct`'s DB read or bounds-clamping; `saveCompletedGame`'s DB write-back; any concurrency/race scenario; and multi-wild-card (2–3 simultaneous wilds) evaluation performance or correctness.
+**Not covered by any test**: the HTTP handlers themselves (`startGame`/`processAction`/`getState` are never invoked via `httptest` or otherwise — every test calls the underlying pure functions directly with hand-built `GameState`/`Player` values); the real `winRateTarget` DB-lookup-with-fallback path (including the `hard`→100% fallback); the sideshow request/accept/reject/freeze flow; `loadRakePct`'s DB read or bounds-clamping; `saveCompletedGame`'s DB write-back; any concurrency/race scenario; and multi-wild-card (2–3 simultaneous wilds) evaluation performance or correctness.
 
 ## Bug references
 
-The no-request-authentication / no-server-side-turn-order-check finding from this pass was fixed 2026-07-29 — see the section above.
-- `docs/Bugs/teen-patti-unbounded-raise-forces-bot-fold.md` — High: `raise` has no upper bound, letting a human force every bot at the table to auto-fold in one action.
+The no-request-authentication / no-server-side-turn-order-check finding from this pass was fixed 2026-07-29 — see the section above. The unbounded-raise finding was also fixed 2026-07-29 — see "Pot limits" above.
 - `docs/Bugs/teen-patti-dda-hard-fallback-100-percent.md` — Medium-High: transient `bot_profiles` read errors silently jump the `hard`-difficulty DDA swap target from the seeded 65% to a hardcoded 100%.
 - `docs/Bugs/teen-patti-dda-admin-control-gap.md` — Medium: no admin-panel control actually reaches `win_rate_target`, the real DDA lever, despite two UI surfaces that look like they should.
