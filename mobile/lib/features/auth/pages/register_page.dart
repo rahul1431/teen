@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_config.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../core/services/locale_service.dart';
+import '../../../core/services/device_fingerprint_service.dart';
 import '../../../shared/theme/app_theme.dart';
 
 class RegisterPage extends StatefulWidget {
@@ -41,6 +42,7 @@ class _RegisterPageState extends State<RegisterPage> {
       _errorMsg = null;
     });
     try {
+      final deviceFingerprint = await DeviceFingerprintService.getInfo();
       final res =
           await Dio().post('${AppConfig.apiBaseUrl}/api/auth/register', data: {
         'phone': widget.phone,
@@ -49,6 +51,10 @@ class _RegisterPageState extends State<RegisterPage> {
         'password': _passCtrl.text,
         if (_refCtrl.text.isNotEmpty)
           'referral_code': _refCtrl.text.trim().toUpperCase(),
+        if (deviceFingerprint != null) ...{
+          'device_fingerprint': deviceFingerprint.fingerprint,
+          'device_info': deviceFingerprint.deviceInfo,
+        },
       });
       await SecureStorage.saveTokens(
           accessToken: res.data['access_token'],

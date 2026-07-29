@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: teen
-      POSTGRES_PASSWORD: teen_secret_2024
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       POSTGRES_DB: teen_db
     command: >
       postgres
@@ -22,7 +22,7 @@ services:
       -c random_page_cost=1.1
       -c effective_io_concurrency=200
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/db/migrations:/docker-entrypoint-initdb.d
@@ -39,18 +39,18 @@ services:
     command: >
       redis-server
       --appendonly yes
-      --requirepass teen_redis_2024
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}
       --maxmemory 512mb
       --maxmemory-policy allkeys-lru
       --save ""
       --tcp-backlog 511
       --hz 20
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "teen_redis_2024", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -63,7 +63,7 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - "2181:2181"
+      - "127.0.0.1:2181:2181"
     healthcheck:
       test: ["CMD", "echo", "ruok", "|", "nc", "127.0.0.1", "2181"]
       interval: 10s
@@ -91,7 +91,7 @@ services:
       KAFKA_LOG_SEGMENT_BYTES: 1073741824
       KAFKA_HEAP_OPTS: '-Xmx512M -Xms512M'
     ports:
-      - "9092:9092"
+      - "127.0.0.1:9092:9092"
 
   # kafka-broker-2 and kafka-broker-3 are intentionally disabled — this box
   # only has one real Kafka consumer (bot-learning-service) and 3.8GB total

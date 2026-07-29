@@ -126,11 +126,18 @@ export class FraudDetector {
    */
   private async checkCoLocation(user_id: string): Promise<number> {
     try {
+      // A user can have multiple device_fingerprints rows (one per distinct
+      // device/reinstall they've logged in from), so the inner lookup must
+      // be an IN, not a `=` scalar subquery — the latter throws "more than
+      // one row returned by a subquery" as soon as any user has 2+ devices,
+      // which now that device_fingerprints is actually populated (see
+      // docs/Bugs/device-fingerprint-never-collected.md) is a real case,
+      // not just a theoretical one.
       const result = await this.pool.query(
         `SELECT COUNT(DISTINCT u.id) as account_count
          FROM users u
          JOIN device_fingerprints df ON u.id = df.user_id
-         WHERE df.fingerprint = (
+         WHERE df.fingerprint IN (
            SELECT fingerprint FROM device_fingerprints WHERE user_id = $1
          )
          AND u.status = 'active'`,

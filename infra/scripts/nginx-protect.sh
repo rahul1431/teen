@@ -4,9 +4,9 @@
 # This script re-applies hestia-proxy.conf if the content drifts.
 #
 # Cron setup (run as root):
-#   */30 * * * * /opt/teen/infra/scripts/nginx-protect.sh >> /var/log/nginx-protect.log 2>&1
+#   */30 * * * * /opt/teen-prod/infra/scripts/nginx-protect.sh >> /var/log/nginx-protect.log 2>&1
 
-BASE=/opt/teen
+BASE=/opt/teen-prod
 HESTIA_DIR="/home/admin/conf/web/game.myonlinejoker.com"
 SOURCE="${BASE}/infra/nginx/hestia-proxy.conf"
 

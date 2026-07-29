@@ -26,9 +26,34 @@ jobs:
             git pull origin claude/confident-archimedes-e2dd1k
             bash infra/deploy/go.sh
             pm2 status
+            # Fail the deploy if any PM2 process isn't online — pm2 status
+            # above is just for the log, this actually gates the job. Same
+            # jlist/python3 pattern as infra/scripts/pm2-alert.sh.
+            pm2 jlist | python3 -c "
+            import json, sys
+            procs = json.load(sys.stdin)
+            bad = [p['name'] for p in procs if p['pm2_env']['status'] not in ('online', 'launching')]
+            if bad:
+                print('PM2 processes not online: ' + ', '.join(bad))
+                sys.exit(1)
+            print('All ' + str(len(procs)) + ' PM2 processes online')
+            "
 
       - name: Health check
         run: |
-          sleep 15
-          curl -f http://${{ secrets.VPS_HOST }}/health || exit 1
-          echo "Health check passed ✅"
+          # /health on hestia-proxy.conf (the live nginx config) proxies to
+          # core-api-service's own GET /health route instead of returning a
+          # static string, so this fails if core-api is crashed, unresponsive,
+          # or nginx can't reach it — not just if nginx itself is up. See
+          # docs/Bugs/deploy-backend-health-check-checks-nothing.md.
+          for i in 1 2 3 4 5; do
+            RESPONSE=$(curl -sf http://${{ secrets.VPS_HOST }}/health) && break
+            echo "Health check attempt $i failed, retrying..."
+            sleep 5
+          done
+          if [ -z "$RESPONSE" ]; then
+            echo "Health check failed: no successful response after retries"
+            exit 1
+          fi
+          echo "$RESPONSE" | grep -q '"status":"ok"' || { echo "Health check failed: unexpected response: $RESPONSE"; exit 1; }
+          echo "Health check passed: $RESPONSE"

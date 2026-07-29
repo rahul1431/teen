@@ -10,6 +10,32 @@ function generateReferralCode(): string {
   return crypto.randomBytes(4).toString('hex').toUpperCase()
 }
 
+// Best-effort device-fingerprint capture, fed by the mobile app on login/register.
+// Feeds risk-service's co-location fraud rule and admin-service's Risk Center
+// "Device Links" tab (both join on device_fingerprints — see
+// docs/Bugs/device-fingerprint-never-collected.md). Fire-and-forget: a single
+// indexed upsert, never awaited by the caller and never allowed to fail the
+// actual login/register response — same fire-and-forget-with-.catch pattern
+// risk-service's FraudDetector uses for its own non-critical logFraudEvent write.
+function recordDeviceFingerprint(db: Pool, userId: string, fingerprint: unknown, deviceInfo: unknown): void {
+  if (typeof fingerprint !== 'string') return
+  const trimmed = fingerprint.trim().slice(0, 255)
+  if (!trimmed) return
+  const info = deviceInfo && typeof deviceInfo === 'object' ? JSON.stringify(deviceInfo) : null
+
+  db.query(
+    `INSERT INTO device_fingerprints (user_id, fingerprint, device_info, last_seen)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (user_id, fingerprint)
+     DO UPDATE SET
+       device_info = COALESCE(EXCLUDED.device_info, device_fingerprints.device_info),
+       last_seen = NOW()`,
+    [userId, trimmed, info],
+  ).catch((err) => {
+    console.error('[auth] device fingerprint upsert failed:', err?.message || err)
+  })
+}
+
 export function authPlugin(db: Pool, redis: Redis) {
   return async function (app: FastifyInstance) {
     app.post('/auth/send-otp', async (req, reply) => {
@@ -29,6 +55,8 @@ export function authPlugin(db: Pool, redis: Redis) {
         utm_source: z.string().max(50).optional(),
         utm_medium: z.string().max(50).optional(),
         utm_campaign: z.string().max(50).optional(),
+        device_fingerprint: z.string().min(1).max(255).optional(),
+        device_info: z.record(z.any()).optional(),
       }).parse(req.body)
 
       const otpValid = await verifyOtp(redis, body.phone, body.otp)
@@ -102,6 +130,8 @@ export function authPlugin(db: Pool, redis: Redis) {
 
         await client.query('COMMIT')
 
+        recordDeviceFingerprint(db, user.id, body.device_fingerprint, body.device_info)
+
         const accessToken = app.jwt.sign({ sub: user.id, username: user.username }, { expiresIn: process.env.JWT_EXPIRES_IN || '15m' })
         const refreshToken = app.jwt.sign({ sub: user.id, type: 'refresh' }, { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d' })
         await redis.setex(`session:${user.id}`, 30 * 24 * 60 * 60, refreshToken)
@@ -115,13 +145,20 @@ export function authPlugin(db: Pool, redis: Redis) {
     })
 
     app.post('/auth/login', async (req, reply) => {
-      const body = z.object({ phone: z.string().regex(/^\d{10}$/), password: z.string() }).parse(req.body)
+      const body = z.object({
+        phone: z.string().regex(/^\d{10}$/),
+        password: z.string(),
+        device_fingerprint: z.string().min(1).max(255).optional(),
+        device_info: z.record(z.any()).optional(),
+      }).parse(req.body)
       const res = await db.query('SELECT id, username, password_hash, status FROM users WHERE phone = $1 AND is_bot = false', [body.phone])
       if (!res.rows.length) return reply.code(401).send({ error: 'Invalid credentials' })
       const user = res.rows[0]
       if (user.status !== 'active') return reply.code(403).send({ error: `Account is ${user.status}` })
       const valid = await bcrypt.compare(body.password, user.password_hash)
       if (!valid) return reply.code(401).send({ error: 'Invalid credentials' })
+
+      recordDeviceFingerprint(db, user.id, body.device_fingerprint, body.device_info)
 
       const accessToken = app.jwt.sign({ sub: user.id, username: user.username }, { expiresIn: process.env.JWT_EXPIRES_IN || '15m' })
       const refreshToken = app.jwt.sign({ sub: user.id, type: 'refresh' }, { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d' })

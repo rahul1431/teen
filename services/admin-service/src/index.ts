@@ -399,13 +399,14 @@ async function start() {
 
   // GET /api/admin/dashboard/stats
   app.get('/api/admin/dashboard/stats', { onRequest: [authenticate] }, async (_req, reply) => {
-    const [activeUsers, activeRooms, revenueToday, pendingWithdrawals, pendingDeposits, newUsersToday] = await Promise.all([
+    const [activeUsers, activeRooms, revenueToday, pendingWithdrawals, pendingDeposits, newUsersToday, fraudAlerts] = await Promise.all([
       db.query("SELECT COUNT(*) FROM users WHERE status = 'active' AND is_bot = false"),
       db.query("SELECT COUNT(*) FROM game_rooms WHERE status = 'active'"),
       db.query("SELECT COALESCE(SUM(platform_fee_collected),0) as total FROM game_rooms WHERE ended_at >= NOW() - INTERVAL '1 day'"),
       db.query("SELECT COUNT(*) FROM payment_orders WHERE type = 'withdrawal' AND status = 'created'"),
       db.query("SELECT COUNT(*) FROM payment_orders WHERE type = 'deposit' AND status = 'created'"),
       db.query("SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '1 day' AND is_bot = false"),
+      db.query("SELECT COUNT(*) FROM fraud_events WHERE resolved = false AND created_at >= NOW() - INTERVAL '1 day'"),
     ])
     return reply.send({
       active_users: parseInt(activeUsers.rows[0].count),
@@ -414,7 +415,7 @@ async function start() {
       pending_withdrawals: parseInt(pendingWithdrawals.rows[0].count),
       pending_deposits: parseInt(pendingDeposits.rows[0].count),
       new_users_today: parseInt(newUsersToday.rows[0].count),
-      fraud_alerts: 0,
+      fraud_alerts: parseInt(fraudAlerts.rows[0].count),
     })
   })
 
@@ -1435,9 +1436,11 @@ async function start() {
           AND wt.created_at > NOW() - INTERVAL '7 days'
         ), 0) AS manual_credits_7d,
         COALESCE((
-          SELECT COUNT(*) FROM users u2
-          WHERE u2.device_fingerprint = u.device_fingerprint
-          AND u2.id != u.id AND u.device_fingerprint IS NOT NULL
+          -- Same join shape as risk-service's FraudDetector.checkCoLocation():
+          -- other users who share at least one device_fingerprints row with u.
+          SELECT COUNT(DISTINCT df2.user_id) FROM device_fingerprints df1
+          JOIN device_fingerprints df2 ON df2.fingerprint = df1.fingerprint AND df2.user_id != df1.user_id
+          WHERE df1.user_id = u.id
         ), 0) AS shared_device_count
       FROM users u
       JOIN wallets w ON w.user_id = u.id
@@ -1446,10 +1449,11 @@ async function start() {
       GROUP BY u.id, u.username, u.phone, u.status, w.total_won, w.total_deposited
       HAVING
         (w.total_won::numeric / NULLIF(w.total_deposited, 0)) > 3
-        OR COALESCE((
-          SELECT COUNT(*) FROM users u2
-          WHERE u2.device_fingerprint = u.device_fingerprint AND u2.id != u.id AND u.device_fingerprint IS NOT NULL
-        ), 0) > 0
+        OR EXISTS (
+          SELECT 1 FROM device_fingerprints df1
+          JOIN device_fingerprints df2 ON df2.fingerprint = df1.fingerprint AND df2.user_id != df1.user_id
+          WHERE df1.user_id = u.id
+        )
         OR COALESCE((
           SELECT COUNT(*) FROM wallet_transactions wt
           WHERE wt.user_id = u.id AND wt.type = 'manual_credit' AND wt.created_at > NOW() - INTERVAL '7 days'
@@ -1460,26 +1464,34 @@ async function start() {
     const countRes = await db.query(`
       SELECT COUNT(*) FROM (
         SELECT u.id FROM users u JOIN wallets w ON w.user_id = u.id WHERE u.is_bot = false
-        GROUP BY u.id, w.total_won, w.total_deposited, u.device_fingerprint
+        GROUP BY u.id, w.total_won, w.total_deposited
         HAVING (w.total_won::numeric / NULLIF(w.total_deposited, 0)) > 3
-          OR EXISTS (SELECT 1 FROM users u2 WHERE u2.device_fingerprint = u.device_fingerprint AND u2.id != u.id AND u.device_fingerprint IS NOT NULL)
+          OR EXISTS (
+            SELECT 1 FROM device_fingerprints df1
+            JOIN device_fingerprints df2 ON df2.fingerprint = df1.fingerprint AND df2.user_id != df1.user_id
+            WHERE df1.user_id = u.id
+          )
       ) sub
     `)
     return reply.send({ users: res.rows, total: parseInt(countRes.rows[0].count) })
   })
 
   // GET /api/admin/risk/device-links â€” users sharing device fingerprints
+  // (device_fingerprints table, populated on login/register â€” see
+  // docs/Bugs/device-fingerprint-never-collected.md). Join shape matches
+  // risk-service's FraudDetector.checkCoLocation().
   app.get('/api/admin/risk/device-links', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
     const res = await db.query(`
-      SELECT device_fingerprint,
-        COUNT(*) AS account_count,
-        JSON_AGG(JSON_BUILD_OBJECT('id', id, 'username', username, 'status', status, 'created_at', created_at)
-                 ORDER BY created_at) AS accounts
-      FROM users
-      WHERE device_fingerprint IS NOT NULL AND is_bot = false
-      GROUP BY device_fingerprint
-      HAVING COUNT(*) > 1
-      ORDER BY COUNT(*) DESC
+      SELECT df.fingerprint AS device_fingerprint,
+        COUNT(DISTINCT u.id) AS account_count,
+        JSON_AGG(JSON_BUILD_OBJECT('id', u.id, 'username', u.username, 'status', u.status, 'created_at', u.created_at)
+                 ORDER BY u.created_at) AS accounts
+      FROM device_fingerprints df
+      JOIN users u ON u.id = df.user_id
+      WHERE u.is_bot = false
+      GROUP BY df.fingerprint
+      HAVING COUNT(DISTINCT u.id) > 1
+      ORDER BY COUNT(DISTINCT u.id) DESC
       LIMIT 50
     `)
     return reply.send(res.rows)
