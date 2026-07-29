@@ -92,6 +92,12 @@ class _ProfilePageState extends State<ProfilePage> {
       ),
     );
     if (confirmed != true || !mounted) return;
+    try {
+      await _api.dio.post('/api/auth/logout');
+    } catch (_) {
+      // Best-effort: still clear local session even if the backend call fails
+      // (offline, token already expired, etc.) so the user isn't stuck.
+    }
     await SecureStorage.clearAll();
     if (mounted) context.go('/auth/login');
   }

@@ -3554,6 +3554,18 @@ async function start() {
       `UPDATE users SET kyc_status = $1 WHERE id = $2`,
       [newStatus, userId]
     )
+    await logAdminAction(db, req, admin.sub, `kyc_${newStatus}`, 'user', userId, { status: newStatus, reason: body.rejection_reason })
+
+    // Push notification to user
+    const kycNotif = newStatus === 'approved'
+      ? { title: 'KYC Approved ✅', body: 'Your KYC verification has been approved. You can now make withdrawals.', type: 'kyc_approved' }
+      : { title: 'KYC Rejected ❌', body: `Your KYC was rejected.${body.rejection_reason ? ` Reason: ${body.rejection_reason}` : ''} Please re-submit your documents.`, type: 'kyc_rejected' }
+    fetch(`${NOTIFICATION_URL}/internal/notifications/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+      body: JSON.stringify({ user_id: userId, ...kycNotif }),
+    }).catch(() => null)
+
     return reply.send({ ok: true, status: newStatus })
   })
 
