@@ -41,7 +41,7 @@ load_dotenv()
 
 logger = logging.getLogger("anomaly-detector")
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://teen:password@127.0.0.1:5432/teen_db")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Anomaly types and thresholds
 ANOMALY_TYPES = {

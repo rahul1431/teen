@@ -1,4 +1,12 @@
 import os
+from dotenv import load_dotenv
+
+# Must run before importing any sibling module (synthetic_data, difficulty_predictor,
+# anomaly_detector, playstyle_clusterer) — each reads DATABASE_URL from the environment
+# at import time, so loading .env after those imports means they'd see an unset var and
+# silently fall back to their own hardcoded DSN regardless of what main.py does below.
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+
 import pickle
 import logging
 import threading
@@ -11,13 +19,10 @@ import pandas as pd
 import psycopg2
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
-from dotenv import load_dotenv
 from synthetic_data import generate_synthetic_training_data, validate_synthetic_data
 from model_versioning import save_model_versioned, activate_model, get_active_model_path, list_model_versions, get_active_model_metadata
 from src.difficulty_predictor import get_predictor as get_difficulty_predictor
 from src.anomaly_detector import run_anomaly_detection_pipeline
-
-load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("churn-ml-service")
@@ -35,7 +40,19 @@ class ModelResult:
 app = FastAPI(title="Teen Patti Churn ML Service")
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "model.pkl")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://teen:password@127.0.0.1:5432/teen_db")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL is not set. Add it to services/churn-ml-service/.env "
+        "(see .env.example) — this service no longer falls back to a hardcoded DSN."
+    )
+
+# Excludes days_since_deposit: that column is how `churned` (the training label) is
+# defined in the query below, so it perfectly determines the label by construction —
+# including it as a feature would let the model "cheat" by learning a lookup of its
+# own label instead of an actual multi-factor churn pattern. See
+# docs/Bugs/churn-ml-model-label-leakage-not-real-prediction.md.
+FEATURE_COLUMNS = ['total_deposits', 'deposits_last_14', 'deposits_prior_14', 'total_games', 'net_profit']
 
 # Global state for async model training
 model: Optional[Any] = None
@@ -171,7 +188,7 @@ def async_train_model():
             logger.warning(f"Insufficient real data for training (found {len(df)} records). Generating synthetic training data.")
             df = generate_synthetic_training_data(n_samples=100)
 
-        X = df[['days_since_deposit', 'total_deposits', 'deposits_last_14', 'deposits_prior_14', 'total_games', 'net_profit']]
+        X = df[FEATURE_COLUMNS]
         y = df['churned']
 
         # Train model with train/test split and cross-validation
@@ -244,7 +261,7 @@ def train_model(days_since_last_play: Optional[int] = None) -> Dict[str, Any]:
             # Generate realistic synthetic training data based on empirical distributions
             df = generate_synthetic_training_data(n_samples=100)
 
-        X = df[['days_since_deposit', 'total_deposits', 'deposits_last_14', 'deposits_prior_14', 'total_games', 'net_profit']]
+        X = df[FEATURE_COLUMNS]
         y = df['churned']
 
         # Train model with train/test split and cross-validation
@@ -344,7 +361,7 @@ def predict_churn(req: PredictRequest) -> Dict[str, Any]:
         }
 
     # 3. Model exists (warm), predict normally
-    X = df[['days_since_deposit', 'total_deposits', 'deposits_last_14', 'deposits_prior_14', 'total_games', 'net_profit']]
+    X = df[FEATURE_COLUMNS]
 
     try:
         prob = model.predict_proba(X)[0][1]  # Probability of class 1 (churned)
@@ -436,9 +453,16 @@ def health():
         os.path.join(os.path.dirname(__file__), "src", "difficulty_model.pkl")
     )
     difficulty_predictor = get_difficulty_predictor()
+    # File existence alone can't show staleness — a model trained once on day one
+    # and never retrained still reports "trained". Surface the active version's
+    # timestamp/sample_count too, so an operator can actually see it's gone stale.
+    # See docs/Bugs/churn-ml-model-never-retrains.md.
+    active_model = get_active_model_metadata()
     return {
         "status": "healthy",
         "model_trained": model_loaded,
+        "model_last_trained_at": active_model.get("created_at") if active_model else None,
+        "model_training_samples": active_model.get("samples") if active_model else None,
         "difficulty_model_trained": difficulty_model_loaded,
         "difficulty_model_test_accuracy": difficulty_predictor.test_accuracy or None,
     }

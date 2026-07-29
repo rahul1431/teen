@@ -32,7 +32,7 @@ load_dotenv()
 
 logger = logging.getLogger("playstyle-clusterer")
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://teen:password@127.0.0.1:5432/teen_db")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Cluster interpretation mappings
 CLUSTER_LABELS = {

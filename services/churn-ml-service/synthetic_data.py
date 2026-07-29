@@ -7,7 +7,7 @@ from typing import Dict, Tuple, Any, List
 
 logger = logging.getLogger("churn-ml-service")
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://teen:password@127.0.0.1:5432/teen_db")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 
 def get_db_connection():

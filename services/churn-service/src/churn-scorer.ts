@@ -342,13 +342,21 @@ export class ChurnScorer {
   async getStats(): Promise<object> {
     const res = await this.pool.query(`
       SELECT
-        COUNT(*) FILTER (WHERE risk_level = 'low')    AS low_count,
-        COUNT(*) FILTER (WHERE risk_level = 'medium') AS medium_count,
-        COUNT(*) FILTER (WHERE risk_level = 'high')   AS high_count,
-        COUNT(*) FILTER (WHERE action_taken IS NOT NULL
-                           AND action_taken_at > NOW() - INTERVAL '1 day') AS actions_today
+        COUNT(*) FILTER (WHERE risk_level = 'low')    AS low,
+        COUNT(*) FILTER (WHERE risk_level = 'medium') AS medium,
+        COUNT(*) FILTER (WHERE risk_level = 'high')   AS high,
+        COUNT(*) FILTER (WHERE action_taken IN ('bonus_credited','bonus+notification')
+                           AND action_taken_at > NOW() - INTERVAL '1 day') AS bonuses_today,
+        COUNT(*) FILTER (WHERE action_taken IN ('notification','bonus+notification')
+                           AND action_taken_at > NOW() - INTERVAL '1 day') AS notifications_today
       FROM user_churn_scores
     `)
-    return res.rows[0]
+    const row = res.rows[0]
+    return {
+      total_at_risk: Number(row.low) + Number(row.medium) + Number(row.high),
+      by_level: { low: Number(row.low), medium: Number(row.medium), high: Number(row.high) },
+      bonuses_sent_today: Number(row.bonuses_today),
+      notifications_sent_today: Number(row.notifications_today),
+    }
   }
 }

@@ -181,13 +181,12 @@ module.exports = {
       cwd: `${BASE}/churn-ml-service`,
       script: 'venv/bin/uvicorn',
       args: 'main:app --host 127.0.0.1 --port 3020',
+      env_file: ENV_FILE('churn-ml-service'),
       instances: 1,
       exec_mode: 'fork',
       watch: false,
       interpreter: 'none',
-      env: {
-        DATABASE_URL: process.env.DATABASE_URL
-      }
+      max_memory_restart: '300M',
     },
 
     // ── App Monitor: Flutter SDK event ingest ──
