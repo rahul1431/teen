@@ -223,13 +223,19 @@ export class ChurnScorer {
 
     if (sendBonus) {
       try {
+        // Day-bucketed (not Date.now()) so a retry of this same call is
+        // idempotent, but the next legitimate re-engagement cycle — which
+        // can't happen for action_cooldown_days (default 7) — still gets a
+        // fresh key instead of silently no-opping against wallet-service's
+        // ON CONFLICT (idempotency_key) DO NOTHING.
+        const cycleDate = new Date().toISOString().slice(0, 10)
         await axios.post(`${this.config.walletServiceUrl}/internal/wallet/credit`, {
-          userId,
+          user_id: userId,
           amount: resolvedCfg.high_bonus_amount,
           type: 'bonus',
-          reference: `churn_reengagement_${Date.now()}`,
+          idempotency_key: `churn_reengagement_${userId}_${cycleDate}`,
           description: 'Re-engagement bonus',
-        })
+        }, { headers: { 'x-internal-key': process.env.INTERNAL_SERVICE_KEY || '' } })
         bonusCredited = true
         // I4: Persist bonus success immediately
         await this.pool.query(
@@ -245,13 +251,13 @@ export class ChurnScorer {
     if (sendNotification) {
       try {
         await axios.post(`${this.config.notificationServiceUrl}/internal/notifications/send`, {
-          userId,
+          user_id: userId,
           title: 'We miss you! 🎮',
           body: sendBonus
             ? 'A special bonus has been added to your wallet. Come back and play!'
             : 'Come back and join the action! New games are waiting for you.',
           type: 'reengagement',
-        })
+        }, { headers: { 'x-internal-key': process.env.INTERNAL_SERVICE_KEY || '' } })
         // I4: Persist notification success immediately, reflecting whether bonus also landed
         const newAction = bonusCredited ? 'bonus+notification' : 'notification'
         await this.pool.query(

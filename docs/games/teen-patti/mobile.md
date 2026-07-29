@@ -26,9 +26,9 @@ The client never talks to the Go engine directly — every payload it consumes o
 - **`variation` + `joker_value`** render a persistent on-table pill (`_buildVariantChip`, `:2088-2106`) — the only client-side indication of which rank is wild in Joker mode, read straight off `GameState.JokerValue` (the display string, e.g. `"K"`), not the numeric `joker_rank`.
 - **`my_cards`** — a gateway-added, per-recipient field, not part of `GameState` itself; the client has no defense of its own against a card leak, it depends entirely on the gateway's per-recipient filtering (the engine's own `/state` endpoint, if ever reached directly, has no such filtering — `backend.md`).
 
-### The client-side turn timer is cosmetic, not authoritative
+### The client-side turn timer is redundant with — and shorter than — the server's own AFK backstop
 
-`_startTurnTimer()` (`:658-677`) runs a 30-second `Timer.periodic` the moment state marks it the local player's turn, auto-folding at zero. This roughly matches the *dead* `resources/game-configs/teen-patti.json`'s `table.turnTimeoutSeconds: 30` (see `overview.md`) but is purely client-side best-effort UX — it only fires if the app is foregrounded, the timer survives, and the socket can still emit. A backgrounded, force-quit, or disconnected app never runs this code. There is no server-side equivalent anywhere in the gateway or engine for Teen Patti (`../../Bugs/teen-patti-no-turn-timeout.md`) — contrast with Ludo's server-driven 25s AFK auto-play, which works even if the client is gone.
+`_startTurnTimer()` (`:658-677`) runs a 30-second `Timer.periodic` the moment state marks it the local player's turn, auto-folding at zero. This roughly matches the *dead* `resources/game-configs/teen-patti.json`'s `table.turnTimeoutSeconds: 30` (see `overview.md`) and is client-side best-effort UX — it only fires if the app is foregrounded, the timer survives, and the socket can still emit. But unlike what an earlier pass of this doc claimed, there **is** a server-side equivalent: `game-gateway`'s `scheduleTeenPattiAfkTimer`/`autoFoldIdleTeenPattiTurn` (`docs/backend-services/game-gateway/backend.md`) arms a 30s Redis-authoritative deadline on every human turn and auto-folds on expiry regardless of whether the client is foregrounded, backgrounded, or gone — so a backgrounded/force-quit/disconnected app is still unstuck by the server within 30s, it just doesn't get the client's own countdown UI first.
 
 ### Sending actions (`_sendAction`, `:773+`)
 
@@ -60,7 +60,5 @@ Emits `game:action` with `{room_id, action, amount, sequence_num}` — the engin
 | Pot-limit tier shown pre-join | Client-side copy of the engine's table, currently in sync but independently maintained |
 
 ## Bug references
-
-Already filed (not re-filed here): `../../Bugs/teen-patti-no-turn-timeout.md`.
 
 New from this pass: `../../Bugs/teen-patti-lobby-fee-percent-hardcoded.md` (see the lobby section above; full writeup in the final report of this pass).

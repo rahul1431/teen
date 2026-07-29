@@ -10,7 +10,7 @@ CLAUDE.md describes this engine as dealing "over its own WS/RPC to the gateway."
 
 One process, not one per room and not one per table. All room state lives in Redis under `tp:game:<roomId>` (a full JSON-serialized `GameState` blob, 2h TTL) — the Go process itself holds no in-memory per-room state between requests; every handler does a fresh `redis.Get` → mutate → `redis.Set` round trip. This makes the process trivially horizontally-scalable in principle (any instance can serve any room, since nothing is pinned in memory) — `ecosystem.config.js` still runs exactly one instance (`instances: 1, exec_mode: 'fork'`), but `processAction` is now wrapped in a Redis `SET NX PX` per-room lock (fixed 2026-07-29, see `backend.md`), so a second instance would no longer be actively dangerous the way it used to be.
 
-The engine has no concept of elapsed time between actions and no background timers — it's purely request-driven. Idle-room detection and turn timeouts are entirely the gateway's/watchdog's job (`docs/Bugs/teen-patti-no-turn-timeout.md`), not this engine's — see `backend.md`.
+The engine has no concept of elapsed time between actions and no background timers — it's purely request-driven. Idle-room detection and turn timeouts are entirely the gateway's/watchdog's job, not this engine's — the gateway's `scheduleTeenPattiAfkTimer` auto-folds a stuck human's turn after 30s (since 2026-07-12), independent of anything in this engine — see `backend.md`.
 
 ## Tech stack
 
@@ -60,9 +60,8 @@ Per CLAUDE.md, PM2's own `env_file` mechanism (used by every Node service here) 
 
 ## Behavioral characteristics carried over from already-filed issues
 
-One bug already filed against this engine is central to how it behaves under real traffic and is referenced rather than repeated throughout `backend.md`:
-- **`docs/Bugs/teen-patti-no-turn-timeout.md`** — this engine has no notion of "how long has this player been idle," so a stuck human's turn is only ever unstuck by the gateway's 15-minute room-level watchdog, not anything in this service.
+This engine has no notion of "how long has this player been idle" itself — that's entirely the gateway's job, via `scheduleTeenPattiAfkTimer` (see `backend.md`) rather than anything here, which is expected given this engine is purely request-driven (above).
 
-(`/action`'s Redis read-modify-write having no lock/mutex/`WATCH` was the other central issue here — fixed 2026-07-29 via `withRoomLock()`, see `backend.md`.)
+(`/action`'s Redis read-modify-write having no lock/mutex/`WATCH` was a real gap here — fixed 2026-07-29 via `withRoomLock()`, see `backend.md`.)
 
-This pass adds four new findings on top of those — see the bug list at the end of `backend.md`.
+This pass adds several new findings on top of that — see the bug list at the end of `backend.md`.
