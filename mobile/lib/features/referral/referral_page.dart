@@ -426,7 +426,7 @@ class _ReferralPageState extends State<ReferralPage>
                 '4',
                 Icons.emoji_events_rounded,
                 'You Earn ₹50',
-                'Bonus is instantly credited to your real balance!',
+                'Bonus is instantly credited to your bonus balance!',
                 AppColors.green),
           ],
         ),

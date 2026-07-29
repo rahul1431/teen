@@ -28,10 +28,14 @@ export interface LudoPlayer {
   color: string
   tokens: number[]       // progress for each of the 4 tokens
   finished: number       // count of tokens that reached HOME
-  status: string         // 'active' | 'finished'
+  status: string         // 'active' | 'finished' | 'disconnected'
+  bot_difficulty?: BotDifficulty // per-bot override; unset = use LudoState.bot_difficulty
+  capture_probability?: number | null // trained (sub-project #3); null/unset = deterministic rule
+  safe_play_probability?: number | null
 }
 
 export type BotDifficulty = 'easy' | 'medium' | 'hard'
+export type WinnerSkill = 'casual' | 'skilled' | 'expert'
 
 export interface LudoState {
   room_id: string
@@ -48,10 +52,17 @@ export interface LudoState {
   round: number
   created_at: number
   bot_difficulty: BotDifficulty
+  coordination?: {
+    winnerBotIdx: number
+    aggressiveness: number
+    winnerSkill?: WinnerSkill
+    boldness?: number
+    diceBias?: number // 0 = fair dice for the winner bot, 1 = maximum favor toward high rolls
+  }
 }
 
 export interface ActionResult {
-  winner_id: string
+  winner_id: string | null   // null when a game ends with no winner (all real players left)
   prize: number
   rake_fee: number
   rankings: { user_id: string; finished: number }[]
@@ -66,7 +77,7 @@ export function absoluteCell(seatIndex: number, progress: number): number {
 export function createInitialState(
   roomId: string,
   stake: number,
-  players: { user_id: string; username: string; seat: number; is_bot: boolean }[],
+  players: { user_id: string; username: string; seat: number; is_bot: boolean; bot_difficulty?: BotDifficulty; capture_probability?: number | null; safe_play_probability?: number | null }[],
   botDifficulty: BotDifficulty = 'medium',
 ): LudoState {
   return {
@@ -82,6 +93,9 @@ export function createInitialState(
       tokens: [-1, -1, -1, -1],
       finished: 0,
       status: 'active',
+      bot_difficulty: p.bot_difficulty,
+      capture_probability: p.capture_probability,
+      safe_play_probability: p.safe_play_probability,
     })),
     status: 'active',
     current_turn: 0,
@@ -233,23 +247,24 @@ function passTurn(state: LudoState): void {
   state.movable_tokens = []
   const n = state.players.length
   let next = state.current_turn
-  // Skip players who have already finished all four tokens.
+  // Skip players who are no longer in play — finished all four tokens, or
+  // left the table (disconnected/forfeited). Only 'active' players take turns.
   for (let i = 0; i < n; i++) {
     next = (next + 1) % n
-    if (state.players[next].status !== 'finished') break
+    if (state.players[next].status === 'active') break
   }
   if (next <= state.current_turn) state.round += 1
   state.current_turn = next
 }
 
-function buildResult(state: LudoState, winner: LudoPlayer): ActionResult {
+function buildResult(state: LudoState, winner: LudoPlayer | null): ActionResult {
   const pot = state.stake * state.players.length
-  const rakeFee = Math.round(pot * 0.05 * 100) / 100
-  const prize = Math.round((pot - rakeFee) * 100) / 100
+  const rakeFee = winner ? Math.round(pot * 0.05 * 100) / 100 : 0
+  const prize = winner ? Math.round((pot - rakeFee) * 100) / 100 : 0
   state.status = 'completed'
-  state.winner_id = winner.user_id
+  state.winner_id = winner ? winner.user_id : null
   return {
-    winner_id: winner.user_id,
+    winner_id: winner ? winner.user_id : null,
     prize,
     rake_fee: rakeFee,
     rankings: [...state.players]
@@ -258,9 +273,74 @@ function buildResult(state: LudoState, winner: LudoPlayer): ActionResult {
   }
 }
 
+/**
+ * A real player left the table (tapped Leave — a deliberate forfeit, not a
+ * transient network drop). The leaver forfeits their stake (settled into the
+ * pot at game end), their tokens go back to base, and they're removed from
+ * the turn rotation. Then:
+ *   - if no real (non-bot) players remain active → the game ends with no
+ *     winner (e.g. the lone human in a vs-bots game left);
+ *   - if exactly one active player remains → that player wins the pot;
+ *   - otherwise the game continues with whoever is left (no bot backfills the
+ *     vacated seat).
+ * Returns a non-null result once the game has ended.
+ */
+export function forfeitPlayer(
+  state: LudoState,
+  userId: string,
+): { state: LudoState; result: ActionResult | null } {
+  const player = state.players.find(p => p.user_id === userId)
+  if (!player || player.status !== 'active') return { state, result: null }
+
+  const wasCurrent = state.players[state.current_turn]?.user_id === userId
+  player.status = 'disconnected'
+  player.tokens = [-1, -1, -1, -1]
+  player.finished = 0
+
+  const active = state.players.filter(p => p.status === 'active')
+  const activeHumans = active.filter(p => !p.is_bot)
+
+  // No real players left → end with no winner; every lock is consumed (the
+  // leaver's stake is forfeited, not refunded).
+  if (activeHumans.length === 0) {
+    return { state, result: buildResult(state, null) }
+  }
+  // Last player standing takes the pot.
+  if (active.length === 1) {
+    return { state, result: buildResult(state, active[0]) }
+  }
+  // Game continues. If the leaver was on turn, advance to the next active
+  // player; the roll/move state is reset so the new player rolls fresh.
+  if (wasCurrent) passTurn(state)
+  return { state, result: null }
+}
+
 /** Cryptographically secure die roll (1..6). The engine is server-authoritative. */
 export function rollDie(): number {
   return crypto.randomInt(1, 7)
+}
+
+/**
+ * Cryptographically secure die roll (1..6), weighted toward higher faces by
+ * `bias` (0 = identical to rollDie(), 1 = maximum skew toward 5/6). Every
+ * face keeps non-zero probability at any bias so a biased roller never
+ * becomes deterministic or visibly "always sixes." Linear per-face weight:
+ * weight(face) = 1 + bias * (face - 1) * 2, e.g. at bias=1 a 6 is 11x more
+ * likely than a 1.
+ */
+export function rollDieBiased(bias: number): number {
+  if (bias <= 0) return rollDie()
+  const clamped = Math.min(bias, 1)
+  const weights = [1, 2, 3, 4, 5, 6].map((face) => 1 + clamped * (face - 1) * 2)
+  const scaledWeights = weights.map((w) => Math.round(w * 1000))
+  const total = scaledWeights.reduce((a, b) => a + b, 0)
+  let r = crypto.randomInt(0, total)
+  for (let face = 1; face <= 6; face++) {
+    const w = scaledWeights[face - 1]
+    if (r < w) return face
+    r -= w
+  }
+  return 6 // unreachable; satisfies the compiler
 }
 
 /**
@@ -273,21 +353,9 @@ export function rollDie(): number {
  *            leaving a token within an opponent's striking distance (1-6
  *            cells behind, on an unsafe cell) if a non-exposed move exists.
  */
-export function chooseBotToken(
-  state: LudoState,
-  playerIdx: number,
-  dice: number,
-  difficulty: BotDifficulty = 'medium',
-): number {
-  const movable = movableTokens(state, playerIdx, dice)
-  if (movable.length === 0) return -1
+/** The first movable token that would capture an opponent this turn, or -1. */
+export function findCapturingMove(state: LudoState, playerIdx: number, dice: number, movable: number[]): number {
   const player = state.players[playerIdx]
-
-  if (difficulty === 'easy' && Math.random() < 0.8) {
-    return movable[Math.floor(Math.random() * movable.length)]
-  }
-
-  // Prefer a move that captures an opponent.
   for (const t of movable) {
     const prog = player.tokens[t]
     if (prog === -1) continue
@@ -300,28 +368,68 @@ export function chooseBotToken(
       }
     }
   }
+  return -1
+}
+
+/** Of the movable tokens, which would NOT leave the token exposed (within an opponent's 1-6 cell striking distance) after this move. */
+export function findSafeMoves(state: LudoState, playerIdx: number, dice: number, movable: number[]): number[] {
+  const player = state.players[playerIdx]
+  return movable.filter((t) => {
+    const prog = player.tokens[t]
+    if (prog === -1) return true // entering play this turn is never "exposed" yet
+    const cell = absoluteCell(playerIdx, prog + dice)
+    if (cell === -1 || SAFE_CELLS.has(cell)) return true
+    for (let p = 0; p < state.players.length; p++) {
+      if (p === playerIdx) continue
+      for (const tp of state.players[p].tokens) {
+        const oc = absoluteCell(p, tp)
+        if (oc === -1) continue
+        const dist = (cell - oc + MAIN_TRACK) % MAIN_TRACK
+        if (dist >= 1 && dist <= 6) return false
+      }
+    }
+    return true
+  })
+}
+
+export function chooseBotToken(
+  state: LudoState,
+  playerIdx: number,
+  dice: number,
+  difficulty: BotDifficulty = 'medium',
+  trainedProfile?: { capture_probability?: number | null; safe_play_probability?: number | null },
+): number {
+  const movable = movableTokens(state, playerIdx, dice)
+  if (movable.length === 0) return -1
+  const player = state.players[playerIdx]
+
+  if (difficulty === 'easy' && Math.random() < 0.8) {
+    return movable[Math.floor(Math.random() * movable.length)]
+  }
+
+  const capturingMove = findCapturingMove(state, playerIdx, dice, movable)
+  if (capturingMove !== -1) {
+    const captureProbability = trainedProfile?.capture_probability
+    if (captureProbability == null || Math.random() < captureProbability) {
+      return capturingMove
+    }
+    // Trained data says: at this rate, a real player would NOT take this
+    // capture. Fall through to the same advance-most-progressed logic
+    // used when there's genuinely no capture available.
+  }
 
   if (difficulty === 'hard') {
-    const safeMoves = movable.filter((t) => {
-      const prog = player.tokens[t]
-      if (prog === -1) return true // entering play this turn is never "exposed" yet
-      const cell = absoluteCell(playerIdx, prog + dice)
-      if (cell === -1 || SAFE_CELLS.has(cell)) return true
-      for (let p = 0; p < state.players.length; p++) {
-        if (p === playerIdx) continue
-        for (const tp of state.players[p].tokens) {
-          const oc = absoluteCell(p, tp)
-          if (oc === -1) continue
-          const dist = (cell - oc + MAIN_TRACK) % MAIN_TRACK
-          if (dist >= 1 && dist <= 6) return false
-        }
-      }
-      return true
-    })
+    const safeMoves = findSafeMoves(state, playerIdx, dice, movable)
     if (safeMoves.length > 0) {
-      let best = safeMoves[0]
-      for (const t of safeMoves) if (player.tokens[t] > player.tokens[best]) best = t
-      return best
+      const safePlayProbability = trainedProfile?.safe_play_probability
+      if (safePlayProbability == null || Math.random() < safePlayProbability) {
+        let best = safeMoves[0]
+        for (const t of safeMoves) if (player.tokens[t] > player.tokens[best]) best = t
+        return best
+      }
+      // Trained data says: at this rate, a real player would take the
+      // exposed move anyway. Fall through to advance-most-progressed
+      // over ALL movable tokens (not just the safe subset).
     }
   }
 

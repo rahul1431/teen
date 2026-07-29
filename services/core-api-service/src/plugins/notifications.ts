@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { Pool } from 'pg'
+import Redis from 'ioredis'
 import * as admin from 'firebase-admin'
 
 let firebaseInitialized = false
@@ -18,9 +19,56 @@ async function sendPushNotification(fcmToken: string, title: string, body: strin
   await admin.messaging().send({ token: fcmToken, notification: { title, body }, data, android: { priority: 'high' }, apns: { payload: { aps: { sound: 'default' } } } })
 }
 
-export function notificationsPlugin(db: Pool) {
+export function notificationsPlugin(db: Pool, redis?: Redis) {
   return async function (app: FastifyInstance) {
     initFirebase()
+
+    // Listen for wallet updates from admin/system credits via Redis Pub/Sub
+    if (redis) {
+      const walletUpdateSub = redis.duplicate()
+      walletUpdateSub.subscribe('wallet:updated', async (err) => {
+        if (err) console.error('[wallet:updated subscriber] subscription error:', err)
+      })
+
+      walletUpdateSub.on('message', async (channel, message) => {
+        if (channel !== 'wallet:updated') return
+        try {
+          const event = JSON.parse(message)
+          const { userId, type, amount, walletType } = event
+
+          // Fetch FCM token for this user
+          const tokenRes = await db.query('SELECT fcm_token FROM users WHERE id = $1', [userId])
+          if (!tokenRes.rows.length || !tokenRes.rows[0].fcm_token) return
+
+          const fcmToken = tokenRes.rows[0].fcm_token
+          let title = 'Wallet Updated'
+          let body = `₹${amount} added to your ${walletType} balance`
+          const data = { walletUpdated: 'true', amount: String(amount), type }
+
+          if (type === 'manual_credit') {
+            title = 'Bonus Added ✨'
+            body = `₹${amount} bonus has been credited to your account`
+          } else if (type === 'deposit') {
+            title = 'Deposit Confirmed ✅'
+            body = `Your deposit of ₹${amount} has been credited`
+          } else if (type === 'referral') {
+            title = 'Referral Reward Earned 🎁'
+            body = `₹${amount} referral bonus has been added`
+          } else if (type === 'game_credit') {
+            title = 'Winnings Credited 🎉'
+            body = `You won ₹${amount}!`
+          }
+
+          await sendPushNotification(fcmToken, title, body, data)
+        } catch (err) {
+          console.error('[wallet:updated handler] error:', err)
+        }
+      })
+
+      walletUpdateSub.on('error', (err) => {
+        console.error('[wallet:updated subscriber] error:', err)
+      })
+    }
 
     const internal = async (req: any, reply: any) => {
       const key = process.env.INTERNAL_SERVICE_KEY
@@ -58,16 +106,39 @@ export function notificationsPlugin(db: Pool) {
       return reply.send({ success: true })
     })
 
-    app.post('/internal/notifications/send', { onRequest: [internal] }, async (req, reply) => {
-      const { user_id, title, body, type = 'general', data } = req.body as any
-      await db.query('INSERT INTO notifications (user_id, type, title, body, data) VALUES ($1, $2, $3, $4, $5)', [user_id, type, title, body, JSON.stringify(data || {})])
-      const userRes = await db.query('SELECT fcm_token FROM users WHERE id = $1', [user_id])
-      if (userRes.rows[0]?.fcm_token) await sendPushNotification(userRes.rows[0].fcm_token, title, body, data)
+    // Marks the CALLING user's own notification(s) for a campaign as read —
+    // used when the user taps a push (foreground or background/terminated),
+    // where the client only knows the campaign_id from the FCM payload, not
+    // the underlying per-user notifications.id row.
+    app.put('/notifications/read-by-campaign/:campaignId', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      const { campaignId } = req.params as any
+      await db.query(
+        'UPDATE notifications SET read = true, read_at = NOW() WHERE campaign_id = $1 AND user_id = $2 AND read = false',
+        [campaignId, user.sub],
+      )
       return reply.send({ success: true })
     })
 
+    app.post('/internal/notifications/send', { onRequest: [internal] }, async (req, reply) => {
+      const { user_id, title, body, type = 'general', data, campaign_id } = req.body as any
+      const pushData = { ...(data || {}), ...(campaign_id ? { campaign_id: String(campaign_id) } : {}) }
+      await db.query(
+        'INSERT INTO notifications (user_id, type, title, body, data, campaign_id) VALUES ($1, $2, $3, $4, $5, $6)',
+        [user_id, type, title, body, JSON.stringify(pushData), campaign_id || null],
+      )
+      const userRes = await db.query('SELECT fcm_token FROM users WHERE id = $1', [user_id])
+      let delivered = 0
+      if (userRes.rows[0]?.fcm_token) {
+        await sendPushNotification(userRes.rows[0].fcm_token, title, body, pushData)
+        delivered = 1
+      }
+      return reply.send({ success: true, delivered })
+    })
+
     app.post('/internal/notifications/broadcast', { onRequest: [internal] }, async (req, reply) => {
-      const { title, body, type = 'broadcast', data } = req.body as any
+      const { title, body, type = 'broadcast', data, campaign_id } = req.body as any
+      const pushData = { ...(data || {}), ...(campaign_id ? { campaign_id: String(campaign_id) } : {}) }
       const usersRes = await db.query(`SELECT id, fcm_token FROM users WHERE is_bot = false AND status = $1`, ['active'])
       const users = usersRes.rows
       if (users.length === 0) return reply.send({ success: true, sent: 0, total: 0 })
@@ -77,13 +148,13 @@ export function notificationsPlugin(db: Pool) {
       for (let i = 0; i < users.length; i += dbBatchSize) {
         const batch = users.slice(i, i + dbBatchSize)
         const values: any[] = []
-        let queryText = 'INSERT INTO notifications (user_id, type, title, body, data) VALUES '
+        let queryText = 'INSERT INTO notifications (user_id, type, title, body, data, campaign_id) VALUES '
         for (let j = 0; j < batch.length; j++) {
           const u = batch[j]
-          const offset = j * 5
-          queryText += `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5})`
+          const offset = j * 6
+          queryText += `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6})`
           if (j < batch.length - 1) queryText += ', '
-          values.push(u.id, type, title, body, JSON.stringify(data || {}))
+          values.push(u.id, type, title, body, JSON.stringify(pushData), campaign_id || null)
         }
         await db.query(queryText, values)
       }
@@ -99,7 +170,7 @@ export function notificationsPlugin(db: Pool) {
           const fcmMessages = tokens.map(token => ({
             token,
             notification: { title, body },
-            data,
+            data: pushData,
             android: { priority: 'high' } as any,
             apns: { payload: { aps: { sound: 'default' } } } as any
           }))

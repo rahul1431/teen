@@ -236,6 +236,15 @@
       if (ref) {
         document.getElementById('refCode').textContent = ref;
         document.getElementById('refInline').textContent = ref;
+
+        // Fire-and-forget click tracking — never let a tracking failure
+        // block the download buttons below.
+        fetch('/api/referral/click', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ref_code: ref }),
+          keepalive: true,
+        }).catch(function () {});
       }
 
       // Android APK direct download (ref code in query so app can read via deep link)

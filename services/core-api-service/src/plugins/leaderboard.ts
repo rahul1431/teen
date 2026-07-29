@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { Pool } from 'pg'
 import Redis from 'ioredis'
+import { startLeaderboardRewardScheduler } from '../modules/leaderboard/scheduler'
 
 const VALID_GAME_TYPES = ['teen_patti', 'rummy', 'ludo', 'aviator', 'matka', 'lottery']
 
@@ -13,6 +14,8 @@ function getLeaderboardKey(gameType: string, period: string): string {
 
 export function leaderboardPlugin(db: Pool, redis: Redis) {
   return async function (app: FastifyInstance) {
+    startLeaderboardRewardScheduler(db)
+
     const authOrInternal = async (req: any, reply: any) => {
       const internalKey = req.headers['x-internal-key']
       if (internalKey && internalKey === process.env.INTERNAL_SERVICE_KEY) return

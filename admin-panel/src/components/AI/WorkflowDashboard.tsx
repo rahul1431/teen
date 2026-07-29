@@ -109,7 +109,7 @@ export function WorkflowDashboard() {
       {/* Status Alert - Phase 1 */}
       <Alert
         message="â­ Phase 1: Fraud Detection Rules Engine - ACTIVE"
-        description="Real-time fraud detection with 4 rules: co-location, win-rate anomalies, velocity checks, referral chains. Rules weight: 30/35/20/15%. Actions: allow (<0.4), slow_lane (0.4-0.85), block (>0.85)."
+        description="Real-time fraud detection with 4 rules: co-location, win-rate anomalies, velocity checks, referral chains. Rules weight: 30/35/20/15%. Actions: allow (<0.4), slow_lane (0.4-0.85, logged/observational only — no rate limiting or 2FA step-up implemented yet), block (>0.85, enforced: blocks withdrawals and joining new/private tables until the flag clears or an admin lifts it)."
         type="success"
         showIcon
         style={{ marginBottom: 24 }}

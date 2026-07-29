@@ -79,30 +79,40 @@ export function WatchdogTab() {
     {
       title: 'Action',
       dataIndex: 'action',
-      width: 100,
-      render: () => <Tag color="purple">REAPED</Tag>,
+      width: 130,
+      render: (action: string) =>
+        action === 'reconciled_stranded_consume'
+          ? <Tag color="orange">RECONCILED</Tag>
+          : <Tag color="purple">REAPED</Tag>,
     },
     {
-      title: 'Refunds',
+      title: 'Details',
       dataIndex: 'refunds',
-      render: (refunds: WatchdogRefund[]) =>
-        refunds.length === 0 ? (
-          <Text type="secondary">nothing to refund</Text>
+      render: (refunds: WatchdogRefund[], row: WatchdogEvent) => {
+        const isReconcile = row.action === 'reconciled_stranded_consume'
+        return refunds.length === 0 ? (
+          <Text type="secondary">{isReconcile ? 'nothing stranded' : 'nothing to refund'}</Text>
         ) : (
           refunds.map(r => (
             <Tooltip key={r.user_id} title={r.user_id}>
-              <Tag color={r.is_bot ? 'default' : 'green'}>
+              <Tag color={r.is_bot ? 'default' : (isReconcile ? 'orange' : 'green')}>
                 {r.username}{r.is_bot ? ' 🤖' : ''} ₹{r.amount}
               </Tag>
             </Tooltip>
           ))
-        ),
+        )
+      },
     },
     {
-      title: 'Total Refunded',
+      title: 'Total Amount',
       dataIndex: 'total_refunded',
       width: 130,
-      render: (v: string) => <Text strong style={{ color: '#d4af37' }}>₹{parseFloat(v).toFixed(2)}</Text>,
+      render: (v: string, row: WatchdogEvent) => (
+        <Text strong style={{ color: '#d4af37' }}>
+          {row.action === 'reconciled_stranded_consume' ? 'collected ' : 'refunded '}
+          ₹{parseFloat(v).toFixed(2)}
+        </Text>
+      ),
     },
   ]
 
@@ -141,7 +151,7 @@ export function WatchdogTab() {
 
       <Card
         size="small"
-        title="Reaped Games — idle 15+ min, auto-refunded & cancelled (sweep every 5 min)"
+        title="Watchdog Events — idle rooms reaped (refunded & cancelled) and completed-room stranded locks reconciled (collected), both every 5 min"
         extra={<Button size="small" icon={<ReloadOutlined />} onClick={load} loading={loading} />}
       >
         <Table

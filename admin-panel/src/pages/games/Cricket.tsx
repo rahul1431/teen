@@ -1,14 +1,111 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert
+  Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert, Collapse, Avatar, Drawer, Upload, AutoComplete, Grid
 } from 'antd'
-import { ReloadOutlined, PlusOutlined, SyncOutlined, CloudDownloadOutlined } from '@ant-design/icons'
+import { ReloadOutlined, PlusOutlined, SyncOutlined, CloudDownloadOutlined, DeleteOutlined, TeamOutlined, TrophyOutlined, UserOutlined, UploadOutlined, EyeOutlined, EditOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
 const { Text } = Typography
 
+// Groups the fantasy roster by team/country (Dream11-style squad browsing)
+// instead of one long flat list — team_name IS the country for international
+// squads (synced via sync-squad/sync-series-squads).
+function groupPlayersByTeam(players: any[]): Record<string, any[]> {
+  const groups: Record<string, any[]> = {}
+  for (const p of players) {
+    const key = p.team_name || 'Unassigned'
+    if (!groups[key]) groups[key] = []
+    groups[key].push(p)
+  }
+  return Object.fromEntries(Object.entries(groups).sort(([a], [b]) => a.localeCompare(b)))
+}
+
+// Every match-picker dropdown used to label matches as just "Team A vs Team B
+// (Series)" — indistinguishable when a series has multiple fixtures between
+// the same two teams (e.g. a 3-ODI series), which is how a contest ended up
+// attached to the wrong match. Adds the date/time plus a short match code
+// admins can cross-check against the match card in the Matches tab.
+function matchLabel(m: any): string {
+  const date = new Date(m.start_time)
+  const dateStr = date.toLocaleDateString(undefined, { day: '2-digit', month: 'short' })
+  const timeStr = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  return `${m.team_a} vs ${m.team_b} · ${dateStr} ${timeStr} (${m.series}) [#${m.id.slice(0, 8)}]`
+}
+
+function CountryFlagUploadField({ form }: { form: any }) {
+  const [uploading, setUploading] = useState(false)
+  const url: string | undefined = Form.useWatch('flag_url', form)
+
+  const upload = async (file: File) => {
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await adminApi.post('/uploads/cricket-flag', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      form.setFieldsValue({ flag_url: res.data.url })
+      message.success('Flag uploaded')
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Upload failed')
+    } finally { setUploading(false) }
+  }
+
+  return (
+    <Form.Item label="Flag Icon" required>
+      <Form.Item name="flag_url" noStyle rules={[{ required: true, message: 'Upload a flag icon' }]}>
+        <Input type="hidden" />
+      </Form.Item>
+      <Space direction="vertical">
+        <Upload showUploadList={false} accept="image/*" maxCount={1}
+          beforeUpload={(file) => { upload(file as File); return false }}>
+          <Button icon={<UploadOutlined />} loading={uploading}>{url ? 'Replace Flag' : 'Upload Flag'}</Button>
+        </Upload>
+        {url && <img src={url} alt="Flag" style={{ width: 60, height: 40, objectFit: 'cover', border: '1px solid #eee', borderRadius: 4 }} />}
+      </Space>
+    </Form.Item>
+  )
+}
+
+function PlayerAvatarUploadField({ form }: { form: any }) {
+  const [uploading, setUploading] = useState(false)
+  const url: string | undefined = Form.useWatch('avatar_url', form)
+
+  const upload = async (file: File) => {
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await adminApi.post('/uploads/cricket-avatar', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      form.setFieldsValue({ avatar_url: res.data.url })
+      message.success('Photo uploaded')
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Upload failed')
+    } finally { setUploading(false) }
+  }
+
+  return (
+    <Form.Item label="Player Photo">
+      <Form.Item name="avatar_url" noStyle>
+        <Input type="hidden" />
+      </Form.Item>
+      <Space direction="vertical">
+        <Space>
+          <Upload showUploadList={false} accept="image/*" maxCount={1}
+            beforeUpload={(file) => { upload(file as File); return false }}>
+            <Button icon={<UploadOutlined />} loading={uploading}>{url ? 'Replace Photo' : 'Upload Photo'}</Button>
+          </Upload>
+          <Text type="secondary" style={{ fontSize: 12 }}>or paste a URL below</Text>
+        </Space>
+        <Input placeholder="https://..." value={url} onChange={e => form.setFieldsValue({ avatar_url: e.target.value })} />
+        {url && <Avatar src={url} size={48} />}
+      </Space>
+    </Form.Item>
+  )
+}
+
 export default function Cricket() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const [config, setConfig] = useState<any>(null)
   const [loadingConfig, setLoadingConfig] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
@@ -16,21 +113,35 @@ export default function Cricket() {
   const [matches, setMatches] = useState<any[]>([])
   const [loadingMatches, setLoadingMatches] = useState(false)
   const [matchOpen, setMatchOpen] = useState(false)
-  const [marketFor, setMarketFor] = useState<any>(null)
-  const [sessionFor, setSessionFor] = useState<any>(null)
   const [mForm] = Form.useForm()
-  const [mkForm] = Form.useForm()
-  const [sForm] = Form.useForm()
 
   // --- Fantasy States ---
   const [players, setPlayers] = useState<any[]>([])
   const [loadingPlayers, setLoadingPlayers] = useState(false)
   const [playerOpen, setPlayerOpen] = useState(false)
+  const [editingPlayer, setEditingPlayer] = useState<any>(null)
   const [leagueOpen, setLeagueOpen] = useState(false)
-  const [settleFantasyFor, setSettleFantasyFor] = useState<any>(null)
+  const [leagueMatchLocked, setLeagueMatchLocked] = useState(false)
+  const [finalizingFor, setFinalizingFor] = useState<string | null>(null)
   const [pForm] = Form.useForm()
   const [lForm] = Form.useForm()
-  const [settleForm] = Form.useForm()
+
+  // --- Session (Fancy) Betting States ---
+  const [sessionFor, setSessionFor] = useState<any>(null)
+  const [editingSession, setEditingSession] = useState<any>(null)
+  const [sForm] = Form.useForm()
+
+  // --- Players Section States (View / Map) ---
+  const [viewingPlayer, setViewingPlayer] = useState<any>(null)
+  const [playerHistory, setPlayerHistory] = useState<any[]>([])
+  const [loadingPlayerHistory, setLoadingPlayerHistory] = useState(false)
+  const [mappingPlayer, setMappingPlayer] = useState<any>(null)
+  const [playerMappings, setPlayerMappings] = useState<any[]>([])
+  const [loadingMappings, setLoadingMappings] = useState(false)
+  const [mappingMatch, setMappingMatch] = useState(false)
+  const [mapMatchId, setMapMatchId] = useState<string | undefined>(undefined)
+  const [mappingCountry, setMappingCountry] = useState(false)
+  const [mapCountryId, setMapCountryId] = useState<string | undefined>(undefined)
 
   // --- Sports API States ---
   const [syncing, setSyncing] = useState(false)
@@ -46,13 +157,47 @@ export default function Cricket() {
 
   // --- Squad Syncing States ---
   const [syncingSquadId, setSyncingSquadId] = useState<string | null>(null)
+  const [syncingSeriesSquadsId, setSyncingSeriesSquadsId] = useState<string | null>(null)
+
+  // --- Series Catalog States ---
+  const [seriesCatalog, setSeriesCatalog] = useState<any[]>([])
+  const [newSeriesName, setNewSeriesName] = useState('')
+
+  // --- Fantasy Contests (per-match) States ---
+  const [leaguesByMatch, setLeaguesByMatch] = useState<Record<string, any[]>>({})
+  const [loadingLeaguesFor, setLoadingLeaguesFor] = useState<string | null>(null)
+
+  // --- Countries States ---
+  const [countries, setCountries] = useState<any[]>([])
+  const [loadingCountries, setLoadingCountries] = useState(false)
+  const [countryOpen, setCountryOpen] = useState(false)
+  const [editingCountry, setEditingCountry] = useState<any>(null)
+  const [cForm] = Form.useForm()
+
+  // --- All Contests States ---
+  const [contests, setContests] = useState<any[]>([])
+  const [contestsTotal, setContestsTotal] = useState(0)
+  const [loadingContests, setLoadingContests] = useState(false)
+  const [contestFilters, setContestFilters] = useState<{ status?: string; match_id?: string; from?: string; to?: string }>({})
+  const [contestPage, setContestPage] = useState(1)
+  const [contestDrawerOpen, setContestDrawerOpen] = useState(false)
+  const [selectedContestId, setSelectedContestId] = useState<string | null>(null)
+  const [contestDetail, setContestDetail] = useState<any>(null)
+  const [contestEntries, setContestEntries] = useState<any[]>([])
+  const [loadingContestDetail, setLoadingContestDetail] = useState(false)
+  const [savingContest, setSavingContest] = useState(false)
+  const [contestEditForm] = Form.useForm()
+
+  // --- Scoring Rulebook States ---
+  const [rulesOpen, setRulesOpen] = useState(false)
+  const [savingRules, setSavingRules] = useState(false)
+  const [rForm] = Form.useForm()
 
   // --- Live Console States ---
   const [liveMatchId, setLiveMatchId] = useState<string>('')
   const [liveMatch, setLiveMatch] = useState<any>(null)
   const [loadingLive, setLoadingLive] = useState(false)
   const [scoreForm] = Form.useForm()
-  const [liveMarketForm] = Form.useForm()
 
   const loadConfig = () => {
     setLoadingConfig(true)
@@ -61,8 +206,11 @@ export default function Cricket() {
         const ckConfig = r.data.find((c: any) => c.game_type === 'cricket')
         setConfig(ckConfig)
         if (ckConfig?.special_rules) {
+          const keys: string[] = ckConfig.special_rules.api_keys?.length
+            ? ckConfig.special_rules.api_keys
+            : ckConfig.special_rules.api_key ? [ckConfig.special_rules.api_key] : []
           apiConfigForm.setFieldsValue({
-            api_key: ckConfig.special_rules.api_key || '',
+            api_keys: keys.join('\n'),
             api_provider: ckConfig.special_rules.api_provider || 'cricket_data_api',
           })
         }
@@ -86,15 +234,16 @@ export default function Cricket() {
   const saveApiConfig = async (values: any) => {
     setSavingConfig(true)
     try {
+      const api_keys = (values.api_keys as string || '').split('\n').map((k: string) => k.trim()).filter(Boolean)
       await adminApi.patch('/game-configs/cricket', {
         ...config,
         special_rules: {
           ...(config?.special_rules || {}),
           api_provider: values.api_provider,
-          api_key: values.api_key,
+          api_keys,
         }
       })
-      message.success('Sports API Key saved!')
+      message.success(`Saved ${api_keys.length} CricAPI key${api_keys.length === 1 ? '' : 's'}!`)
       loadConfig()
     } catch {
       message.error('Failed to save API config')
@@ -145,8 +294,9 @@ export default function Cricket() {
     setImportingSeriesId(seriesId)
     try {
       const r = await adminApi.post('/betting/cricket/import-series-matches', { series_id: seriesId })
-      message.success(`Series imported! Added: ${r.data.imported} matches`)
+      message.success(`Series imported! ${r.data.inserted} new, ${r.data.updated} updated`)
       loadMatches()
+      loadSeriesCatalog()
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'Failed to import series')
     } finally {
@@ -167,12 +317,24 @@ export default function Cricket() {
     }
   }
 
+  const syncSeriesSquads = async (seriesId: string) => {
+    setSyncingSeriesSquadsId(seriesId)
+    try {
+      const r = await adminApi.post('/betting/cricket/sync-series-squads', { series_id: seriesId })
+      message.success(`Squads synced! ${r.data.teamsSeeded} teams, ${r.data.playersSeeded} players`)
+      loadPlayers()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to sync series squads')
+    } finally {
+      setSyncingSeriesSquadsId(null)
+    }
+  }
+
   const loadMatches = () => {
     setLoadingMatches(true)
     adminApi.get('/betting/cricket/matches')
       .then(r => {
         setMatches(r.data.matches || [])
-        // Set first live/upcoming match as active live match if none selected
         const liveOrUpcoming = r.data.matches?.find((m: any) => m.status === 'live' || m.status === 'upcoming')
         if (liveOrUpcoming && !liveMatchId) {
           setLiveMatchId(liveOrUpcoming.id)
@@ -186,6 +348,309 @@ export default function Cricket() {
     adminApi.get('/betting/cricket/fantasy/players')
       .then(r => setPlayers(r.data.players || []))
       .finally(() => setLoadingPlayers(false))
+  }
+
+  const loadSeriesCatalog = () => {
+    adminApi.get('/betting/cricket/series-catalog').then(r => setSeriesCatalog(r.data.series || []))
+  }
+
+  const addSeriesToCatalog = async () => {
+    if (!newSeriesName.trim()) return
+    try {
+      await adminApi.post('/betting/cricket/series-catalog', { name: newSeriesName.trim() })
+      setNewSeriesName('')
+      loadSeriesCatalog()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to add series')
+    }
+  }
+
+  const deleteSeriesFromCatalog = async (id: number) => {
+    try {
+      await adminApi.delete(`/betting/cricket/series-catalog/${id}`)
+      message.success('Series removed')
+      loadSeriesCatalog()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to remove series')
+    }
+  }
+
+  const deleteMatch = async (id: string) => {
+    try {
+      await adminApi.delete(`/betting/cricket/matches/${id}`)
+      message.success('Match deleted')
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to delete match')
+    }
+  }
+
+  const deletePlayer = async (id: string) => {
+    try {
+      await adminApi.delete(`/betting/cricket/fantasy/players/${id}`)
+      message.success('Player deleted')
+      loadPlayers()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to delete player')
+    }
+  }
+
+  const openPlayerModal = (player?: any) => {
+    setEditingPlayer(player || null)
+    pForm.resetFields()
+    if (player) pForm.setFieldsValue(player)
+    setPlayerOpen(true)
+  }
+
+  const savePlayer = async (v: any) => {
+    try {
+      if (editingPlayer) {
+        await adminApi.patch(`/betting/cricket/fantasy/players/${editingPlayer.id}`, {
+          name: v.name, role: v.role, credits: v.credits, team_name: v.team_name, avatar_url: v.avatar_url
+        })
+        message.success('Player updated')
+      } else {
+        await adminApi.post('/betting/cricket/fantasy/players', {
+          name: v.name, role: v.role, credits: v.credits, team_name: v.team_name, avatar_url: v.avatar_url
+        })
+        message.success('Player added globally')
+      }
+      setPlayerOpen(false)
+      pForm.resetFields()
+      loadPlayers()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed')
+    }
+  }
+
+  // --- Player View (per-match performance history) ---
+  const openPlayerView = (player: any) => {
+    setViewingPlayer(player)
+    setLoadingPlayerHistory(true)
+    adminApi.get(`/betting/cricket/fantasy/players/${player.id}/matches`)
+      .then(r => setPlayerHistory(r.data.matches || []))
+      .finally(() => setLoadingPlayerHistory(false))
+  }
+
+  // --- Player Map (to a match squad, or to a country) ---
+  const loadPlayerMappings = (playerId: string) => {
+    setLoadingMappings(true)
+    adminApi.get(`/betting/cricket/fantasy/players/${playerId}/matches`)
+      .then(r => setPlayerMappings(r.data.matches || []))
+      .finally(() => setLoadingMappings(false))
+  }
+
+  const openMapModal = (player: any) => {
+    setMappingPlayer(player)
+    setMapMatchId(undefined)
+    setMapCountryId(player.team_name ? countries.find(c => c.name === player.team_name)?.id : undefined)
+    loadPlayerMappings(player.id)
+  }
+
+  const closeMapModal = () => {
+    setMappingPlayer(null)
+    setPlayerMappings([])
+  }
+
+  const mapPlayerToMatch = async () => {
+    if (!mappingPlayer || !mapMatchId) return
+    setMappingMatch(true)
+    try {
+      await adminApi.post(`/betting/cricket/fantasy/players/${mappingPlayer.id}/map-match`, { match_id: mapMatchId })
+      message.success('Player mapped to match squad')
+      setMapMatchId(undefined)
+      loadPlayerMappings(mappingPlayer.id)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to map player to match')
+    } finally {
+      setMappingMatch(false)
+    }
+  }
+
+  const unmapPlayerFromMatch = async (matchId: string) => {
+    if (!mappingPlayer) return
+    try {
+      await adminApi.delete(`/betting/cricket/fantasy/players/${mappingPlayer.id}/map-match/${matchId}`)
+      message.success('Mapping removed')
+      loadPlayerMappings(mappingPlayer.id)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to remove mapping')
+    }
+  }
+
+  const mapPlayerToCountry = async () => {
+    if (!mappingPlayer || !mapCountryId) return
+    const country = countries.find(c => c.id === mapCountryId)
+    if (!country) return
+    setMappingCountry(true)
+    try {
+      await adminApi.patch(`/betting/cricket/fantasy/players/${mappingPlayer.id}`, { team_name: country.name })
+      message.success(`Mapped to ${country.name}`)
+      loadPlayers()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to map player to country')
+    } finally {
+      setMappingCountry(false)
+    }
+  }
+
+  // --- Session (Fancy) Betting ---
+  const openSessionModal = (match: any, session?: any) => {
+    setSessionFor(match)
+    setEditingSession(session || null)
+    sForm.resetFields()
+    if (session) sForm.setFieldsValue(session)
+    else sForm.setFieldsValue({ label: '6 Over Session - India', min_runs: 45, max_runs: 47 })
+  }
+
+  const closeSessionModal = () => {
+    setSessionFor(null)
+    setEditingSession(null)
+  }
+
+  const saveSession = async (v: any) => {
+    try {
+      if (editingSession) {
+        await adminApi.patch(`/betting/cricket/sessions/${editingSession.id}`, {
+          label: v.label, min_runs: v.min_runs, max_runs: v.max_runs,
+        })
+        message.success('Session updated')
+      } else {
+        await adminApi.post('/betting/cricket/session/create', {
+          match_id: sessionFor.id, label: v.label, min_runs: v.min_runs, max_runs: v.max_runs,
+        })
+        message.success('Session added')
+      }
+      closeSessionModal()
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed')
+    }
+  }
+
+  const settleSession = async (sessionId: string, runs: number | null) => {
+    try {
+      const r = await adminApi.post('/betting/cricket/session/settle', { session_id: sessionId, result_runs: runs })
+      message.success(`Session Settled — ${r.data.winners} winners paid`)
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Session settle failed')
+    }
+  }
+
+  const deleteSession = async (id: string) => {
+    try {
+      await adminApi.delete(`/betting/cricket/sessions/${id}`)
+      message.success('Session deleted')
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to delete session')
+    }
+  }
+
+  const loadLeagues = (matchId: string) => {
+    setLoadingLeaguesFor(matchId)
+    adminApi.get('/betting/cricket/fantasy/leagues', { params: { match_id: matchId } })
+      .then(r => setLeaguesByMatch(prev => ({ ...prev, [matchId]: r.data.leagues || [] })))
+      .finally(() => setLoadingLeaguesFor(null))
+  }
+
+  const deleteLeague = async (id: string, matchId: string) => {
+    try {
+      await adminApi.delete(`/betting/cricket/fantasy/leagues/${id}`)
+      message.success('Contest deleted')
+      loadLeagues(matchId)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to delete contest')
+    }
+  }
+
+  const loadCountries = () => {
+    setLoadingCountries(true)
+    adminApi.get('/betting/cricket/countries')
+      .then(r => setCountries(r.data.countries || []))
+      .finally(() => setLoadingCountries(false))
+  }
+
+  const CONTEST_PAGE_SIZE = 10
+
+  const loadContests = (page = contestPage, filters = contestFilters) => {
+    setLoadingContests(true)
+    adminApi.get('/betting/cricket/fantasy/contests', {
+      params: { ...filters, limit: CONTEST_PAGE_SIZE, offset: (page - 1) * CONTEST_PAGE_SIZE }
+    })
+      .then(r => { setContests(r.data.contests || []); setContestsTotal(r.data.total || 0) })
+      .finally(() => setLoadingContests(false))
+  }
+
+  const openContestDrawer = (id: string) => {
+    setSelectedContestId(id)
+    setContestDrawerOpen(true)
+  }
+
+  const loadContestDetail = (id: string) => {
+    setLoadingContestDetail(true)
+    Promise.all([
+      adminApi.get(`/betting/cricket/fantasy/leagues/${id}`),
+      adminApi.get(`/betting/cricket/fantasy/leagues/${id}/entries`),
+    ])
+      .then(([detailRes, entriesRes]) => {
+        const contest = detailRes.data.contest
+        setContestDetail(contest)
+        setContestEntries(entriesRes.data.entries || [])
+        contestEditForm.setFieldsValue({
+          ...contest,
+          prize_distribution: (contest.prize_distribution || []).map((p: any) => `${p.rank_start}|${p.rank_end}|${p.payout}`).join('\n'),
+        })
+      })
+      .finally(() => setLoadingContestDetail(false))
+  }
+
+  const saveContestEdit = async (v: any) => {
+    if (!selectedContestId) return
+    setSavingContest(true)
+    try {
+      const payload: any = { name: v.name }
+      if (contestDetail?.current_entries === 0) {
+        payload.entry_fee = v.entry_fee
+        payload.prize_pool = v.prize_pool
+        payload.max_entries = v.max_entries
+        payload.prize_distribution = (v.prize_distribution as string).split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+          const [start, end, pay] = l.split('|').map(s => s.trim())
+          return { rank_start: Number(start), rank_end: Number(end), payout: Number(pay) }
+        })
+      }
+      await adminApi.patch(`/betting/cricket/fantasy/leagues/${selectedContestId}`, payload)
+      message.success('Contest updated')
+      loadContestDetail(selectedContestId)
+      loadContests(contestPage, contestFilters)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to update contest')
+    } finally {
+      setSavingContest(false)
+    }
+  }
+
+  const openCountryModal = (country?: any) => {
+    setEditingCountry(country || null)
+    cForm.resetFields()
+    if (country) cForm.setFieldsValue(country)
+    setCountryOpen(true)
+  }
+
+  const saveCountry = async (v: any) => {
+    try {
+      if (editingCountry) {
+        await adminApi.patch(`/betting/cricket/countries/${editingCountry.id}`, { name: v.name, flag_url: v.flag_url })
+      } else {
+        await adminApi.post('/betting/cricket/countries', { id: v.id, name: v.name, flag_url: v.flag_url })
+      }
+      message.success('Country saved')
+      setCountryOpen(false)
+      loadCountries()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to save country')
+    }
   }
 
   const createMatch = async (v: any) => {
@@ -204,82 +669,22 @@ export default function Cricket() {
     }
   }
 
-  const createMarket = async (v: any) => {
-    try {
-      const options = (v.options as string).split('\n').map(l => l.trim()).filter(Boolean).map(l => {
-        const [key, label, odds] = l.split('|').map(s => s.trim())
-        return { key, label, odds: Number(odds) }
-      })
-      await adminApi.post('/betting/cricket/market', {
-        match_id: marketFor.id, market_type: v.market_type, label: v.label, options,
-      })
-      message.success('Market added')
-      setMarketFor(null)
-      mkForm.resetFields()
-      loadMatches()
-      if (liveMatch && marketFor.id === liveMatch.id) {
-        loadLiveMatch(liveMatch.id)
-      }
-    } catch (e: any) {
-      message.error(e?.response?.data?.error || 'Failed to add market')
+  // Opening from a specific match's "+ Add Contest" button pre-fills and
+  // locks the Target Match field — removes the exact mistake that put a
+  // contest on the wrong fixture in a multi-match series (see matchLabel()).
+  const openLeagueModal = (matchId?: string) => {
+    lForm.resetFields()
+    if (matchId) {
+      lForm.setFieldsValue({ match_id: matchId })
+      setLeagueMatchLocked(true)
+    } else {
+      setLeagueMatchLocked(false)
     }
-  }
-
-  const settleMarket = async (market: any, resultKey: string | null) => {
-    try {
-      const r = await adminApi.post('/betting/cricket/settle', { market_id: market.id, result_key: resultKey })
-      message.success(`Settled — ${r.data.winners} winners, ₹${Number(r.data.paid).toFixed(0)} paid`)
-      loadMatches()
-      if (liveMatch) {
-        loadLiveMatch(liveMatch.id)
-      }
-    } catch (e: any) {
-      message.error(e?.response?.data?.error || 'Settle failed')
-    }
-  }
-
-  const createSession = async (v: any) => {
-    try {
-      await adminApi.post('/betting/cricket/session/create', {
-        match_id: sessionFor.id, label: v.label, min_runs: v.min_runs, max_runs: v.max_runs,
-      })
-      message.success('Session added')
-      setSessionFor(null)
-      sForm.resetFields()
-      loadMatches()
-    } catch (e: any) {
-      message.error(e?.response?.data?.error || 'Failed to add session')
-    }
-  }
-
-  const settleSession = async (sessionId: string, runs: number | null) => {
-    try {
-      const r = await adminApi.post('/betting/cricket/session/settle', { session_id: sessionId, result_runs: runs })
-      message.success(`Session Settled — ${r.data.winners} winners paid`)
-      loadMatches()
-    } catch (e: any) {
-      message.error('Session settle failed')
-    }
-  }
-
-  // --- Fantasy Operators ---
-  const addPlayer = async (v: any) => {
-    try {
-      await adminApi.post('/betting/cricket/fantasy/players', {
-        name: v.name, role: v.role, credits: v.credits, team_name: v.team_name, avatar_url: v.avatar_url
-      })
-      message.success('Player added globally')
-      setPlayerOpen(false)
-      pForm.resetFields()
-      loadPlayers()
-    } catch (e: any) {
-      message.error(e?.response?.data?.error || 'Failed')
-    }
+    setLeagueOpen(true)
   }
 
   const createLeague = async (v: any) => {
     try {
-      // Parse custom prize distribution: "rank_start|rank_end|payout"
       const prize_distribution = (v.prize_distribution as string).split('\n').map(l => l.trim()).filter(Boolean).map(l => {
         const [start, end, pay] = l.split('|').map(s => s.trim())
         return { rank_start: Number(start), rank_end: Number(end), payout: Number(pay) }
@@ -297,23 +702,38 @@ export default function Cricket() {
     }
   }
 
-  const handleSettleFantasy = async (values: any) => {
+  // Dream11-style: no manual point entry — pulls the final scorecard,
+  // computes every drafted player's points from the rulebook, ranks
+  // contests, and pays out winners in one click.
+  const finalizeMatch = async (matchId: string) => {
+    setFinalizingFor(matchId)
     try {
-      const player_points: Record<string, number> = {}
-      Object.entries(values).forEach(([key, val]) => {
-        if (key.startsWith('p_')) {
-          player_points[key.replace('p_', '')] = Number(val || 0)
-        }
-      })
-      const r = await adminApi.post('/betting/cricket/fantasy/settle', {
-        match_id: settleFantasyFor.id, player_points
-      })
-      message.success(`Fantasy pool settled! ${r.data.settledLeagues} contests paid, ₹${Number(r.data.totalPaid).toFixed(0)} disbursed`)
-      setSettleFantasyFor(null)
-      settleForm.resetFields()
+      const r = await adminApi.post('/betting/cricket/fantasy/finalize', { match_id: matchId })
+      message.success(`Finalized — ${r.data.playersScored} players scored, ${r.data.settledLeagues} contests paid, ₹${Number(r.data.totalPaid).toFixed(0)} disbursed`)
       loadMatches()
+      loadLeagues(matchId)
     } catch (e: any) {
-      message.error(e?.response?.data?.error || 'Settlement failed')
+      message.error(e?.response?.data?.error || 'Finalize failed')
+    } finally {
+      setFinalizingFor(null)
+    }
+  }
+
+  // --- Scoring Rulebook ---
+  const loadScoringRules = () => {
+    adminApi.get('/betting/cricket/scoring-rules').then(r => rForm.setFieldsValue(r.data.rules))
+  }
+
+  const saveScoringRules = async (values: any) => {
+    setSavingRules(true)
+    try {
+      await adminApi.patch('/betting/cricket/scoring-rules', values)
+      message.success('Scoring rulebook saved')
+      setRulesOpen(false)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to save rulebook')
+    } finally {
+      setSavingRules(false)
     }
   }
 
@@ -326,7 +746,6 @@ export default function Cricket() {
         const found = r.data.matches?.find((m: any) => m.id === id)
         if (found) {
           setLiveMatch(found)
-          // Set initial values for score operator
           scoreForm.setFieldsValue({
             runs: found.live_score?.runs ?? 0,
             wickets: found.live_score?.wickets ?? 0,
@@ -347,6 +766,7 @@ export default function Cricket() {
             live_tv_url: found.live_tv_url ?? '',
             status: found.status
           })
+          loadLeagues(id)
         }
       })
       .finally(() => setLoadingLive(false))
@@ -382,6 +802,8 @@ export default function Cricket() {
     loadConfig()
     loadMatches()
     loadPlayers()
+    loadSeriesCatalog()
+    loadCountries()
   }, [])
 
   useEffect(() => {
@@ -390,15 +812,34 @@ export default function Cricket() {
     }
   }, [liveMatchId])
 
-  // Players filtered by teams playing in selected match to score points
-  const matchPlayersToScore = settleFantasyFor
-    ? players.filter(p => p.team_name === settleFantasyFor.team_a || p.team_name === settleFantasyFor.team_b)
-    : []
+  useEffect(() => {
+    loadContests(1, contestFilters)
+    setContestPage(1)
+  }, [contestFilters])
+
+  useEffect(() => {
+    if (contestDrawerOpen && selectedContestId) {
+      loadContestDetail(selectedContestId)
+    } else {
+      setContestDetail(null)
+      setContestEntries([])
+    }
+  }, [contestDrawerOpen, selectedContestId])
+
+  // Seeded roster for the live match, so the operator console searches
+  // real player names instead of free-typing them. Falls back to every
+  // seeded player if the live match's squad hasn't been synced yet.
+  const liveRosterOptions = (() => {
+    const squad = players.filter(p => p.team_name === liveMatch?.team_a || p.team_name === liveMatch?.team_b)
+    const pool = squad.length ? squad : players
+    const seen = new Set<string>()
+    return pool.filter(p => (seen.has(p.name) ? false : (seen.add(p.name), true))).map(p => ({ value: p.name }))
+  })()
 
   const tabItems = [
     {
       key: 'matches',
-      label: '🏏 Matches & Markets',
+      label: '🏏 Matches',
       children: (
         <Row gutter={[24, 24]}>
           <Col xs={24} lg={8}>
@@ -415,23 +856,6 @@ export default function Cricket() {
                   <Form.Item name="rake_percent" label="Rake % (Platform Fee)">
                     <InputNumber min={0} max={20} step={0.5} suffix="%" style={{ width: '100%' }} />
                   </Form.Item>
-                  <Divider>Bot Settings</Divider>
-                  <Form.Item name="bot_fill_enabled" label="Bot Fill Enabled" valuePropName="checked">
-                    <Switch checkedChildren="Yes" unCheckedChildren="No" />
-                  </Form.Item>
-                  <Form.Item name="bot_fill_delay_seconds" label="Bot Fill Delay (seconds)">
-                    <InputNumber min={5} max={60} style={{ width: '100%' }} />
-                  </Form.Item>
-                  <Form.Item name="max_bot_ratio" label="Max Bot Ratio (0-1)">
-                    <InputNumber min={0} max={1} step={0.1} style={{ width: '100%' }} />
-                  </Form.Item>
-                  <Form.Item name="bot_difficulty" label="Bot Difficulty">
-                    <Select>
-                      <Select.Option value="easy">Easy</Select.Option>
-                      <Select.Option value="medium">Medium</Select.Option>
-                      <Select.Option value="hard">Hard</Select.Option>
-                    </Select>
-                  </Form.Item>
                   <Form.Item>
                     <Button type="primary" htmlType="submit" block loading={savingConfig}>
                       Save Config
@@ -444,8 +868,8 @@ export default function Cricket() {
             <Card title="🌐 CricAPI Integration" style={{ marginTop: 16 }} loading={loadingConfig}>
               <Alert
                 type="info"
-                message="CricAPI Key Configured"
-                description={<span>Paste your API key below to auto-import matches, squads, and flags. By default, the system includes a free key: <code>dd511ce4-aeb7-4e1f-86f4-1160404b2776</code>.</span>}
+                message="CricAPI free-tier keys are capped at 100 hits/day each"
+                description="Paste one key per line to pool multiple free accounts — calls rotate round-robin across them and automatically fail over to the next key if one gets rate-limited, multiplying your effective daily quota. A single key works fine too."
                 style={{ marginBottom: 16 }}
                 showIcon
               />
@@ -455,12 +879,12 @@ export default function Cricket() {
                     { value: 'cricket_data_api', label: 'CricAPI (cricapi.com)' }
                   ]} />
                 </Form.Item>
-                <Form.Item name="api_key" label="API Key">
-                  <Input.Password placeholder="Enter your CricAPI key here..." />
+                <Form.Item name="api_keys" label="API Keys (one per line)">
+                  <Input.TextArea rows={4} placeholder={'key1...\nkey2...\nkey3...'} />
                 </Form.Item>
                 <Space style={{ width: '100%' }} direction="vertical">
                   <Button type="primary" htmlType="submit" block loading={savingConfig} icon={<CloudDownloadOutlined />}>
-                    Save API Key
+                    Save API Keys
                   </Button>
                   <Button block onClick={syncCountries} loading={syncingCountries} icon={<SyncOutlined />} style={{ backgroundColor: '#13c2c2', color: 'white', border: 'none' }}>
                     {syncingCountries ? 'Caching flags...' : 'Sync Countries & Flags'}
@@ -472,6 +896,27 @@ export default function Cricket() {
               </Form>
             </Card>
 
+            <Card title="🏆 Series Catalog" style={{ marginTop: 16 }}
+              extra={<Text type="secondary" style={{ fontSize: 12 }}>Powers the Series dropdown below</Text>}>
+              <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
+                <Input
+                  placeholder="e.g. Ranji Trophy"
+                  value={newSeriesName}
+                  onChange={e => setNewSeriesName(e.target.value)}
+                  onPressEnter={addSeriesToCatalog}
+                />
+                <Button type="primary" icon={<PlusOutlined />} onClick={addSeriesToCatalog}>Add</Button>
+              </Space.Compact>
+              <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                <Space wrap>
+                  {seriesCatalog.map(s => (
+                    <Tag key={s.id} closable onClose={(e) => { e.preventDefault(); deleteSeriesFromCatalog(s.id) }} style={{ marginBottom: 6 }}>
+                      {s.name}
+                    </Tag>
+                  ))}
+                </Space>
+              </div>
+            </Card>
           </Col>
 
           <Col xs={24} lg={16}>
@@ -498,6 +943,7 @@ export default function Cricket() {
                         {m.team_b_flag && <img src={m.team_b_flag} alt="" style={{ width: 22, height: 15, marginLeft: 6, verticalAlign: 'middle', border: '1px solid #ddd', borderRadius: 2 }} />}
                       </b>{' '}
                       <Tag color={m.status === 'settled' ? 'red' : m.status === 'live' ? 'orange' : 'blue'}>{m.status}</Tag>
+                      <Tag>#{m.id.slice(0, 8)}</Tag>
                     </span>
                   }
                   extra={
@@ -507,60 +953,43 @@ export default function Cricket() {
                           Sync Squad
                         </Button>
                       )}
-                      <Button size="small" onClick={() => setSessionFor(m)}>+ Session</Button>
-                      <Button size="small" onClick={() => setMarketFor(m)}>+ Market</Button>
+                      <Button size="small" onClick={() => openSessionModal(m)}>+ Session</Button>
+                      <Popconfirm title="Delete this match?" description="Blocked if it has an active fantasy contest with joined entries." onConfirm={() => deleteMatch(m.id)}>
+                        <Button size="small" danger icon={<DeleteOutlined />} />
+                      </Popconfirm>
                     </Space>
                   }>
                   <Text type="secondary">{new Date(m.start_time).toLocaleString()}</Text>
-                  {(m.markets || []).map((mk: any) => (
-                    <div key={mk.id} style={{ marginTop: 12 }}>
-                      <Divider style={{ margin: '8px 0' }} />
-                      <Space wrap>
-                        <Text strong>{mk.label}</Text>
-                        <Tag color={mk.status === 'settled' ? 'red' : 'green'}>{mk.status}</Tag>
-                        {mk.result_key && <Tag color="gold">Result: {mk.result_key}</Tag>}
-                      </Space>
-                      <div style={{ marginTop: 8 }}>
-                        <Space wrap>
-                          {(mk.options || []).map((o: any) => (
-                            <Popconfirm key={o.key} title={`Settle "${mk.label}" → ${o.label} wins?`}
-                              disabled={mk.status === 'settled'} onConfirm={() => settleMarket(mk, o.key)}>
-                              <Button size="small" disabled={mk.status === 'settled'}>{o.label} @ {o.odds}</Button>
-                            </Popconfirm>
-                          ))}
-                          <Popconfirm title="Void this market and refund all stakes?"
-                            disabled={mk.status === 'settled'} onConfirm={() => settleMarket(mk, null)}>
-                            <Button size="small" danger disabled={mk.status === 'settled'}>Void / Refund</Button>
-                          </Popconfirm>
-                        </Space>
-                      </div>
-                    </div>
-                  ))}
 
-                  {/* Sessions Section */}
-                  {m.sessions && m.sessions.length > 0 && (
-                    <div style={{ marginTop: 20 }}>
-                      <Divider style={{ margin: '8px 0' }} />
-                      <div style={{ marginBottom: 4 }}><Text strong>Sessions (Fancy)</Text></div>
+                  {(m.sessions || []).length > 0 && (
+                    <>
+                      <Divider style={{ margin: '10px 0' }} />
+                      <Text strong style={{ fontSize: 12 }}>Sessions (Fancy)</Text>
                       {m.sessions.map((s: any) => (
                         <div key={s.id} style={{ marginTop: 8 }}>
                           <Space wrap>
-                            <Text>{s.label} ({s.min_runs}-{s.max_runs})</Text>
+                            <Text style={{ fontSize: 12 }}>{s.label} ({s.min_runs}-{s.max_runs})</Text>
                             <Tag color={s.status === 'settled' ? 'red' : 'green'}>{s.status}</Tag>
-                            {s.status !== 'settled' && (
+                            {s.status === 'settled' ? (
+                              <Text type="success" style={{ fontSize: 12 }}>Result: {s.result_runs} runs</Text>
+                            ) : (
                               <Space>
-                                <InputNumber size="small" placeholder="Final Runs" id={`runs-${s.id}`} style={{ width: 100 }} />
+                                <Button size="small" icon={<EditOutlined />} onClick={() => openSessionModal(m, s)} />
+                                <InputNumber size="small" placeholder="Final Runs" id={`runs-${s.id}`} />
                                 <Button size="small" type="primary" onClick={() => {
-                                  const val = (document.getElementById(`runs-${s.id}`) as HTMLInputElement)?.value;
-                                  if (val) settleSession(s.id, parseInt(val));
+                                  const el = document.getElementById(`runs-${s.id}`) as HTMLInputElement
+                                  const val = el?.value
+                                  if (val) settleSession(s.id, parseInt(val))
                                 }}>Settle</Button>
+                                <Popconfirm title="Delete this session?" description="Blocked if there are unsettled bets." onConfirm={() => deleteSession(s.id)}>
+                                  <Button size="small" danger type="text" icon={<DeleteOutlined />} />
+                                </Popconfirm>
                               </Space>
                             )}
-                            {s.status === 'settled' && <Text type="success">Result: {s.result_runs} runs</Text>}
                           </Space>
                         </div>
                       ))}
-                    </div>
+                    </>
                   )}
                 </Card>
               ))}
@@ -578,57 +1007,114 @@ export default function Cricket() {
             <Card title="Matches & Fantasy Pools"
               extra={
                 <Space>
-                  <Button type="primary" onClick={() => setLeagueOpen(true)}>+ Create Contest</Button>
+                  <Button type="primary" onClick={() => openLeagueModal()}>+ Create Contest</Button>
+                  <Button icon={<TrophyOutlined />} onClick={() => { loadScoringRules(); setRulesOpen(true) }}>Scoring Rulebook</Button>
                   <Button onClick={loadMatches}>Refresh</Button>
                 </Space>
               }
             >
               {matches.map(m => (
                 <Card key={m.id} type="inner" style={{ marginBottom: 16 }}
-                  title={<span>{m.series} — <b>{m.team_a} vs {m.team_b}</b></span>}
+                  title={<span>{m.series} — <b>{m.team_a} vs {m.team_b}</b> <Tag>#{m.id.slice(0, 8)}</Tag></span>}
                   extra={
-                    <Button size="small" type="primary" disabled={m.status === 'settled'}
-                      onClick={() => {
-                        setSettleFantasyFor(m)
-                        settleForm.resetFields()
-                      }}
-                    >
-                      Settle Points
-                    </Button>
+                    <Space>
+                      <Button size="small" type="primary" onClick={() => openLeagueModal(m.id)}>+ Add Contest</Button>
+                      <Button size="small" onClick={() => loadLeagues(m.id)} loading={loadingLeaguesFor === m.id}>
+                        {leaguesByMatch[m.id] ? 'Refresh' : 'View Contests'}
+                      </Button>
+                      <Popconfirm
+                        title="Finalize this match?"
+                        description="Pulls the final scorecard, auto-computes every drafted player's points, ranks contests, and pays out winners. Cannot be undone."
+                        onConfirm={() => finalizeMatch(m.id)}
+                        disabled={m.status === 'settled'}
+                      >
+                        <Button size="small" type="primary" disabled={m.status === 'settled'} loading={finalizingFor === m.id}>
+                          Finalize (Auto)
+                        </Button>
+                      </Popconfirm>
+                    </Space>
                   }
                 >
                   <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
                     Starts: {new Date(m.start_time).toLocaleString()} · Status: <Tag color={m.status === 'settled' ? 'red' : 'green'}>{m.status}</Tag>
                   </Text>
-                  
-                  {/* Fetching leagues would require fetching details, for simplicity we show match status and action */}
-                  <Divider style={{ margin: '8px 0' }} />
-                  <Text type="secondary">Admin Action: Create contests using the button above and select this match.</Text>
+
+                  {leaguesByMatch[m.id] && (
+                    <>
+                      <Divider style={{ margin: '8px 0' }} />
+                      {leaguesByMatch[m.id].length === 0 ? (
+                        <Text type="secondary">No contests created for this match yet.</Text>
+                      ) : (
+                        leaguesByMatch[m.id].map(l => (
+                          <div key={l.id} style={{ marginTop: 6 }}>
+                            <Space wrap>
+                              <Text strong>{l.name}</Text>
+                              <Tag>{l.current_entries}/{l.max_entries} joined</Tag>
+                              <Tag color={l.status === 'settled' ? 'red' : 'green'}>{l.status}</Tag>
+                              <Text type="secondary">₹{Number(l.entry_fee)} entry · ₹{Number(l.prize_pool)} pool</Text>
+                              <Popconfirm title="Delete this contest?" description="Blocked if it has joined entries and isn't settled yet." onConfirm={() => deleteLeague(l.id, m.id)}>
+                                <Button size="small" danger type="text" icon={<DeleteOutlined />} />
+                              </Popconfirm>
+                            </Space>
+                          </div>
+                        ))
+                      )}
+                    </>
+                  )}
                 </Card>
               ))}
             </Card>
           </Col>
           <Col xs={24} lg={10}>
-            <Card title="Seeded Fantasy Players" 
+            <Card title="Seeded Fantasy Players"
               extra={
-                <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => setPlayerOpen(true)}>
+                <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => openPlayerModal()}>
                   Add Player
                 </Button>
               }
               loading={loadingPlayers}
             >
-              <Table 
-                rowKey="id" 
-                dataSource={players} 
-                size="small" 
-                pagination={{ pageSize: 8 }}
-                columns={[
-                  { title: 'Name', dataIndex: 'name', render: (n: string) => <b>{n}</b> },
-                  { title: 'Team', dataIndex: 'team_name' },
-                  { title: 'Role', dataIndex: 'role', render: (r: string) => <Tag color="blue">{r.toUpperCase().replace('_', ' ')}</Tag> },
-                  { title: 'Credits', dataIndex: 'credits', render: (c: any) => `${Number(c).toFixed(1)}` }
-                ]} 
-              />
+              {players.length === 0 ? (
+                <Text type="secondary">No players seeded yet — use Sync Squad on a match or Sync Squads on a series.</Text>
+              ) : (
+                <Collapse
+                  defaultActiveKey={Object.keys(groupPlayersByTeam(players)).slice(0, 1)}
+                  items={Object.entries(groupPlayersByTeam(players)).map(([team, teamPlayers]) => ({
+                    key: team,
+                    label: <span><b>{team}</b> <Tag>{teamPlayers.length} players</Tag></span>,
+                    children: (
+                      <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                        {teamPlayers.map(p => (
+                          <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid #f0f0f0' }}>
+                            <div style={{ position: 'relative' }}>
+                              <Avatar src={p.avatar_url || undefined} size={36} icon={!p.avatar_url && <UserOutlined />} />
+                              {p.flag_url && (
+                                <img src={p.flag_url} alt="" style={{ position: 'absolute', bottom: -2, right: -2, width: 16, height: 11, border: '1px solid #fff', borderRadius: 2 }} />
+                              )}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div><b>{p.name}</b></div>
+                              <Space size={4}>
+                                <Tag color="blue" style={{ fontSize: 10 }}>{p.role.toUpperCase().replace('_', ' ')}</Tag>
+                                <Text type="secondary" style={{ fontSize: 11 }}>{Number(p.credits).toFixed(1)} cr</Text>
+                                {Number(p.matches_played) > 0 && (
+                                  <Text type="secondary" style={{ fontSize: 11 }}>
+                                    · {p.matches_played} match{Number(p.matches_played) === 1 ? '' : 'es'} · {Number(p.total_points).toFixed(1)} pts
+                                  </Text>
+                                )}
+                              </Space>
+                            </div>
+                            <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openPlayerModal(p)} />
+                            <Popconfirm title="Delete this player?" description="Blocked if set as a fantasy team's captain/vice-captain." onConfirm={() => deletePlayer(p.id)}>
+                              <Button size="small" danger type="text" icon={<DeleteOutlined />} />
+                            </Popconfirm>
+                          </div>
+                        ))}
+                      </Space>
+                    ),
+                  }))}
+                />
+              )}
             </Card>
           </Col>
         </Row>
@@ -643,12 +1129,12 @@ export default function Cricket() {
             <Card title="Active Match Operator Scoreboard">
               <div style={{ marginBottom: 16 }}>
                 <Text>Select Match: </Text>
-                <Select 
-                  style={{ width: '100%', marginTop: 8 }} 
+                <Select
+                  style={{ width: '100%', marginTop: 8 }}
                   placeholder="Select match to operate..."
                   value={liveMatchId}
                   onChange={(val) => setLiveMatchId(val)}
-                  options={matches.map(m => ({ value: m.id, label: `${m.team_a} vs ${m.team_b} (${m.series})` }))}
+                  options={matches.map(m => ({ value: m.id, label: matchLabel(m) }))}
                 />
               </div>
 
@@ -700,7 +1186,9 @@ export default function Cricket() {
                   <Divider style={{ margin: '8px 0' }}>Batsmen on Crease</Divider>
                   <Row gutter={8}>
                     <Col span={12}>
-                      <Form.Item name="batsman1_name" label="Batsman 1 Name"><Input placeholder="e.g. Virat Kohli" /></Form.Item>
+                      <Form.Item name="batsman1_name" label="Batsman 1 Name">
+                        <AutoComplete options={liveRosterOptions} filterOption={(input, opt) => (opt?.value as string).toLowerCase().includes(input.toLowerCase())} placeholder="Search player…" />
+                      </Form.Item>
                     </Col>
                     <Col span={6}>
                       <Form.Item name="batsman1_runs" label="Runs"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
@@ -711,7 +1199,9 @@ export default function Cricket() {
                   </Row>
                   <Row gutter={8}>
                     <Col span={12}>
-                      <Form.Item name="batsman2_name" label="Batsman 2 Name"><Input placeholder="e.g. Rohit Sharma" /></Form.Item>
+                      <Form.Item name="batsman2_name" label="Batsman 2 Name">
+                        <AutoComplete options={liveRosterOptions} filterOption={(input, opt) => (opt?.value as string).toLowerCase().includes(input.toLowerCase())} placeholder="Search player…" />
+                      </Form.Item>
                     </Col>
                     <Col span={6}>
                       <Form.Item name="batsman2_runs" label="Runs"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
@@ -724,7 +1214,9 @@ export default function Cricket() {
                   <Divider style={{ margin: '8px 0' }}>Active Bowler</Divider>
                   <Row gutter={8}>
                     <Col span={10}>
-                      <Form.Item name="bowler_name" label="Bowler Name"><Input placeholder="e.g. Jasprit Bumrah" /></Form.Item>
+                      <Form.Item name="bowler_name" label="Bowler Name">
+                        <AutoComplete options={liveRosterOptions} filterOption={(input, opt) => (opt?.value as string).toLowerCase().includes(input.toLowerCase())} placeholder="Search player…" />
+                      </Form.Item>
                     </Col>
                     <Col span={4}>
                       <Form.Item name="bowler_overs" label="Overs"><InputNumber min={0} step={0.1} style={{ width: '100%' }} /></Form.Item>
@@ -748,59 +1240,166 @@ export default function Cricket() {
           </Col>
 
           <Col xs={24} lg={14}>
-            <Card title="Live Ball-by-Ball micro-Betting Board" 
-              extra={
-                <Button type="primary" size="small" disabled={!liveMatch} onClick={() => setMarketFor(liveMatch)}>
-                  + Spawn Live Market
-                </Button>
-              }
-              loading={loadingLive}
-            >
+            <Card title="Live Fantasy Leaderboard" loading={loadingLive}>
               {liveMatch ? (
                 <div>
                   <Typography.Title level={5} style={{ color: '#d4af37' }}>
-                    📈 Active Live Markets: {liveMatch.team_a} vs {liveMatch.team_b}
+                    📈 {liveMatch.team_a} vs {liveMatch.team_b} — points auto-update every ~2 min while the match is live
                   </Typography.Title>
-                  
-                  {liveMatch.markets?.filter((m: any) => m.status === 'open').length === 0 ? (
-                    <Text type="secondary">No live markets currently spawned. Click "Spawn Live Market" to create one.</Text>
+                  {(leaguesByMatch[liveMatch.id] || []).length === 0 ? (
+                    <Text type="secondary">No fantasy contests for this match yet.</Text>
                   ) : (
-                    liveMatch.markets?.map((mk: any) => (
-                      <Card key={mk.id} type="inner" style={{ marginBottom: 12 }} title={mk.label}>
-                        <Space wrap>
-                          {(mk.options || []).map((o: any) => (
-                            <Popconfirm key={o.key} title={`Settle live market to: "${o.label}" wins?`}
-                              onConfirm={() => settleMarket(mk, o.key)}>
-                              <Button size="small">{o.label} @ {o.odds}</Button>
-                            </Popconfirm>
-                          ))}
-                          <Popconfirm title="Void live market and refund all bets?" onConfirm={() => settleMarket(mk, null)}>
-                            <Button size="small" danger>Void/Refund</Button>
-                          </Popconfirm>
-                        </Space>
+                    leaguesByMatch[liveMatch.id].map(l => (
+                      <Card key={l.id} type="inner" style={{ marginBottom: 12 }}
+                        title={<span>{l.name} <Tag color={l.status === 'settled' ? 'red' : 'green'}>{l.status}</Tag></span>}>
+                        <Text type="secondary">{l.current_entries}/{l.max_entries} joined · ₹{Number(l.prize_pool)} pool — open the contest in-app to see live per-team ranks.</Text>
                       </Card>
                     ))
                   )}
                 </div>
               ) : (
-                <Text type="secondary">Select a match on the left to display its live betting board.</Text>
+                <Text type="secondary">Select a match on the left to see its fantasy contests.</Text>
               )}
             </Card>
           </Col>
         </Row>
       )
     }
+    ,{
+      key: 'players',
+      label: '🧢 Players',
+      children: (
+        <Card title="Fantasy Players — full roster management"
+          extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openPlayerModal()}>Add Player</Button>}
+          loading={loadingPlayers}
+        >
+          <Table
+            rowKey="id"
+            dataSource={players}
+            scroll={{ x: 'max-content' }}
+            columns={[
+              {
+                title: 'Player', render: (p: any) => (
+                  <Space>
+                    <div style={{ position: 'relative' }}>
+                      <Avatar src={p.avatar_url || undefined} size={32} icon={!p.avatar_url && <UserOutlined />} />
+                      {p.flag_url && (
+                        <img src={p.flag_url} alt="" style={{ position: 'absolute', bottom: -2, right: -2, width: 14, height: 10, border: '1px solid #fff', borderRadius: 2 }} />
+                      )}
+                    </div>
+                    <b>{p.name}</b>
+                  </Space>
+                )
+              },
+              { title: 'Role', dataIndex: 'role', render: (r: string) => <Tag color="blue">{r.toUpperCase().replace('_', ' ')}</Tag> },
+              { title: 'Team / Country', dataIndex: 'team_name' },
+              { title: 'Credits', dataIndex: 'credits', render: (c: number) => Number(c).toFixed(1) },
+              { title: 'Matches', dataIndex: 'matches_played' },
+              { title: 'Total Points', dataIndex: 'total_points', render: (v: number) => Number(v).toFixed(1) },
+              {
+                title: 'Action', render: (p: any) => (
+                  <Space>
+                    <Button size="small" icon={<EyeOutlined />} onClick={() => openPlayerView(p)} />
+                    <Button size="small" icon={<EditOutlined />} onClick={() => openPlayerModal(p)} />
+                    <Button size="small" onClick={() => openMapModal(p)}>Map</Button>
+                    <Popconfirm title="Delete this player?" description="Blocked if set as a fantasy team's captain/vice-captain." onConfirm={() => deletePlayer(p.id)}>
+                      <Button size="small" danger type="text" icon={<DeleteOutlined />} />
+                    </Popconfirm>
+                  </Space>
+                )
+              },
+            ]}
+          />
+        </Card>
+      )
+    }
+    ,{
+      key: 'countries',
+      label: '🌍 Countries',
+      children: (
+        <Card title="Country Flags"
+          extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openCountryModal()}>Add Country</Button>}
+          loading={loadingCountries}
+        >
+          <Table
+            rowKey="id"
+            dataSource={countries}
+            scroll={{ x: 'max-content' }}
+            columns={[
+              { title: 'Flag', dataIndex: 'flag_url', render: (u: string) => <img src={u} alt="" style={{ width: 32, height: 22, objectFit: 'cover', border: '1px solid #eee' }} /> },
+              { title: 'Code', dataIndex: 'id' },
+              { title: 'Country / Team Name', dataIndex: 'name' },
+              { title: 'Action', render: (record: any) => <Button size="small" onClick={() => openCountryModal(record)}>Edit</Button> },
+            ]}
+          />
+        </Card>
+      )
+    }
+    ,{
+      key: 'contests',
+      label: '📋 All Contests',
+      children: (
+        <Card title="All Fantasy Contests"
+          extra={
+            <Space>
+              <Select allowClear placeholder="Status" style={{ width: 130 }}
+                options={[{ value: 'open', label: 'Open' }, { value: 'closed', label: 'Closed' }, { value: 'settled', label: 'Settled' }, { value: 'cancelled', label: 'Cancelled' }]}
+                onChange={v => setContestFilters(f => ({ ...f, status: v }))} />
+              <Select allowClear placeholder="Match" style={{ width: 240 }} showSearch optionFilterProp="label"
+                options={matches.map(m => ({ value: m.id, label: matchLabel(m) }))}
+                onChange={v => setContestFilters(f => ({ ...f, match_id: v }))} />
+              <DatePicker.RangePicker onChange={(dates) => setContestFilters(f => ({
+                ...f,
+                from: dates?.[0]?.toISOString(),
+                to: dates?.[1]?.toISOString(),
+              }))} />
+              <Button onClick={() => loadContests(contestPage, contestFilters)}>Refresh</Button>
+            </Space>
+          }
+          loading={loadingContests}
+        >
+          <Table
+            rowKey="id"
+            dataSource={contests}
+            scroll={{ x: 'max-content' }}
+            pagination={{
+              current: contestPage,
+              pageSize: CONTEST_PAGE_SIZE,
+              total: contestsTotal,
+              onChange: (page) => { setContestPage(page); loadContests(page, contestFilters) },
+            }}
+            columns={[
+              { title: 'Match', render: (r: any) => `${r.team_a} vs ${r.team_b}` },
+              { title: 'Contest Name', dataIndex: 'name' },
+              { title: 'Entry Fee', dataIndex: 'entry_fee', render: (v: number) => `₹${Number(v)}` },
+              { title: 'Prize Pool', dataIndex: 'prize_pool', render: (v: number) => `₹${Number(v)}` },
+              { title: 'Entries', render: (r: any) => `${r.current_entries}/${r.max_entries}` },
+              { title: 'Status', dataIndex: 'status', render: (s: string) => <Tag color={s === 'settled' ? 'red' : s === 'cancelled' ? 'default' : 'green'}>{s}</Tag> },
+              { title: 'Action', render: (r: any) => <Button size="small" icon={<EyeOutlined />} onClick={() => openContestDrawer(r.id)}>View</Button> },
+            ]}
+          />
+        </Card>
+      )
+    }
   ]
 
   return (
     <div>
-      <h2 style={{ color: '#d4af37', marginBottom: 24 }}>🏏 Cricket Betting Management</h2>
+      <h2 style={{ color: '#d4af37', marginBottom: 24 }}>🏏 Cricket Fantasy Management</h2>
       <Tabs defaultActiveKey="matches" items={tabItems} style={{ background: '#fff', padding: 24, borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }} />
 
       {/* Add Match Modal */}
       <Modal open={matchOpen} title="Add Cricket Match" onCancel={() => setMatchOpen(false)} onOk={() => mForm.submit()} okText="Add">
         <Form form={mForm} layout="vertical" onFinish={createMatch}>
-          <Form.Item name="series" label="Series" rules={[{ required: true }]}><Input placeholder="IPL 2026 / ICC T20 World Cup" /></Form.Item>
+          <Form.Item name="series" label="Series" rules={[{ required: true }]}>
+            <Select
+              showSearch
+              placeholder="Select a series"
+              options={seriesCatalog.map(s => ({ value: s.name, label: s.name }))}
+              filterOption={(input, option) => (option?.label as string).toLowerCase().includes(input.toLowerCase())}
+              notFoundContent={<Text type="secondary">No match — add it to the Series Catalog card first.</Text>}
+            />
+          </Form.Item>
           <Form.Item name="format" label="Format" rules={[{ required: true }]} initialValue="t20">
             <Select options={['ipl', 't20', 'odi', 'test'].map(f => ({ value: f, label: f.toUpperCase() }))} />
           </Form.Item>
@@ -816,32 +1415,32 @@ export default function Cricket() {
         </Form>
       </Modal>
 
-      {/* Add Market Modal */}
-      <Modal open={!!marketFor} title={`Add Market — ${marketFor?.team_a} vs ${marketFor?.team_b}`}
-        onCancel={() => setMarketFor(null)} onOk={() => mkForm.submit()} okText="Add Market">
-        <Form form={mkForm} layout="vertical" onFinish={createMarket}>
-          <Form.Item name="market_type" label="Market Type" rules={[{ required: true }]} initialValue="match_winner">
-            <Select options={[
-              { value: 'match_winner', label: 'Match Winner' },
-              { value: 'toss_winner', label: 'Toss Winner' },
-              { value: 'top_batsman', label: 'Top Batsman' },
-              { value: 'total_runs', label: 'Total Runs' },
-              { value: 'live_ball', label: 'Live Ball (Micro)' },
-              { value: 'live_over', label: 'Live Over (Micro)' },
-              { value: 'live_session', label: 'Live Session (Micro)' }
-            ]} />
+      {/* Add/Edit Session Modal */}
+      <Modal open={!!sessionFor} title={editingSession ? `Edit Session — ${sessionFor?.team_a} vs ${sessionFor?.team_b}` : `Add Session — ${sessionFor?.team_a} vs ${sessionFor?.team_b}`}
+        onCancel={closeSessionModal} onOk={() => sForm.submit()} okText={editingSession ? 'Save' : 'Add Session'}>
+        <Form form={sForm} layout="vertical" onFinish={saveSession}>
+          <Form.Item name="label" label="Label" rules={[{ required: true }]}>
+            <Input placeholder="e.g. 6 Over Session - India" />
           </Form.Item>
-          <Form.Item name="label" label="Question" rules={[{ required: true }]}><Input placeholder="Who will win the match?" /></Form.Item>
-          <Form.Item name="options" label="Options (one per line: key|label|odds)" rules={[{ required: true }]}
-            tooltip="Example: a|India|1.75">
-            <Input.TextArea rows={4} placeholder={'a|India|1.75\nb|Australia|2.05'} />
-          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="min_runs" label="Line (Min)" rules={[{ required: true }]}>
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="max_runs" label="Line (Max)" rules={[{ required: true }]}>
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Text type="secondary">Min is for 'No' bet, Max is for 'Yes' bet.</Text>
         </Form>
       </Modal>
 
-      {/* Add Player Modal */}
-      <Modal open={playerOpen} title="Seed Global Fantasy Player" onCancel={() => setPlayerOpen(false)} onOk={() => pForm.submit()} okText="Add Player">
-        <Form form={pForm} layout="vertical" onFinish={addPlayer}>
+      {/* Add/Edit Player Modal */}
+      <Modal open={playerOpen} title={editingPlayer ? 'Edit Fantasy Player' : 'Seed Global Fantasy Player'} onCancel={() => setPlayerOpen(false)} onOk={() => pForm.submit()} okText={editingPlayer ? 'Save' : 'Add Player'}>
+        <Form form={pForm} layout="vertical" onFinish={savePlayer}>
           <Form.Item name="name" label="Player Name" rules={[{ required: true }]}><Input placeholder="e.g. Virat Kohli" /></Form.Item>
           <Form.Item name="role" label="Role" rules={[{ required: true }]} initialValue="batsman">
             <Select options={[
@@ -855,7 +1454,7 @@ export default function Cricket() {
             <InputNumber min={5.0} max={15.0} step={0.5} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="team_name" label="Team / Country" rules={[{ required: true }]}><Input placeholder="e.g. India" /></Form.Item>
-          <Form.Item name="avatar_url" label="Avatar URL"><Input placeholder="https://..." /></Form.Item>
+          <PlayerAvatarUploadField form={pForm} />
         </Form>
       </Modal>
 
@@ -863,7 +1462,7 @@ export default function Cricket() {
       <Modal open={leagueOpen} title="Create Fantasy Contest Pool" onCancel={() => setLeagueOpen(false)} onOk={() => lForm.submit()} okText="Create Pool">
         <Form form={lForm} layout="vertical" onFinish={createLeague}>
           <Form.Item name="match_id" label="Target Match" rules={[{ required: true }]}>
-            <Select options={matches.map(m => ({ value: m.id, label: `${m.team_a} vs ${m.team_b} (${m.series})` }))} />
+            <Select disabled={leagueMatchLocked} options={matches.map(m => ({ value: m.id, label: matchLabel(m) }))} />
           </Form.Item>
           <Form.Item name="name" label="Contest Pool Name" rules={[{ required: true }]}><Input placeholder="e.g. Mega Contest / Head to Head" /></Form.Item>
           <Row gutter={16}>
@@ -883,44 +1482,14 @@ export default function Cricket() {
         </Form>
       </Modal>
 
-      {/* Settle Points Modal */}
-      <Modal open={!!settleFantasyFor} title={`Post Player Performance Scorecard — ${settleFantasyFor?.team_a} vs ${settleFantasyFor?.team_b}`}
-        onCancel={() => setSettleFantasyFor(null)} onOk={() => settleForm.submit()} okText="Calculate & Disburse Payouts" width={600}>
-        <Form form={settleForm} layout="vertical" onFinish={handleSettleFantasy}>
-          <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-            Input final fantasy scoring points achieved by match players. Multipliers for Captain (2x) and Vice-Captain (1.5x) are calculated automatically.
-          </Text>
-          <div style={{ maxHeight: 400, overflowY: 'auto', paddingRight: 8 }}>
-            {matchPlayersToScore.length === 0 ? (
-              <Text type="warning" style={{ display: 'block' }}>
-                No seeded players found belonging to {settleFantasyFor?.team_a} or {settleFantasyFor?.team_b}. Please add players in the global roster tab first.
-              </Text>
-            ) : (
-              matchPlayersToScore.map(p => (
-                <Row key={p.id} gutter={16} align="middle" style={{ marginBottom: 8 }}>
-                  <Col span={12}>
-                    <b>{p.name}</b> <Tag>{p.team_name}</Tag>
-                  </Col>
-                  <Col span={12}>
-                    <Form.Item name={`p_${p.id}`} noStyle initialValue={0}>
-                      <InputNumber min={-50} max={1000} step={0.5} placeholder="Points" style={{ width: '100%' }} />
-                    </Form.Item>
-                  </Col>
-                </Row>
-              ))
-            )}
-          </div>
-        </Form>
-      </Modal>
-
       {/* Import Series Modal */}
       <Modal open={seriesOpen} title="Import Matches from Series" onCancel={() => setSeriesOpen(false)} footer={null} width={700}>
         <div style={{ marginBottom: 16 }}>
           <Space.Compact style={{ width: '100%' }}>
-            <Input 
-              placeholder="Search Series (e.g. IPL, ICC, Big Bash)..." 
-              value={seriesQuery} 
-              onChange={e => setSeriesQuery(e.target.value)} 
+            <Input
+              placeholder="Search Series (e.g. IPL, ICC, Big Bash)..."
+              value={seriesQuery}
+              onChange={e => setSeriesQuery(e.target.value)}
               onPressEnter={searchSeries}
             />
             <Button type="primary" loading={searchingSeries} onClick={searchSeries}>
@@ -935,48 +1504,266 @@ export default function Cricket() {
           size="small"
           loading={searchingSeries}
           pagination={{ pageSize: 5 }}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Series Name', dataIndex: 'name', render: (n: string) => <b>{n}</b> },
             { title: 'Start Date', dataIndex: 'startDate', render: (d: string) => d ? new Date(d).toLocaleDateString() : '-' },
             { title: 'End Date', dataIndex: 'endDate', render: (d: string) => d ? new Date(d).toLocaleDateString() : '-' },
-            { title: 'Matches', dataIndex: 'matches' },
-            { 
-              title: 'Action', 
+            { title: 'Matches', dataIndex: 'matchCount' },
+            {
+              title: 'Action',
               render: (record: any) => (
-                <Button 
-                  size="small" 
-                  type="primary" 
-                  loading={importingSeriesId === record.id} 
-                  onClick={() => importSeriesMatches(record.id)}
-                >
-                  Import Matches
-                </Button>
-              ) 
+                <Space>
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={importingSeriesId === record.id}
+                    onClick={() => importSeriesMatches(record.id)}
+                  >
+                    Import Matches
+                  </Button>
+                  <Button
+                    size="small"
+                    icon={<TeamOutlined />}
+                    loading={syncingSeriesSquadsId === record.id}
+                    onClick={() => syncSeriesSquads(record.id)}
+                  >
+                    Sync Squads
+                  </Button>
+                </Space>
+              )
             }
           ]}
         />
       </Modal>
 
-      <Modal open={!!sessionFor} title={`Add Session — ${sessionFor?.team_a} vs ${sessionFor?.team_b}`}
-        onCancel={() => setSessionFor(null)} onOk={() => sForm.submit()} okText="Add Session">
-        <Form form={sForm} layout="vertical" onFinish={createSession}>
-          <Form.Item name="label" label="Label" rules={[{ required: true }]} initialValue="6 Over Session - India">
-            <Input placeholder="e.g. 6 Over Session - India" />
-          </Form.Item>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="min_runs" label="Line (Min)" rules={[{ required: true }]} initialValue={45}>
-                <InputNumber style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="max_runs" label="Line (Max)" rules={[{ required: true }]} initialValue={47}>
-                <InputNumber style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
+      {/* Scoring Rulebook Modal */}
+      <Modal open={rulesOpen} title="🏆 Dream11-Style Scoring Rulebook" onCancel={() => setRulesOpen(false)} onOk={() => rForm.submit()} okText="Save Rulebook" confirmLoading={savingRules} width={640}>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+          Points are computed automatically from the live scorecard. These defaults match Dream11's published T20 point values — only change them if you want different contest economics.
+        </Text>
+        <Form form={rForm} layout="vertical" onFinish={saveScoringRules}>
+          <Divider style={{ margin: '8px 0' }}>Batting</Divider>
+          <Row gutter={12}>
+            <Col span={8}><Form.Item name="runPoint" label="Per Run"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="boundaryBonus" label="Four Bonus"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="sixBonus" label="Six Bonus"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
           </Row>
-          <Text type="secondary">Min is for 'No' bet, Max is for 'Yes' bet.</Text>
+          <Row gutter={12}>
+            <Col span={6}><Form.Item name="bonus25Runs" label="25 Runs"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={6}><Form.Item name="bonus50Runs" label="50 Runs"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={6}><Form.Item name="bonus75Runs" label="75 Runs"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={6}><Form.Item name="bonus100Runs" label="100 Runs"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={12}><Form.Item name="duckPenalty" label="Duck Penalty"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+          </Row>
+
+          <Divider style={{ margin: '8px 0' }}>Bowling</Divider>
+          <Row gutter={12}>
+            <Col span={12}><Form.Item name="wicketPoints" label="Per Wicket"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={12}><Form.Item name="maidenOverPoints" label="Maiden Over"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={8}><Form.Item name="bonus4Wickets" label="4-Wkt Bonus"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="bonus5Wickets" label="5-Wkt Bonus"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="bowledLbwBonus" label="Bowled/LBW Bonus"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+          </Row>
+
+          <Divider style={{ margin: '8px 0' }}>Fielding</Divider>
+          <Row gutter={12}>
+            <Col span={6}><Form.Item name="catchPoints" label="Per Catch"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={6}><Form.Item name="bonus3Catches" label="3-Catch Bonus"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={6}><Form.Item name="stumpingPoints" label="Stumping"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={6}><Form.Item name="runOutPoints" label="Run Out"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+          </Row>
+
+          <Divider style={{ margin: '8px 0' }}>Captaincy</Divider>
+          <Row gutter={12}>
+            <Col span={12}><Form.Item name="captainMultiplier" label="Captain Multiplier"><InputNumber step={0.1} style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={12}><Form.Item name="viceCaptainMultiplier" label="Vice-Captain Multiplier"><InputNumber step={0.1} style={{ width: '100%' }} /></Form.Item></Col>
+          </Row>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            Strike-rate and economy-rate bonus bands use Dream11's standard tiers and aren't editable here — ask engineering if you need those changed.
+          </Text>
         </Form>
+      </Modal>
+
+      {/* Country / Flag Modal */}
+      <Modal open={countryOpen} title={editingCountry ? 'Edit Country' : 'Add Country'} onCancel={() => setCountryOpen(false)} onOk={() => cForm.submit()} okText="Save">
+        <Form form={cForm} layout="vertical" onFinish={saveCountry}>
+          <Form.Item name="id" label="Code (e.g. IND, AUS)" rules={[{ required: true }]}>
+            <Input maxLength={10} disabled={!!editingCountry} />
+          </Form.Item>
+          <Form.Item name="name" label="Country / Team Name" rules={[{ required: true }]}><Input placeholder="e.g. India" /></Form.Item>
+          <CountryFlagUploadField form={cForm} />
+        </Form>
+      </Modal>
+
+      {/* Contest Detail Drawer */}
+      <Drawer
+        title={contestDetail ? `${contestDetail.team_a} vs ${contestDetail.team_b} — ${contestDetail.name}` : 'Contest Detail'}
+        open={contestDrawerOpen}
+        onClose={() => setContestDrawerOpen(false)}
+        width={isMobile ? '100%' : 640}
+        loading={loadingContestDetail}
+      >
+        {contestDetail && (
+          <>
+            <Form form={contestEditForm} layout="vertical" onFinish={saveContestEdit}>
+              <Form.Item name="name" label="Contest Name" rules={[{ required: true }]}><Input /></Form.Item>
+              {contestDetail.current_entries > 0 && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message={`This contest has ${contestDetail.current_entries} joined entries — entry fee, prize pool, and max entries are locked.`}
+                />
+              )}
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item name="entry_fee" label="Entry Fee (₹)"><InputNumber min={0} style={{ width: '100%' }} disabled={contestDetail.current_entries > 0} /></Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="prize_pool" label="Prize Pool (₹)"><InputNumber min={0} style={{ width: '100%' }} disabled={contestDetail.current_entries > 0} /></Form.Item>
+                </Col>
+              </Row>
+              <Form.Item name="max_entries" label="Max Entries"><InputNumber min={2} style={{ width: '100%' }} disabled={contestDetail.current_entries > 0} /></Form.Item>
+              <Form.Item name="prize_distribution" label="Custom Prize Payout Tiers (one per line: rank_start|rank_end|payout)"
+                tooltip="Specifies cash payout ranges. Example: 1|1|5000 means Rank 1 gets 5000."
+              >
+                <Input.TextArea rows={4} placeholder={'1|1|5000\n2|5|1000\n6|10|500'} disabled={contestDetail.current_entries > 0} />
+              </Form.Item>
+              <Button type="primary" htmlType="submit" loading={savingContest}>Save Changes</Button>
+            </Form>
+
+            <Divider>Participants ({contestEntries.length})</Divider>
+            <Table
+              rowKey="id"
+              size="small"
+              dataSource={contestEntries}
+              pagination={{ pageSize: 10 }}
+              scroll={{ x: 'max-content' }}
+              columns={[
+                { title: 'User', dataIndex: 'username' },
+                { title: 'Rank', dataIndex: 'final_rank', render: (r: number | null) => r ?? '-' },
+                { title: 'Points', dataIndex: 'points', render: (p: number) => Number(p).toFixed(1) },
+                { title: 'Payout', dataIndex: 'payout_received', render: (p: number) => `₹${Number(p).toFixed(0)}` },
+                { title: 'Status', dataIndex: 'status', render: (s: string) => <Tag>{s}</Tag> },
+              ]}
+            />
+          </>
+        )}
+      </Drawer>
+
+      {/* Player View Drawer */}
+      <Drawer
+        title={viewingPlayer ? viewingPlayer.name : 'Player Detail'}
+        open={!!viewingPlayer}
+        onClose={() => setViewingPlayer(null)}
+        width={isMobile ? '100%' : 520}
+        loading={loadingPlayerHistory}
+      >
+        {viewingPlayer && (
+          <>
+            <Space align="start" style={{ marginBottom: 16 }}>
+              <div style={{ position: 'relative' }}>
+                <Avatar src={viewingPlayer.avatar_url || undefined} size={56} icon={!viewingPlayer.avatar_url && <UserOutlined />} />
+                {viewingPlayer.flag_url && (
+                  <img src={viewingPlayer.flag_url} alt="" style={{ position: 'absolute', bottom: -2, right: -2, width: 20, height: 14, border: '1px solid #fff', borderRadius: 2 }} />
+                )}
+              </div>
+              <div>
+                <Tag color="blue">{viewingPlayer.role.toUpperCase().replace('_', ' ')}</Tag>
+                <div style={{ marginTop: 4 }}><Text type="secondary">{viewingPlayer.team_name} · {Number(viewingPlayer.credits).toFixed(1)} cr</Text></div>
+              </div>
+            </Space>
+            <Divider>Match History ({playerHistory.length})</Divider>
+            {playerHistory.length === 0 ? (
+              <Text type="secondary">No match performances recorded yet.</Text>
+            ) : (
+              <Table
+                rowKey={(r: any) => `${r.match_id}`}
+                size="small"
+                dataSource={playerHistory}
+                pagination={{ pageSize: 10 }}
+                scroll={{ x: 'max-content' }}
+                columns={[
+                  { title: 'Match', render: (r: any) => `${r.team_a} vs ${r.team_b}` },
+                  { title: 'Runs', dataIndex: 'runs_scored' },
+                  { title: 'Wkts', dataIndex: 'wickets' },
+                  { title: 'Catches', dataIndex: 'catches' },
+                  { title: 'Points', dataIndex: 'fantasy_points', render: (v: number) => Number(v).toFixed(1) },
+                ]}
+              />
+            )}
+          </>
+        )}
+      </Drawer>
+
+      {/* Player Map Modal (to a match squad, or to a country) */}
+      <Modal open={!!mappingPlayer} title={mappingPlayer ? `Map — ${mappingPlayer.name}` : 'Map Player'} onCancel={closeMapModal} footer={null} width={560}>
+        {mappingPlayer && (
+          <Tabs items={[
+            {
+              key: 'match', label: 'Match Squad', children: (
+                <div>
+                  <Space.Compact style={{ width: '100%', marginBottom: 16 }}>
+                    <Select
+                      style={{ width: '100%' }}
+                      showSearch optionFilterProp="label"
+                      placeholder="Select a match to add this player to"
+                      value={mapMatchId}
+                      onChange={setMapMatchId}
+                      options={matches.map(m => ({ value: m.id, label: matchLabel(m) }))}
+                    />
+                    <Button type="primary" loading={mappingMatch} onClick={mapPlayerToMatch} disabled={!mapMatchId}>Add</Button>
+                  </Space.Compact>
+                  <Table
+                    rowKey="match_id"
+                    size="small"
+                    loading={loadingMappings}
+                    dataSource={playerMappings}
+                    pagination={false}
+                    scroll={{ x: 'max-content' }}
+                    columns={[
+                      { title: 'Match', render: (r: any) => `${r.team_a} vs ${r.team_b}` },
+                      { title: 'Status', dataIndex: 'status', render: (s: string) => <Tag>{s}</Tag> },
+                      { title: 'Points', dataIndex: 'fantasy_points', render: (v: number) => Number(v).toFixed(1) },
+                      {
+                        title: 'Action', render: (r: any) => (
+                          <Popconfirm title="Remove this player from the match squad?" onConfirm={() => unmapPlayerFromMatch(r.match_id)}>
+                            <Button size="small" danger type="text" icon={<DeleteOutlined />} />
+                          </Popconfirm>
+                        )
+                      },
+                    ]}
+                  />
+                </div>
+              )
+            },
+            {
+              key: 'country', label: 'Country', children: (
+                <div>
+                  <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+                    Sets this player's team/country to exactly match a Countries entry, so the flag badge renders correctly.
+                  </Text>
+                  <Space.Compact style={{ width: '100%' }}>
+                    <Select
+                      style={{ width: '100%' }}
+                      showSearch optionFilterProp="label"
+                      placeholder="Select a country"
+                      value={mapCountryId}
+                      onChange={setMapCountryId}
+                      options={countries.map(c => ({ value: c.id, label: c.name }))}
+                    />
+                    <Button type="primary" loading={mappingCountry} onClick={mapPlayerToCountry} disabled={!mapCountryId}>Save</Button>
+                  </Space.Compact>
+                </div>
+              )
+            },
+          ]} />
+        )}
       </Modal>
     </div>
   )

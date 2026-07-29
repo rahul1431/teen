@@ -4,16 +4,22 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "vitest",
+    "test:lb": "vitest tests/load-balancing.test.ts",
+    "test:stress-5k": "tsx tests/stress-test-5k.ts"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",
     "@fastify/jwt": "^8.0.1",
+    "@fastify/rate-limit": "^11.1.0",
     "axios": "^1.18.1",
     "dotenv": "^16.4.5",
     "fastify": "^4.28.1",
     "ioredis": "^5.4.1",
+    "kafkajs": "^2.2.4",
     "pg": "^8.12.0",
+    "pino": "^8.17.2",
     "uuid": "^10.0.0",
     "ws": "^8.18.0",
     "zod": "^3.23.8"
@@ -24,6 +30,7 @@
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.5.12",
     "tsx": "^4.16.2",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "vitest": "^2.0.0"
   }
 }

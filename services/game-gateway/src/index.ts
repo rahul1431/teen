@@ -11,6 +11,8 @@ import { MatchmakingService } from './matchmaking'
 import { GameWatchdog } from './watchdog'
 import { RealtimeHub, Conn } from './realtime'
 import { monitorEmitter } from './monitor-emitter'
+import { SessionManager } from './session-manager'
+import { createRateLimiter } from './middleware/rate-limiter'
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
@@ -21,12 +23,42 @@ const redisOpts = {
 const redis = new Redis(process.env.REDIS_URL!, redisOpts)
 redis.on('error', (err) => console.error('[redis] pub error', err.message))
 
+// Session Manager for stateless load balancing
+const sessionManager = new SessionManager(redis)
+const INSTANCE_ID = `gateway-${crypto.randomUUID().substring(0, 8)}`
+
 // Dealer-tip presets; must match the mobile tip tray.
 const TIP_AMOUNTS = [5, 10, 20, 50]
+// Minimum gap between two tips from the same user in the same room. The
+// mobile client has no in-flight guard on the tip button, and the previous
+// per-tip idempotency key was time-based (fresh on every message, so a
+// double-tap or reconnect replay could never be deduped) — see
+// docs/Bugs/dealer-tip-idempotency-key-is-not-actually-idempotent.md.
+const TIP_DEBOUNCE_MS = 3000
 
 async function start() {
+  // Validate environment variables early
+  const jwtSecret = process.env.JWT_SECRET
+  if (!jwtSecret) {
+    throw new Error('JWT_SECRET environment variable is not set. Configure it in .env or via PM2 ecosystem config.')
+  }
+
   await app.register(cors, { origin: true })
-  await app.register(jwt, { secret: process.env.JWT_SECRET! })
+  await app.register(jwt, { secret: jwtSecret })
+
+  // Initialize rate limiter
+  const rateLimiter = createRateLimiter(redis)
+
+  // Apply HTTP rate limiting to all routes
+  app.addHook('onRequest', (req, reply, done) => {
+    // Skip rate limiting for health checks
+    if (req.url === '/health') {
+      return done()
+    }
+    rateLimiter.httpLimiter(req, reply)
+      .then(() => done())
+      .catch(done)
+  })
 
   const httpServer = app.server
   const hub = new RealtimeHub()
@@ -34,20 +66,36 @@ async function start() {
 
   const redisSub = new Redis(process.env.REDIS_URL!, redisOpts)
   redisSub.on('error', (err) => console.error('[redis] sub error', err.message))
-  await redisSub.subscribe('gateway:broadcast')
+  await redisSub.subscribe('gateway:broadcast', 'config:updated')
   redisSub.on('message', (channel, message) => {
-    if (channel !== 'gateway:broadcast') return
-    try {
-      const msg = JSON.parse(message)
-      if (msg.sender === hub.processId) return
-      
-      if (msg.type === 'room') {
-        hub.sendToRoom(msg.target, msg.event, msg.data, msg.sender)
-      } else if (msg.type === 'user') {
-        hub.sendToUser(msg.target, msg.event, msg.data, msg.sender)
+    if (channel === 'gateway:broadcast') {
+      try {
+        const msg = JSON.parse(message)
+        if (msg.sender === hub.processId) return
+
+        if (msg.type === 'room') {
+          hub.sendToRoom(msg.target, msg.event, msg.data, msg.sender)
+        } else if (msg.type === 'user') {
+          hub.sendToUser(msg.target, msg.event, msg.data, msg.sender)
+        } else if (msg.type === 'joinRoom') {
+          hub.joinRoomLocal(msg.userId, msg.target)
+        }
+      } catch (e) {
+        console.error('[redis-sub] Error processing cluster message', e)
       }
-    } catch (e) {
-      console.error('[redis-sub] Error processing cluster message', e)
+    } else if (channel === 'config:updated') {
+      try {
+        const event = JSON.parse(message)
+        console.log(`[config] Reload triggered for ${event.gameType}`)
+        const userMap = (hub as any)['byUser'] as Map<string, Set<any>>
+        for (const conns of userMap.values()) {
+          for (const conn of conns) {
+            hub.send(conn, 'config:reload', { gameType: event.gameType, reloadedAt: event.updatedAt })
+          }
+        }
+      } catch (e) {
+        console.error('[redis-sub] Error processing config:updated', e)
+      }
     }
   })
 
@@ -59,7 +107,16 @@ async function start() {
   // ?token= query param or the Authorization header.
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' })
 
-  wss.on('connection', (ws: WebSocket, req) => {
+  wss.on('connection', async (ws: WebSocket, req) => {
+    // --- Rate limit WebSocket connections per IP ---
+    const clientIP = req.socket.remoteAddress || 'unknown'
+    const { allowed, resetTime } = await rateLimiter.wsLimiter(clientIP)
+    if (!allowed) {
+      console.warn(`[ws] rate limit exceeded for IP ${clientIP}`)
+      ws.close(4029, `WebSocket connection rate limit exceeded. Retry after ${Math.ceil((resetTime - Date.now()) / 1000)}s`)
+      return
+    }
+
     // --- Authenticate the handshake ---
     let userId: string, username: string
     try {
@@ -79,6 +136,7 @@ async function start() {
     const conn: Conn = { ws, userId, username, rooms: new Set(), isAlive: true }
     hub.add(conn)
     console.log(`[ws] connected: user=${userId}`)
+    hub.send(conn, 'config:version', { checkingAt: new Date().toISOString() })
 
     // Heartbeat — mark alive on pong; a sweep below culls dead links.
     ;(ws as any).isAlive = true
@@ -99,6 +157,15 @@ async function start() {
 
     ws.on('close', () => {
       hub.remove(conn)
+      // Only dequeue once the user's *last* live connection is gone — a
+      // second connected device shouldn't get kicked out of a shared
+      // matchmaking search just because one tab/session closed. See
+      // docs/Bugs/matchmaking-queue-orphaned-on-disconnect.md.
+      if (!hub.hasUser(conn.userId)) {
+        matchmaking.leaveQueueOnDisconnect(conn.userId).catch((err) =>
+          console.error(`[ws] leaveQueueOnDisconnect failed for user=${conn.userId}:`, err)
+        )
+      }
       console.log(`[ws] disconnected: user=${userId}`)
     })
 
@@ -122,6 +189,11 @@ async function start() {
       case 'join_matchmaking': {
         const { game_type, stake } = data
         const variation = typeof data.variation === 'string' && data.variation ? data.variation : 'classic'
+        // Ludo colour choice: 1-based seat (1=red,2=green,3=yellow,4=blue).
+        const preferredSeat =
+          Number.isInteger(data.preferred_seat) && data.preferred_seat >= 1 && data.preferred_seat <= 4
+            ? data.preferred_seat
+            : undefined
         console.log(`[matchmaking] join request: user=${conn.userId} game=${game_type} variation=${variation} stake=${stake}`)
         if (!game_type || !stake) return hub.send(conn, 'error', { message: 'game_type and stake required' })
 
@@ -130,8 +202,31 @@ async function start() {
           console.warn(`[matchmaking] game not available: ${game_type} (rows=${configRes.rows.length})`)
           return hub.send(conn, 'error', { message: 'Game not available' })
         }
+
+        // risk-service's fraud verdict was previously never enforced anywhere
+        // — see docs/Bugs/fraud-action-never-enforced.md. Block-level users
+        // can't join a new real-money room until the flag clears (self-expires
+        // or an admin lifts it); doesn't touch a room they're already in.
+        if (await redis.exists(`fraud:flagged:${conn.userId}`)) {
+          return hub.send(conn, 'error', { message: 'Matchmaking is on hold pending a security review. Contact support if you believe this is a mistake.' })
+        }
+
+        // Ludo only: don't let a user queue into a second table while still
+        // a live participant of one — see findActiveLudoRoomForUser for why.
+        if (game_type === 'ludo') {
+          const activeRoomId = await matchmaking.findActiveLudoRoomForUser(conn.userId)
+          if (activeRoomId) {
+            const rejoined = await matchmaking.rejoinActiveLudoRoom(conn.userId, activeRoomId)
+            if (rejoined) {
+              console.log(`[matchmaking] ${conn.userId} already in active ludo room=${activeRoomId} — resumed instead of re-queueing`)
+              return
+            }
+            // Postgres row was stale (room already finished) — fall through and queue normally.
+          }
+        }
+
         try {
-          await matchmaking.joinQueue(game_type, stake, { userId: conn.userId, username: conn.username }, variation)
+          await matchmaking.joinQueue(game_type, stake, { userId: conn.userId, username: conn.username, preferredSeat }, variation)
           hub.send(conn, 'matchmaking:joined', { game_type, stake, variation })
           monitorEmitter.emit('join_matchmaking', { game_type, user_id: conn.userId, stake })
           console.log(`[matchmaking] ${conn.userId} queued for ${game_type}:${variation}:${stake}`)
@@ -161,6 +256,16 @@ async function start() {
         return handleGameAction(conn, room_id, action, amount, sequence_num)
       }
 
+      case 'leave_room': {
+        // A player deliberately left a game mid-match. Only Ludo has
+        // server-side forfeit handling; other games ignore this (unchanged).
+        const rawState = await matchmaking.getRoomState(data.room_id)
+        if (rawState && (rawState.gameType === 'ludo' || rawState.game_type === 'ludo')) {
+          return handleLudoLeave(conn, data.room_id)
+        }
+        return
+      }
+
       case 'join_room': {
         const { room_id } = data
         if (!room_id) return
@@ -168,6 +273,26 @@ async function start() {
 
         // Fetch current game state to sync the client
         const rawState = await matchmaking.getRoomState(room_id)
+
+        // A hand's result is pushed via sendToUser — a direct push to
+        // whichever socket is connected at that exact moment, with no
+        // persistence or replay. If the connection drops (or is mid-
+        // reconnect) right as the hand concludes, that push is lost
+        // forever, and this join_room handler previously had nothing that
+        // detected "this room already finished" — a reconnecting player
+        // got a stale generic room:joined (or, if the gateway's cached
+        // state had already expired, literally nothing back at all) and
+        // stayed stuck on their last pre-disconnect view permanently.
+        // Reproduced live: server-side logs/DB confirmed hands completing
+        // and settling correctly while the client sat frozen mid-game.
+        const gameTypeGuess = rawState?.gameType ?? rawState?.game_type
+        const looksCompleted = rawState?.status === 'completed'
+        if ((gameTypeGuess === 'teen_patti' && looksCompleted) || !rawState) {
+          const sent = await sendTeenPattiResultIfCompleted(conn, room_id)
+          if (sent) return
+          if (!rawState) return // truly nothing to sync — room unknown either place
+        }
+
         if (rawState) {
           let myCards: any[] = []
           
@@ -187,6 +312,7 @@ async function start() {
             }
           }
 
+          const gameType = rawState.gameType ?? rawState.game_type
           // Send room:joined event to sync this connection
           hub.send(conn, 'room:joined', {
             room_id,
@@ -197,12 +323,13 @@ async function start() {
             })),
             my_cards: myCards,
             your_seat: rawState.players?.findIndex((p: any) => (p.userId ?? p.user_id) === conn.userId) + 1,
-            game_type: rawState.gameType ?? rawState.game_type,
+            game_type: gameType,
             stake: rawState.stake,
             pot: rawState.pot,
             current_turn: rawState.currentTurn ?? rawState.current_turn ?? 0,
             dealer_id: rawState.dealer_id ?? rawState.DealerID,
             min_bet: rawState.minBet ?? rawState.min_bet ?? rawState.stake,
+            state: gameType === 'ludo' ? rawState : undefined,
           })
 
           // Bot recovery: if it's currently a bot's turn, trigger/drive the bot
@@ -245,6 +372,18 @@ async function start() {
         if (!room_id || !TIP_AMOUNTS.includes(tip)) {
           return hub.send(conn, 'error', { message: 'Invalid tip amount' })
         }
+        // Cross-instance lock (gateway runs 3 fork instances behind nginx, so
+        // an in-memory guard wouldn't survive a retry landing on a different
+        // process) — blocks a double-tap or reconnect replay from debiting
+        // twice. The stored idempotency_key is deterministic within the same
+        // window as a DB-level backstop if the lock is ever bypassed (e.g.
+        // Redis unavailable).
+        const tipWindow = Math.floor(Date.now() / TIP_DEBOUNCE_MS)
+        const lockKey = `tip:lock:${conn.userId}:${room_id}`
+        const acquired = await redis.set(lockKey, '1', 'EX', Math.ceil(TIP_DEBOUNCE_MS / 1000), 'NX')
+        if (!acquired) {
+          return hub.send(conn, 'error', { message: 'Please wait a moment before tipping again' })
+        }
         const client = await db.connect()
         try {
           await client.query('BEGIN')
@@ -259,7 +398,7 @@ async function start() {
             // matches that phrase to pop the low-balance game dialog.
             return hub.send(conn, 'error', { message: 'Not enough balance to tip the dealer' })
           }
-          const ikey = `tip:${conn.userId}:${room_id}:${Date.now()}`
+          const ikey = `tip:${conn.userId}:${room_id}:${tipWindow}`
           await client.query(
             `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
              VALUES ($1, 'tip_dealer', 'real', $2, $3, $4, $5, $6, 'completed', 'Dealer tip')`,
@@ -300,6 +439,11 @@ async function start() {
         if (!cfg.rows.length || !cfg.rows[0].is_active) {
           return hub.send(conn, 'error', { message: 'Game not available' })
         }
+        // See the identical check in join_matchmaking — same enforcement,
+        // same reasoning. docs/Bugs/fraud-action-never-enforced.md.
+        if (await redis.exists(`fraud:flagged:${conn.userId}`)) {
+          return hub.send(conn, 'error', { message: 'Creating tables is on hold pending a security review. Contact support if you believe this is a mistake.' })
+        }
         const code = await generatePrivateCode()
         const table = {
           code,
@@ -330,6 +474,10 @@ async function start() {
         }
         if (table.players.length >= table.maxPlayers) {
           return hub.send(conn, 'error', { message: 'Table is full' })
+        }
+        // See join_matchmaking — docs/Bugs/fraud-action-never-enforced.md.
+        if (await redis.exists(`fraud:flagged:${conn.userId}`)) {
+          return hub.send(conn, 'error', { message: 'Joining tables is on hold pending a security review. Contact support if you believe this is a mistake.' })
         }
         table.players.push({ userId: conn.userId, username: conn.username })
         await redis.setex(`private:table:${code}`, PRIVATE_TABLE_TTL, JSON.stringify(table))
@@ -484,6 +632,34 @@ async function start() {
   async function handleLudoAction(conn: Conn, room_id: string, data: any): Promise<void> {
     const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
     try {
+      const currentState = await matchmaking.getRoomState(room_id)
+
+      // Inbound version check: drop stale actions
+      if (data.version_id !== undefined) {
+        const currentVersion = currentState?.version ?? currentState?.version_id ?? 0
+        if (data.version_id < currentVersion) {
+          return hub.send(conn, 'game:error', { message: 'Stale action discarded' })
+        }
+      }
+
+      // Cancel this room's pending AFK backstop the instant a real action is
+      // RECEIVED — before the engine round trip below. Otherwise the timer
+      // armed for this turn keeps running for the whole duration of that
+      // round trip (and stays live on any OTHER gateway instance that never
+      // saw this action at all), and can auto-play concurrently with this
+      // very action. driveLudoBots re-arms a fresh one once the new turn
+      // state is known.
+      matchmaking.clearLudoAfkTimer(room_id)
+      // Claim this turn immediately so the AFK auto-play backstop — which may
+      // already be mid-flight (its own redis-deadline recheck ran a moment
+      // before this action was received) — sees the claim and backs off
+      // instead of also calling the engine for the same turn. Without this,
+      // both requests could reach the engine's per-room lock, the loser gets
+      // rejected with 409 "Move not expected"/"Roll not expected", and that
+      // loser can be the player's own genuine tap. See claimLudoTurn.
+      const currentTurnIdx = currentState?.current_turn ?? currentState?.currentTurn ?? 0
+      void matchmaking.claimLudoTurn(room_id, currentTurnIdx)
+
       const res = await fetch(`${engineUrl}/action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -515,6 +691,8 @@ async function start() {
         // engine even when it auto-passed the turn (which clears newState.dice
         // back to null) — without it, rolls with no legal move show no toast.
         last_action: { user_id: conn.userId, action: data.action, dice: out.dice ?? newState.dice, token_index: data.token_index },
+        version_id: newState.version || Date.now(),
+        ts: Date.now(),
         result: out.result ?? null,
       })
       if (out.result) {
@@ -525,6 +703,95 @@ async function start() {
     } catch (e) {
       console.error('Ludo action failed', e)
       hub.send(conn, 'error', { message: 'Engine unavailable' })
+    }
+  }
+
+  // A real player tapped Leave in a Ludo game — forfeit. The engine marks them
+  // disconnected, sends their tokens home, and either ends the game (no real
+  // players left, or a last player standing wins) or lets it continue. The
+  // leaver's stake is consumed at settlement (no refund).
+  async function handleLudoLeave(conn: Conn, room_id: string): Promise<void> {
+    const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
+    try {
+      matchmaking.clearLudoAfkTimer(room_id)
+      const res = await fetch(`${engineUrl}/leave`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id, user_id: conn.userId }),
+      })
+      if (!res.ok) {
+        console.error(`Ludo /leave returned ${res.status} for room ${room_id}`)
+        return
+      }
+      const out = await res.json() as any
+      const newState = out.state
+      if (!newState) return
+      await matchmaking.setRoomState(room_id, { ...newState, gameType: 'ludo' })
+      hub.sendToRoom(room_id, 'game:state_update', {
+        room_id,
+        state: newState,
+        last_action: { user_id: conn.userId, action: 'leave' },
+        result: out.result ?? null,
+      })
+      if (out.result) {
+        await matchmaking.handleLudoEnd(room_id, out.result)
+      } else {
+        // Continue: drive any bot whose turn it now is, and re-arm the AFK
+        // timer if the next seat is a connected human.
+        void matchmaking.driveLudoBots(room_id)
+      }
+    } catch (e) {
+      console.error('Ludo leave failed', e)
+    }
+  }
+
+  // Recovery path for a Teen Patti player rejoining a room whose hand has
+  // already concluded (they missed the original sendToUser('game:result')
+  // push — e.g. a disconnect right as the hand ended). Looks up the actual
+  // outcome from game_participants/game_rooms (populated reliably by
+  // handleGameEnd's settlement, unlike the ephemeral Redis game state) and
+  // re-sends the same 'game:result' shape the live push would have sent.
+  // Returns true if a result was found and sent (caller should stop, not
+  // fall through to a stale room:joined sync).
+  async function sendTeenPattiResultIfCompleted(conn: Conn, roomId: string): Promise<boolean> {
+    try {
+      const roomRes = await db.query(
+        `SELECT id FROM game_rooms WHERE id = $1 AND game_type = 'teen_patti' AND status = 'completed'`,
+        [roomId]
+      )
+      if (roomRes.rows.length === 0) return false
+
+      const meRes = await db.query(
+        `SELECT 1 FROM game_participants WHERE room_id = $1 AND user_id = $2 AND is_bot = false`,
+        [roomId, conn.userId]
+      )
+      if (meRes.rows.length === 0) return false // not a real participant of this room
+
+      const winnerRes = await db.query(
+        `SELECT gp.user_id, gp.prize_won, u.username
+         FROM game_participants gp
+         LEFT JOIN users u ON u.id = gp.user_id
+         WHERE gp.room_id = $1 AND gp.final_rank = 1
+         LIMIT 1`,
+        [roomId]
+      )
+      const winner = winnerRes.rows[0]
+
+      hub.send(conn, 'game:result', {
+        room_id: roomId,
+        winner_id: winner?.user_id ?? null,
+        winner_username: winner?.username ?? 'Unknown',
+        prize: winner ? Number(winner.prize_won) : 0,
+        // hand_rank/all_hands aren't persisted (only the ephemeral engine
+        // response had them) — the client's win/loss display doesn't
+        // require them, only the showdown card reveal would miss detail.
+        hand_rank: undefined,
+        all_hands: [],
+      })
+      return true
+    } catch (e) {
+      console.error('[gateway] sendTeenPattiResultIfCompleted failed', e)
+      return false
     }
   }
 
@@ -542,6 +809,17 @@ async function start() {
     if (!outOfTurnOk && (state.currentTurn ?? state.current_turn) !== playerIdx) {
       return hub.send(conn, 'error', { message: 'Not your turn' })
     }
+
+    // Cancel the pending AFK backstop NOW, before the wallet-lock + engine
+    // round trip below — not after, once scheduleBotTurn re-arms it for the
+    // next turn. Otherwise the timer set for THIS turn keeps running for the
+    // whole duration of that round trip, and can fire concurrently with this
+    // very action if it runs long enough. Only for the actual current-turn
+    // player's own action — outOfTurnOk actions (see/sideshow_accept/reject)
+    // are answered by a DIFFERENT player, and clearing here would cancel the
+    // real current-turn player's protection based on someone else's action.
+    // No-op for non-Teen-Patti rooms (nothing armed in the map for them).
+    if (!outOfTurnOk) matchmaking.clearTeenPattiAfkTimer(room_id)
 
     // In-game bet locking
     let extraBet = 0
@@ -586,7 +864,7 @@ async function start() {
     try {
       const res = await fetch(`${engineUrl}/action`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
         body: JSON.stringify({ room_id, user_id: conn.userId, action, amount: amount ?? 0, sequence_num: sequence_num ?? 0 }),
       })
       if (!res.ok) {
@@ -625,6 +903,8 @@ async function start() {
         room_id,
         state: { ...newState, players: newState.players?.map((p: any) => ({ ...p, cards: undefined })) },
         last_action: { user_id: conn.userId, action, amount },
+        version_id: newState.version || Date.now(),
+        ts: Date.now(),
         result: data.result ?? null,
       })
 
@@ -632,8 +912,15 @@ async function start() {
 
       const realPlayers = (newState.players ?? []).filter((p: any) => !(p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
 
-      if (newState.status === 'completed' && data.result) {
-        await matchmaking.handleGameEnd(room_id, data.result, realPlayers, newState)
+      if (newState.status === 'completed') {
+        if (data.result) {
+          await matchmaking.handleGameEnd(room_id, data.result, realPlayers, newState)
+        } else {
+          // Defensive: game completed but result is missing — log and still notify players
+          console.warn(`[gateway] Game completed for room=${room_id} but result is missing from engine response`)
+          const fallbackResult = { winner_id: null, prize: 0, hand_rank: 'High Card', all_hands: [] }
+          await matchmaking.handleGameEnd(room_id, fallbackResult, realPlayers, newState)
+        }
       } else {
         const bots = (newState.players ?? []).filter((p: any) => (p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
         matchmaking.scheduleBotTurn(room_id, newState, realPlayers, bots)
@@ -698,7 +985,7 @@ async function start() {
     const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
     const res = await fetch(`${engineUrl}/action`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
       body: JSON.stringify({
         room_id,
         user_id: botUserId,
@@ -723,13 +1010,67 @@ async function start() {
     dispatchSideshowEvents(room_id, data, newState)
   }
 
+  // --- Authentication Middleware ---
+
+  /**
+   * Middleware: Verify internal service key via x-internal-key header
+   * Auth Method: Internal-Only Header (x-internal-key)
+   * Returns: 401 Unauthorized if key missing or invalid
+   * Returns: 403 Forbidden if service not allowed (future use)
+   */
+  async function verifyInternalOnly(req: any, reply: any): Promise<boolean> {
+    const expectedKey = process.env.INTERNAL_SERVICE_KEY
+    if (!expectedKey) {
+      console.warn('[auth] INTERNAL_SERVICE_KEY not configured')
+      return reply.code(500).send({ error: 'Internal auth not configured' }), false
+    }
+
+    const providedKey = req.headers['x-internal-key']
+    if (!providedKey || providedKey !== expectedKey) {
+      console.warn('[auth] Invalid or missing x-internal-key header from', req.ip)
+      return reply.code(401).send({ error: 'Unauthorized', code: 'INVALID_SERVICE_KEY' }), false
+    }
+
+    return true
+  }
+
+  /**
+   * Middleware: Verify JWT token from Authorization header
+   * Auth Method: Bearer Token (JWT)
+   * Returns: 401 Unauthorized if token missing or invalid
+   * Returns: 403 Forbidden if token expired
+   */
+  async function verifyJWT(req: any, reply: any): Promise<any> {
+    try {
+      const token = req.headers.authorization?.split(' ')[1]
+      if (!token) {
+        console.warn('[auth] Missing Bearer token from', req.ip)
+        return reply.code(401).send({ error: 'Unauthorized', code: 'MISSING_TOKEN' }), null
+      }
+
+      const payload = app.jwt.verify(token) as any
+      return payload
+    } catch (err) {
+      const msg = (err as Error).message
+      console.warn('[auth] Invalid JWT token:', msg, 'from', req.ip)
+      if (msg.includes('expired')) {
+        return reply.code(403).send({ error: 'Forbidden', code: 'TOKEN_EXPIRED' }), null
+      }
+      return reply.code(401).send({ error: 'Unauthorized', code: 'INVALID_TOKEN' }), null
+    }
+  }
+
   // --- Internal Admin API Endpoints ---
 
+  /**
+   * POST /internal/game-rooms/:roomId/force-action
+   * Force a game action for a player (admin control)
+   * Auth: Internal-Only Header (x-internal-key)
+   * Risk: HIGH - allows direct game manipulation
+   */
   app.post('/internal/game-rooms/:roomId/force-action', async (req, reply) => {
-    const key = process.env.INTERNAL_SERVICE_KEY
-    if (!key || req.headers['x-internal-key'] !== key) {
-      return reply.code(401).send({ error: 'Unauthorized' })
-    }
+    const isAuth = await verifyInternalOnly(req, reply)
+    if (!isAuth) return
     const { roomId } = req.params as any
     const { user_id, action, amount, token_index } = req.body as any
 
@@ -752,11 +1093,15 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  /**
+   * POST /internal/game-rooms/:roomId/kick
+   * Force remove a player from an active game (marks as bot)
+   * Auth: Internal-Only Header (x-internal-key)
+   * Risk: CRITICAL - allows ejecting players mid-game
+   */
   app.post('/internal/game-rooms/:roomId/kick', async (req, reply) => {
-    const key = process.env.INTERNAL_SERVICE_KEY
-    if (!key || req.headers['x-internal-key'] !== key) {
-      return reply.code(401).send({ error: 'Unauthorized' })
-    }
+    const isAuth = await verifyInternalOnly(req, reply)
+    if (!isAuth) return
     const { roomId } = req.params as any
     const { user_id } = req.body as any
 
@@ -845,11 +1190,15 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  /**
+   * POST /internal/game-rooms/:roomId/terminate
+   * Terminate a game session and refund all stakes
+   * Auth: Internal-Only Header (x-internal-key)
+   * Risk: CRITICAL - cancels active games and triggers refunds
+   */
   app.post('/internal/game-rooms/:roomId/terminate', async (req, reply) => {
-    const key = process.env.INTERNAL_SERVICE_KEY
-    if (!key || req.headers['x-internal-key'] !== key) {
-      return reply.code(401).send({ error: 'Unauthorized' })
-    }
+    const isAuth = await verifyInternalOnly(req, reply)
+    if (!isAuth) return
     const { roomId } = req.params as any
 
     // 1. Fetch participants to refund stakes
@@ -894,7 +1243,74 @@ async function start() {
     return reply.send({ success: true })
   })
 
-  app.get('/health', async () => ({ status: 'ok', service: 'game-gateway' }))
+  // ── Health Check Endpoint (for load balancer) ──
+  app.get('/health', async () => ({
+    status: 'ok',
+    service: 'game-gateway',
+    instance: INSTANCE_ID,
+    timestamp: Date.now(),
+    uptime: process.uptime(),
+  }))
+
+  // ── Internal Test Endpoint (for load balancing tests) ──
+  /**
+   * POST /internal/test-session
+   * Create or update a test session (load balancer verification)
+   * Auth: Internal-Only Header (x-internal-key)
+   * Risk: MEDIUM - allows session creation without user consent
+   */
+  app.post('/internal/test-session', async (req, reply) => {
+    const isAuth = await verifyInternalOnly(req, reply)
+    if (!isAuth) return
+
+    const { player_id } = req.body as any
+    if (!player_id) {
+      return reply.code(400).send({ error: 'player_id required' })
+    }
+
+    try {
+      // Create or update session
+      await sessionManager.setSession(player_id, {
+        game_type: 'test',
+        gateway_instance: INSTANCE_ID,
+      })
+
+      // Verify session was created
+      const session = await sessionManager.getSession(player_id)
+      return reply.send({
+        success: true,
+        instance: INSTANCE_ID,
+        session,
+      })
+    } catch (err) {
+      console.error('[test-session] Error:', err)
+      return reply.code(500).send({ error: 'Failed to create session' })
+    }
+  })
+
+  // ── Get Session Endpoint (for debugging) ──
+  /**
+   * GET /internal/session/:playerId
+   * Retrieve a player's session state (debugging/monitoring)
+   * Auth: Internal-Only Header (x-internal-key)
+   * Risk: MEDIUM - exposes user session state and gateway routing
+   */
+  app.get('/internal/session/:playerId', async (req, reply) => {
+    const isAuth = await verifyInternalOnly(req, reply)
+    if (!isAuth) return
+
+    const { playerId } = req.params as any
+    try {
+      const session = await sessionManager.getSession(playerId)
+      return reply.send({
+        session: session || null,
+        instance: INSTANCE_ID,
+      })
+    } catch (err) {
+      console.error('[get-session] Error:', err)
+      return reply.code(500).send({ error: 'Failed to retrieve session' })
+    }
+  })
 
   const port = parseInt(process.env.PORT || '3004')
   await app.ready()

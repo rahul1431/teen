@@ -144,7 +144,7 @@ export default function Users() {
       </Space>
 
       <Table dataSource={users} columns={columns as any} rowKey="id" loading={loading}
-        pagination={{ total, pageSize: 20, current: page, onChange: setPage }} size="small" />
+        pagination={{ total, pageSize: 20, current: page, onChange: setPage }} size="small" scroll={{ x: 'max-content' }} />
 
       <Modal title={selectedUser ? `User — ${selectedUser.username}` : ''} open={!!selectedUser && !walletModal}
         onCancel={() => setSelectedUser(null)} footer={null} width={820} destroyOnClose>
@@ -248,7 +248,7 @@ function TransactionsTab({ userId }: { userId: string }) {
     adminApi.get(`/users/${userId}/transactions`).then(r => setRows(r.data)).finally(() => setLoading(false))
   }, [userId])
   return (
-    <Table dataSource={rows} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 10 }}
+    <Table dataSource={rows} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 10 }} scroll={{ x: 'max-content' }}
       columns={[
         { title: 'When', dataIndex: 'created_at', render: (d: string) => new Date(d).toLocaleString() },
         { title: 'Type', dataIndex: 'type', render: (t: string) => <Tag>{t}</Tag> },
@@ -319,7 +319,7 @@ function GamesTab({ userId }: { userId: string }) {
     adminApi.get(`/users/${userId}/games`).then(r => setRows(r.data)).finally(() => setLoading(false))
   }, [userId])
   return (
-    <Table dataSource={rows} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 10 }}
+    <Table dataSource={rows} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 10 }} scroll={{ x: 'max-content' }}
       columns={[
         { title: 'When', dataIndex: 'started_at', render: (d: string) => d ? new Date(d).toLocaleString() : '-' },
         { title: 'Game', dataIndex: 'game_type', render: (t: string) => <Tag>{t}</Tag> },

@@ -1,15 +1,16 @@
 import axios from 'axios'
 
-const BASE = import.meta.env.VITE_API_BASE_URL || ''
+const getBaseURL = () => import.meta.env.VITE_API_BASE_URL || ''
 
 export const api = axios.create({
-  baseURL: BASE,
+  baseURL: getBaseURL(),
   timeout: 15000,
 })
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('admin_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
+
   return config
 })
 
@@ -24,14 +25,17 @@ api.interceptors.response.use(
   }
 )
 
-// Admin-specific API calls (admin service on port 3008)
+// Admin-specific API calls
+const getAdminBaseURL = () => import.meta.env.VITE_ADMIN_API_BASE_URL || '/api/admin'
+
 export const adminApi = axios.create({
-  baseURL: (import.meta.env.VITE_ADMIN_API_BASE_URL || BASE) + '/api/admin',
+  baseURL: getAdminBaseURL(),
   timeout: 15000,
 })
 
 adminApi.interceptors.request.use((config) => {
   const token = localStorage.getItem('admin_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
+
   return config
 })

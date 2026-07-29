@@ -379,7 +379,7 @@ export class MonitorIngestor {
     activeOnly: boolean
   ): Promise<SessionRow[]> {
     const activeFilter = activeOnly
-      ? `AND s.last_seen_at > NOW() - INTERVAL '35 seconds'`
+      ? `AND s.last_seen_at > NOW() - INTERVAL '90 seconds'`
       : ''
     const res = await this.pool.query(
       `SELECT
@@ -391,7 +391,7 @@ export class MonitorIngestor {
          s.ended_at,
          s.last_seen_at,
          COUNT(e.id)::int  AS event_count,
-         CASE WHEN s.last_seen_at > NOW() - INTERVAL '35 seconds'
+         CASE WHEN s.last_seen_at > NOW() - INTERVAL '90 seconds'
               THEN 'active' ELSE 'ended' END AS status
        FROM app_sessions s
        LEFT JOIN app_events e ON e.session_id = s.id
@@ -437,7 +437,7 @@ export class MonitorIngestor {
         SELECT lat, lon FROM app_device_locations d
         WHERE d.session_id = s.id ORDER BY d.created_at DESC LIMIT 1
       ) loc ON true
-      WHERE s.last_seen_at > NOW() - INTERVAL '35 seconds'
+      WHERE s.last_seen_at > NOW() - INTERVAL '90 seconds'
         AND (u.is_bot IS NULL OR u.is_bot = false)
       ORDER BY s.last_seen_at DESC
       LIMIT 500`)
@@ -480,7 +480,7 @@ export class MonitorIngestor {
         SELECT lat, lon FROM app_device_locations d
         WHERE d.session_id = s.id ORDER BY d.created_at DESC LIMIT 1
       ) loc ON true
-      WHERE s.last_seen_at > NOW() - INTERVAL '35 seconds'
+      WHERE s.last_seen_at > NOW() - INTERVAL '90 seconds'
         AND (u.is_bot IS NULL OR u.is_bot = false)
         AND COALESCE(loc.lat, s.geo_lat) IS NOT NULL
       GROUP BY 1, 2 ORDER BY players DESC LIMIT 500`)

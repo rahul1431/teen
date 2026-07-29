@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Card, Row, Col, Table, Tag, Statistic, Drawer, Spin, Typography, List } from 'antd'
+import { Card, Row, Col, Table, Tag, Statistic, Drawer, Spin, Typography, List, Grid } from 'antd'
 import { MobileOutlined, EnvironmentOutlined, AimOutlined } from '@ant-design/icons'
 import { MapContainer, TileLayer, CircleMarker, Tooltip as LTooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -18,6 +18,8 @@ interface LivePlayer {
 interface GeoPoint { lat: number; lon: number; city: string | null; players: number }
 
 export default function PlayerTracking() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const [players, setPlayers] = useState<LivePlayer[]>([])
   const [geo, setGeo] = useState<GeoPoint[]>([])
   const [loading, setLoading] = useState(true)
@@ -95,10 +97,11 @@ export default function PlayerTracking() {
             { title: 'IP Address', dataIndex: 'ip_address', width: 130, render: v => <Text code style={{ fontSize: 11 }}>{v ?? '—'}</Text> },
             { title: 'Game', dataIndex: 'last_game', width: 130, render: v => v ? <Tag color="purple">{v}</Tag> : <Text type="secondary">{'—'}</Text> },
           ]}
+          scroll={{ x: 'max-content' }}
         />
       </Card>
 
-      <Drawer title="Player Detail" width={560} open={detailOpen} onClose={() => setDetailOpen(false)}>
+      <Drawer title="Player Detail" width={isMobile ? '100%' : 560} open={detailOpen} onClose={() => setDetailOpen(false)}>
         {!detail ? <Spin /> : (
           <>
             <Card size="small" title="Recent Sessions" style={{ marginBottom: 12 }}>

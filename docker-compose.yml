@@ -55,6 +55,89 @@ services:
       timeout: 5s
       retries: 5
 
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: teen_zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    healthcheck:
+      test: ["CMD", "echo", "ruok", "|", "nc", "127.0.0.1", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka-broker-1:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: teen_kafka_1
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-broker-1:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Single-broker box: RF above 1 can never be satisfied and leaves
+      # partitions leaderless. Was 2 across a 3-broker cluster that was
+      # eating ~2.6GB of the VPS's 3.8GB RAM; scaled down to 1 broker.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_HEAP_OPTS: '-Xmx512M -Xms512M'
+    ports:
+      - "9092:9092"
+
+  # kafka-broker-2 and kafka-broker-3 are intentionally disabled — this box
+  # only has one real Kafka consumer (bot-learning-service) and 3.8GB total
+  # RAM; a 3-broker cluster reserved ~2.6GB (1GB heap each) and starved the
+  # game services. Re-enable only if genuine multi-broker throughput/HA is
+  # needed and the VPS is upsized accordingly.
+  # kafka-broker-2:
+  #   image: confluentinc/cp-kafka:7.5.0
+  #   container_name: teen_kafka_2
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - zookeeper
+  #   environment:
+  #     KAFKA_BROKER_ID: 2
+  #     KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+  #     KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-broker-2:29092,PLAINTEXT_HOST://localhost:9093
+  #     KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+  #     KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+  #     KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+  #     KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+  #     KAFKA_LOG_RETENTION_HOURS: 168
+  #     KAFKA_LOG_SEGMENT_BYTES: 1073741824
+  #   ports:
+  #     - "9093:9093"
+
+  # kafka-broker-3:
+  #   image: confluentinc/cp-kafka:7.5.0
+  #   container_name: teen_kafka_3
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - zookeeper
+  #   environment:
+  #     KAFKA_BROKER_ID: 3
+  #     KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+  #     KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-broker-3:29092,PLAINTEXT_HOST://localhost:9094
+  #     KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+  #     KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+  #     KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+  #     KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+  #     KAFKA_LOG_RETENTION_HOURS: 168
+  #     KAFKA_LOG_SEGMENT_BYTES: 1073741824
+  #   ports:
+  #     - "9094:9094"
+
 volumes:
   postgres_data:
+    name: teen_postgres_data
   redis_data:
+    name: teen_redis_data

@@ -1,4 +1,5 @@
 import { Pool, PoolClient } from 'pg'
+import Redis from 'ioredis'
 import crypto from 'crypto'
 
 export type TxnType = 'deposit' | 'withdrawal' | 'game_credit' | 'game_debit' | 'bonus' | 'referral' | 'manual_credit' | 'manual_debit'
@@ -15,7 +16,7 @@ interface CreditDebitOptions {
 }
 
 export class WalletService {
-  constructor(private db: Pool) {}
+  constructor(private db: Pool, private redis?: Redis) {}
 
   async getBalance(userId: string) {
     const res = await this.db.query(
@@ -76,6 +77,23 @@ export class WalletService {
           'UPDATE wallets SET total_won = total_won + $1 WHERE user_id = $2',
           [opts.amount, opts.userId]
         )
+      }
+
+      // Publish wallet update event to Redis for real-time notifications
+      if (this.redis) {
+        try {
+          await this.redis.publish('wallet:updated', JSON.stringify({
+            userId: opts.userId,
+            type: opts.type,
+            amount: opts.amount,
+            walletType: opts.walletType || 'real',
+            timestamp: new Date().toISOString(),
+            idempotencyKey: ikey
+          }))
+        } catch (err) {
+          // Log but don't fail the transaction if Redis publish fails
+          console.error('[wallet-service] Failed to publish wallet:updated event:', err)
+        }
       }
 
       if (!client) await c.query('COMMIT')

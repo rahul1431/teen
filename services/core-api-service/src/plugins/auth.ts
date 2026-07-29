@@ -25,6 +25,10 @@ export function authPlugin(db: Pool, redis: Redis) {
         username: z.string().min(3).max(20).regex(/^[a-zA-Z0-9_]+$/),
         password: z.string().min(6),
         referral_code: z.string().optional(),
+        campaign_id: z.string().uuid().optional(),
+        utm_source: z.string().max(50).optional(),
+        utm_medium: z.string().max(50).optional(),
+        utm_campaign: z.string().max(50).optional(),
       }).parse(req.body)
 
       const otpValid = await verifyOtp(redis, body.phone, body.otp)
@@ -36,18 +40,28 @@ export function authPlugin(db: Pool, redis: Redis) {
       const passwordHash = await bcrypt.hash(body.password, 12)
       const referralCode = generateReferralCode()
 
+      // A referral code belongs to either a player (existing one-time bonus
+      // path, checked first) or an agent (recurring commission tracking,
+      // Task 1's agents table) — never both. See
+      // docs/superpowers/specs/2026-07-20-agent-commission-system-design.md
       let referredBy: string | null = null
+      let referredByAgentId: string | null = null
       if (body.referral_code) {
         const ref = await db.query('SELECT id FROM users WHERE referral_code = $1', [body.referral_code])
-        if (ref.rows.length > 0) referredBy = ref.rows[0].id
+        if (ref.rows.length > 0) {
+          referredBy = ref.rows[0].id
+        } else {
+          const agentRef = await db.query(`SELECT id FROM agents WHERE referral_code = $1 AND status = 'active'`, [body.referral_code])
+          if (agentRef.rows.length > 0) referredByAgentId = agentRef.rows[0].id
+        }
       }
 
       const client = await db.connect()
       try {
         await client.query('BEGIN')
         const userRes = await client.query(
-          `INSERT INTO users (phone, username, password_hash, referral_code, referred_by) VALUES ($1, $2, $3, $4, $5) RETURNING id, username, referral_code`,
-          [body.phone, body.username, passwordHash, referralCode, referredBy],
+          `INSERT INTO users (phone, username, password_hash, referral_code, referred_by, agent_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, username, referral_code`,
+          [body.phone, body.username, passwordHash, referralCode, referredBy, referredByAgentId],
         )
         const user = userRes.rows[0]
         await client.query('INSERT INTO wallets (user_id) VALUES ($1)', [user.id])
@@ -57,6 +71,35 @@ export function authPlugin(db: Pool, redis: Redis) {
             [referredBy, user.id, process.env.REFERRAL_BONUS_AMOUNT || 50],
           )
         }
+
+        // Campaign Attribution
+        if (body.campaign_id) {
+          const campaignRes = await client.query('SELECT utm_source, utm_medium, utm_campaign FROM marketing_campaigns WHERE id = $1 AND is_active = true', [body.campaign_id])
+          if (campaignRes.rows.length > 0) {
+            const camp = campaignRes.rows[0]
+            await client.query(
+              `INSERT INTO user_campaign_attribution (user_id, campaign_id, utm_source, utm_medium, utm_campaign)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [user.id, body.campaign_id, camp.utm_source, camp.utm_medium, camp.utm_campaign]
+            )
+          }
+        } else if (body.utm_source) {
+          const campaignRes = await client.query(
+            `SELECT id FROM marketing_campaigns
+             WHERE utm_source = $1
+               AND COALESCE(utm_medium, '') = COALESCE($2, '')
+               AND COALESCE(utm_campaign, '') = COALESCE($3, '')
+               AND is_active = true`,
+            [body.utm_source, body.utm_medium || null, body.utm_campaign || null]
+          )
+          const campId = campaignRes.rows.length > 0 ? campaignRes.rows[0].id : null
+          await client.query(
+            `INSERT INTO user_campaign_attribution (user_id, campaign_id, utm_source, utm_medium, utm_campaign)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [user.id, campId, body.utm_source, body.utm_medium || null, body.utm_campaign || null]
+          )
+        }
+
         await client.query('COMMIT')
 
         const accessToken = app.jwt.sign({ sub: user.id, username: user.username }, { expiresIn: process.env.JWT_EXPIRES_IN || '15m' })

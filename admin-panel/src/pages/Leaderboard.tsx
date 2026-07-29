@@ -106,6 +106,7 @@ export default function Leaderboard() {
           rowKey="user_id"
           pagination={{ pageSize: 20 }}
           locale={{ emptyText: 'No leaderboard records found for this period' }}
+          scroll={{ x: 'max-content' }}
         />
       </Card>
     </div>

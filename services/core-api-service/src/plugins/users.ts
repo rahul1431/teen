@@ -99,70 +99,6 @@ export function usersPlugin(db: Pool) {
       })
     })
 
-    app.get('/users/daily-bonus/status', { onRequest: [app.authenticate] }, async (req, reply) => {
-      const user = req.user as any
-      const [streakRes, configRes] = await Promise.all([
-        db.query(`SELECT * FROM user_login_streaks WHERE user_id = $1`, [user.sub]),
-        db.query(`SELECT * FROM login_bonus_config WHERE is_active = true ORDER BY day_number ASC`),
-      ])
-      const streak = streakRes.rows[0] || { current_streak: 0, longest_streak: 0, last_claimed_date: null, total_claimed: 0, total_earned: 0 }
-      const config = configRes.rows
-      const todayDate = new Date().toISOString().slice(0, 10)
-      const lastDate = streak.last_claimed_date ? new Date(streak.last_claimed_date).toISOString().slice(0, 10) : null
-      const canClaim = lastDate !== todayDate
-      const cycleLen = config.length || 7
-      const nextDay = ((streak.current_streak) % cycleLen) + 1
-      const todayConfig = config.find((c: any) => c.day_number === nextDay) || config[0]
-      const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
-      const yesterdayStr = yesterday.toISOString().slice(0, 10)
-      const streakBroken = lastDate && lastDate < yesterdayStr
-      return reply.send({ can_claim: canClaim, current_streak: streakBroken ? 0 : streak.current_streak, longest_streak: streak.longest_streak, total_claimed: streak.total_claimed, total_earned: streak.total_earned, next_day_number: streakBroken ? 1 : nextDay, today_bonus: todayConfig, schedule: config, last_claimed_date: lastDate })
-    })
-
-    app.post('/users/daily-bonus/claim', { onRequest: [app.authenticate] }, async (req, reply) => {
-      const user = req.user as any
-      const client = await db.connect()
-      try {
-        await client.query('BEGIN')
-        const streakRes = await client.query(`SELECT * FROM user_login_streaks WHERE user_id = $1 FOR UPDATE`, [user.sub])
-        const streak = streakRes.rows[0]
-        const todayDate = new Date().toISOString().slice(0, 10)
-        const lastDate = streak?.last_claimed_date ? new Date(streak.last_claimed_date).toISOString().slice(0, 10) : null
-        if (lastDate === todayDate) { await client.query('ROLLBACK'); return reply.code(409).send({ error: 'Already claimed today' }) }
-        const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
-        const yesterdayStr = yesterday.toISOString().slice(0, 10)
-        const streakBroken = lastDate && lastDate < yesterdayStr
-        const currentStreak = streakBroken ? 0 : (streak?.current_streak || 0)
-        const configRes = await client.query(`SELECT * FROM login_bonus_config WHERE is_active = true ORDER BY day_number ASC`)
-        const config = configRes.rows
-        const cycleLen = config.length || 7
-        const dayNumber = (currentStreak % cycleLen) + 1
-        const dayConfig = config.find((c: any) => c.day_number === dayNumber) || config[0]
-        const bonusAmount = parseFloat(dayConfig.bonus_amount)
-        const newStreak = currentStreak + 1
-        await client.query(
-          `INSERT INTO user_login_streaks (user_id, current_streak, longest_streak, last_claimed_date, total_claimed, total_earned)
-           VALUES ($1, $2, $2, $3, 1, $4)
-           ON CONFLICT (user_id) DO UPDATE SET current_streak = $2, longest_streak = GREATEST(user_login_streaks.longest_streak, $2), last_claimed_date = $3, total_claimed = user_login_streaks.total_claimed + 1, total_earned = user_login_streaks.total_earned + $4, updated_at = NOW()`,
-          [user.sub, newStreak, todayDate, bonusAmount],
-        )
-        await client.query(`INSERT INTO bonuses (user_id, type, amount, wagering_requirement, status, expires_at) VALUES ($1, 'daily_login', $2, 0, 'active', NOW() + INTERVAL '30 days')`, [user.sub, bonusAmount])
-        await client.query('COMMIT')
-        const walletUrl = process.env.WALLET_SERVICE_URL || 'http://localhost:3003'
-        await fetch(`${walletUrl}/internal/wallet/credit`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY || '' },
-          body: JSON.stringify({ user_id: user.sub, amount: bonusAmount, type: 'bonus', wallet_type: 'bonus', idempotency_key: `daily_login:${user.sub}:${todayDate}`, description: `Daily login bonus — Day ${dayNumber}` }),
-        }).catch(err => console.error('[daily-bonus] wallet credit failed:', err))
-        return reply.send({ success: true, bonus_amount: bonusAmount, bonus_type: dayConfig.bonus_type, day_number: dayNumber, new_streak: newStreak, label: dayConfig.label, emoji: dayConfig.emoji })
-      } catch (err) {
-        await client.query('ROLLBACK')
-        throw err
-      } finally {
-        client.release()
-      }
-    })
-
     app.get('/users/banners', async (_req, reply) => {
       const now = new Date().toISOString()
       const res = await db.query(
@@ -291,26 +227,6 @@ export function usersPlugin(db: Pool) {
       })
     })
 
-    // ── Admin: Bank Details ───────────────────────────────────────────────────
-    app.get('/admin/bank-details', async (_req, reply) => {
-      const res = await db.query(
-        `SELECT bd.*, u.username, u.phone, u.email
-         FROM bank_details bd
-         JOIN users u ON u.id = bd.user_id
-         ORDER BY bd.updated_at DESC`,
-      )
-      return reply.send({ bank_details: res.rows })
-    })
-
-    app.patch('/admin/bank-details/:userId/verify', async (req, reply) => {
-      const { userId } = req.params as any
-      const { verified } = req.body as any
-      await db.query(
-        `UPDATE bank_details SET verified = $1, verified_at = $2, updated_at = NOW() WHERE user_id = $3`,
-        [verified, verified ? new Date() : null, userId],
-      )
-      return reply.send({ success: true })
-    })
   }
 }
 

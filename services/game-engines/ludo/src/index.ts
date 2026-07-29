@@ -8,12 +8,18 @@ import {
   createInitialState,
   applyRoll,
   applyMove,
+  forfeitPlayer,
   rollDie,
+  rollDieBiased,
   chooseBotToken,
+  findCapturingMove,
+  findSafeMoves,
   LudoState,
   ActionResult,
   BotDifficulty,
+  WinnerSkill,
 } from './rules'
+import { chooseBotTokenCoordinated } from './coordination'
 
 const app = Fastify({ logger: false })
 const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
@@ -69,8 +75,15 @@ async function withRoomLock<T>(roomId: string, fn: () => Promise<T>): Promise<T>
 interface StartReq {
   room_id: string
   stake: number
-  players: { user_id: string; username: string; seat: number; is_bot: boolean }[]
+  players: { user_id: string; username: string; seat: number; is_bot: boolean; bot_difficulty?: BotDifficulty; capture_probability?: number | null; safe_play_probability?: number | null }[]
   bot_difficulty?: BotDifficulty
+  botCoordination?: {
+    winnerBotIdx: number
+    aggressiveness: number
+    winnerSkill?: WinnerSkill
+    boldness?: number
+    diceBias?: number
+  }
 }
 
 interface ActionReq {
@@ -95,6 +108,15 @@ async function start() {
       ? (body.bot_difficulty as BotDifficulty)
       : 'medium'
     const state = createInitialState(body.room_id, body.stake, body.players, difficulty)
+    if (body.botCoordination) {
+      state.coordination = {
+        winnerBotIdx: body.botCoordination.winnerBotIdx,
+        aggressiveness: body.botCoordination.aggressiveness,
+        winnerSkill: body.botCoordination.winnerSkill,
+        boldness: body.botCoordination.boldness,
+        diceBias: body.botCoordination.diceBias,
+      }
+    }
     await saveState(state)
     return state
   })
@@ -132,6 +154,29 @@ async function start() {
           if (!state.movable_tokens.includes(tokenIndex)) {
             return reply.code(409).send({ error: 'Illegal move' })
           }
+
+          // Log real players' actual decisions for training (sub-project #3) —
+          // never blocks the move on failure.
+          if (!state.players[idx].is_bot) {
+            const capturingMove = findCapturingMove(state, idx, state.dice!, state.movable_tokens)
+            const safeMoves = findSafeMoves(state, idx, state.dice!, state.movable_tokens)
+            const captureAvailable = capturingMove !== -1
+            const safeMoveAvailable = safeMoves.length > 0 && safeMoves.length < state.movable_tokens.length
+            db.query(
+              `INSERT INTO ludo_move_decisions (room_id, user_id, dice, capture_available, capture_taken, safe_move_available, chose_safe_move)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [
+                state.room_id,
+                state.players[idx].user_id,
+                state.dice,
+                captureAvailable,
+                captureAvailable && tokenIndex === capturingMove,
+                safeMoveAvailable,
+                safeMoveAvailable && safeMoves.includes(tokenIndex),
+              ]
+            ).catch((err: unknown) => console.error('[ludo] Failed to log move decision', err))
+          }
+
           const r = applyMove(state, tokenIndex)
           result = r.result
         } else {
@@ -162,13 +207,31 @@ async function start() {
           return reply.code(409).send({ error: 'Not bot turn' })
         }
 
-        const dice = rollDie()
+        const isWinnerBot = state.coordination && idx === state.coordination.winnerBotIdx
+        const dice = isWinnerBot ? rollDieBiased(state.coordination!.diceBias ?? 0) : rollDie()
         applyRoll(state, dice)
         let result: ActionResult | null = null
         let movedToken = -1
 
         if (state.awaiting === 'move') {
-          movedToken = chooseBotToken(state, idx, dice, state.bot_difficulty)
+          movedToken = state.coordination
+            ? chooseBotTokenCoordinated(state, idx, dice, {
+                isHelper: idx !== state.coordination.winnerBotIdx,
+                winnerBotIdx: state.coordination.winnerBotIdx,
+                aggressiveness: state.coordination.aggressiveness,
+                winnerSkill: state.coordination.winnerSkill,
+                boldness: state.coordination.boldness,
+              })
+            : chooseBotToken(
+                state,
+                idx,
+                dice,
+                state.players[idx].bot_difficulty ?? state.bot_difficulty,
+                {
+                  capture_probability: state.players[idx].capture_probability,
+                  safe_play_probability: state.players[idx].safe_play_probability,
+                },
+              )
           if (movedToken >= 0) {
             const r = applyMove(state, movedToken)
             result = r.result
@@ -178,6 +241,32 @@ async function start() {
         await saveState(state)
         if (result) void saveCompletedGame(state, result)
         return { state, result, dice, moved_token: movedToken }
+      })
+    } catch (e) {
+      if (e instanceof RoomBusyError) return reply.code(409).send({ error: e.message })
+      throw e
+    }
+  })
+
+  // POST /leave — a real player deliberately left the table (forfeit). Marks
+  // them disconnected, sends their tokens home, and either ends the game or
+  // lets it continue with whoever remains. Idempotent: leaving twice, or when
+  // already completed, is a no-op result.
+  app.post('/leave', async (req, reply) => {
+    const body = req.body as { room_id: string; user_id: string }
+    if (!body?.room_id || !body?.user_id) {
+      return reply.code(400).send({ error: 'room_id and user_id required' })
+    }
+    try {
+      return await withRoomLock(body.room_id, async () => {
+        const state = await loadState(body.room_id)
+        if (!state) return reply.code(404).send({ error: 'Room not found' })
+        if (state.status === 'completed') return { state, result: null }
+
+        const r = forfeitPlayer(state, body.user_id)
+        await saveState(state)
+        if (r.result) void saveCompletedGame(state, r.result)
+        return { state, result: r.result }
       })
     } catch (e) {
       if (e instanceof RoomBusyError) return reply.code(409).send({ error: e.message })
@@ -207,12 +296,18 @@ async function start() {
 // with no retry or record of the failure.
 async function saveCompletedGame(state: LudoState, result: ActionResult): Promise<void> {
   const attempts = 3
+  // game_rooms has no winner_id/prize_pool/platform_fee columns (the winner is
+  // recorded per-participant by the wallet ledger); the real columns are
+  // pot_amount + platform_fee_collected. The previous UPDATE referenced
+  // nonexistent columns and failed on every completed game, so Ludo rooms'
+  // pot/rake were never persisted and admin GGR reporting under-counted Ludo.
+  const pot = Math.round(state.stake * state.players.length * 100) / 100
   for (let i = 1; i <= attempts; i++) {
     try {
       await db.query(
-        `UPDATE game_rooms SET status = 'completed', winner_id = $1, prize_pool = $2,
-                platform_fee = $3, ended_at = NOW() WHERE id = $4`,
-        [result.winner_id, result.prize, result.rake_fee, state.room_id],
+        `UPDATE game_rooms SET status = 'completed', pot_amount = $1,
+                platform_fee_collected = $2, ended_at = NOW() WHERE id = $3`,
+        [pot, result.rake_fee, state.room_id],
       )
       return
     } catch (err) {

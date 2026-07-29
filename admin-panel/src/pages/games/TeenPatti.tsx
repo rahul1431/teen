@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag, Badge,
   Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col,
-  Input, Popconfirm, Modal, Typography, Spin
+  Input, Popconfirm, Modal, Typography, Spin, Upload, Grid, Tabs
 } from 'antd'
-import { ReloadOutlined, EyeOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons'
+import { ReloadOutlined, EyeOutlined, PlusOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
+import BotManagementPanel from '../../components/BotManagementPanel'
+import GamePnlDashboard from '../../components/GamePnlDashboard'
 
 const { Text } = Typography
 
@@ -42,6 +44,8 @@ function PlayingCards({ cards }: { cards: any[] }) {
 }
 
 export default function TeenPatti() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const [config, setConfig] = useState<any>(null)
   const [loadingConfig, setLoadingConfig] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
@@ -60,6 +64,24 @@ export default function TeenPatti() {
   const [newEmoji, setNewEmoji] = useState('')
   const [newEmojiLabel, setNewEmojiLabel] = useState('')
   const [savingEmoji, setSavingEmoji] = useState(false)
+  const [uploadingEmoji, setUploadingEmoji] = useState(false)
+
+  const handleEmojiUpload = async (file: File) => {
+    setUploadingEmoji(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await adminApi.post('/uploads/emoji', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      setNewEmoji(res.data.url)
+      message.success('Animated sticker uploaded successfully!')
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Upload failed')
+    } finally {
+      setUploadingEmoji(false)
+    }
+  }
 
 
   const loadConfig = () => {
@@ -121,7 +143,7 @@ export default function TeenPatti() {
   }
 
   const addEmoji = async () => {
-    if (!newEmoji.trim()) { message.warning('Enter an emoji'); return }
+    if (!newEmoji.trim()) { message.warning('Enter an emoji or upload a sticker'); return }
     setSavingEmoji(true)
     try {
       await adminApi.post('/emojis', { emoji: newEmoji.trim(), label: newEmojiLabel.trim() })
@@ -161,7 +183,16 @@ export default function TeenPatti() {
   }, [selectedRoom])
 
   const emojiColumns = [
-    { title: 'Emoji', dataIndex: 'emoji', render: (e: string) => <span style={{ fontSize: 24 }}>{e}</span> },
+    {
+      title: 'Emoji / Sticker',
+      dataIndex: 'emoji',
+      render: (e: string) => {
+        if (e && e.startsWith('/uploads/')) {
+          return <img src={e} alt="sticker" style={{ maxHeight: 40, maxWidth: 40, objectFit: 'contain' }} />
+        }
+        return <span style={{ fontSize: 24 }}>{e}</span>
+      }
+    },
     { title: 'Label', dataIndex: 'label', render: (l: string) => l || <Text type="secondary">—</Text> },
     { title: 'Order', dataIndex: 'sort_order' },
     {
@@ -198,6 +229,7 @@ export default function TeenPatti() {
   ]
 
   return (
+    <Tabs items={[{ key: 'overview', label: 'Overview', children: (
     <div>
       <h2 style={{ color: '#d4af37', marginBottom: 24 }}>🃏 Teen Patti Management</h2>
       <Row gutter={[24, 24]}>
@@ -256,7 +288,7 @@ export default function TeenPatti() {
               </Space>
             }
           >
-            <Table dataSource={rooms} columns={roomColumns} rowKey="id" loading={loadingRooms} size="small" />
+            <Table dataSource={rooms} columns={roomColumns} rowKey="id" loading={loadingRooms} size="small" scroll={{ x: 'max-content' }} />
           </Card>
         </Col>
       </Row>
@@ -282,6 +314,7 @@ export default function TeenPatti() {
               rowKey="id"
               size="small"
               pagination={{ pageSize: 10 }}
+              scroll={{ x: 'max-content' }}
             />
           </Card>
         </Col>
@@ -298,30 +331,56 @@ export default function TeenPatti() {
         okText="Add"
       >
         <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', marginBottom: 4 }}>Emoji character</label>
+          <label style={{ display: 'block', marginBottom: 4 }}>Emoji character or Sticker URL</label>
           <Input
             value={newEmoji}
             onChange={e => setNewEmoji(e.target.value)}
-            placeholder="Paste emoji here, e.g. 🎉"
-            maxLength={8}
-            style={{ fontSize: 24, width: 120 }}
+            placeholder="Paste emoji or sticker URL"
+            maxLength={256}
+            style={{ fontSize: 16, width: '100%' }}
           />
         </div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', marginBottom: 4 }}>Upload Animated Sticker (GIF, WebP, PNG, etc.)</label>
+          <Upload
+            showUploadList={false}
+            accept="image/*"
+            maxCount={1}
+            beforeUpload={(file) => { handleEmojiUpload(file as File); return false }}
+          >
+            <Button icon={<UploadOutlined />} loading={uploadingEmoji} disabled={savingEmoji}>
+              {newEmoji.startsWith('/uploads/') ? 'Change Sticker File' : 'Upload Sticker File'}
+            </Button>
+          </Upload>
+        </div>
         <div>
-          <label style={{ display: 'block', marginBottom: 4 }}>Label (optional)</label>
+          <label style={{ display: 'block', marginBottom: 4 }}>Label / Name</label>
           <Input
             value={newEmojiLabel}
             onChange={e => setNewEmojiLabel(e.target.value)}
-            placeholder="e.g. Party"
+            placeholder="e.g. Laughing GIF"
             maxLength={32}
           />
         </div>
         {newEmoji && (
-          <div style={{ marginTop: 16, fontSize: 40, textAlign: 'center' }}>{newEmoji}</div>
+          <div style={{ marginTop: 16, textAlign: 'center' }}>
+            {newEmoji.startsWith('/uploads/') ? (
+              <img
+                src={newEmoji}
+                alt="sticker preview"
+                style={{ maxHeight: 80, maxWidth: 80, objectFit: 'contain' }}
+                onError={(e) => {
+                  (e.target as any).style.display = 'none';
+                }}
+              />
+            ) : (
+              <div style={{ fontSize: 40 }}>{newEmoji}</div>
+            )}
+          </div>
         )}
       </Modal>
 
-      <Drawer title="Room Details" open={!!selectedRoom} onClose={() => setSelectedRoom(null)} width={480}>
+      <Drawer title="Room Details" open={!!selectedRoom} onClose={() => setSelectedRoom(null)} width={isMobile ? '100%' : 480}>
         {selectedRoom && (
           <>
             <Descriptions column={2} size="small" bordered>
@@ -393,5 +452,6 @@ export default function TeenPatti() {
         )}
       </Drawer>
     </div>
+    ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="teen_patti" /> }, { key: 'analytics', label: 'Analytics', children: <GamePnlDashboard gameType="teen_patti" /> }]} />
   )
 }

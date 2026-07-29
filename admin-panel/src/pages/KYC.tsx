@@ -217,6 +217,7 @@ export default function KYCPage() {
           pagination={{ pageSize: 15 }}
           size="small"
           rowClassName={(s) => s.status === 'under_review' ? 'kyc-pending-row' : ''}
+          scroll={{ x: 'max-content' }}
         />
       </Card>
 

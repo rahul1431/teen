@@ -1,12 +1,21 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag, Badge,
-  Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col
+  Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col, Grid, Tabs
 } from 'antd'
 import { ReloadOutlined, EyeOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
+import BotManagementPanel from '../../components/BotManagementPanel'
+import GamePnlDashboard from '../../components/GamePnlDashboard'
+import { BotTrainingConfigPanel } from '../../components/BotTrainingConfigPanel'
+import { BotMetricsTable } from '../../components/BotMetricsTable'
+import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
+import { BotTrainingTrendChart } from '../../components/BotTrainingTrendChart'
+import { MLTrainingPanel } from '../../components/MLTrainingPanel'
 
 export default function Ludo() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const [config, setConfig] = useState<any>(null)
   const [loadingConfig, setLoadingConfig] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
@@ -76,6 +85,7 @@ export default function Ludo() {
   ]
 
   return (
+    <Tabs items={[{ key: 'overview', label: 'Overview', children: (
     <div>
       <h2 style={{ color: '#d4af37', marginBottom: 24 }}>🎲 Ludo Management</h2>
       <Row gutter={[24, 24]}>
@@ -134,12 +144,12 @@ export default function Ludo() {
               </Space>
             }
           >
-            <Table dataSource={rooms} columns={roomColumns} rowKey="id" loading={loadingRooms} size="small" />
+            <Table dataSource={rooms} columns={roomColumns} rowKey="id" loading={loadingRooms} size="small" scroll={{ x: 'max-content' }} />
           </Card>
         </Col>
       </Row>
 
-      <Drawer title="Room Details" open={!!selectedRoom} onClose={() => setSelectedRoom(null)} width={480}>
+      <Drawer title="Room Details" open={!!selectedRoom} onClose={() => setSelectedRoom(null)} width={isMobile ? '100%' : 480}>
         {selectedRoom && (
           <>
             <Descriptions column={2} size="small" bordered>
@@ -168,5 +178,13 @@ export default function Ludo() {
         )}
       </Drawer>
     </div>
+    ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="ludo" /> }, { key: 'analytics', label: 'Analytics', children: <GamePnlDashboard gameType="ludo" /> }, { key: 'bot-training', label: 'Bot Training', children: (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+        <BotTrainingConfigPanel />
+        <BotTrainingTrendChart />
+        <BotMetricsTable />
+        <BotTrainingAuditTrail />
+      </div>
+    ) }, { key: 'ml-training', label: 'ML Training', children: <MLTrainingPanel /> }]} />
   )
 }

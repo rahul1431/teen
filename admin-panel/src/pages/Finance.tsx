@@ -68,6 +68,7 @@ function DealerTips() {
           size="small"
           loading={loading}
           pagination={{ pageSize: 15 }}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Time', dataIndex: 'created_at', width: 180, render: (v: string) => new Date(v).toLocaleString() },
             { title: 'Player', dataIndex: 'username', render: (u: string) => <Tag color="green">{u}</Tag> },
@@ -81,6 +82,19 @@ function DealerTips() {
   )
 }
 
+// Withdrawal order metadata used to be { bank_account, upi_id } (free text the
+// user typed). It's now a snapshot of the user's verified bank_details row
+// ({ holder_name, bank_name, account_number, ifsc_code, upi_id }) — the
+// bank_account fallback keeps orders created before that change readable.
+function withdrawalDestination(metadata: any): string {
+  if (!metadata) return '-'
+  if (metadata.account_number) {
+    const parts = [metadata.holder_name, metadata.bank_name, metadata.account_number, metadata.ifsc_code].filter(Boolean)
+    return parts.join(' · ') || '-'
+  }
+  return metadata.upi_id || metadata.bank_account || '-'
+}
+
 // ---- Withdrawals ----
 function Withdrawals() {
   const [rows, setRows] = useState<any[]>([])
@@ -89,6 +103,17 @@ function Withdrawals() {
   const [acting, setActing] = useState<{ row: any; action: 'paid' | 'refunded' } | null>(null)
   const [reference, setReference] = useState('')
   const [reason, setReason] = useState('')
+  const [recent, setRecent] = useState<any[]>([])
+  const [recentLoading, setRecentLoading] = useState(false)
+
+  const loadRecent = async () => {
+    setRecentLoading(true)
+    try {
+      const res = await adminApi.get('/finance/withdrawals', { params: { status: 'all', limit: 15 } })
+      setRecent(res.data)
+    } finally { setRecentLoading(false) }
+  }
+  useEffect(() => { loadRecent() }, [])
 
   const load = async () => {
     setLoading(true)
@@ -123,19 +148,44 @@ function Withdrawals() {
 
   return (
     <>
+      <Card
+        size="small"
+        title="Recent Withdrawals"
+        extra={<Button size="small" onClick={loadRecent} loading={recentLoading}>Refresh</Button>}
+        style={{ marginBottom: 16 }}
+      >
+        <Table
+          dataSource={recent}
+          rowKey="id"
+          size="small"
+          loading={recentLoading}
+          pagination={false}
+          scroll={{ x: 'max-content' }}
+          columns={[
+            { title: 'User', dataIndex: 'username' },
+            { title: 'Amount (₹)', dataIndex: 'amount', align: 'right' as const, render: (v: any) => parseFloat(v).toFixed(2) },
+            { title: 'Status', dataIndex: 'status', render: (s: string) => (
+              <Tag color={{ created: 'orange', paid: 'green', failed: 'red', refunded: 'purple' }[s] || 'default'}>{s}</Tag>
+            )},
+            { title: 'Requested', dataIndex: 'created_at', render: (d: string) => new Date(d).toLocaleString() },
+          ]}
+          locale={{ emptyText: 'No withdrawals yet' }}
+        />
+      </Card>
       <Space style={{ marginBottom: 16 }}>
         <Select value={status} onChange={setStatus} style={{ width: 160 }}>
           <Select.Option value="created">Pending</Select.Option>
           <Select.Option value="paid">Approved</Select.Option>
           <Select.Option value="refunded">Rejected</Select.Option>
+          <Select.Option value="all">All</Select.Option>
         </Select>
         <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
       </Space>
-      <Table dataSource={rows} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 20 }}
+      <Table dataSource={rows} rowKey="id" loading={loading} size="small" pagination={{ pageSize: 20 }} scroll={{ x: 'max-content' }}
         columns={[
           { title: 'User', dataIndex: 'username' },
           { title: 'Amount (₹)', dataIndex: 'amount', align: 'right' as const, render: (v: any) => parseFloat(v).toFixed(2) },
-          { title: 'UPI / Bank', key: 'payment', render: (r: any) => r.metadata?.upi_id || r.metadata?.bank_account || '-' },
+          { title: 'UPI / Bank', key: 'payment', render: (r: any) => withdrawalDestination(r.metadata) },
           { title: 'Requested', dataIndex: 'created_at', render: (d: string) => new Date(d).toLocaleString() },
           { title: 'UTR', key: 'utr', render: (r: any) => r.metadata?.utr || '-' },
           { title: 'Status', dataIndex: 'status', render: (s: string) => (
@@ -174,7 +224,7 @@ function Withdrawals() {
               <Descriptions.Item label="User">{acting.row.username}</Descriptions.Item>
               <Descriptions.Item label="Amount">₹{parseFloat(acting.row.amount).toFixed(2)}</Descriptions.Item>
               <Descriptions.Item label="Current Status">{acting.row.status}</Descriptions.Item>
-              <Descriptions.Item label="Destination">{acting.row.metadata?.upi_id || acting.row.metadata?.bank_account || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Destination">{withdrawalDestination(acting.row.metadata)}</Descriptions.Item>
             </Descriptions>
             {acting.action === 'paid' ? (
               <>
@@ -266,6 +316,7 @@ function BankDetailsAdmin() {
         columns={columns}
         size="small"
         pagination={{ pageSize: 20 }}
+        scroll={{ x: 'max-content' }}
       />
     </>
   )
@@ -326,6 +377,7 @@ function Deposits() {
       </Space>
       <Table dataSource={rows} rowKey="id" loading={loading} size="small"
         pagination={{ pageSize: 20, total, current: page, onChange: setPage }}
+        scroll={{ x: 'max-content' }}
         columns={[
           { title: 'When', dataIndex: 'created_at', render: (d: string) => new Date(d).toLocaleString() },
           { title: 'User', dataIndex: 'username' },
@@ -433,6 +485,7 @@ function Ledger() {
       </Space>
       <Table dataSource={rows} rowKey="id" loading={loading} size="small"
         pagination={{ pageSize: 50, total, current: page, onChange: setPage }}
+        scroll={{ x: 'max-content' }}
         columns={[
           { title: 'When', dataIndex: 'created_at', render: (d: string) => new Date(d).toLocaleString() },
           { title: 'User', dataIndex: 'username' },
@@ -636,7 +689,7 @@ function Reconciliation() {
           <Row gutter={[24, 24]}>
             <Col xs={24} lg={12}>
               <Card title="Payment Orders by Day" size="small" style={{ borderRadius: 12 }}>
-                <Table size="small" pagination={false} dataSource={data.by_day} rowKey={(r: any) => `${r.day}-${r.type}-${r.status}`}
+                <Table size="small" pagination={false} dataSource={data.by_day} rowKey={(r: any) => `${r.day}-${r.type}-${r.status}`} scroll={{ x: 'max-content' }}
                   columns={[
                     { title: 'Day', dataIndex: 'day', render: (d: string) => new Date(d).toLocaleDateString() },
                     { title: 'Type', dataIndex: 'type', render: (t: string) => <Tag>{t}</Tag> },
@@ -648,7 +701,7 @@ function Reconciliation() {
             </Col>
             <Col xs={24} lg={12}>
               <Card title="Gross Gaming Revenue (Rake)" size="small" style={{ borderRadius: 12, marginBottom: 16 }}>
-                <Table size="small" pagination={false} dataSource={data.ggr} rowKey="day"
+                <Table size="small" pagination={false} dataSource={data.ggr} rowKey="day" scroll={{ x: 'max-content' }}
                   columns={[
                     { title: 'Day', dataIndex: 'day', render: (d: string) => new Date(d).toLocaleDateString() },
                     { title: 'Pot Volume (₹)', dataIndex: 'pot', align: 'right' as const, render: (v: string) => parseFloat(v).toFixed(2) },
@@ -657,7 +710,7 @@ function Reconciliation() {
                   ]} />
               </Card>
               <Card title="By Gateway" size="small" style={{ borderRadius: 12 }}>
-                <Table size="small" pagination={false} dataSource={data.by_gateway} rowKey={(r: any) => `${r.gateway}-${r.status}`}
+                <Table size="small" pagination={false} dataSource={data.by_gateway} rowKey={(r: any) => `${r.gateway}-${r.status}`} scroll={{ x: 'max-content' }}
                   columns={[
                     { title: 'Gateway', dataIndex: 'gateway' },
                     { title: 'Status', dataIndex: 'status' },
@@ -749,7 +802,7 @@ function PaymentMethods() {
         <Button type="primary" icon={<PlusOutlined />} onClick={openNew}>Add Method</Button>
         <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
       </Space>
-      <Table dataSource={rows} rowKey="id" loading={loading} size="small" pagination={false}
+      <Table dataSource={rows} rowKey="id" loading={loading} size="small" pagination={false} scroll={{ x: 'max-content' }}
         columns={[
           { title: 'Type', dataIndex: 'method_type', render: (t: string) => <Tag color={{ upi: 'blue', bank: 'green', qr: 'purple' }[t]}>{t?.toUpperCase()}</Tag> },
           { title: 'Label', dataIndex: 'label' },

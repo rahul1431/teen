@@ -7,6 +7,7 @@ import { Pool } from 'pg'
 import Redis from 'ioredis'
 import { Logger } from 'pino'
 import { execSync } from 'child_process'
+import * as fs from 'fs'
 import { MonitorIngestor } from './monitor-ingestor'
 
 const SWEEP_MS = 2 * 60 * 1000
@@ -69,7 +70,11 @@ export class AlertEngine {
     }
     for (const p of list) {
       const status = p.pm2_env?.status ?? 'unknown'
-      if (status === 'online') continue
+      // Only 'errored' means pm2 detected a real crash-loop. 'stopped'/'stopping'
+      // is an intentional `pm2 stop` (e.g. mid-deploy) — fighting that would
+      // restart a service someone deliberately took down. 'launching' is a
+      // normal transient state while a process is still coming up.
+      if (status !== 'errored') continue
       if (p.name === 'teen-app-monitor') continue // can't restart ourselves
       await this.remediate(p.name, 'restart')
     }
@@ -106,7 +111,20 @@ export class AlertEngine {
       execSync(cmd, { timeout: 60000, env: cleanEnv })
       await new Promise(r => setTimeout(r, 8000))
       const after: any[] = JSON.parse(execSync('pm2 jlist 2>/dev/null', { timeout: 5000 }).toString())
-      ok = after.some(p => p.name === name && p.pm2_env?.status === 'online')
+      const proc = after.find(p => p.name === name)
+      ok = proc?.pm2_env?.status === 'online'
+      if (!ok) {
+        // pm2 restart succeeds even if the app crashes moments later (crash-loop
+        // on boot) — no exception is thrown in that case, so without this the
+        // failure is recorded with no clue why. Tail its own error log instead.
+        const errLogPath = proc?.pm2_env?.pm_err_log_path as string | undefined
+        if (errLogPath) {
+          try {
+            const lines = fs.readFileSync(errLogPath, 'utf8').split('\n').filter(Boolean)
+            error = lines.slice(-15).join('\n').slice(0, 2000)
+          } catch { /* best-effort diagnostic only */ }
+        }
+      }
     } catch (e: any) {
       error = e?.message ?? String(e)
     }

@@ -4,6 +4,7 @@ import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import jwt from '@fastify/jwt'
 import multipart from '@fastify/multipart'
+import websocket from '@fastify/websocket'
 import { Pool } from 'pg'
 import Redis from 'ioredis'
 import bcrypt from 'bcryptjs'
@@ -14,13 +15,48 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { pipeline } from 'stream/promises'
+
+// Mirrors DEFAULT_SCORING_RULES in core-api-service/src/helpers/fantasy-scoring.ts
+// — admin-service and core-api-service are independent deployables with no
+// shared package, so this small constant is duplicated rather than proxied.
+// Keep both copies in sync if the rulebook shape changes.
+const DEFAULT_SCORING_RULES = {
+  runPoint: 1, boundaryBonus: 1, sixBonus: 2, bonus25Runs: 4, bonus50Runs: 8, bonus75Runs: 12, bonus100Runs: 16,
+  duckPenalty: -2, srMinBalls: 10,
+  srBands: [{ max: 50, points: -6 }, { max: 60, points: -4 }, { max: 70, points: -2 }, { max: 130, points: 0 }, { max: 150, points: 2 }, { max: 170, points: 4 }, { max: null, points: 6 }],
+  wicketPoints: 25, bonus4Wickets: 8, bonus5Wickets: 16, maidenOverPoints: 12, bowledLbwBonus: 8, ecoMinOvers: 2,
+  ecoBands: [{ max: 5, points: 6 }, { max: 6, points: 4 }, { max: 7, points: 2 }, { max: 10, points: 0 }, { max: 11, points: -2 }, { max: 12, points: -4 }, { max: null, points: -6 }],
+  catchPoints: 8, bonus3Catches: 4, stumpingPoints: 12, runOutPoints: 12,
+  captainMultiplier: 2.0, viceCaptainMultiplier: 1.5,
+}
 import { registerMLRoutes } from './ml-routes'
 import { registerChurnRoutes } from './churn-routes'
 import { registerBotLearningRoutes } from './bot-learning-routes'
 import { registerMonitorRoutes } from './monitor-routes'
+import { registerMetricsRoutes } from './metrics-routes'
+import { registerPlayerAnomaliesRoutes } from './player-anomalies-routes'
+import { registerPnlDashboardRoutes } from './pnl-dashboard-routes'
+import { registerTaskRoutes } from './task-routes'
+import { registerMissionRoutes } from './mission-routes'
+import { registerNotificationRoutes } from './notifications-routes'
+import { registerNotificationCampaignRoutes } from './notification-campaigns-routes'
+import { registerAgentRoutes } from './agent-routes'
+import { registerAgentPortalRoutes } from './agent-portal-routes'
+import { registerAnalyticsRoutes } from './analytics-routes'
+import { registerBotTrainingRoutes } from './routes'
+import { registerMlTrainingRoutes } from './ml-training-routes'
+import { AgentSettlementJob } from './agent-settlement-job'
+import { createRateLimiter } from './middleware/rate-limiter'
+import { buildWithdrawalsFilter, resolveWithdrawalsLimit } from './withdrawals-query'
 
-// QR images for payment methods are stored here, served by nginx at /uploads/qr/.
+// QR images for payment methods are stored here. nginx's /uploads/ alias points at
+// /opt/teen/uploads/ (not /opt/teen-prod), even though services now run from /opt/teen-prod —
+// keep uploads writing to the legacy path so nginx can actually serve them.
 const QR_UPLOAD_DIR = process.env.QR_UPLOAD_DIR || '/opt/teen/uploads/qr'
+
+// Cricket fantasy player avatars and country flag icons, served by nginx at /uploads/cricket-avatars/ and /uploads/cricket-flags/.
+const CRICKET_AVATAR_UPLOAD_DIR = process.env.CRICKET_AVATAR_UPLOAD_DIR || '/opt/teen/uploads/cricket-avatars'
+const CRICKET_FLAG_UPLOAD_DIR = process.env.CRICKET_FLAG_UPLOAD_DIR || '/opt/teen/uploads/cricket-flags'
 
 // Thin wrapper to keep the call sites readable (matches the old `authenticator` API)
 const totp = {
@@ -32,9 +68,9 @@ const totp = {
 }
 
 // RBAC: role hierarchy. Higher index = more privileged.
-const ROLES = ['readonly', 'support', 'finance', 'superadmin'] as const
+const ROLES = ['readonly', 'employee', 'support', 'finance', 'superadmin'] as const
 type Role = typeof ROLES[number]
-const ROLE_INDEX: Record<Role, number> = { readonly: 0, support: 1, finance: 2, superadmin: 3 }
+const ROLE_INDEX: Record<Role, number> = { readonly: 0, employee: 1, support: 2, finance: 3, superadmin: 4 }
 function hasRole(actual: string | undefined, required: Role): boolean {
   if (!actual || !(actual in ROLE_INDEX)) return false
   return ROLE_INDEX[actual as Role] >= ROLE_INDEX[required]
@@ -51,12 +87,30 @@ async function start() {
   await app.register(helmet, { crossOriginResourcePolicy: false })
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: process.env.ADMIN_JWT_SECRET! })
-  await app.register(multipart, { limits: { fileSize: 150 * 1024 * 1024 } }) // 150MB (APK uploads)
+  await app.register(multipart, { limits: { fileSize: 300 * 1024 * 1024 } }) // 300MB (APK uploads)
+  await app.register(websocket)
   if (redis.status === 'wait') await redis.connect()
   fs.mkdirSync(QR_UPLOAD_DIR, { recursive: true })
+  fs.mkdirSync(CRICKET_AVATAR_UPLOAD_DIR, { recursive: true })
+  fs.mkdirSync(CRICKET_FLAG_UPLOAD_DIR, { recursive: true })
+
+  try {
+    await db.query('ALTER TABLE game_emojis ALTER COLUMN emoji TYPE VARCHAR(256)');
+  } catch (err) {
+    app.log.error(err, 'Failed to alter game_emojis.emoji column length');
+  }
 
   const authenticate = async (req: any, reply: any) => {
-    try { await req.jwtVerify() } catch { reply.code(401).send({ error: 'Unauthorized' }) }
+    try {
+      await req.jwtVerify()
+      // Agent tokens (role: 'agent', signed in agent-portal-routes.ts) are valid
+      // JWTs but must NEVER pass the shared admin gate — they'd otherwise reach
+      // every route guarded by `authenticate` alone (no requireRole on top).
+      // Agent self-service routes use their own `authenticateAgent` guard instead.
+      if ((req.user as any)?.role === 'agent') {
+        return reply.code(403).send({ error: 'Forbidden' })
+      }
+    } catch { reply.code(401).send({ error: 'Unauthorized' }) }
   }
 
   // Role-gate factory. Use as: { onRequest: [authenticate, requireRole('finance')] }
@@ -67,6 +121,20 @@ async function start() {
 
   app.decorate('authenticate', authenticate)
   app.decorate('requireRole', requireRole)
+
+  // Initialize rate limiter
+  const rateLimiter = createRateLimiter(redis)
+
+  // Apply HTTP rate limiting to all routes (skip for certain endpoints)
+  app.addHook('onRequest', (req, reply, done) => {
+    // Skip rate limiting for health checks and public endpoints
+    if (req.url === '/health' || req.url === '/api/admin/auth/login') {
+      return done()
+    }
+    rateLimiter.httpLimiter(req, reply)
+      .then(() => done())
+      .catch(done)
+  })
 
   // Register ML routes
   await registerMLRoutes(app, redis, db, authenticate)
@@ -80,11 +148,41 @@ async function start() {
   // Register Monitor proxy routes
   await registerMonitorRoutes(app, authenticate, requireRole)
 
+  // Register Metrics routes
+  await registerMetricsRoutes(app, db, authenticate)
+
+  // Register Player Anomalies Dashboard routes
+  await registerPlayerAnomaliesRoutes(app, db, authenticate, requireRole)
+
+  // Register PnL Dashboard routes (Teen Patti / Ludo)
+  await registerPnlDashboardRoutes(app, db, authenticate, requireRole)
+
+  // Register Task Management routes
+  await registerTaskRoutes(app, db, authenticate, requireRole)
+
+  // Register Missions routes (player-facing rewards — distinct from the employee Task Management above)
+  await registerMissionRoutes(app, db, authenticate, requireRole)
+
+  // Register Notification routes
+  registerNotificationRoutes(app, db, authenticate)
+  registerNotificationCampaignRoutes(app, db, authenticate, requireRole)
+
+  // Register Agent commission system routes
+  await registerAgentRoutes(app, db, authenticate, requireRole)
+  await registerAgentPortalRoutes(app, db)
+  await registerAnalyticsRoutes(app, db, authenticate, requireRole)
+
+  // Register Bot Training Config routes
+  await registerBotTrainingRoutes(app, redis, db, authenticate, requireRole)
+  await registerMlTrainingRoutes(app, db, authenticate, requireRole)
+
+  new AgentSettlementJob(db, (msg) => app.log.info(msg)).start()
+
   // POST /api/admin/auth/login
   // If the admin has 2FA enabled, the call must include `totp_code`. If it's
   // missing on a 2FA-enabled account, we respond with 401 + a `require_2fa`
   // flag so the UI knows to prompt for the code.
-  app.post('/api/admin/auth/login', async (req, reply) => {
+  app.post('/api/admin/auth/login', { onRequest: [rateLimiter.loginLimiter.bind(rateLimiter)] }, async (req, reply) => {
     const { username, password, totp_code } = z.object({
       username: z.string(),
       password: z.string(),
@@ -181,7 +279,7 @@ async function start() {
       username: z.string().min(3).max(50),
       email: z.string().email(),
       password: z.string().min(10),
-      role: z.enum(['readonly', 'support', 'finance', 'superadmin']),
+      role: z.enum(['readonly', 'employee', 'support', 'finance', 'superadmin']),
     }).parse(req.body)
     const hash = await bcrypt.hash(body.password, 12)
     try {
@@ -204,7 +302,7 @@ async function start() {
     const me = req.user as any
     const { id } = req.params as any
     const body = z.object({
-      role: z.enum(['readonly', 'support', 'finance', 'superadmin']).optional(),
+      role: z.enum(['readonly', 'employee', 'support', 'finance', 'superadmin']).optional(),
       is_active: z.boolean().optional(),
     }).parse(req.body)
     if (id === me.sub && body.is_active === false) {
@@ -291,16 +389,18 @@ async function start() {
 
   // GET /api/admin/users
   app.get('/api/admin/users', { onRequest: [authenticate] }, async (req, reply) => {
-    const { page = 1, limit = 20, search, status, is_bot = 'false' } = req.query as any
+    const { page = 1, limit = 20, search, status, is_bot = 'false', game_type } = req.query as any
     const offset = (parseInt(page) - 1) * parseInt(limit)
     const conditions: string[] = ['u.is_bot = $1']
     const params: any[] = [is_bot !== 'false']
     let idx = 2
     if (search) { conditions.push(`(u.username ILIKE $${idx} OR u.phone ILIKE $${idx})`); params.push(`%${search}%`); idx++ }
     if (status) { conditions.push(`u.status = $${idx}`); params.push(status); idx++ }
+    if (game_type) { conditions.push(`u.preferred_game_type = $${idx}`); params.push(game_type); idx++ }
     const where = conditions.join(' AND ')
     const [users, countRes] = await Promise.all([
       db.query(`SELECT u.id, u.username, u.phone, u.email, u.kyc_status, u.status, u.referral_code, u.created_at,
+                       u.preferred_game_type, u.bot_difficulty,
                        w.real_balance, w.bonus_balance,
                        COALESCE(
                          (SELECT SUM(CASE WHEN type = 'game_credit' THEN amount ELSE -amount END)
@@ -320,7 +420,7 @@ async function start() {
   app.patch('/api/admin/users/:id/status', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
-    const { status } = z.object({ status: z.enum(['active', 'suspended', 'banned']) }).parse(req.body)
+    const { status } = z.object({ status: z.enum(['active', 'suspended', 'banned', 'paused_anomaly']) }).parse(req.body)
     await db.query('UPDATE users SET status = $1 WHERE id = $2', [status, id])
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'user', $3, $4)`,
       [admin.sub, `set_status_${status}`, id, JSON.stringify({ status })])
@@ -357,7 +457,7 @@ async function start() {
     const res = await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/debit/manual`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-      body: JSON.stringify({ user_id: id, amount, description: description || 'Manual debit by admin' }),
+      body: JSON.stringify({ user_id: id, amount, request_id: crypto.randomUUID(), description: description || 'Manual debit by admin' }),
     })
     if (!res.ok) return reply.code(res.status).send(await res.json().catch(() => ({ error: 'Wallet service error' })))
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'debit_wallet', 'user', $2, $3)`,
@@ -598,14 +698,18 @@ async function start() {
   })
 
   // GET /api/admin/finance/withdrawals
+  // status='all' returns every status (used by the "All" filter and the Recents card);
+  // any other value (or omitted) filters to that single status, defaulting to 'created'.
   app.get('/api/admin/finance/withdrawals', { onRequest: [authenticate] }, async (req, reply) => {
-    const { status } = req.query as any
+    const { status, limit } = req.query as any
+    const { clause, params } = buildWithdrawalsFilter(status)
+    const boundedLimit = resolveWithdrawalsLimit(limit)
     const res = await db.query(`
       SELECT po.*, u.username FROM payment_orders po
       JOIN users u ON u.id = po.user_id
-      WHERE po.type = 'withdrawal' AND po.status = $1
-      ORDER BY po.created_at DESC LIMIT 100
-    `, [status || 'created'])
+      WHERE po.type = 'withdrawal' ${clause}
+      ORDER BY po.created_at DESC LIMIT ${boundedLimit}
+    `, params)
     return reply.send(res.rows)
   })
 
@@ -632,90 +736,97 @@ async function start() {
       return reply.send({ success: true })
     }
 
+    // Every wallet-service call below must actually succeed before the status
+    // transition is considered to have happened — fetch() only rejects on
+    // network-level failure, never on a 4xx/5xx, so the previous
+    // fire-and-forget .catch() let the DB update / audit log / user
+    // notification below all claim success even when the money movement
+    // silently failed server-side. See
+    // docs/Bugs/withdrawal-state-machine-ignores-wallet-service-failures.md.
+    const callWallet = async (path: string, body: any, label: string): Promise<string | null> => {
+      try {
+        const res = await fetch(`${process.env.WALLET_SERVICE_URL}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) {
+          const errBody: any = await res.json().catch(() => ({}))
+          console.error(`[admin-service] wallet ${label} failed for withdrawal ${id}: ${res.status}`, errBody)
+          return errBody?.error || `wallet ${label} failed (HTTP ${res.status})`
+        }
+        return null
+      } catch (e: any) {
+        console.error(`[admin-service] wallet ${label} error for withdrawal ${id}:`, e?.message)
+        return `wallet service unreachable during ${label}`
+      }
+    }
+
+    let walletError: string | null = null
     // Handle wallet balance adjustments based on the transition
     if (oldStatus === 'created' && newStatus === 'paid') {
       // 1. created -> paid: Consume locked funds
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/consume`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
-          user_id: row.rows[0].user_id,
-          amount: parseFloat(row.rows[0].amount),
-          room_id: `withdrawal:${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet consume:', e?.message))
+      walletError = await callWallet('/internal/wallet/consume', {
+        user_id: row.rows[0].user_id,
+        amount: parseFloat(row.rows[0].amount),
+        room_id: `withdrawal:${id}`,
+      }, 'consume')
     } else if (oldStatus === 'created' && newStatus === 'refunded') {
       // 2. created -> refunded: Unlock locked funds (refund to real balance)
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
-          user_id: row.rows[0].user_id,
-          amount: parseFloat(row.rows[0].amount),
-          room_id: `withdrawal:${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet unlock:', e?.message))
+      walletError = await callWallet('/internal/wallet/unlock', {
+        user_id: row.rows[0].user_id,
+        amount: parseFloat(row.rows[0].amount),
+        room_id: `withdrawal:${id}`,
+      }, 'unlock')
     } else if (oldStatus === 'paid' && newStatus === 'refunded') {
       // 3. paid -> refunded: Funds already consumed, must credit real balance directly
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
-          user_id: row.rows[0].user_id,
-          amount: parseFloat(row.rows[0].amount),
-          type: 'manual_credit',
-          idempotency_key: `withdrawal_refund_paid_${id}`,
-          reference_id: `withdrawal:${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet credit:', e?.message))
+      walletError = await callWallet('/internal/wallet/credit', {
+        user_id: row.rows[0].user_id,
+        amount: parseFloat(row.rows[0].amount),
+        type: 'manual_credit',
+        idempotency_key: `withdrawal_refund_paid_${id}`,
+        reference_id: `withdrawal:${id}`,
+      }, 'credit')
     } else if (oldStatus === 'refunded' && newStatus === 'paid') {
       // 4. refunded -> paid: Funds were refunded to real balance, must debit real balance directly
-      await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/debit/manual`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
-          user_id: row.rows[0].user_id,
-          amount: parseFloat(row.rows[0].amount),
-          request_id: `withdrawal_debit_refunded_${id}`,
-          description: `Withdrawal marked paid (previously rejected): ${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet manual debit:', e?.message))
+      walletError = await callWallet('/wallet/debit/manual', {
+        user_id: row.rows[0].user_id,
+        amount: parseFloat(row.rows[0].amount),
+        request_id: `withdrawal_debit_refunded_${id}`,
+        description: `Withdrawal marked paid (previously rejected): ${id}`,
+      }, 'debit')
     } else if (oldStatus === 'paid' && newStatus === 'created') {
-      // 5. paid -> created: Restore funds to real balance, then lock them
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/credit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
-          user_id: row.rows[0].user_id,
-          amount: parseFloat(row.rows[0].amount),
-          type: 'manual_credit',
-          idempotency_key: `withdrawal_restore_paid_${id}`,
-          reference_id: `withdrawal:${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet credit:', e?.message))
-
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
+      // 5. paid -> created: Restore funds to real balance, then lock them.
+      // Both idempotency keys are deterministic per order id, so if this
+      // fails after the credit but before the lock, retrying the same PATCH
+      // is safe — the credit becomes a no-op and only the lock is retried.
+      walletError = await callWallet('/internal/wallet/credit', {
+        user_id: row.rows[0].user_id,
+        amount: parseFloat(row.rows[0].amount),
+        type: 'manual_credit',
+        idempotency_key: `withdrawal_restore_paid_${id}`,
+        reference_id: `withdrawal:${id}`,
+      }, 'credit')
+      if (!walletError) {
+        walletError = await callWallet('/internal/wallet/lock', {
           user_id: row.rows[0].user_id,
           amount: parseFloat(row.rows[0].amount),
           room_id: `withdrawal:${id}`,
           lock_id: `withdraw:${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet lock:', e?.message))
+        }, 'lock')
+      }
     } else if (oldStatus === 'refunded' && newStatus === 'created') {
       // 6. refunded -> created: Funds are in real balance, lock them again
-      await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/lock`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-        body: JSON.stringify({
-          user_id: row.rows[0].user_id,
-          amount: parseFloat(row.rows[0].amount),
-          room_id: `withdrawal:${id}`,
-          lock_id: `withdraw:${id}`,
-        }),
-      }).catch((e) => console.error('[admin-service] Error calling wallet lock:', e?.message))
+      walletError = await callWallet('/internal/wallet/lock', {
+        user_id: row.rows[0].user_id,
+        amount: parseFloat(row.rows[0].amount),
+        room_id: `withdrawal:${id}`,
+        lock_id: `withdraw:${id}`,
+      }, 'lock')
+    }
+
+    if (walletError) {
+      return reply.code(502).send({ error: `Could not change withdrawal status — money movement failed: ${walletError}` })
     }
 
     const meta = { ...(row.rows[0].metadata || {}) }
@@ -807,19 +918,29 @@ async function start() {
       if (row.rows[0].status === 'paid') {
         return reply.code(400).send({ error: 'Already paid' })
       }
-      await db.query(`UPDATE payment_orders SET status='paid', metadata=$1, updated_at=NOW() WHERE id=$2`,
-        [JSON.stringify(meta), id])
-      // Credit the user's wallet
-      await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/deposit/manual`, {
+      // Credit the wallet BEFORE marking the order paid — if this call fails,
+      // the order must stay unpaid rather than be recorded as paid with no
+      // funds actually credited. request_id is the stable order id (not a
+      // fresh UUID) so retrying this same approval after a failure is
+      // idempotent on the wallet-service side instead of double-crediting.
+      const creditRes = await fetch(`${process.env.WALLET_SERVICE_URL}/wallet/deposit/manual`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
         body: JSON.stringify({
           user_id: row.rows[0].user_id,
           amount: parseFloat(row.rows[0].amount),
-          request_id: crypto.randomUUID(),
+          request_id: id,
           description: `Manual deposit reconciliation${reference ? ` (ref: ${reference})` : ''}`,
         }),
+      }).catch((e: any) => {
+        throw new Error(`Wallet credit request failed: ${e?.message || e}`)
       })
+      if (!creditRes.ok) {
+        const msg = await creditRes.text().catch(() => '')
+        return reply.code(502).send({ error: `Failed to credit wallet — deposit not marked paid: ${msg}` })
+      }
+      await db.query(`UPDATE payment_orders SET status='paid', metadata=$1, updated_at=NOW() WHERE id=$2`,
+        [JSON.stringify(meta), id])
       // Credit the promo-code bonus recorded at submit time (non-withdrawable
       // bonus wallet). Idempotency key is tied to the order so retries are safe.
       const promoBonus = parseFloat(meta.promo_bonus || '0')
@@ -874,6 +995,56 @@ async function start() {
     return reply.send({ url: `/uploads/qr/${fname}` })
   })
 
+  // POST /api/admin/uploads/emoji — upload an emoji/sticker, returns its public URL
+  app.post('/api/admin/uploads/emoji', { onRequest: [authenticate] }, async (req, reply) => {
+    const file = await (req as any).file()
+    if (!file) return reply.code(400).send({ error: 'No file uploaded' })
+    const ext = path.extname(file.filename || '').toLowerCase().slice(0, 8) || '.gif'
+    const fname = `emoji_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`
+    const EMOJI_UPLOAD_DIR = process.env.EMOJI_UPLOAD_DIR || '/opt/teen/uploads/emojis'
+    fs.mkdirSync(EMOJI_UPLOAD_DIR, { recursive: true })
+    await pipeline(file.file, fs.createWriteStream(path.join(EMOJI_UPLOAD_DIR, fname)))
+    return reply.send({ url: `/uploads/emojis/${fname}` })
+  })
+
+  // POST /api/admin/uploads/cricket-avatar — upload a fantasy player photo, returns its public URL
+  app.post('/api/admin/uploads/cricket-avatar', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const file = await (req as any).file({ limits: { fileSize: 5 * 1024 * 1024 } })
+    if (!file) return reply.code(400).send({ error: 'No file uploaded' })
+    const ext = path.extname(file.filename || '').toLowerCase().slice(0, 8) || '.png'
+    if (!['.jpg', '.jpeg', '.png', '.webp'].includes(ext) || !['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+      file.file.resume()
+      return reply.code(400).send({ error: 'Unsupported image type' })
+    }
+    const fname = `avatar_${crypto.randomUUID()}${ext}`
+    const fpath = path.join(CRICKET_AVATAR_UPLOAD_DIR, fname)
+    await pipeline(file.file, fs.createWriteStream(fpath))
+    if (file.file.truncated) {
+      fs.unlinkSync(fpath)
+      return reply.code(400).send({ error: 'File too large (max 5MB)' })
+    }
+    return reply.send({ url: `/uploads/cricket-avatars/${fname}` })
+  })
+
+  // POST /api/admin/uploads/cricket-flag — upload a country flag icon, returns its public URL
+  app.post('/api/admin/uploads/cricket-flag', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const file = await (req as any).file({ limits: { fileSize: 5 * 1024 * 1024 } })
+    if (!file) return reply.code(400).send({ error: 'No file uploaded' })
+    const ext = path.extname(file.filename || '').toLowerCase().slice(0, 8) || '.png'
+    if (!['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext) || !['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'].includes(file.mimetype)) {
+      file.file.resume()
+      return reply.code(400).send({ error: 'Unsupported image type' })
+    }
+    const fname = `flag_${crypto.randomUUID()}${ext}`
+    const fpath = path.join(CRICKET_FLAG_UPLOAD_DIR, fname)
+    await pipeline(file.file, fs.createWriteStream(fpath))
+    if (file.file.truncated) {
+      fs.unlinkSync(fpath)
+      return reply.code(400).send({ error: 'File too large (max 5MB)' })
+    }
+    return reply.send({ url: `/uploads/cricket-flags/${fname}` })
+  })
+
   // GET /api/admin/payment-methods â€” list all (active + inactive)
   app.get('/api/admin/payment-methods', { onRequest: [authenticate, requireRole('finance')] }, async (_req, reply) => {
     const res = await db.query(`SELECT * FROM payment_methods ORDER BY sort_order ASC, created_at ASC`)
@@ -886,17 +1057,17 @@ async function start() {
     const b = z.object({
       method_type: z.enum(['upi', 'bank', 'qr']),
       label: z.string().min(1),
-      upi_id: z.string().optional(),
-      account_name: z.string().optional(),
-      account_number: z.string().optional(),
-      ifsc: z.string().optional(),
-      bank_name: z.string().optional(),
-      qr_image_url: z.string().optional(),
-      instructions: z.string().optional(),
-      min_amount: z.number().optional(),
-      max_amount: z.number().optional(),
+      upi_id: z.string().nullable().optional(),
+      account_name: z.string().nullable().optional(),
+      account_number: z.string().nullable().optional(),
+      ifsc: z.string().nullable().optional(),
+      bank_name: z.string().nullable().optional(),
+      qr_image_url: z.string().nullable().optional(),
+      instructions: z.string().nullable().optional(),
+      min_amount: z.coerce.number().optional(),
+      max_amount: z.coerce.number().optional(),
       is_active: z.boolean().optional(),
-      sort_order: z.number().optional(),
+      sort_order: z.coerce.number().optional(),
     }).parse(req.body)
     const res = await db.query(
       `INSERT INTO payment_methods
@@ -918,17 +1089,17 @@ async function start() {
     const { id } = req.params as any
     const b = z.object({
       label: z.string().optional(),
-      upi_id: z.string().optional(),
-      account_name: z.string().optional(),
-      account_number: z.string().optional(),
-      ifsc: z.string().optional(),
-      bank_name: z.string().optional(),
-      qr_image_url: z.string().optional(),
-      instructions: z.string().optional(),
-      min_amount: z.number().optional(),
-      max_amount: z.number().optional(),
+      upi_id: z.string().nullable().optional(),
+      account_name: z.string().nullable().optional(),
+      account_number: z.string().nullable().optional(),
+      ifsc: z.string().nullable().optional(),
+      bank_name: z.string().nullable().optional(),
+      qr_image_url: z.string().nullable().optional(),
+      instructions: z.string().nullable().optional(),
+      min_amount: z.coerce.number().optional(),
+      max_amount: z.coerce.number().optional(),
       is_active: z.boolean().optional(),
-      sort_order: z.number().optional(),
+      sort_order: z.coerce.number().optional(),
     }).parse(req.body)
     const updates: string[] = []
     const params: any[] = []
@@ -949,7 +1120,16 @@ async function start() {
   app.delete('/api/admin/payment-methods/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
-    await db.query(`DELETE FROM payment_methods WHERE id = $1`, [id])
+    try {
+      await db.query(`DELETE FROM payment_methods WHERE id = $1`, [id])
+    } catch (err: any) {
+      // 23503 = foreign key violation — this method has payment_orders history,
+      // which we must keep for the audit trail, so it can't be hard-deleted.
+      if (err?.code === '23503') {
+        return reply.code(400).send({ error: 'This payment method has existing orders and cannot be deleted. Set it to inactive instead.' })
+      }
+      throw err
+    }
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'payment_method_delete', 'payment_method', $2)`,
       [admin.sub, id])
     return reply.send({ success: true })
@@ -1031,42 +1211,149 @@ async function start() {
   app.patch('/api/admin/game-configs/:gameType', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const admin = req.user as any
     const { gameType } = req.params as any
-    const body = req.body as any
+    const body = z.object({
+      is_active: z.boolean().optional(),
+      rake_percent: z.number().optional(),
+      bot_fill_enabled: z.boolean().optional(),
+      bot_fill_delay_seconds: z.number().optional(),
+      max_bot_ratio: z.number().optional(),
+      bot_difficulty: z.string().optional(),
+      bot_fill_table_size: z.number().optional(),
+      special_rules: z.record(z.any()).optional(),
+    }).parse(req.body)
+
+    const existing = await db.query('SELECT * FROM game_configs WHERE game_type=$1', [gameType])
+    if (!existing.rows.length) return reply.code(404).send({ error: 'Game config not found' })
+    const current = existing.rows[0]
     // Merge any provided economics into special_rules (e.g. Aviator house edge,
-    // max win, bet limits) without clobbering other keys.
-    const existing = await db.query('SELECT special_rules FROM game_configs WHERE game_type=$1', [gameType])
-    const currentRules = existing.rows[0]?.special_rules || {}
-    const specialRules = body.special_rules ? { ...currentRules, ...body.special_rules } : currentRules
+    // max win, bet limits) without clobbering other keys. Every other field
+    // falls back to its current value (via ??, not ||, so `false`/`0` survive)
+    // when the request omits it — a form that never submits a given field
+    // (e.g. Bots.tsx's per-game panel never sends is_active) must not
+    // silently null out an existing setting. See
+    // docs/Bugs/CRITICAL-bot-config-save-can-disable-live-game.md.
+    const specialRules = body.special_rules ? { ...current.special_rules, ...body.special_rules } : current.special_rules
+
     await db.query(
       `UPDATE game_configs SET is_active=$1, rake_percent=$2, bot_fill_enabled=$3, bot_fill_delay_seconds=$4, max_bot_ratio=$5, bot_difficulty=$6, special_rules=$7, bot_fill_table_size=$8, updated_by=$9, updated_at=NOW()
        WHERE game_type=$10`,
-      [body.is_active, body.rake_percent, body.bot_fill_enabled, body.bot_fill_delay_seconds, body.max_bot_ratio, body.bot_difficulty, JSON.stringify(specialRules), body.bot_fill_table_size ?? null, admin.sub, gameType]
+      [
+        body.is_active ?? current.is_active,
+        body.rake_percent ?? current.rake_percent,
+        body.bot_fill_enabled ?? current.bot_fill_enabled,
+        body.bot_fill_delay_seconds ?? current.bot_fill_delay_seconds,
+        body.max_bot_ratio ?? current.max_bot_ratio,
+        body.bot_difficulty ?? current.bot_difficulty,
+        JSON.stringify(specialRules),
+        body.bot_fill_table_size ?? current.bot_fill_table_size,
+        admin.sub,
+        gameType,
+      ]
     )
+    await redis.publish('config:updated', JSON.stringify({ gameType, updatedAt: new Date().toISOString() }))
     return reply.send({ success: true })
+  })
+
+  // GET /api/admin/aviator/pnl — house PnL (staked − paid out) for
+  // Today / This Week / This Month / All-Time, from aviator_bets.
+  app.get('/api/admin/aviator/pnl', { onRequest: [authenticate, requireRole('finance')] }, async (_req, reply) => {
+    const periodQuery = (whereClause: string) => db.query(
+      `SELECT
+         COUNT(*)::int AS bets,
+         COUNT(DISTINCT round_id)::int AS rounds,
+         COALESCE(SUM(amount), 0)::float AS staked,
+         COALESCE(SUM(payout), 0)::float AS paid_out,
+         COALESCE(SUM(amount - payout), 0)::float AS pnl
+       FROM aviator_bets
+       ${whereClause}`
+    )
+    const [daily, weekly, monthly, allTime] = await Promise.all([
+      periodQuery(`WHERE created_at >= date_trunc('day', NOW())`),
+      periodQuery(`WHERE created_at >= date_trunc('week', NOW())`),
+      periodQuery(`WHERE created_at >= date_trunc('month', NOW())`),
+      periodQuery(''),
+    ])
+    return reply.send({
+      daily: daily.rows[0],
+      weekly: weekly.rows[0],
+      monthly: monthly.rows[0],
+      all_time: allTime.rows[0],
+    })
+  })
+
+  // GET /api/admin/aviator/history — round-by-round game history, paginated.
+  app.get('/api/admin/aviator/history', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { page = '1', limit = '20' } = req.query as any
+    const offset = (parseInt(page) - 1) * parseInt(limit)
+    const [rows, countRes] = await Promise.all([
+      db.query(
+        `SELECT round_id, MAX(crash_at) AS crash_at, MIN(created_at) AS started_at,
+                COUNT(*)::int AS bets,
+                COALESCE(SUM(amount), 0)::float AS staked,
+                COALESCE(SUM(payout), 0)::float AS paid_out,
+                COALESCE(SUM(amount - payout), 0)::float AS pnl
+         FROM aviator_bets
+         GROUP BY round_id
+         ORDER BY MIN(created_at) DESC
+         LIMIT $1 OFFSET $2`,
+        [parseInt(limit), offset]
+      ),
+      db.query(`SELECT COUNT(DISTINCT round_id) FROM aviator_bets`),
+    ])
+    return reply.send({ rounds: rows.rows, total: parseInt(countRes.rows[0].count) })
   })
 
   // POST /api/admin/notifications/broadcast
   app.post('/api/admin/notifications/broadcast', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const body = req.body as any
-    const res = await fetch(`${NOTIFICATION_URL}/internal/notifications/broadcast`, {
+    const me = req.user as any
+    const CORE_API_URL = process.env.CORE_API_URL || 'http://127.0.0.1:3001'
+
+    const totalRes = await db.query(`SELECT COUNT(*)::int AS c FROM users WHERE is_bot = false AND status = 'active'`)
+    const totalRecipients = totalRes.rows[0].c
+
+    const campaignRes = await db.query(
+      `INSERT INTO notification_campaigns (title, body, type, target_type, sent_by, total_recipients)
+       VALUES ($1, $2, $3, 'all', $4, $5) RETURNING id`,
+      [body.title, body.body, body.type || 'broadcast', me.sub, totalRecipients],
+    )
+    const campaignId = campaignRes.rows[0].id
+
+    const res = await fetch(`${CORE_API_URL}/internal/notifications/broadcast`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, campaign_id: campaignId }),
     })
     const data = await res.json()
-    return reply.send(data)
+
+    await db.query(`UPDATE notification_campaigns SET delivered_count = $1 WHERE id = $2`, [data.sent ?? 0, campaignId])
+
+    return reply.send({ ...data, campaign_id: campaignId })
   })
 
   // POST /api/admin/notifications/send
   app.post('/api/admin/notifications/send', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const body = req.body as any
-    const res = await fetch(`${NOTIFICATION_URL}/internal/notifications/send`, {
+    const me = req.user as any
+    const CORE_API_URL = process.env.CORE_API_URL || 'http://127.0.0.1:3001'
+
+    const campaignRes = await db.query(
+      `INSERT INTO notification_campaigns (title, body, type, target_type, target_user_id, sent_by, total_recipients)
+       VALUES ($1, $2, $3, 'specific_user', $4, $5, 1) RETURNING id`,
+      [body.title, body.body, body.type || 'general', body.user_id, me.sub],
+    )
+    const campaignId = campaignRes.rows[0].id
+
+    const res = await fetch(`${CORE_API_URL}/internal/notifications/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, campaign_id: campaignId }),
     })
     const data = await res.json()
-    return reply.send(data)
+
+    await db.query(`UPDATE notification_campaigns SET delivered_count = $1 WHERE id = $2`, [data.delivered ?? 0, campaignId])
+
+    return reply.send({ ...data, campaign_id: campaignId })
   })
 
   // ---- Risk Center / Anti-Cheat ----
@@ -1347,11 +1634,22 @@ async function start() {
       title: z.string().min(1).max(200),
       body_md: z.string().max(100000),
       is_published: z.boolean().optional(),
+      meta_title: z.string().max(255).optional().nullable(),
+      meta_description: z.string().optional().nullable(),
+      meta_keywords: z.string().optional().nullable(),
+      og_title: z.string().max(255).optional().nullable(),
+      og_description: z.string().optional().nullable(),
+      og_image: z.string().optional().nullable(),
     }).parse(req.body)
     try {
       await db.query(
-        `INSERT INTO cms_pages (slug, title, body_md, is_published, updated_by) VALUES ($1, $2, $3, $4, $5)`,
-        [body.slug, body.title, body.body_md, body.is_published ?? true, me.sub]
+        `INSERT INTO cms_pages (slug, title, body_md, is_published, updated_by, meta_title, meta_description, meta_keywords, og_title, og_description, og_image)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          body.slug, body.title, body.body_md, body.is_published ?? true, me.sub,
+          body.meta_title || null, body.meta_description || null, body.meta_keywords || null,
+          body.og_title || null, body.og_description || null, body.og_image || null
+        ]
       )
       return reply.send({ success: true })
     } catch (e: any) {
@@ -1367,6 +1665,12 @@ async function start() {
       title: z.string().min(1).max(200).optional(),
       body_md: z.string().max(100000).optional(),
       is_published: z.boolean().optional(),
+      meta_title: z.string().max(255).optional().nullable(),
+      meta_description: z.string().optional().nullable(),
+      meta_keywords: z.string().optional().nullable(),
+      og_title: z.string().max(255).optional().nullable(),
+      og_description: z.string().optional().nullable(),
+      og_image: z.string().optional().nullable(),
     }).parse(req.body)
     const updates: string[] = []
     const params: any[] = []
@@ -1374,6 +1678,12 @@ async function start() {
     if (body.title !== undefined) { updates.push(`title = $${idx}`); params.push(body.title); idx++ }
     if (body.body_md !== undefined) { updates.push(`body_md = $${idx}`); params.push(body.body_md); idx++ }
     if (body.is_published !== undefined) { updates.push(`is_published = $${idx}`); params.push(body.is_published); idx++ }
+    if (body.meta_title !== undefined) { updates.push(`meta_title = $${idx}`); params.push(body.meta_title); idx++ }
+    if (body.meta_description !== undefined) { updates.push(`meta_description = $${idx}`); params.push(body.meta_description); idx++ }
+    if (body.meta_keywords !== undefined) { updates.push(`meta_keywords = $${idx}`); params.push(body.meta_keywords); idx++ }
+    if (body.og_title !== undefined) { updates.push(`og_title = $${idx}`); params.push(body.og_title); idx++ }
+    if (body.og_description !== undefined) { updates.push(`og_description = $${idx}`); params.push(body.og_description); idx++ }
+    if (body.og_image !== undefined) { updates.push(`og_image = $${idx}`); params.push(body.og_image); idx++ }
     if (!updates.length) return reply.code(400).send({ error: 'Nothing to update' })
     updates.push(`updated_by = $${idx}`); params.push(me.sub); idx++
     updates.push(`updated_at = NOW()`)
@@ -1454,14 +1764,220 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // ---- SEO Settings ----
+
+  app.get('/api/admin/seo/settings', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
+    const res = await db.query('SELECT key, value FROM seo_settings')
+    const settings: Record<string, string> = {}
+    for (const row of res.rows) {
+      settings[row.key] = row.value || ''
+    }
+    return reply.send(settings)
+  })
+
+  app.post('/api/admin/seo/settings', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const me = req.user as any
+    const body = z.record(z.string()).parse(req.body)
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
+      for (const [key, value] of Object.entries(body)) {
+        await client.query(
+          `INSERT INTO seo_settings (key, value, updated_by, updated_at)
+           VALUES ($1, $2, $3, NOW())
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+          [key, value, me.sub]
+        )
+      }
+      await client.query('COMMIT')
+      return reply.send({ success: true })
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
+  })
+
+  // ---- Marketing Campaigns ----
+
+  app.get('/api/admin/marketing/campaigns', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
+    const res = await db.query(`
+      SELECT 
+        c.id, c.name, c.description, c.utm_source, c.utm_medium, c.utm_campaign, c.clicks, c.is_active, c.created_at,
+        COUNT(DISTINCT uca.user_id)::int AS signups,
+        COUNT(DISTINCT po.id)::int AS deposits,
+        COALESCE(SUM(po.amount), 0)::float AS total_deposit_amount
+      FROM marketing_campaigns c
+      LEFT JOIN user_campaign_attribution uca ON uca.campaign_id = c.id
+      LEFT JOIN payment_orders po ON po.user_id = uca.user_id AND po.type = 'deposit' AND po.status = 'paid'
+      GROUP BY c.id
+      ORDER BY c.created_at DESC
+    `)
+    return reply.send(res.rows)
+  })
+
+  app.post('/api/admin/marketing/campaigns', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const me = req.user as any
+    const body = z.object({
+      name: z.string().min(1).max(100),
+      description: z.string().optional(),
+      utm_source: z.string().min(1).max(50),
+      utm_medium: z.string().max(50).optional().nullable(),
+      utm_campaign: z.string().max(50).optional().nullable(),
+    }).parse(req.body)
+    try {
+      const res = await db.query(
+        `INSERT INTO marketing_campaigns (name, description, utm_source, utm_medium, utm_campaign, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [body.name, body.description || null, body.utm_source, body.utm_medium || null, body.utm_campaign || null, me.sub]
+      )
+      return reply.send({ success: true, id: res.rows[0].id })
+    } catch (e: any) {
+      if (e.code === '23505') return reply.code(400).send({ error: 'Campaign name already exists' })
+      throw e
+    }
+  })
+
+  app.patch('/api/admin/marketing/campaigns/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const body = z.object({
+      name: z.string().min(1).max(100).optional(),
+      description: z.string().optional().nullable(),
+      is_active: z.boolean().optional(),
+    }).parse(req.body)
+    const updates: string[] = []
+    const params: any[] = []
+    let idx = 1
+    if (body.name !== undefined) { updates.push(`name = $${idx}`); params.push(body.name); idx++ }
+    if (body.description !== undefined) { updates.push(`description = $${idx}`); params.push(body.description); idx++ }
+    if (body.is_active !== undefined) { updates.push(`is_active = $${idx}`); params.push(body.is_active); idx++ }
+    if (!updates.length) return reply.code(400).send({ error: 'Nothing to update' })
+    updates.push(`updated_at = NOW()`)
+    params.push(id)
+    await db.query(`UPDATE marketing_campaigns SET ${updates.join(', ')} WHERE id = $${idx}`, params)
+    return reply.send({ success: true })
+  })
+
+  app.delete('/api/admin/marketing/campaigns/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    await db.query('DELETE FROM marketing_campaigns WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+  // ---- Referrals Analytics ----
+
+  app.get('/api/admin/marketing/referrals', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
+    const res = await db.query(`
+      SELECT 
+        u.id AS referrer_id,
+        u.username AS referrer_username,
+        u.phone AS referrer_phone,
+        COUNT(r.id)::int AS total_referred,
+        COUNT(CASE WHEN r.status = 'qualified' OR r.status = 'rewarded' THEN 1 END)::int AS qualified_referred,
+        COALESCE(SUM(CASE WHEN r.status = 'rewarded' THEN r.reward_amount ELSE 0 END), 0)::float AS rewards_earned
+      FROM referrals r
+      JOIN users u ON u.id = r.referrer_id
+      GROUP BY u.id, u.username, u.phone
+      ORDER BY total_referred DESC
+      LIMIT 100
+    `)
+    return reply.send(res.rows)
+  })
+
+  // ---- Knowledge Base ----
+
+  app.get('/api/admin/support/kb', { onRequest: [authenticate, requireRole('readonly')] }, async (req, reply) => {
+    const { search, category } = req.query as any
+    let query = `
+      SELECT k.*, a.username AS created_by_username, b.username AS updated_by_username
+      FROM support_kb_articles k
+      LEFT JOIN admin_users a ON a.id = k.created_by
+      LEFT JOIN admin_users b ON b.id = k.updated_by
+      WHERE 1=1`
+    const params: any[] = []
+    let idx = 1
+    if (category) {
+      query += ` AND k.category = $${idx}`
+      params.push(category)
+      idx++
+    }
+    if (search) {
+      query += ` AND (k.title ILIKE $${idx} OR k.content_md ILIKE $${idx})`
+      params.push(`%${search}%`)
+      idx++
+    }
+    query += ` ORDER BY k.updated_at DESC`
+    const res = await db.query(query, params)
+    return reply.send(res.rows)
+  })
+
+  app.get('/api/admin/support/kb/:id', { onRequest: [authenticate, requireRole('readonly')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT k.*, a.username AS created_by_username, b.username AS updated_by_username
+       FROM support_kb_articles k
+       LEFT JOIN admin_users a ON a.id = k.created_by
+       LEFT JOIN admin_users b ON b.id = k.updated_by
+       WHERE k.id = $1`,
+      [id]
+    )
+    if (!res.rows.length) return reply.code(404).send({ error: 'Article not found' })
+    return reply.send(res.rows[0])
+  })
+
+  app.post('/api/admin/support/kb', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const me = req.user as any
+    const body = z.object({
+      title: z.string().min(1).max(255),
+      category: z.string().min(1).max(100),
+      content_md: z.string().min(1),
+    }).parse(req.body)
+    const res = await db.query(
+      `INSERT INTO support_kb_articles (title, category, content_md, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $4) RETURNING id`,
+      [body.title, body.category, body.content_md, me.sub]
+    )
+    return reply.send({ success: true, id: res.rows[0].id })
+  })
+
+  app.patch('/api/admin/support/kb/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const me = req.user as any
+    const { id } = req.params as any
+    const body = z.object({
+      title: z.string().min(1).max(255).optional(),
+      category: z.string().min(1).max(100).optional(),
+      content_md: z.string().min(1).optional(),
+    }).parse(req.body)
+    const updates: string[] = []
+    const params: any[] = []
+    let idx = 1
+    if (body.title !== undefined) { updates.push(`title = $${idx}`); params.push(body.title); idx++ }
+    if (body.category !== undefined) { updates.push(`category = $${idx}`); params.push(body.category); idx++ }
+    if (body.content_md !== undefined) { updates.push(`content_md = $${idx}`); params.push(body.content_md); idx++ }
+    if (!updates.length) return reply.code(400).send({ error: 'Nothing to update' })
+    updates.push(`updated_by = $${idx}`); params.push(me.sub); idx++
+    updates.push(`updated_at = NOW()`)
+    params.push(id)
+    await db.query(`UPDATE support_kb_articles SET ${updates.join(', ')} WHERE id = $${idx}`, params)
+    return reply.send({ success: true })
+  })
+
+  app.delete('/api/admin/support/kb/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    await db.query('DELETE FROM support_kb_articles WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• BETTING GAMES (Matka / Lottery / Cricket) â•â•â•â•â•â•â•â•â•â•â•
   // The admin panel manages these here; write actions proxy to the
   // betting-service internal endpoints (which hold the result-settlement
   // logic and wallet payouts) using the shared internal key.
-  const BETTING_URL = process.env.BETTING_SERVICE_URL || 'http://127.0.0.1:3012'
-  const callBetting = async (path: string, body: any) => {
+  const BETTING_URL = process.env.BETTING_SERVICE_URL || 'http://127.0.0.1:3001'
+  const callBetting = async (path: string, body: any, method: string = 'POST') => {
     const res = await fetch(`${BETTING_URL}${path}`, {
-      method: 'POST',
+      method,
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
       body: JSON.stringify(body),
     })
@@ -1480,6 +1996,16 @@ async function start() {
     return reply.send({ draws: rows.rows })
   })
 
+  app.get('/api/admin/betting/matka/draws/:id/bets', { onRequest: [authenticate] }, async (req: any, reply) => {
+    const rows = await db.query(
+      `SELECT b.*, u.username, u.phone 
+       FROM matka_bets b 
+       JOIN users u ON u.id = b.user_id 
+       WHERE b.draw_id = $1 
+       ORDER BY b.created_at DESC LIMIT 500`, [req.params.id])
+    return reply.send({ bets: rows.rows })
+  })
+
   app.post('/api/admin/betting/matka/declare', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const r = await callBetting('/internal/matka/declare', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
@@ -1489,7 +2015,8 @@ async function start() {
   app.get('/api/admin/betting/lottery/draws', { onRequest: [authenticate] }, async (_req, reply) => {
     const rows = await db.query(
       `SELECT d.*,
-              (SELECT COUNT(*) FROM lottery_tickets t WHERE t.draw_id = d.id) AS ticket_count
+              (SELECT COUNT(*) FROM lottery_tickets t WHERE t.draw_id = d.id) AS ticket_count,
+              (SELECT COUNT(*) FROM lottery_tickets t JOIN users u ON u.id = t.user_id WHERE t.draw_id = d.id AND u.is_bot = true) AS bot_ticket_count
        FROM lottery_draws d ORDER BY d.draw_time DESC LIMIT 100`)
     return reply.send({ draws: rows.rows })
   })
@@ -1504,35 +2031,121 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  app.get('/api/admin/betting/lottery/bot-config', { onRequest: [authenticate] }, async (_req, reply) => {
+    const r = await callBetting('/internal/lottery/bot-config', undefined, 'GET')
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/lottery/bot-config', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/lottery/bot-config', req.body)
+    return reply.code(r.status).send(r.data)
+  })
+
+  // --- Lottery: Instant (Scratch Card) ---
+  app.get('/api/admin/betting/lottery/scratch/products', { onRequest: [authenticate] }, async (_req, reply) => {
+    const rows = await db.query(`
+      SELECT p.*,
+             (SELECT COUNT(*) FROM lottery_scratch_tickets t WHERE t.product_id = p.id) AS tickets_sold,
+             (SELECT COALESCE(SUM(t.amount), 0) FROM lottery_scratch_tickets t WHERE t.product_id = p.id) AS total_paid,
+             (SELECT COUNT(*) * p.price FROM lottery_scratch_tickets t WHERE t.product_id = p.id) AS total_revenue
+      FROM lottery_scratch_products p ORDER BY p.created_at DESC`)
+    return reply.send({ products: rows.rows })
+  })
+
+  app.post('/api/admin/betting/lottery/scratch/create', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/lottery/scratch/create', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.patch('/api/admin/betting/lottery/scratch/products/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const body = z.object({ is_active: z.boolean() }).parse(req.body)
+    const r = await db.query(`UPDATE lottery_scratch_products SET is_active = $1 WHERE id = $2 RETURNING *`, [body.is_active, id])
+    if (!r.rows.length) return reply.code(404).send({ error: 'Product not found' })
+    return reply.send({ success: true, product: r.rows[0] })
+  })
+
+  // --- Lottery: Daily (tier-based) ---
+  // All CRUD/validation logic lives in core-api-service's tiersService/
+  // drawsService (Task 5/6) -- proxy through rather than duplicate it here.
+  app.get('/api/admin/betting/lottery/daily/admin/tiers', { onRequest: [authenticate] }, async (_req, reply) => {
+    const r = await callBetting('/lottery/daily/admin/tiers', undefined, 'GET')
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/lottery/daily/admin/tiers', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/lottery/daily/admin/tiers', req.body)
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.put('/api/admin/betting/lottery/daily/admin/tiers/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const r = await callBetting(`/lottery/daily/admin/tiers/${id}`, req.body, 'PUT')
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.get('/api/admin/betting/lottery/daily/admin/draws', { onRequest: [authenticate] }, async (_req, reply) => {
+    const r = await callBetting('/lottery/daily/admin/draws', undefined, 'GET')
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/lottery/daily/admin/draws', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/lottery/daily/admin/draws', req.body)
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.get('/api/admin/betting/lottery/daily/admin/draws/:id/tickets', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const r = await callBetting(`/lottery/daily/admin/draws/${id}/tickets`, undefined, 'GET')
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/lottery/daily/admin/draws/:id/declare', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const r = await callBetting(`/lottery/daily/admin/draws/${id}/declare`, req.body)
+    return reply.code(r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/lottery/daily/admin/draws/:id/cancel', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const r = await callBetting(`/lottery/daily/admin/draws/${id}/cancel`, req.body)
+    return reply.code(r.status).send(r.data)
+  })
+
   // --- Cricket ---
+  // Match-odds (Match Winner/Toss/etc markets) stays archived in favor of
+  // the Dream11-style fantasy contest system — see archived_cricket_{bets,
+  // markets}. Session/Fancy betting was restored alongside it.
   app.get('/api/admin/betting/cricket/matches', { onRequest: [authenticate] }, async (_req, reply) => {
-    const matches = await db.query(`SELECT * FROM cricket_matches ORDER BY start_time DESC LIMIT 100`)
+    // Live/upcoming matches float to the top (soonest first) so today's
+    // fixture isn't buried under a backlog of already-settled ones; settled
+    // matches sort earliest-first too, just after everything actionable.
+    const matches = await db.query(`
+      SELECT * FROM cricket_matches
+      ORDER BY CASE status WHEN 'live' THEN 0 WHEN 'upcoming' THEN 1 ELSE 2 END, start_time ASC
+      LIMIT 100
+    `)
     const out = []
     for (const m of matches.rows) {
-      const markets = await db.query(`SELECT * FROM cricket_markets WHERE match_id = $1`, [m.id])
-      const sessions = await db.query(`SELECT * FROM cricket_sessions WHERE match_id = $1`, [m.id])
-      out.push({ ...m, markets: markets.rows, sessions: sessions.rows })
+      const sessions = await db.query(`SELECT * FROM cricket_sessions WHERE match_id = $1 ORDER BY created_at ASC`, [m.id])
+      out.push({ ...m, sessions: sessions.rows })
     }
     return reply.send({ matches: out })
   })
 
-  app.post('/api/admin/betting/cricket/match', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+  app.post('/api/admin/betting/cricket/match', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/match', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
-  app.post('/api/admin/betting/cricket/market', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const r = await callBetting('/internal/cricket/market', req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  app.post('/api/admin/betting/cricket/settle', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const r = await callBetting('/internal/cricket/settle', req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
+  // --- Cricket Sessions (Fancy betting: e.g. "6 Over Session - India") ---
   app.post('/api/admin/betting/cricket/session/create', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/session/create', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.patch('/api/admin/betting/cricket/sessions/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting(`/internal/cricket/session/${(req.params as any).id}`, req.body, 'PATCH')
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
@@ -1541,10 +2154,73 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  app.delete('/api/admin/betting/cricket/sessions/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const pending = await db.query(`SELECT 1 FROM cricket_session_bets WHERE session_id = $1 AND status = 'pending' LIMIT 1`, [id])
+    if (pending.rows.length) return reply.code(409).send({ error: 'This session has unsettled bets — settle or void it first.' })
+    await db.query('DELETE FROM cricket_session_bets WHERE session_id = $1', [id])
+    await db.query('DELETE FROM cricket_sessions WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+  // --- Cricket Countries (flag icons, shared by match-level flags and player country badges) ---
+  app.get('/api/admin/betting/cricket/countries', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query('SELECT * FROM cricket_countries ORDER BY name ASC')
+    return reply.send({ countries: res.rows })
+  })
+
+  app.post('/api/admin/betting/cricket/countries', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id, name, flag_url } = req.body as any
+    if (!id || !name || !flag_url) return reply.code(400).send({ error: 'id, name, and flag_url are required' })
+    const res = await db.query(
+      `INSERT INTO cricket_countries (id, name, flag_url) VALUES ($1, $2, $3)
+       ON CONFLICT (id) DO UPDATE SET name = $2, flag_url = $3 RETURNING *`,
+      [id, name, flag_url]
+    )
+    return reply.send({ success: true, country: res.rows[0] })
+  })
+
+  app.patch('/api/admin/betting/cricket/countries/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const { name, flag_url } = req.body as any
+    const fields: string[] = [], params: any[] = [id]
+    let i = 2
+    if (name !== undefined) { fields.push(`name = $${i++}`); params.push(name) }
+    if (flag_url !== undefined) { fields.push(`flag_url = $${i++}`); params.push(flag_url) }
+    if (!fields.length) return reply.code(400).send({ error: 'No fields to update' })
+    const res = await db.query(`UPDATE cricket_countries SET ${fields.join(', ')} WHERE id = $1 RETURNING *`, params)
+    if (!res.rows.length) return reply.code(404).send({ error: 'Country not found' })
+    return reply.send({ success: true, country: res.rows[0] })
+  })
+
   // --- Cricket Fantasy & Live Updates ---
+  // team_name doubles as the country/squad grouping key the admin panel
+  // sections players by. matches_played/total_points are a lightweight
+  // per-player summary of their cricket_match_players history (session
+  // data) so the roster view isn't just a bare name list.
   app.get('/api/admin/betting/cricket/fantasy/players', { onRequest: [authenticate] }, async (_req, reply) => {
-    const res = await db.query('SELECT * FROM cricket_fantasy_players ORDER BY role ASC, name ASC')
+    const res = await db.query(`
+      SELECT p.*,
+        COALESCE(mp.matches_played, 0) AS matches_played,
+        COALESCE(mp.total_points, 0) AS total_points,
+        c.flag_url
+      FROM cricket_fantasy_players p
+      LEFT JOIN (
+        SELECT player_id, COUNT(*) AS matches_played, SUM(fantasy_points) AS total_points
+        FROM cricket_match_players
+        GROUP BY player_id
+      ) mp ON mp.player_id = p.id
+      LEFT JOIN cricket_countries c ON c.name = p.team_name
+      ORDER BY p.team_name ASC, p.role ASC, p.name ASC
+    `)
     return reply.send({ players: res.rows })
+  })
+
+  app.get('/api/admin/betting/cricket/fantasy/leagues', { onRequest: [authenticate] }, async (req, reply) => {
+    const { match_id } = req.query as any
+    if (!match_id) return reply.code(400).send({ error: 'match_id is required' })
+    const res = await db.query('SELECT * FROM cricket_fantasy_leagues WHERE match_id = $1 ORDER BY created_at DESC', [match_id])
+    return reply.send({ leagues: res.rows })
   })
 
   app.post('/api/admin/betting/cricket/fantasy/players', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
@@ -1552,9 +2228,126 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  app.patch('/api/admin/betting/cricket/fantasy/players/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting(`/internal/cricket/fantasy/players/${(req.params as any).id}`, req.body, 'PATCH')
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  // GET a player's per-match performance history (for the Players section's View drawer)
+  app.get('/api/admin/betting/cricket/fantasy/players/:id/matches', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT mp.*, m.series, m.team_a, m.team_b, m.start_time, m.status
+       FROM cricket_match_players mp JOIN cricket_matches m ON m.id = mp.match_id
+       WHERE mp.player_id = $1 ORDER BY m.start_time DESC`,
+      [id]
+    )
+    return reply.send({ matches: res.rows })
+  })
+
+  // Map a global fantasy player into a specific match's squad — no wallet/
+  // settlement side effects, so this writes directly rather than proxying
+  // through betting-service internal routes.
+  app.post('/api/admin/betting/cricket/fantasy/players/:id/map-match', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const { match_id } = req.body as any
+    if (!match_id) return reply.code(400).send({ error: 'match_id is required' })
+    const res = await db.query(
+      `INSERT INTO cricket_match_players (match_id, player_id) VALUES ($1, $2)
+       ON CONFLICT (match_id, player_id) DO NOTHING RETURNING *`,
+      [match_id, id]
+    )
+    return reply.send({ success: true, mapping: res.rows[0] || null })
+  })
+
+  app.delete('/api/admin/betting/cricket/fantasy/players/:id/map-match/:matchId', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id, matchId } = req.params as any
+    await db.query('DELETE FROM cricket_match_players WHERE player_id = $1 AND match_id = $2', [id, matchId])
+    return reply.send({ success: true })
+  })
+
   app.post('/api/admin/betting/cricket/fantasy/leagues', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/fantasy/leagues', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  // GET /api/admin/betting/cricket/fantasy/contests — cross-match, filterable contest list
+  app.get('/api/admin/betting/cricket/fantasy/contests', { onRequest: [authenticate] }, async (req, reply) => {
+    const { status, match_id, from, to, limit, offset } = req.query as any
+    const lim = Math.min(Number(limit) || 20, 100)
+    const off = Number(offset) || 0
+    const res = await db.query(
+      `SELECT l.*, m.series, m.team_a, m.team_b, m.start_time AS match_start_time, m.status AS match_status,
+              COUNT(*) OVER() AS total_count
+       FROM cricket_fantasy_leagues l
+       JOIN cricket_matches m ON m.id = l.match_id
+       WHERE ($1::text IS NULL OR l.status = $1)
+         AND ($2::uuid IS NULL OR l.match_id = $2)
+         AND ($3::timestamptz IS NULL OR m.start_time >= $3)
+         AND ($4::timestamptz IS NULL OR m.start_time <= $4)
+       ORDER BY m.start_time DESC
+       LIMIT $5 OFFSET $6`,
+      [status || null, match_id || null, from || null, to || null, lim, off]
+    )
+    const total = res.rows[0]?.total_count ? Number(res.rows[0].total_count) : 0
+    return reply.send({ contests: res.rows.map(({ total_count, ...r }) => r), total })
+  })
+
+  // GET /api/admin/betting/cricket/fantasy/leagues/:id — single contest detail
+  app.get('/api/admin/betting/cricket/fantasy/leagues/:id', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT l.*, m.series, m.team_a, m.team_b, m.start_time AS match_start_time
+       FROM cricket_fantasy_leagues l JOIN cricket_matches m ON m.id = l.match_id
+       WHERE l.id = $1`, [id]
+    )
+    if (!res.rows.length) return reply.code(404).send({ error: 'Contest not found' })
+    return reply.send({ contest: res.rows[0] })
+  })
+
+  // GET /api/admin/betting/cricket/fantasy/leagues/:id/entries — who joined this contest
+  app.get('/api/admin/betting/cricket/fantasy/leagues/:id/entries', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT e.id, e.points, e.final_rank, e.payout_received, e.status, e.created_at,
+              u.username, u.id AS user_id, t.id AS team_id
+       FROM cricket_fantasy_entries e
+       JOIN users u ON u.id = e.user_id
+       JOIN user_fantasy_teams t ON t.id = e.team_id
+       WHERE e.league_id = $1
+       ORDER BY e.final_rank ASC NULLS LAST, e.points DESC`, [id]
+    )
+    return reply.send({ entries: res.rows })
+  })
+
+  // PATCH /api/admin/betting/cricket/fantasy/leagues/:id — edit a contest.
+  // name is always editable; entry_fee/prize_pool/max_entries/prize_distribution
+  // are locked (409) once anyone has joined, so terms can't change under paying players.
+  app.patch('/api/admin/betting/cricket/fantasy/leagues/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const body = req.body as any
+    const current = await db.query('SELECT current_entries FROM cricket_fantasy_leagues WHERE id = $1', [id])
+    if (!current.rows.length) return reply.code(404).send({ error: 'Contest not found' })
+    const hasEntries = current.rows[0].current_entries > 0
+    const touchesMoneyFields = body.entry_fee !== undefined || body.prize_pool !== undefined || body.max_entries !== undefined || body.prize_distribution !== undefined
+    if (hasEntries && touchesMoneyFields) {
+      return reply.code(409).send({ error: 'This contest already has joined entries — entry fee, prize pool, max entries, and prize distribution are locked. You can still rename it.' })
+    }
+    const fields: string[] = [], params: any[] = [id]
+    let i = 2
+    if (body.name !== undefined) { fields.push(`name = $${i++}`); params.push(body.name) }
+    if (body.entry_fee !== undefined) { fields.push(`entry_fee = $${i++}`); params.push(body.entry_fee) }
+    if (body.prize_pool !== undefined) { fields.push(`prize_pool = $${i++}`); params.push(body.prize_pool) }
+    if (body.max_entries !== undefined) { fields.push(`max_entries = $${i++}`); params.push(body.max_entries) }
+    if (body.prize_distribution !== undefined) { fields.push(`prize_distribution = $${i++}`); params.push(JSON.stringify(body.prize_distribution)) }
+    if (!fields.length) return reply.code(400).send({ error: 'No editable fields provided' })
+    const whereClause = touchesMoneyFields ? `WHERE id = $1 AND current_entries = 0` : `WHERE id = $1`
+    const res = await db.query(`UPDATE cricket_fantasy_leagues SET ${fields.join(', ')} ${whereClause} RETURNING *`, params)
+    if (!res.rows.length && touchesMoneyFields) {
+      return reply.code(409).send({ error: 'This contest already has joined entries — entry fee, prize pool, max entries, and prize distribution are locked. You can still rename it.' })
+    }
+    if (!res.rows.length) return reply.code(404).send({ error: 'Contest not found' })
+    return reply.send({ success: true, contest: res.rows[0] })
   })
 
   app.post('/api/admin/betting/cricket/scores/update', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
@@ -1565,6 +2358,26 @@ async function start() {
   app.post('/api/admin/betting/cricket/fantasy/settle', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/fantasy/settle', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/betting/cricket/fantasy/finalize', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/fantasy/finalize', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  // --- Cricket Scoring Rulebook ---
+  app.get('/api/admin/betting/cricket/scoring-rules', { onRequest: [authenticate] }, async (_req, reply) => {
+    const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
+    const stored = configRes.rows[0]?.special_rules?.scoring_rules
+    return reply.send({ rules: { ...DEFAULT_SCORING_RULES, ...(stored || {}) } })
+  })
+
+  app.patch('/api/admin/betting/cricket/scoring-rules', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const configRes = await db.query("SELECT id, special_rules FROM game_configs WHERE game_type = 'cricket'")
+    if (!configRes.rows.length) return reply.code(404).send({ error: 'Cricket config not found' })
+    const merged = { ...(configRes.rows[0].special_rules || {}), scoring_rules: { ...DEFAULT_SCORING_RULES, ...(configRes.rows[0].special_rules?.scoring_rules || {}), ...(req.body as object) } }
+    await db.query('UPDATE game_configs SET special_rules = $1 WHERE id = $2', [JSON.stringify(merged), configRes.rows[0].id])
+    return reply.send({ success: true, rules: merged.scoring_rules })
   })
 
   app.post('/api/admin/betting/cricket/sync-api', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
@@ -1592,6 +2405,82 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  app.post('/api/admin/betting/cricket/sync-series-squads', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/sync-series-squads', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  // --- Cricket Series Catalog ---
+  // Fixed, admin-managed list of tournaments (IPL, ICC World Cup, ...) that
+  // the Add Match form picks from instead of free-text, so the same
+  // tournament doesn't end up spelled three different ways across matches.
+  app.get('/api/admin/betting/cricket/series-catalog', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query('SELECT * FROM cricket_series WHERE is_active = true ORDER BY name ASC')
+    return reply.send({ series: res.rows })
+  })
+
+  app.post('/api/admin/betting/cricket/series-catalog', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const body = z.object({ name: z.string().min(1), short_name: z.string().optional() }).parse(req.body)
+    const res = await db.query(
+      `INSERT INTO cricket_series (name, short_name) VALUES ($1, $2)
+       ON CONFLICT (name) DO UPDATE SET is_active = true RETURNING *`,
+      [body.name.trim(), body.short_name?.trim() || null]
+    )
+    return reply.send({ success: true, series: res.rows[0] })
+  })
+
+  app.delete('/api/admin/betting/cricket/series-catalog/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const seriesRow = await db.query('SELECT name FROM cricket_series WHERE id = $1', [id])
+    if (!seriesRow.rows.length) return reply.code(404).send({ error: 'Series not found' })
+    const inUse = await db.query('SELECT 1 FROM cricket_matches WHERE series = $1 LIMIT 1', [seriesRow.rows[0].name])
+    if (inUse.rows.length) {
+      return reply.code(409).send({ error: 'This series is used by existing matches — remove or reassign those matches first.' })
+    }
+    await db.query('DELETE FROM cricket_series WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+  // --- Cricket Deletion ---
+  // Superadmin-gated, blocked with a 409 if it would silently wipe out an
+  // active (unsettled, joined) fantasy contest.
+  app.delete('/api/admin/betting/cricket/matches/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const activeContest = await db.query(
+      `SELECT 1 FROM cricket_fantasy_leagues WHERE match_id = $1 AND status != 'settled' AND current_entries > 0 LIMIT 1`, [id]
+    )
+    if (activeContest.rows.length) {
+      return reply.code(409).send({ error: 'This match has an active fantasy contest with joined entries — settle it first.' })
+    }
+    // match_players, fantasy leagues/entries, user_fantasy_teams, match_cache cascade from this delete.
+    await db.query('DELETE FROM cricket_matches WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+  app.delete('/api/admin/betting/cricket/fantasy/leagues/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const league = await db.query('SELECT status, current_entries FROM cricket_fantasy_leagues WHERE id = $1', [id])
+    if (!league.rows.length) return reply.code(404).send({ error: 'League not found' })
+    if (league.rows[0].status !== 'settled' && league.rows[0].current_entries > 0) {
+      return reply.code(409).send({ error: 'This contest has joined entries and is not settled yet — settle it first.' })
+    }
+    // cricket_fantasy_entries cascades automatically.
+    await db.query('DELETE FROM cricket_fantasy_leagues WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+  app.delete('/api/admin/betting/cricket/fantasy/players/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const captaining = await db.query(
+      `SELECT 1 FROM user_fantasy_teams WHERE captain_id = $1 OR vice_captain_id = $1 LIMIT 1`, [id]
+    )
+    if (captaining.rows.length) {
+      return reply.code(409).send({ error: 'This player is set as captain/vice-captain on an existing fantasy team — cannot delete.' })
+    }
+    // cricket_match_players cascades automatically.
+    await db.query('DELETE FROM cricket_fantasy_players WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
 
   // --- Satta Matka Market Creation & Deletion ---
   app.get('/api/admin/betting/matka/markets', { onRequest: [authenticate] }, async (_req, reply) => {
@@ -1641,7 +2530,10 @@ async function start() {
       name: z.string().optional(),
       ticket_price: z.number().positive().optional(),
       draw_time: z.string().optional(),
-      prize_multiplier: z.number().positive().optional(),
+      prize_tiers: z.array(z.object({
+        match_type: z.enum(['exact', 'last_3', 'last_2', 'last_1']),
+        multiplier: z.number().positive(),
+      })).min(1).optional(),
     }).parse(req.body)
     const existing = await db.query(`SELECT status FROM lottery_draws WHERE id = $1`, [id])
     if (!existing.rows.length) return reply.code(404).send({ error: 'Draw not found' })
@@ -1651,7 +2543,7 @@ async function start() {
     if (body.name) { fields.push(`name = $${i++}`); params.push(body.name) }
     if (body.ticket_price) { fields.push(`ticket_price = $${i++}`); params.push(body.ticket_price) }
     if (body.draw_time) { fields.push(`draw_time = $${i++}`); params.push(body.draw_time) }
-    if (body.prize_multiplier) { fields.push(`prize_multiplier = $${i++}`); params.push(body.prize_multiplier) }
+    if (body.prize_tiers) { fields.push(`prize_tiers = $${i++}`); params.push(JSON.stringify(body.prize_tiers)) }
     if (!fields.length) return reply.code(400).send({ error: 'No fields to update' })
     const r = await db.query(`UPDATE lottery_draws SET ${fields.join(', ')} WHERE id = $1 RETURNING *`, params)
     return reply.send({ success: true, draw: r.rows[0] })
@@ -1693,6 +2585,7 @@ async function start() {
           COUNT(*) FILTER (WHERE status = 'settled') AS settled_draws,
           COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled_draws,
           (SELECT COUNT(*) FROM lottery_tickets) AS total_tickets,
+          (SELECT COUNT(*) FROM lottery_tickets t JOIN users u ON u.id = t.user_id WHERE u.is_bot = true) AS total_bot_tickets,
           (SELECT COALESCE(SUM(amount), 0) FROM lottery_tickets) AS total_revenue,
           (SELECT COALESCE(SUM(prize), 0) FROM lottery_tickets WHERE is_winner = true) AS total_paid_out
         FROM lottery_draws
@@ -1720,6 +2613,7 @@ async function start() {
     return reply.send(r.data)
   })
 
+
   // --- Bot Management ---
   app.get('/api/admin/bots/stats', { onRequest: [authenticate] }, async (_req, reply) => {
     const res = await db.query(`
@@ -1739,18 +2633,19 @@ async function start() {
       username: z.string(),
       phone: z.string().optional(),
       initial_balance: z.number().nonnegative().default(10000),
+      preferred_game_type: z.enum(['teen_patti', 'ludo', 'lottery']),
     }).parse(req.body)
-    
+
     const phone = body.phone || `999${Math.floor(1000000 + Math.random() * 9000000)}`
     const referralCode = Math.random().toString(36).substring(2, 10).toUpperCase()
-    
+
     const client = await db.connect()
     try {
       await client.query('BEGIN')
       const userRes = await client.query(
-        `INSERT INTO users (phone, username, password_hash, is_bot, status, referral_code)
-         VALUES ($1, $2, $3, true, 'active', $4) RETURNING id`,
-        [phone, body.username, '$2b$12$invalid_bot_hash_never_login', referralCode]
+        `INSERT INTO users (phone, username, password_hash, is_bot, status, referral_code, preferred_game_type)
+         VALUES ($1, $2, $3, true, 'active', $4, $5) RETURNING id`,
+        [phone, body.username, '$2b$12$invalid_bot_hash_never_login', referralCode, body.preferred_game_type]
       )
       const botId = userRes.rows[0].id
       await client.query(
@@ -1758,8 +2653,17 @@ async function start() {
          VALUES ($1, $2, 0)`,
         [botId, body.initial_balance]
       )
+      // Logged so bot bankroll ROI (sub-project #4) can reconstruct total
+      // invested capital -- previously only later top-ups were logged,
+      // never the initial funding itself.
+      await client.query(
+        `INSERT INTO wallet_transactions
+           (user_id, type, wallet_type, amount, balance_before, balance_after, idempotency_key, status, description)
+         VALUES ($1, 'manual_credit', 'real', $2, 0, $2, $3, 'completed', 'Initial bot funding')`,
+        [botId, body.initial_balance, `initial-fund:${botId}`]
+      )
       await client.query('COMMIT')
-      return reply.send({ success: true, bot: { id: botId, username: body.username, phone, balance: body.initial_balance } })
+      return reply.send({ success: true, bot: { id: botId, username: body.username, phone, balance: body.initial_balance, preferred_game_type: body.preferred_game_type } })
     } catch (e: any) {
       await client.query('ROLLBACK')
       return reply.code(400).send({ error: e.message || 'Failed to create bot' })
@@ -1789,6 +2693,48 @@ async function start() {
     } finally {
       client.release()
     }
+  })
+
+  app.patch('/api/admin/bots/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const botCheck = await db.query('SELECT is_bot FROM users WHERE id = $1', [id])
+    if (!botCheck.rows.length || !botCheck.rows[0].is_bot) {
+      return reply.code(400).send({ error: 'User is not a bot or does not exist' })
+    }
+
+    const body = z.object({
+      preferred_game_type: z.string().min(1).optional(),
+      bot_difficulty: z.enum(['easy', 'medium', 'hard']).nullable().optional(),
+    }).parse(req.body)
+
+    const sets: string[] = []
+    const params: any[] = [id]
+    if (body.preferred_game_type !== undefined) { params.push(body.preferred_game_type); sets.push(`preferred_game_type = $${params.length}`) }
+    if (body.bot_difficulty !== undefined) { params.push(body.bot_difficulty); sets.push(`bot_difficulty = $${params.length}`) }
+
+    if (sets.length === 0) {
+      return reply.code(400).send({ error: 'No fields to update' })
+    }
+
+    await db.query(`UPDATE users SET ${sets.join(', ')} WHERE id = $1`, params)
+    return reply.send({ success: true })
+  })
+
+
+  // --- Website Settings ---
+  app.get('/api/admin/settings', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query("SELECT key, value FROM system_settings")
+    const config: Record<string, string> = {}
+    for (const row of res.rows) config[row.key] = row.value
+    return reply.send({ success: true, data: config })
+  })
+
+  app.patch('/api/admin/settings', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const body = req.body as Record<string, string>
+    for (const [k, v] of Object.entries(body)) {
+      await db.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [k, String(v)])
+    }
+    return reply.send({ success: true })
   })
 
   // --- Leaderboard ---
@@ -2074,6 +3020,182 @@ async function start() {
     }
   })
 
+  // ── Anomaly Response Handler endpoints ──────────────────────────────────────────────────────────────
+
+  // POST /api/admin/override-anomaly-pause/:playerId - Admin override for anomaly pause
+  app.post('/api/admin/override-anomaly-pause/:playerId', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    try {
+      const { playerId } = req.params as any
+      const { reason, anomalyId } = z.object({
+        reason: z.string().min(5).max(255).default('Auto-paused via admin quick action'),
+        anomalyId: z.string().uuid().optional(),
+      }).parse(req.body ?? {})
+      const admin = req.user as any
+
+      // Start transaction
+      const client = await db.connect()
+      try {
+        await client.query('BEGIN')
+
+        // Update player status back to active
+        const playerResult = await client.query(
+          'UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING id, status',
+          ['active', playerId]
+        )
+
+        if (!playerResult.rows.length) {
+          await client.query('ROLLBACK')
+          return reply.code(404).send({ success: false, error: 'Player not found' })
+        }
+
+        // If anomalyId provided, update anomaly status to overridden
+        if (anomalyId) {
+          const anomalyResult = await client.query(
+            `UPDATE player_anomalies
+             SET status = $1, admin_override_at = NOW(), override_by = $2, override_reason = $3, updated_at = NOW()
+             WHERE id = $4
+             RETURNING id, player_id, anomaly_type, confidence`,
+            ['overridden', admin.sub, reason, anomalyId]
+          )
+
+          if (anomalyResult.rows.length) {
+            // Create admin override audit record
+            await client.query(
+              `INSERT INTO admin_anomaly_overrides (anomaly_id, player_id, override_reason, overridden_by, created_at)
+               VALUES ($1, $2, $3, $4, NOW())`,
+              [anomalyId, playerId, reason, admin.sub]
+            )
+
+            // Log the override action to audit log
+            await client.query(
+              `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details, created_at)
+               VALUES ($1, $2, $3, $4, $5, NOW())`,
+              [
+                admin.sub,
+                'anomaly_override',
+                'player_anomaly',
+                anomalyId,
+                JSON.stringify({ reason, player_id: playerId })
+              ]
+            )
+          }
+        }
+
+        await client.query('COMMIT')
+
+        return reply.send({
+          success: true,
+          data: {
+            playerId,
+            status: 'active',
+            message: 'Player pause overridden successfully',
+            reason,
+          },
+        })
+      } catch (err: any) {
+        await client.query('ROLLBACK').catch(() => {})
+        throw err
+      } finally {
+        client.release()
+      }
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to override anomaly pause' })
+    }
+  })
+
+  // GET /api/admin/anomalies - List detected anomalies
+  app.get('/api/admin/anomalies', { onRequest: [authenticate] }, async (req, reply) => {
+    try {
+      const { status, limit = 50, offset = 0 } = req.query as any
+
+      let query = `
+        SELECT
+          pa.id,
+          pa.player_id,
+          u.username,
+          pa.anomaly_type,
+          pa.confidence,
+          pa.anomaly_score,
+          pa.feature_zscore,
+          pa.status,
+          pa.created_at,
+          pa.player_paused_at,
+          pa.support_ticket_id,
+          st.subject as ticket_subject
+        FROM player_anomalies pa
+        LEFT JOIN users u ON pa.player_id = u.id
+        LEFT JOIN support_tickets st ON pa.support_ticket_id = st.id
+      `
+
+      const params: any[] = []
+
+      if (status) {
+        query += ` WHERE pa.status = $${params.length + 1}`
+        params.push(status)
+      }
+
+      query += ` ORDER BY pa.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
+      params.push(limit, offset)
+
+      const result = await db.query(query, params)
+
+      return reply.send({
+        success: true,
+        data: result.rows,
+        total: result.rows.length,
+      })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to fetch anomalies' })
+    }
+  })
+
+  // PATCH /api/admin/anomalies/:anomalyId/dismiss - Dismiss an anomaly
+  app.patch('/api/admin/anomalies/:anomalyId/dismiss', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    try {
+      const { anomalyId } = req.params as any
+      const { reason } = z.object({
+        reason: z.string().min(5).max(255),
+      }).parse(req.body)
+      const admin = req.user as any
+
+      const result = await db.query(
+        `UPDATE player_anomalies
+         SET status = $1, dismissed_at = NOW(), dismissed_by = $2, dismissal_reason = $3, updated_at = NOW()
+         WHERE id = $4
+         RETURNING id, player_id, anomaly_type`,
+        ['dismissed', admin.sub, reason, anomalyId]
+      )
+
+      if (!result.rows.length) {
+        return reply.code(404).send({ success: false, error: 'Anomaly not found' })
+      }
+
+      // Log to audit
+      await db.query(
+        `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details, created_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())`,
+        [
+          admin.sub,
+          'anomaly_dismissed',
+          'player_anomaly',
+          anomalyId,
+          JSON.stringify({ reason })
+        ]
+      )
+
+      return reply.send({
+        success: true,
+        data: {
+          anomalyId,
+          status: 'dismissed',
+          message: 'Anomaly dismissed',
+        },
+      })
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to dismiss anomaly' })
+    }
+  })
+
   // â”€â”€ Emoji management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   // GET /api/admin/emojis — list all emojis
@@ -2164,87 +3286,22 @@ async function start() {
         `SELECT id, room_id, game_type, action, refunds, total_refunded, created_at
          FROM watchdog_events ORDER BY created_at DESC LIMIT 100`
       ),
+      // Scoped to action='reaped' so these specifically-named "reaped"/
+      // "refunded" counters keep meaning what they say — the completed-room
+      // reconcile sweep logs a different action ('reconciled_stranded_consume')
+      // into the same table, and that money was collected, not refunded.
       db.query(
         `SELECT count(*)::int AS total_reaped,
                 COALESCE(sum(total_refunded), 0) AS total_refunded,
                 count(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS reaped_24h,
                 COALESCE(sum(total_refunded) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours'), 0) AS refunded_24h
-         FROM watchdog_events`
+         FROM watchdog_events WHERE action = 'reaped'`
       ),
       db.query(
         `SELECT count(*)::int AS active_rooms FROM game_rooms WHERE status IN ('waiting','active')`
       ),
     ])
     return reply.send({ events: events.rows, stats: { ...stats.rows[0], ...active.rows[0] } })
-  })
-
-  // ── Daily Login Bonus Config ──────────────────────────────────────────────────
-
-  // GET /api/admin/bonus/login-config — fetch current day schedule
-  app.get('/api/admin/bonus/login-config', { onRequest: [app.authenticate] }, async (_req, reply) => {
-    const res = await db.query(
-      `SELECT * FROM login_bonus_config ORDER BY day_number ASC`
-    )
-    return reply.send(res.rows)
-  })
-
-  // PUT /api/admin/bonus/login-config — upsert one or many day configs (superadmin/finance)
-  app.put('/api/admin/bonus/login-config', {
-    onRequest: [app.authenticate, app.requireRole('finance')],
-  }, async (req, reply) => {
-    const body = z.array(z.object({
-      day_number:   z.number().int().min(1).max(30),
-      bonus_amount: z.number().min(0),
-      bonus_type:   z.enum(['real', 'bonus']).default('real'),
-      label:        z.string().max(100).optional(),
-      emoji:        z.string().max(10).optional(),
-      is_special:   z.boolean().default(false),
-      is_active:    z.boolean().default(true),
-    })).parse(req.body)
-
-    for (const d of body) {
-      await db.query(
-        `INSERT INTO login_bonus_config (day_number, bonus_amount, bonus_type, label, emoji, is_special, is_active, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
-         ON CONFLICT (day_number) DO UPDATE SET
-           bonus_amount = EXCLUDED.bonus_amount,
-           bonus_type   = EXCLUDED.bonus_type,
-           label        = EXCLUDED.label,
-           emoji        = EXCLUDED.emoji,
-           is_special   = EXCLUDED.is_special,
-           is_active    = EXCLUDED.is_active,
-           updated_at   = NOW()`,
-        [d.day_number, d.bonus_amount, d.bonus_type, d.label ?? `Day ${d.day_number}`,
-         d.emoji ?? '🎁', d.is_special, d.is_active]
-      )
-    }
-    const res = await db.query(`SELECT * FROM login_bonus_config ORDER BY day_number ASC`)
-    return reply.send({ success: true, config: res.rows })
-  })
-
-  // GET /api/admin/bonus/stats — today's claim stats
-  app.get('/api/admin/bonus/stats', { onRequest: [app.authenticate] }, async (_req, reply) => {
-    const todayDate = new Date().toISOString().slice(0, 10)
-    const [todayRes, totalRes, streakRes] = await Promise.all([
-      db.query(
-        `SELECT COUNT(*) AS claimed_today, SUM(b.amount) AS distributed_today
-         FROM bonuses b WHERE b.type = 'daily_login' AND b.created_at::date = $1`, [todayDate]
-      ),
-      db.query(
-        `SELECT COUNT(*) AS total_claims, SUM(amount) AS total_distributed
-         FROM bonuses WHERE type = 'daily_login'`
-      ),
-      db.query(
-        `SELECT MAX(current_streak) AS max_streak, AVG(current_streak) AS avg_streak,
-                COUNT(*) AS active_streaks
-         FROM user_login_streaks WHERE current_streak > 0`
-      ),
-    ])
-    return reply.send({
-      today: todayRes.rows[0],
-      all_time: totalRes.rows[0],
-      streaks: streakRes.rows[0],
-    })
   })
 
   // ── Home Banners ──────────────────────────────────────────────────────────────
@@ -2302,7 +3359,7 @@ async function start() {
     const res = await db.query(
       `UPDATE home_banners SET
          title = COALESCE($1, title), subtitle = COALESCE($2, subtitle),
-         click_url = $3, click_type = COALESCE($4, click_type),
+         click_url = COALESCE($3, click_url), click_type = COALESCE($4, click_type),
          sort_order = COALESCE($5, sort_order), is_active = COALESCE($6, is_active),
          updated_at = NOW()
        WHERE id = $7 RETURNING *`,
@@ -2361,13 +3418,13 @@ async function start() {
     const body = req.body as any
     const res = await db.query(
       `UPDATE promo_codes SET
-         code = COALESCE($1, code), description = $2,
+         code = COALESCE($1, code), description = COALESCE($2, description),
          discount_type = COALESCE($3, discount_type),
          discount_value = COALESCE($4, discount_value),
          min_deposit = COALESCE($5, min_deposit),
-         max_discount = $6, usage_limit = $7,
+         max_discount = COALESCE($6, max_discount), usage_limit = COALESCE($7, usage_limit),
          per_user_limit = COALESCE($8, per_user_limit),
-         is_active = COALESCE($9, is_active), expires_at = $10
+         is_active = COALESCE($9, is_active), expires_at = COALESCE($10, expires_at)
        WHERE id = $11 RETURNING *`,
       [body.code?.toUpperCase() ?? null, body.description ?? null, body.discount_type ?? null,
        body.discount_value ?? null, body.min_deposit ?? null, body.max_discount ?? null,
@@ -2432,7 +3489,7 @@ async function start() {
   const KYC_UPLOAD_DIR = process.env.KYC_UPLOAD_DIR || '/opt/teen/uploads/kyc'
   const KYC_FILE_KEYS: Record<string, string> = { front: 'aadhaar_front', back: 'aadhaar_back', selfie: 'selfie' }
   const KYC_MIME_TYPES: Record<string, string> = { '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' }
-  app.get('/api/admin/kyc/:userId/file/:type', { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.get('/api/admin/kyc/:userId/file/:type', { onRequest: [app.authenticate, app.requireRole('support')] }, async (req, reply) => {
     const { userId, type } = req.params as any
     const key = KYC_FILE_KEYS[type]
     if (!key) return reply.code(400).send({ error: 'Invalid document type' })
@@ -2479,8 +3536,13 @@ async function start() {
 
   // ── App Version / In-App Update ──────────────────────────────────────────
   const APK_DIR = process.env.APK_DIR || '/opt/teen/downloads'
-  const APK_FILENAME = 'app-release.apk'
-  const APK_PUBLIC_URL = process.env.APK_PUBLIC_URL || 'https://game.myonlinejoker.com/downloads/app-release.apk'
+  // Each version gets its own on-disk file and its own download_url — never
+  // shared/overwritten — so old Version History rows keep pointing at the
+  // APK they actually represent instead of silently serving the latest
+  // upload. See docs/Bugs/app-update-version-history-downloads-wrong-apk.md.
+  const APK_PUBLIC_BASE_URL = (process.env.APK_PUBLIC_BASE_URL || 'https://game.myonlinejoker.com/downloads').replace(/\/+$/, '')
+  const apkFilename = (versionCode: number) => `app-release-${versionCode}.apk`
+  const apkPublicUrl = (versionCode: number) => `${APK_PUBLIC_BASE_URL}/${apkFilename(versionCode)}`
   fs.mkdirSync(APK_DIR, { recursive: true })
 
   // Public: GET /api/app/version — no auth, called by the Flutter app on startup
@@ -2488,38 +3550,57 @@ async function start() {
     const res = await db.query(
       'SELECT version_name, version_code, download_url, release_notes, force_update FROM app_versions ORDER BY version_code DESC LIMIT 1'
     )
-    if (!res.rows.length) return reply.send({ version_code: 0, version_name: '1.0.0', force_update: false, download_url: APK_PUBLIC_URL })
+    if (!res.rows.length) return reply.send({ version_code: 0, version_name: '1.0.0', force_update: false, download_url: apkPublicUrl(0) })
     return reply.send(res.rows[0])
   })
 
   // Admin: POST /api/admin/app/upload — upload APK and set new version info
   app.post('/api/admin/app/upload', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const parts = (req as any).parts()
+    // version_code isn't known until its field part is read, and the admin
+    // panel appends the file part first — so the file streams to a
+    // version-agnostic temp name and is only renamed to its permanent,
+    // version-specific filename once version_code has been validated below.
+    const tmpDest = path.join(APK_DIR, `.upload-${Date.now()}-${crypto.randomUUID()}.tmp`)
     let versionName = '', versionCode = 0, releaseNotes = '', forceUpdate = false, fileWritten = false
 
-    for await (const part of parts) {
-      if (part.type === 'file' && part.fieldname === 'apk') {
-        const dest = path.join(APK_DIR, APK_FILENAME)
-        await pipeline(part.file, fs.createWriteStream(dest))
-        fileWritten = true
-      } else if (part.type === 'field') {
-        if (part.fieldname === 'version_name') versionName = String(part.value)
-        if (part.fieldname === 'version_code') versionCode = parseInt(String(part.value)) || 0
-        if (part.fieldname === 'release_notes') releaseNotes = String(part.value)
-        if (part.fieldname === 'force_update') forceUpdate = String(part.value) === 'true'
+    try {
+      for await (const part of parts) {
+        if (part.type === 'file' && part.fieldname === 'apk') {
+          // Stream to a temp file first — never touch a live APK until the
+          // whole upload has succeeded and validation has passed, so a
+          // truncated/oversized/invalid upload can't corrupt production.
+          await pipeline(part.file, fs.createWriteStream(tmpDest))
+          if (part.file.truncated) throw Object.assign(new Error('File exceeds size limit'), { statusCode: 413 })
+          fileWritten = true
+        } else if (part.type === 'field') {
+          if (part.fieldname === 'version_name') versionName = String(part.value)
+          if (part.fieldname === 'version_code') versionCode = parseInt(String(part.value)) || 0
+          if (part.fieldname === 'release_notes') releaseNotes = String(part.value)
+          if (part.fieldname === 'force_update') forceUpdate = String(part.value) === 'true'
+        }
       }
+
+      if (!fileWritten) return reply.code(400).send({ error: 'No APK file provided' })
+      if (!versionName || versionCode < 1) return reply.code(400).send({ error: 'version_name and version_code are required' })
+
+      const downloadUrl = apkPublicUrl(versionCode)
+      await db.query(
+        `INSERT INTO app_versions (version_name, version_code, download_url, release_notes, force_update)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (version_code) DO UPDATE SET version_name=$1, download_url=$3, release_notes=$4, force_update=$5, created_at=NOW()`,
+        [versionName, versionCode, downloadUrl, releaseNotes || null, forceUpdate]
+      )
+      // Only now — after the DB write succeeded — promote the temp file to
+      // its permanent, version-specific path (re-uploading the same
+      // version_code intentionally overwrites just that version's file).
+      await fs.promises.rename(tmpDest, path.join(APK_DIR, apkFilename(versionCode)))
+      return reply.send({ success: true, version_name: versionName, version_code: versionCode, download_url: downloadUrl })
+    } catch (err: any) {
+      await fs.promises.unlink(tmpDest).catch(() => {})
+      const statusCode = err?.statusCode === 413 ? 413 : 500
+      return reply.code(statusCode).send({ error: statusCode === 413 ? 'APK file exceeds the upload size limit' : 'Upload failed' })
     }
-
-    if (!fileWritten) return reply.code(400).send({ error: 'No APK file provided' })
-    if (!versionName || versionCode < 1) return reply.code(400).send({ error: 'version_name and version_code are required' })
-
-    await db.query(
-      `INSERT INTO app_versions (version_name, version_code, download_url, release_notes, force_update)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (version_code) DO UPDATE SET version_name=$1, download_url=$3, release_notes=$4, force_update=$5, created_at=NOW()`,
-      [versionName, versionCode, APK_PUBLIC_URL, releaseNotes || null, forceUpdate]
-    )
-    return reply.send({ success: true, version_name: versionName, version_code: versionCode, download_url: APK_PUBLIC_URL })
   })
 
   // Admin: GET /api/admin/app/versions — list all uploaded versions
@@ -2532,7 +3613,7 @@ async function start() {
   // ── Bank Details Admin Routes ──────────────────────────────────────────────
 
   // GET /api/admin/bank-details — list all submitted bank accounts
-  app.get('/api/admin/bank-details', { onRequest: [authenticate] }, async (_req, reply) => {
+  app.get('/api/admin/bank-details', { onRequest: [authenticate, requireRole('finance')] }, async (_req, reply) => {
     const res = await db.query(
       `SELECT bd.*, u.username, u.phone, u.email
        FROM bank_details bd

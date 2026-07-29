@@ -5,10 +5,13 @@ import { Pool } from 'pg'
 import Redis from 'ioredis'
 import pino from 'pino'
 import os from 'os'
-import { execSync } from 'child_process'
+import { exec } from 'child_process'
+import { promisify } from 'util'
 import { MonitorIngestor } from './monitor-ingestor'
 import { AlertEngine } from './alerts'
 import { parseClientIp, GeoLookup } from './geo'
+
+const execAsync = promisify(exec)
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' })
 
@@ -21,6 +24,21 @@ const app = Fastify({ logger: false })
 const ingestor = new MonitorIngestor(pool, redis, logger)
 const geoLookup = new GeoLookup(process.env.GEOLITE2_CITY_PATH)
 new AlertEngine(pool, redis, ingestor, logger).start()
+
+// Every route except the public mobile-app ingest endpoint and /health
+// requires the shared internal-service key — this data (live player GPS,
+// phone numbers, IPs, PM2/Docker process state) must never be reachable
+// without it. See docs/Bugs/app-monitor-read-endpoints-publicly-unauthenticated.md.
+const INTERNAL_SERVICE_KEY = process.env.INTERNAL_SERVICE_KEY
+const PUBLIC_PATHS = new Set(['/health', '/api/monitor/events'])
+app.addHook('onRequest', async (req, reply) => {
+  const path = req.url.split('?')[0]
+  if (PUBLIC_PATHS.has(path)) return
+  const key = req.headers['x-internal-key']
+  if (!INTERNAL_SERVICE_KEY || key !== INTERNAL_SERVICE_KEY) {
+    return reply.code(403).send({ success: false, error: 'Forbidden' })
+  }
+})
 
 // ── Alerts (raised by AlertEngine, shown in the admin AI Control Center) ──
 app.get<{ Querystring: { limit?: string } }>('/api/monitor/alerts', async (req, reply) => {
@@ -75,9 +93,11 @@ app.post<{ Body: Record<string, unknown> }>('/api/monitor/events', async (req, r
   try {
     const payload = req.body as any
     if (!payload.session_id || !payload.device_id || !Array.isArray(payload.events)) {
+      logger.warn({ session_id: !!payload.session_id, device_id: !!payload.device_id, events: !!Array.isArray(payload.events) }, 'Invalid ingest payload')
       return reply.code(400).send({ success: false, error: 'Missing required fields: session_id, device_id, events' })
     }
     if (payload.events.length > 100) {
+      logger.warn({ event_count: payload.events.length }, 'Batch too large')
       return reply.code(400).send({ success: false, error: 'Batch too large: max 100 events' })
     }
     // Validate shared secret (skip check when env var not configured — dev only)
@@ -85,15 +105,25 @@ app.post<{ Body: Record<string, unknown> }>('/api/monitor/events', async (req, r
     if (expectedKey) {
       const providedKey = req.headers['x-monitor-key']
       if (providedKey !== expectedKey) {
+        logger.warn({
+          providedLen: String(providedKey ?? '').length,
+          expectedLen: expectedKey.length,
+          providedPrefix: String(providedKey ?? '').slice(0, 6),
+        }, 'Invalid auth key')
         return reply.code(401).send({ success: false, error: 'Unauthorized' })
       }
+    } else {
+      logger.debug('Auth key not configured — accepting all requests')
     }
     const ip = parseClientIp(req.headers as any, req.socket?.remoteAddress)
     const geo = geoLookup.lookup(ip)
+    logger.debug('Ingesting batch', { session_id: payload.session_id, device_id: payload.device_id, event_count: payload.events.length, ip, geo })
     await ingestor.ingestBatch(payload, geo, ip)
+    logger.info('Ingest success', { session_id: payload.session_id, event_count: payload.events.length })
     return reply.send({ success: true })
   } catch (err: any) {
     if (err.statusCode === 429) {
+      logger.warn('Rate limit exceeded')
       return reply.code(429).send({ success: false, error: 'Rate limit exceeded' })
     }
     logger.error({ err }, 'Ingest error')
@@ -200,10 +230,19 @@ app.get<{ Querystring: { hours?: string } }>(
 
 app.get('/api/monitor/server-health', async (_req, reply) => {
   try {
-    // PM2 process list
+    // PM2 process list + Docker containers — run concurrently, non-blocking
+    const [pmResult, dockerResult] = await Promise.all([
+      execAsync('pm2 jlist 2>/dev/null', { timeout: 5000, encoding: 'utf-8' }).catch(pmErr => {
+        // PM2 not available in this env (Docker, K8s, dev) — log but don't crash
+        logger.warn({ err: pmErr instanceof Error ? pmErr.message : String(pmErr) }, 'PM2 jlist unavailable')
+        return null
+      }),
+      execAsync('docker ps --format "{{.Names}}|{{.Status}}|{{.State}}" 2>/dev/null', { timeout: 5000 }).catch(() => null),
+    ])
+
     let processes: object[] = []
-    try {
-      const raw = execSync('pm2 jlist 2>/dev/null', { timeout: 5000 }).toString()
+    const raw = pmResult?.stdout?.toString()
+    if (raw && raw.trim()) {
       const list: any[] = JSON.parse(raw)
       processes = list.map(p => ({
         name:        p.name,
@@ -214,7 +253,7 @@ app.get('/api/monitor/server-health', async (_req, reply) => {
         uptime_ms:   p.pm2_env?.pm_uptime ? (Date.now() - p.pm2_env.pm_uptime) : 0,
         pid:         p.pid ?? null,
       }))
-    } catch { /* PM2 not available in this env — skip */ }
+    }
 
     // System memory via OS module
     const totalMem  = Math.round(os.totalmem()  / 1024 / 1024)
@@ -224,20 +263,16 @@ app.get('/api/monitor/server-health', async (_req, reply) => {
 
     // Docker containers
     let containers: object[] = []
-    try {
-      const raw = execSync(
-        'docker ps --format "{{.Names}}|{{.Status}}|{{.State}}" 2>/dev/null', { timeout: 5000 }
-      ).toString().trim()
-      if (raw) {
-        containers = raw.split('\n').map(line => {
-          const [name, status, state] = line.split('|')
-          const healthy = status?.includes('(healthy)') ? 'healthy'
-            : status?.includes('(unhealthy)') ? 'unhealthy'
-            : 'no-healthcheck'
-          return { name, state, health: healthy }
-        })
-      }
-    } catch { /* Docker not available */ }
+    const dockerRaw = dockerResult?.stdout?.toString().trim()
+    if (dockerRaw) {
+      containers = dockerRaw.split('\n').map(line => {
+        const [name, status, state] = line.split('|')
+        const healthy = status?.includes('(healthy)') ? 'healthy'
+          : status?.includes('(unhealthy)') ? 'unhealthy'
+          : 'no-healthcheck'
+        return { name, state, health: healthy }
+      })
+    }
 
     return reply.send({
       success: true,

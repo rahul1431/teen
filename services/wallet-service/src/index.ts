@@ -11,6 +11,7 @@ import { z } from 'zod'
 import fs from 'fs'
 import path from 'path'
 import { pipeline } from 'stream/promises'
+import Redis from 'ioredis'
 import { WalletService } from './wallet.service'
 
 // Where uploaded deposit screenshots are stored (served by nginx at /uploads/).
@@ -63,6 +64,21 @@ async function tryTriggerReferralReward(userId: string, db: Pool, walletSvc: any
         idempotencyKey: ikey,
         description: 'Referral bonus — friend made first deposit',
       })
+      const coreApiUrl = process.env.CORE_API_SERVICE_URL || 'http://127.0.0.1:3001'
+      const key = process.env.INTERNAL_SERVICE_KEY || ''
+      fetch(`${coreApiUrl}/internal/notifications/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-internal-key': key,
+        },
+        body: JSON.stringify({
+          user_id: referral.referrer_id,
+          title: 'Referral Reward Earned 🎁',
+          body: `Your friend made their first deposit! You have been credited a referral bonus of ₹${parseFloat(referral.reward_amount).toFixed(2)}.`,
+          type: 'referral_reward',
+        }),
+      }).catch(err => console.error('[referral-reward] notification trigger failed:', err?.message))
     }
   } catch (err) {
     // Non-fatal: log and continue so the deposit itself doesn't fail
@@ -72,7 +88,8 @@ async function tryTriggerReferralReward(userId: string, db: Pool, walletSvc: any
 
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
-const walletSvc = new WalletService(db)
+const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : undefined
+const walletSvc = new WalletService(db, redis)
 
 // Razorpay is optional — manual UPI/bank deposits are the primary flow.
 // Only construct the client when keys are configured so the service boots
@@ -349,7 +366,14 @@ async function start() {
       }
     }
 
-    // Validate promo code if provided
+    // Validate promo code if provided. The usage row is reserved with
+    // INSERT ... ON CONFLICT DO NOTHING inside a transaction *before* the
+    // bonus is computed/stored — this is what makes it race-safe: only the
+    // request that actually inserts the (promo_id, user_id) row (the DB's
+    // UNIQUE constraint is the single source of truth) gets to claim a
+    // bonus and increment used_count. A losing racer sees zero rows
+    // affected and silently gets no bonus, instead of both racers reading
+    // "eligible" before either has committed.
     let promoRow: any = null
     let promoBonus = 0
     if (promoCode) {
@@ -362,16 +386,33 @@ async function start() {
       if (pr.rows.length) {
         promoRow = pr.rows[0]
         if (amount >= parseFloat(promoRow.min_deposit)) {
-          const used = await db.query(
-            `SELECT COUNT(*) as cnt FROM promo_code_usages WHERE promo_id = $1 AND user_id = $2`,
-            [promoRow.id, user.sub]
-          )
-          if (parseInt(used.rows[0].cnt) < promoRow.per_user_limit) {
-            promoBonus = promoRow.discount_type === 'percent'
-              ? (amount * parseFloat(promoRow.discount_value)) / 100
-              : parseFloat(promoRow.discount_value)
-            if (promoRow.max_discount) promoBonus = Math.min(promoBonus, parseFloat(promoRow.max_discount))
-            promoBonus = Math.round(promoBonus * 100) / 100
+          const client = await db.connect()
+          try {
+            await client.query('BEGIN')
+            const used = await client.query(
+              `SELECT COUNT(*) as cnt FROM promo_code_usages WHERE promo_id = $1 AND user_id = $2`,
+              [promoRow.id, user.sub]
+            )
+            if (parseInt(used.rows[0].cnt) < promoRow.per_user_limit) {
+              const reserved = await client.query(
+                `INSERT INTO promo_code_usages (promo_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING id`,
+                [promoRow.id, user.sub]
+              )
+              if (reserved.rows.length) {
+                promoBonus = promoRow.discount_type === 'percent'
+                  ? (amount * parseFloat(promoRow.discount_value)) / 100
+                  : parseFloat(promoRow.discount_value)
+                if (promoRow.max_discount) promoBonus = Math.min(promoBonus, parseFloat(promoRow.max_discount))
+                promoBonus = Math.round(promoBonus * 100) / 100
+                await client.query(`UPDATE promo_codes SET used_count = used_count + 1 WHERE id = $1`, [promoRow.id])
+              }
+            }
+            await client.query('COMMIT')
+          } catch (e) {
+            await client.query('ROLLBACK')
+            throw e
+          } finally {
+            client.release()
           }
         }
       }
@@ -386,15 +427,9 @@ async function start() {
        JSON.stringify({ submitted_at: new Date().toISOString(), promo_code: promoCode, promo_bonus: promoBonus })]
     )
 
-    // Record promo usage (non-fatal)
     if (promoRow && promoBonus > 0) {
-      try {
-        await db.query(
-          `INSERT INTO promo_code_usages (promo_id, user_id, deposit_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
-          [promoRow.id, user.sub, ins.rows[0].id]
-        )
-        await db.query(`UPDATE promo_codes SET used_count = used_count + 1 WHERE id = $1`, [promoRow.id])
-      } catch (e) { /* non-fatal */ }
+      await db.query(`UPDATE promo_code_usages SET deposit_id = $1 WHERE promo_id = $2 AND user_id = $3`,
+        [ins.rows[0].id, promoRow.id, user.sub]).catch(() => {})
     }
 
     return reply.send({
@@ -442,14 +477,39 @@ async function start() {
     const user = req.user as any
     const body = z.object({
       amount: z.number().min(100).max(50000),
-      bank_account: z.string().optional(),
-      upi_id: z.string().optional(),
     }).parse(req.body)
 
     // KYC check first
     const kycRes = await db.query('SELECT kyc_status FROM users WHERE id = $1', [user.sub])
     if (kycRes.rows[0]?.kyc_status !== 'approved') {
       return reply.code(403).send({ error: 'KYC verification required before withdrawal' })
+    }
+
+    // risk-service sets fraud:flagged:<userId> (auto, 24h TTL, on a 'block'
+    // verdict; or manually via admin, 7d TTL) but nothing previously read it
+    // back anywhere — the entire fraud-detection pipeline was observational
+    // only. Withdrawal is the highest-leverage, lowest-collateral-damage
+    // enforcement point: it holds real money movement without preventing
+    // the user from playing or contesting the flag, and the key self-expires
+    // (or an admin can clear it via risk-service's setUserFlag). See
+    // docs/Bugs/fraud-action-never-enforced.md.
+    if (redis) {
+      const flagged = await redis.exists(`fraud:flagged:${user.sub}`)
+      if (flagged) {
+        return reply.code(403).send({ error: 'Withdrawals are on hold pending a security review. Contact support if you believe this is a mistake.' })
+      }
+    }
+
+    // Payout destination must be the user's own admin-verified bank account —
+    // never trust client-supplied account details for where money is sent.
+    const bankRes = await db.query(
+      `SELECT holder_name, bank_name, account_number, ifsc_code, upi_id, verified
+       FROM bank_details WHERE user_id = $1`,
+      [user.sub]
+    )
+    const bank = bankRes.rows[0]
+    if (!bank || bank.verified !== true) {
+      return reply.code(400).send({ error: 'Add and verify your bank details before withdrawing' })
     }
 
     // Lock the amount in a transaction so balance + order creation are atomic
@@ -476,7 +536,13 @@ async function start() {
       const orderRes = await client.query(
         `INSERT INTO payment_orders (user_id, gateway, amount, type, status, metadata)
          VALUES ($1, 'manual', $2, 'withdrawal', 'created', $3) RETURNING id`,
-        [user.sub, body.amount, JSON.stringify({ bank_account: body.bank_account, upi_id: body.upi_id })]
+        [user.sub, body.amount, JSON.stringify({
+          holder_name: bank.holder_name,
+          bank_name: bank.bank_name,
+          account_number: bank.account_number,
+          ifsc_code: bank.ifsc_code,
+          upi_id: bank.upi_id,
+        })]
       )
 
       // Log the lock

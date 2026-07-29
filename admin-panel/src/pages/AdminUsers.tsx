@@ -8,6 +8,7 @@ import { useAuthStore } from '../store/auth'
 
 const ROLE_OPTIONS = [
   { value: 'readonly', label: 'Read-only — views only, no writes' },
+  { value: 'employee', label: 'Employee — Tasks page only, own tasks' },
   { value: 'support', label: 'Support — user notes, status changes, KYC review' },
   { value: 'finance', label: 'Finance — withdrawals, deposits, ledger, wallet adjust' },
   { value: 'superadmin', label: 'Superadmin — everything (use sparingly)' },
@@ -17,6 +18,7 @@ const ROLE_COLOR: Record<string, string> = {
   superadmin: 'red',
   finance: 'gold',
   support: 'blue',
+  employee: 'purple',
   readonly: 'default',
 }
 
@@ -85,6 +87,7 @@ export default function AdminUsers() {
       </Space>
       <Table dataSource={rows} rowKey="id" loading={loading} size="small"
         locale={{ emptyText: <Empty description="No admin users" /> }}
+        scroll={{ x: 'max-content' }}
         columns={[
           { title: 'Username', dataIndex: 'username' },
           { title: 'Email', dataIndex: 'email' },

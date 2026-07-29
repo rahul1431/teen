@@ -1,7 +1,9 @@
 import React, { Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { ConfigProvider, theme } from 'antd'
+import { ConfigProvider } from 'antd'
+import { antdTheme } from './theme/antdTheme'
+import { tokens } from './theme/tokens'
 import './index.css'
 import { useAuthStore } from './store/auth'
 
@@ -12,6 +14,7 @@ const Users = React.lazy(() => import('./pages/Users'))
 const Bots = React.lazy(() => import('./pages/Bots'))
 const Finance = React.lazy(() => import('./pages/Finance'))
 const Notifications = React.lazy(() => import('./pages/Notifications'))
+const NotificationsHistory = React.lazy(() => import('./pages/NotificationsHistory'))
 const AdminUsers = React.lazy(() => import('./pages/AdminUsers'))
 const Profile = React.lazy(() => import('./pages/Profile'))
 const RiskCenter = React.lazy(() => import('./pages/RiskCenter'))
@@ -28,30 +31,51 @@ const Changelog = React.lazy(() => import('./pages/Changelog'))
 const AIControlCenter = React.lazy(() => import('./pages/AIControlCenter').then(module => ({ default: module.AIControlCenter })))
 const AppMonitor = React.lazy(() => import('./pages/AppMonitor'))
 const PlayerTracking = React.lazy(() => import('./pages/PlayerTracking'))
-const DailyBonus = React.lazy(() => import('./pages/DailyBonus'))
 const Banners = React.lazy(() => import('./pages/Banners'))
 const PromoCodes = React.lazy(() => import('./pages/PromoCodes'))
 const KYCPage = React.lazy(() => import('./pages/KYC'))
 const AppUpdate = React.lazy(() => import('./pages/AppUpdate'))
+const Marketing = React.lazy(() => import('./pages/Marketing'))
+const CMSManagement = React.lazy(() => import('./pages/CMSManagement'))
+const MetricsDashboard = React.lazy(() => import('./pages/MetricsDashboard'))
+const PlayerAnomaliesPage = React.lazy(() => import('./pages/PlayerAnomaliesPage'))
+const Tasks = React.lazy(() => import('./pages/Tasks'))
+const Agents = React.lazy(() => import('./pages/Agents'))
+const Analytics = React.lazy(() => import('./pages/Analytics'))
+const AgentLogin = React.lazy(() => import('./pages/AgentLogin'))
+const AgentPortal = React.lazy(() => import('./pages/AgentPortal'))
+const WebsiteSettings = React.lazy(() => import('./pages/WebsiteSettings'))
+const Missions = React.lazy(() => import('./pages/Missions'))
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { token } = useAuthStore()
-  if (!token) return <Navigate to="/admin/login" replace />
+  const { token, admin } = useAuthStore()
+  // An agent JWT must never render the admin SPA shell — the API calls behind it
+  // now 403, but the shell itself shouldn't load for a non-admin session either.
+  if (!token || admin?.role === 'agent') return <Navigate to="/admin/login" replace />
+  return <>{children}</>
+}
+
+function ProtectedAgentRoute({ children }: { children: React.ReactNode }) {
+  const { token, admin } = useAuthStore()
+  if (!token || admin?.role !== 'agent') return <Navigate to="/admin/agent/login" replace />
   return <>{children}</>
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <ConfigProvider theme={{ algorithm: theme.defaultAlgorithm, token: { colorPrimary: '#d4af37', borderRadius: 8 } }}>
+  <ConfigProvider theme={antdTheme}>
     <BrowserRouter basename={import.meta.env.VITE_ROUTER_BASE || undefined}>
-      <Suspense fallback={<div style={{ padding: 100, textAlign: 'center', fontSize: 18, color: '#d4af37' }}>Loading page...</div>}>
+      <Suspense fallback={<div style={{ padding: 100, textAlign: 'center', fontSize: 18, color: tokens.color.gold }}>Loading page...</div>}>
         <Routes>
           <Route path="/admin/login" element={<Login />} />
+          <Route path="/admin/agent/login" element={<AgentLogin />} />
+          <Route path="/admin/agent" element={<ProtectedAgentRoute><AgentPortal /></ProtectedAgentRoute>} />
           <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
             <Route index element={<Dashboard />} />
             <Route path="users" element={<Users />} />
             <Route path="bots" element={<Bots />} />
             <Route path="finance" element={<Finance />} />
             <Route path="notifications" element={<Notifications />} />
+            <Route path="notifications-history" element={<NotificationsHistory />} />
             <Route path="games/teen-patti" element={<TeenPatti />} />
             <Route path="games/ludo" element={<Ludo />} />
             <Route path="games/aviator" element={<Aviator />} />
@@ -68,11 +92,19 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="changelog" element={<Changelog />} />
             <Route path="app-monitor" element={<AppMonitor />} />
             <Route path="player-tracking" element={<PlayerTracking />} />
-            <Route path="daily-bonus" element={<DailyBonus />} />
             <Route path="banners" element={<Banners />} />
             <Route path="promo-codes" element={<PromoCodes />} />
+            <Route path="marketing" element={<Marketing />} />
+            <Route path="marketing/cms" element={<CMSManagement />} />
             <Route path="kyc" element={<KYCPage />} />
             <Route path="app-update" element={<AppUpdate />} />
+            <Route path="metrics-dashboard" element={<MetricsDashboard />} />
+            <Route path="player-anomalies" element={<PlayerAnomaliesPage />} />
+            <Route path="tasks" element={<Tasks />} />
+            <Route path="agents" element={<Agents />} />
+            <Route path="analytics" element={<Analytics />} />
+            <Route path="settings" element={<WebsiteSettings />} />
+            <Route path="missions" element={<Missions />} />
           </Route>
           <Route path="*" element={<Navigate to="/admin" replace />} />
         </Routes>

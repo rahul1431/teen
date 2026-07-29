@@ -6,10 +6,10 @@
 # Usage: bash /opt/teen/infra/db/migrate.sh
 
 set -e
-BASE=/opt/teen
+BASE=/opt/teen-prod
 
 echo "==> Ensuring schema_migrations table exists..."
-docker exec -i teen_postgres psql -U teen -d teen_db << 'SQL'
+docker exec -i teen_postgres psql -v ON_ERROR_STOP=1 -U teen -d teen_db << 'SQL'
 CREATE TABLE IF NOT EXISTS schema_migrations (
   filename   TEXT PRIMARY KEY,
   applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -34,7 +34,14 @@ for mig in "$BASE"/infra/db/migrations/*.sql; do
   fi
 
   echo "  APPLY $name ..."
-  if docker exec -i teen_postgres psql -U teen -d teen_db < "$mig"; then
+  # -v ON_ERROR_STOP=1 is required for a failing statement to actually
+  # produce a non-zero psql exit code — without it, a mid-file SQL error
+  # (a typo'd type name, invalid DDL, etc.) is printed to stderr but the
+  # script is still recorded as successfully applied below. This bit twice:
+  # 005_risk_status.sql (wrong enum type name) and 012_game_events_monitoring.sql
+  # (MySQL-style DDL Postgres rejects) were both marked applied despite
+  # failing outright. See docs/Bugs/migrate-sh-missing-on-error-stop.md.
+  if docker exec -i teen_postgres psql -v ON_ERROR_STOP=1 -U teen -d teen_db < "$mig"; then
     # Record as applied
     docker exec teen_postgres psql -U teen -d teen_db -c \
       "INSERT INTO schema_migrations (filename) VALUES ('$name') ON CONFLICT DO NOTHING;" > /dev/null

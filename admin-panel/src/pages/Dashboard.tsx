@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Row, Col, Card, Statistic, Table, Tag, Typography, Badge } from 'antd'
 import { UserOutlined, DollarOutlined, PlayCircleOutlined, WarningOutlined } from '@ant-design/icons'
 import { adminApi } from '../api/client'
+import { tokens } from '../theme/tokens'
 
 // ---- Custom SVG Charting Component ----
 function SVGLineChart({ data, width = 400, height = 180, strokeColor = '#52c41a', fillColor = 'rgba(82, 196, 26, 0.05)', valueKey = 'ggr' }: { data: any[], width?: number, height?: number, strokeColor?: string, fillColor?: string, valueKey?: string }) {
@@ -62,6 +63,49 @@ function SVGLineChart({ data, width = 400, height = 180, strokeColor = '#52c41a'
   );
 }
 
+// A stat card with a glowing icon badge instead of a bare antd Statistic —
+// the badge's tint/glow is derived from the same semantic color as the value.
+function StatCard({ icon, label, value, color, prefix, precision }: {
+  icon: ReactNode
+  label: string
+  value: number
+  color: string
+  prefix?: string
+  precision?: number
+}) {
+  const formatted = precision != null
+    ? value.toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision })
+    : value.toLocaleString()
+
+  return (
+    <Card styles={{ body: { padding: 20 } }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={{
+          width: 48,
+          height: 48,
+          borderRadius: 14,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 22,
+          flexShrink: 0,
+          color,
+          background: `${color}1A`,
+          boxShadow: `0 0 0 1px ${color}26, 0 8px 20px ${color}22`,
+        }}>
+          {icon}
+        </div>
+        <div>
+          <Typography.Text style={{ color: tokens.color.textMuted, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</Typography.Text>
+          <div style={{ fontSize: 26, fontWeight: 700, color: tokens.color.inkBase, lineHeight: 1.3 }}>
+            {prefix}{formatted}
+          </div>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 export default function Dashboard() {
   const [stats, setStats] = useState<any>({})
   const [recentGames, setRecentGames] = useState([])
@@ -95,24 +139,21 @@ export default function Dashboard() {
 
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={12} xl={6}>
-          <Card>
-            <Statistic title="Active Users Now" value={stats.active_users || 0} prefix={<UserOutlined />} valueStyle={{ color: '#52c41a' }} />
-          </Card>
+          <StatCard label="Active Users Now" value={stats.active_users || 0} icon={<UserOutlined />} color={tokens.color.success} />
         </Col>
         <Col xs={24} sm={12} xl={6}>
-          <Card>
-            <Statistic title="Active Game Rooms" value={stats.active_rooms || 0} prefix={<PlayCircleOutlined />} valueStyle={{ color: '#1677ff' }} />
-          </Card>
+          <StatCard label="Active Game Rooms" value={stats.active_rooms || 0} icon={<PlayCircleOutlined />} color={tokens.color.info} />
         </Col>
         <Col xs={24} sm={12} xl={6}>
-          <Card>
-            <Statistic title="Revenue Today (₹)" value={stats.revenue_today || 0} prefix={<DollarOutlined />} precision={2} valueStyle={{ color: '#d4af37' }} />
-          </Card>
+          <StatCard label="Revenue Today (₹)" value={stats.revenue_today || 0} icon={<DollarOutlined />} color={tokens.color.gold} precision={2} />
         </Col>
         <Col xs={24} sm={12} xl={6}>
-          <Card>
-            <Statistic title="Fraud Alerts" value={stats.fraud_alerts || 0} prefix={<WarningOutlined />} valueStyle={{ color: stats.fraud_alerts > 0 ? '#ff4d4f' : '#52c41a' }} />
-          </Card>
+          <StatCard
+            label="Fraud Alerts"
+            value={stats.fraud_alerts || 0}
+            icon={<WarningOutlined />}
+            color={stats.fraud_alerts > 0 ? tokens.color.error : tokens.color.success}
+          />
         </Col>
       </Row>
 
@@ -124,12 +165,12 @@ export default function Dashboard() {
         </Col>
         <Col xs={24} xl={8}>
           <Card title="Pending Withdrawals" size="small">
-            <Statistic value={stats.pending_withdrawals || 0} suffix="requests" valueStyle={{ color: stats.pending_withdrawals > 0 ? '#fa8c16' : undefined }} />
+            <Statistic value={stats.pending_withdrawals || 0} suffix="requests" valueStyle={{ color: stats.pending_withdrawals > 0 ? tokens.color.warning : undefined }} />
           </Card>
         </Col>
         <Col xs={24} xl={8}>
           <Card title="Pending Deposits (to approve)" size="small">
-            <Statistic value={stats.pending_deposits || 0} suffix="requests" valueStyle={{ color: stats.pending_deposits > 0 ? '#fa8c16' : undefined }} />
+            <Statistic value={stats.pending_deposits || 0} suffix="requests" valueStyle={{ color: stats.pending_deposits > 0 ? tokens.color.warning : undefined }} />
           </Card>
         </Col>
       </Row>
@@ -143,6 +184,7 @@ export default function Dashboard() {
               rowKey="id"
               pagination={{ pageSize: 10 }}
               size="small"
+              scroll={{ x: 'max-content' }}
             />
           </Card>
         </Col>
@@ -150,7 +192,7 @@ export default function Dashboard() {
           <Card title="Weekly Revenue GGR Trend (₹)" style={{ height: '100%', borderRadius: 12 }}>
             <div style={{ padding: '16px 8px' }}>
               {reconciliationData ? (
-                <SVGLineChart data={reconciliationData.ggr} strokeColor="#d4af37" fillColor="rgba(212, 175, 55, 0.05)" />
+                <SVGLineChart data={reconciliationData.ggr} strokeColor={tokens.color.gold} fillColor="rgba(212, 175, 55, 0.05)" />
               ) : (
                 <div style={{ height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading trend...</div>
               )}

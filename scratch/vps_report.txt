@@ -1,0 +1,498 @@
+================================================================================
+### PM2 List
+Command: pm2 list
+================================================================================
+┌────┬──────────────────────────┬─────────────┬─────────┬─────────┬──────────┬────────┬──────┬───────────┬──────────┬──────────┬──────────┬──────────┐
+│ id │ name                     │ namespace   │ version │ mode    │ pid      │ uptime │ ↺    │ status    │ cpu      │ mem      │ user     │ watching │
+├────┼──────────────────────────┼─────────────┼─────────┼─────────┼──────────┼────────┼──────┼───────────┼──────────┼──────────┼──────────┼──────────┤
+│ 18 │ teen-admin-svc           │ default     │ 1.0.0   │ fork    │ 0        │ 0      │ 675  │ errored   │ 0%       │ 0b       │ root     │ disabled │
+│ 8  │ teen-admin-svc-dev       │ default     │ 1.0.0   │ fork    │ 538775   │ 14h    │ 0    │ online    │ 0%       │ 79.3mb   │ root     │ disabled │
+│ 12 │ teen-app-monitor-dev     │ default     │ 1.0.0   │ fork    │ 538879   │ 14h    │ 0    │ online    │ 0%       │ 70.1mb   │ root     │ disabled │
+│ 5  │ teen-aviator-dev         │ default     │ 1.0.0   │ fork    │ 957023   │ 4h     │ 1    │ online    │ 0%       │ 78.4mb   │ root     │ disabled │
+│ 13 │ teen-bot-learning-dev    │ default     │ 1.0.0   │ fork    │ 1139251  │ 7s     │ 5398 │ online    │ 0%       │ 75.6mb   │ root     │ disabled │
+│ 11 │ teen-churn-dev           │ default     │ 1.0.0   │ fork    │ 538852   │ 14h    │ 0    │ online    │ 0%       │ 72.3mb   │ root     │ disabled │
+│ 14 │ teen-core-api            │ default     │ 1.0.0   │ fork    │ 540442   │ 14h    │ 0    │ online    │ 0%       │ 75.9mb   │ root     │ disabled │
+│ 0  │ teen-core-api-dev        │ default     │ 1.0.0   │ fork    │ 538612   │ 14h    │ 0    │ online    │ 0%       │ 71.1mb   │ root     │ disabled │
+│ 16 │ teen-gateway             │ default     │ 1.0.0   │ fork    │ 1114087  │ 36m    │ 2    │ online    │ 0%       │ 74.5mb   │ root     │ disabled │
+│ 3  │ teen-gateway-2-dev       │ default     │ 1.0.0   │ fork    │ 1111391  │ 39m    │ 1    │ online    │ 0%       │ 68.6mb   │ root     │ disabled │
+│ 4  │ teen-gateway-3-dev       │ default     │ 1.0.0   │ fork    │ 1111403  │ 39m    │ 1    │ online    │ 0%       │ 64.6mb   │ root     │ disabled │
+│ 2  │ teen-gateway-dev         │ default     │ 1.0.0   │ fork    │ 538650   │ 14h    │ 0    │ online    │ 0%       │ 77.5mb   │ root     │ disabled │
+│ 6  │ teen-ludo-dev            │ default     │ 1.0.0   │ fork    │ 538743   │ 14h    │ 0    │ online    │ 0%       │ 67.8mb   │ root     │ disabled │
+│ 9  │ teen-monitoring-dev      │ default     │ 1.0.0   │ fork    │ 538794   │ 14h    │ 0    │ online    │ 0%       │ 66.6mb   │ root     │ disabled │
+│ 10 │ teen-risk-dev            │ default     │ 1.0.0   │ fork    │ 538832   │ 14h    │ 0    │ online    │ 0%       │ 68.2mb   │ root     │ disabled │
+│ 17 │ teen-tp-engine           │ default     │ 1.0.0   │ fork    │ 540930   │ 14h    │ 0    │ online    │ 0%       │ 11.6mb   │ root     │ disabled │
+│ 7  │ teen-tp-engine-dev       │ default     │ 1.0.0   │ fork    │ 538762   │ 14h    │ 0    │ online    │ 0%       │ 8.5mb    │ root     │ disabled │
+│ 15 │ teen-wallet              │ default     │ 1.0.0   │ fork    │ 0        │ 0      │ 675  │ errored   │ 0%       │ 0b       │ root     │ disabled │
+│ 1  │ teen-wallet-dev          │ default     │ 1.0.0   │ fork    │ 538631   │ 14h    │ 0    │ online    │ 0%       │ 72.7mb   │ root     │ disabled │
+└────┴──────────────────────────┴─────────────┴─────────┴─────────┴──────────┴────────┴──────┴───────────┴──────────┴──────────┴──────────┴──────────┘
+
+
+
+================================================================================
+### Dev Admin web dir content
+Command: ls -la /home/admin/web/dev.myonlinejoker.com/public_html/admin/
+================================================================================
+ERROR OUTPUT:
+ls: cannot access '/home/admin/web/dev.myonlinejoker.com/public_html/admin/': No such file or directory
+
+
+
+================================================================================
+### Prod Admin web dir content
+Command: ls -la /home/admin/web/game.myonlinejoker.com/public_html/admin/
+================================================================================
+total 16
+drwxr-xr-x 3 admin admin    4096 Jul 12 04:19 .
+drwxr-xr-x 7 admin www-data 4096 Jul 12 04:25 ..
+drwxr-xr-x 2 admin admin    4096 Jul 12 04:19 assets
+-rw-r--r-- 1 admin admin     494 Jul 12 04:19 index.html
+
+
+
+================================================================================
+### Dev Hestia nginx.conf
+Command: cat /home/admin/conf/web/dev.myonlinejoker.com/nginx.conf
+================================================================================
+#=========================================================================#
+# Default Web Domain Template                                             #
+# DO NOT MODIFY THIS FILE! CHANGES WILL BE LOST WHEN REBUILDING DOMAINS   #
+# https://hestiacp.com/docs/server-administration/web-templates.html      #
+#=========================================================================#
+
+server {
+	listen      64.204.130.181:80;
+	server_name dev.myonlinejoker.com ;
+	error_log   /var/log/apache2/domains/dev.myonlinejoker.com.error.log error;
+
+	include /home/admin/conf/web/dev.myonlinejoker.com/nginx.forcessl.conf*;
+
+	location ~ /\.(?!well-known\/|file) {
+		deny all;
+		return 404;
+	}
+
+
+	location /api/admin {
+		proxy_pass http://127.0.0.1:3001;
+		proxy_set_header Host $host;
+		proxy_set_header X-Real-IP $remote_addr;
+		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		proxy_set_header X-Forwarded-Proto $scheme;
+		proxy_set_header Connection "upgrade";
+		proxy_set_header Upgrade $http_upgrade;
+	}
+	# Serve admin panel frontend
+	location /admin {
+		alias /opt/teen/admin-panel/dist;
+		try_files $uri $uri/ /index.html;
+		expires 1d;
+	}
+	location / {
+		proxy_pass http://dev_game_backend;
+
+		location ~* ^.+\.(css|htm|html|js|mjs|json|xml|apng|avif|bmp|cur|gif|ico|jfif|jpg|jpeg|pjp|pjpeg|png|svg|tif|tiff|webp|aac|caf|flac|m4a|midi|mp3|ogg|opus|wav|3gp|av1|avi|m4v|mkv|mov|mpg|mpeg|mp4|mp4v|webm|otf|ttf|woff|woff2|doc|docx|odf|odp|ods|odt|pdf|ppt|pptx|rtf|txt|xls|xlsx|7z|bz2|gz|rar|tar|tgz|zip|apk|appx|bin|dmg|exe|img|iso|jar|msi|webmanifest)$ {
+			try_files  $uri @fallback;
+
+			root       /home/admin/web/dev.myonlinejoker.com/public_html;
+			access_log /var/log/apache2/domains/dev.myonlinejoker.com.log combined;
+			access_log /var/log/apache2/domains/dev.myonlinejoker.com.bytes bytes;
+
+			expires    max;
+		}
+	}
+
+	location @fallback {
+		proxy_pass http://dev_game_backend;
+	}
+
+	location /error/ {
+		alias /home/admin/web/dev.myonlinejoker.com/document_errors/;
+	}
+
+	include /home/admin/conf/web/dev.myonlinejoker.com/nginx.conf_*;
+}
+
+
+
+================================================================================
+### Dev Hestia nginx.ssl.conf
+Command: cat /home/admin/conf/web/dev.myonlinejoker.com/nginx.ssl.conf
+================================================================================
+#=========================================================================#
+# Default Web Domain Template                                             #
+# DO NOT MODIFY THIS FILE! CHANGES WILL BE LOST WHEN REBUILDING DOMAINS   #
+# https://hestiacp.com/docs/server-administration/web-templates.html      #
+#=========================================================================#
+
+server {
+	listen      64.204.130.181:443 ssl;
+	server_name dev.myonlinejoker.com ;
+	error_log   /var/log/apache2/domains/dev.myonlinejoker.com.error.log error;
+
+	ssl_certificate     /home/admin/conf/web/dev.myonlinejoker.com/ssl/dev.myonlinejoker.com.pem;
+	ssl_certificate_key /home/admin/conf/web/dev.myonlinejoker.com/ssl/dev.myonlinejoker.com.key;
+	#Commented out ssl_stapling directives due to Lets Encrypt ending OCSP support in 2025
+	#ssl_stapling        on;
+	#ssl_stapling_verify on;
+
+	# TLS 1.3 0-RTT anti-replay
+	if ($anti_replay = 307) { return 307 https://$host$request_uri; }
+	if ($anti_replay = 425) { return 425; }
+
+	include /home/admin/conf/web/dev.myonlinejoker.com/nginx.hsts.conf*;
+
+	location ~ /\.(?!well-known\/|file) {
+		deny all;
+		return 404;
+	}
+
+
+	# Serve admin panel frontend
+
+	location / {
+    # Admin API - proxy to admin service
+    location /api/admin {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Admin panel static assets
+    location /admin/assets {
+        alias /opt/teen/admin-panel/dist/assets;
+        expires 30d;
+    }
+
+    # Admin panel index.html (SPA entry point)
+    location = /admin/index.html {
+        alias /opt/teen/admin-panel/dist/index.html;
+        expires 1h;
+    }
+
+    # Admin panel SPA routing - all routes serve index.html
+    location /admin/ {
+        alias /opt/teen/admin-panel/dist/;
+        try_files $uri $uri/ =404;
+        error_page 404 /admin/index.html;
+        expires 1d;
+    }
+
+    # Redirect /admin to /admin/
+    location = /admin {
+        return 301 /admin/;
+    }
+		# proxy_ssl_server_name on;  # Modified for backend routing
+		# proxy_ssl_name $host;  # Modified for backend routing
+		proxy_pass http://dev_game_backend;
+
+		location ~* ^.+\.(css|htm|html|js|mjs|json|xml|apng|avif|bmp|cur|gif|ico|jfif|jpg|jpeg|pjp|pjpeg|png|svg|tif|tiff|webp|aac|caf|flac|m4a|midi|mp3|ogg|opus|wav|3gp|av1|avi|m4v|mkv|mov|mpg|mpeg|mp4|mp4v|webm|otf|ttf|woff|woff2|doc|docx|odf|odp|ods|odt|pdf|ppt|pptx|rtf|txt|xls|xlsx|7z|bz2|gz|rar|tar|tgz|zip|apk|appx|bin|dmg|exe|img|iso|jar|msi|webmanifest)$ {
+			try_files  $uri @fallback;
+
+			root       /home/admin/web/dev.myonlinejoker.com/public_html;
+			access_log /var/log/apache2/domains/dev.myonlinejoker.com.log combined;
+			access_log /var/log/apache2/domains/dev.myonlinejoker.com.bytes bytes;
+
+			expires    max;
+		}
+	}
+
+	location @fallback {
+		# proxy_ssl_server_name on;  # Modified for backend routing
+		# proxy_ssl_name $host;  # Modified for backend routing
+		proxy_pass http://dev_game_backend;
+	}
+
+	location /error/ {
+		alias /home/admin/web/dev.myonlinejoker.com/document_errors/;
+	}
+
+
+	include /home/admin/conf/web/dev.myonlinejoker.com/nginx.ssl.conf_*;
+}
+
+
+
+================================================================================
+### Prod Hestia nginx.conf
+Command: cat /home/admin/conf/web/game.myonlinejoker.com/nginx.conf
+================================================================================
+#=========================================================================#
+# Default Web Domain Template                                             #
+# DO NOT MODIFY THIS FILE! CHANGES WILL BE LOST WHEN REBUILDING DOMAINS   #
+# https://hestiacp.com/docs/server-administration/web-templates.html      #
+#=========================================================================#
+
+server {
+	listen      64.204.130.181:80;
+	server_name game.myonlinejoker.com ;
+	error_log   /var/log/apache2/domains/game.myonlinejoker.com.error.log error;
+
+	include /home/admin/conf/web/game.myonlinejoker.com/nginx.forcessl.conf*;
+
+	location ~ /\.(?!well-known\/|file) {
+		deny all;
+		return 404;
+	}
+
+	location / {
+		proxy_pass http://prod_game_backend;
+
+		location ~* ^.+\.(css|htm|html|js|mjs|json|xml|apng|avif|bmp|cur|gif|ico|jfif|jpg|jpeg|pjp|pjpeg|png|svg|tif|tiff|webp|aac|caf|flac|m4a|midi|mp3|ogg|opus|wav|3gp|av1|avi|m4v|mkv|mov|mpg|mpeg|mp4|mp4v|webm|otf|ttf|woff|woff2|doc|docx|odf|odp|ods|odt|pdf|ppt|pptx|rtf|txt|xls|xlsx|7z|bz2|gz|rar|tar|tgz|zip|apk|appx|bin|dmg|exe|img|iso|jar|msi|webmanifest)$ {
+			try_files  $uri @fallback;
+
+			root       /home/admin/web/game.myonlinejoker.com/public_html;
+			access_log /var/log/apache2/domains/game.myonlinejoker.com.log combined;
+			access_log /var/log/apache2/domains/game.myonlinejoker.com.bytes bytes;
+
+			expires    max;
+		}
+	}
+
+	location @fallback {
+		proxy_pass http://prod_game_backend;
+	}
+
+	location /error/ {
+		alias /home/admin/web/game.myonlinejoker.com/document_errors/;
+	}
+
+	include /home/admin/conf/web/game.myonlinejoker.com/nginx.conf_*;
+}
+
+
+
+================================================================================
+### Prod Hestia nginx.ssl.conf
+Command: cat /home/admin/conf/web/game.myonlinejoker.com/nginx.ssl.conf
+================================================================================
+#=========================================================================#
+# Default Web Domain Template                                             #
+# DO NOT MODIFY THIS FILE! CHANGES WILL BE LOST WHEN REBUILDING DOMAINS   #
+# https://hestiacp.com/docs/server-administration/web-templates.html      #
+#=========================================================================#
+
+server {
+	listen      64.204.130.181:443 ssl;
+	server_name game.myonlinejoker.com ;
+	error_log   /var/log/apache2/domains/game.myonlinejoker.com.error.log error;
+
+	ssl_certificate     /home/admin/conf/web/game.myonlinejoker.com/ssl/game.myonlinejoker.com.pem;
+	ssl_certificate_key /home/admin/conf/web/game.myonlinejoker.com/ssl/game.myonlinejoker.com.key;
+	#Commented out ssl_stapling directives due to Lets Encrypt ending OCSP support in 2025
+	#ssl_stapling        on;
+	#ssl_stapling_verify on;
+
+	# TLS 1.3 0-RTT anti-replay
+	if ($anti_replay = 307) { return 307 https://$host$request_uri; }
+	if ($anti_replay = 425) { return 425; }
+
+	include /home/admin/conf/web/game.myonlinejoker.com/nginx.hsts.conf*;
+
+	location ~ /\.(?!well-known\/|file) {
+		deny all;
+		return 404;
+	}
+
+	location / {
+		proxy_pass http://prod_game_backend;
+
+		location ~* ^.+\.(css|htm|html|js|mjs|json|xml|apng|avif|bmp|cur|gif|ico|jfif|jpg|jpeg|pjp|pjpeg|png|svg|tif|tiff|webp|aac|caf|flac|m4a|midi|mp3|ogg|opus|wav|3gp|av1|avi|m4v|mkv|mov|mpg|mpeg|mp4|mp4v|webm|otf|ttf|woff|woff2|doc|docx|odf|odp|ods|odt|pdf|ppt|pptx|rtf|txt|xls|xlsx|7z|bz2|gz|rar|tar|tgz|zip|apk|appx|bin|dmg|exe|img|iso|jar|msi|webmanifest)$ {
+			try_files  $uri @fallback;
+
+			root       /home/admin/web/game.myonlinejoker.com/public_html;
+			access_log /var/log/apache2/domains/game.myonlinejoker.com.log combined;
+			access_log /var/log/apache2/domains/game.myonlinejoker.com.bytes bytes;
+
+			expires    max;
+		}
+	}
+
+	location @fallback {
+		proxy_pass http://prod_game_backend;
+	}
+
+	location /error/ {
+		alias /home/admin/web/game.myonlinejoker.com/document_errors/;
+	}
+
+
+	include /home/admin/conf/web/game.myonlinejoker.com/nginx.ssl.conf_*;
+}
+
+
+
+================================================================================
+### Prod Nginx conf_api
+Command: cat /home/admin/conf/web/game.myonlinejoker.com/nginx.ssl.conf_api
+================================================================================
+# HestiaCP Nginx Custom Configuration
+# File placed at: /home/admin/conf/web/game.myonlinejoker.com/nginx.conf_api
+#                 /home/admin/conf/web/game.myonlinejoker.com/nginx.ssl.conf_api
+# All 5 consolidated services (auth + users + leaderboard + notifications + betting)
+# now run on core-api-service at port 3001.
+
+# ── Auth ──
+location /api/auth/ {
+    rewrite ^/api/auth/(.*) /auth/$1 break;
+    proxy_pass http://127.0.0.1:3001;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# ── Users ──
+location /api/users/ {
+    rewrite ^/api/users/(.*) /users/$1 break;
+    proxy_pass http://127.0.0.1:3001;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# ── Wallet ──
+location /api/wallet/ {
+    rewrite ^/api/wallet/(.*) /wallet/$1 break;
+    proxy_pass http://127.0.0.1:3003;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# ── Leaderboard ──
+location /api/leaderboard/ {
+    rewrite ^/api/leaderboard/(.*) /leaderboard/$1 break;
+    proxy_pass http://127.0.0.1:3001;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+
+# ── Notifications ──
+location /api/notifications/ {
+    rewrite ^/api/notifications/(.*) /notifications/$1 break;
+    proxy_pass http://127.0.0.1:3001;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+
+# ── Support ──
+location /api/support/ {
+    rewrite ^/api/support/(.*) /support/$1 break;
+    proxy_pass http://127.0.0.1:3001;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# ── Admin Service ──
+location /api/admin/ {
+    proxy_pass http://127.0.0.1:3008;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# ── Public app version endpoint ──
+location /api/app/ {
+    proxy_pass http://127.0.0.1:3008;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+
+# ── App Monitor SDK ──
+location /api/monitor/ {
+    proxy_pass http://127.0.0.1:3015;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# ── Betting (Matka, Lottery, Cricket) → core-api ──
+location /api/betting/ {
+    rewrite ^/api/betting/(.*) /$1 break;
+    proxy_pass http://127.0.0.1:3001;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# ── WebSocket: Aviator Engine (longer prefix wins) ──
+# proxy_pass_header lines are REQUIRED: without them Hestia's nginx strips
+# the upgrade response headers, real WS clients reject the 101 handshake,
+# and every game shows "connection lost" (broke live on 2026-07-06).
+location /ws/aviator {
+    proxy_pass http://127.0.0.1:3005;
+    proxy_http_version 1.1;
+    proxy_pass_header Upgrade;
+    proxy_pass_header Connection;
+    proxy_pass_header Sec-WebSocket-Accept;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_read_timeout 86400s;
+    proxy_send_timeout 86400s;
+    proxy_buffering off;
+}
+
+# ── WebSocket: Game Gateway ──
+location /ws {
+    proxy_pass http://gateway_backend;
+    proxy_http_version 1.1;
+    proxy_pass_header Upgrade;
+    proxy_pass_header Connection;
+    proxy_pass_header Sec-WebSocket-Accept;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_read_timeout 86400s;
+    proxy_send_timeout 86400s;
+    proxy_buffering off;
+}
+
+# ── Admin Panel (React SPA) ──
+location /admin {
+    alias /opt/teen/admin-panel/dist;
+    try_files $uri $uri/ /admin/index.html;
+    add_header Cache-Control "no-cache";
+}
+
+# ── User uploads ──
+location /uploads/ {
+    alias /opt/teen/uploads/;
+    expires 7d;
+    add_header Cache-Control "public";
+    location /uploads/kyc/ {
+        deny all;
+        return 403;
+    }
+}
+
+# ── Static resources ──
+location /resources/ {
+    alias /opt/teen/resources/;
+    expires 1h;
+}
+
+# ── Block internal routes ──
+location /internal/ {
+    deny all;
+    return 403;
+}
+
+

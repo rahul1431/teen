@@ -1,6 +1,6 @@
 const fs = require('fs')
 
-const BASE = '/opt/teen/services'
+const BASE = '/opt/teen-prod/services'
 const ENV_FILE = (svc) => `${BASE}/${svc}/.env`
 
 // Go binaries can't load dotenv themselves, so parse the service .env here
@@ -45,7 +45,15 @@ module.exports = {
       env: NODE_OPTS,
     },
 
-    // ── Game Gateway: WebSocket hub — 1 instance (was cluster max=3) ──
+    // ── Game Gateway: WebSocket hub ──
+    // 3 fork-mode instances on distinct ports (3004/3021/3022), NOT PM2
+    // cluster mode — cluster mode shares one port via SO_REUSEPORT with
+    // plain round-robin, which breaks the Nginx consistent-hash session
+    // affinity these need for WebSocket reconnects (this is likely why an
+    // earlier cluster-mode attempt was reverted to instances:1, per the
+    // prior comment here). Session state is shared via Redis
+    // (session-manager.ts) so any instance can serve any player on
+    // reconnect regardless of which one they land on.
     {
       name: 'teen-gateway',
       cwd: `${BASE}/game-gateway`,
@@ -55,7 +63,29 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '300M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3004 },
+    },
+    {
+      name: 'teen-gateway-2',
+      cwd: `${BASE}/game-gateway`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('game-gateway'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '300M',
+      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3021 },
+    },
+    {
+      name: 'teen-gateway-3',
+      cwd: `${BASE}/game-gateway`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('game-gateway'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '300M',
+      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3022 },
     },
 
     // ── Game Engines ──
@@ -171,6 +201,19 @@ module.exports = {
       watch: false,
       max_memory_restart: '150M',
       env: { ...NODE_OPTS, NODE_ENV: 'production', PORT: 3015, GEOLITE2_CITY_PATH: '/opt/teen/geoip/GeoLite2-City.mmdb' },
+    },
+
+    // ── Uptime Bot: Monitoring service health + TCP ports, writes to JSON ──
+    {
+      name: 'teen-uptime-bot',
+      cwd: `${BASE}/uptime-bot`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('uptime-bot'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '100M',
+      env: { ...NODE_OPTS, UPTIME_STATUS_FILE: '/opt/teen/uptime-status.json' },
     },
 
     // ── Bot Learning: nightly bot-profile rebuild from real player data ──
