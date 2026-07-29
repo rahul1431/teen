@@ -76,6 +76,10 @@ function hasRole(actual: string | undefined, required: Role): boolean {
   return ROLE_INDEX[actual as Role] >= ROLE_INDEX[required]
 }
 
+// Matches the JWT's `expiresIn: '8h'` so the Redis session key never outlives
+// the token it gates.
+const ADMIN_SESSION_TTL_SECONDS = 8 * 60 * 60
+
 const app = Fastify({ logger: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL!, max: 20 })
 const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
@@ -110,7 +114,19 @@ async function start() {
       if ((req.user as any)?.role === 'agent') {
         return reply.code(403).send({ error: 'Forbidden' })
       }
-    } catch { reply.code(401).send({ error: 'Unauthorized' }) }
+      // Beyond signature/expiry, the token must still match the session id
+      // recorded at login time in Redis. This is what makes deactivation/role
+      // change/forced password reset (see PATCH /admin-users/:id and
+      // POST /admin-users/:id/reset-password below) actually take effect —
+      // those delete the `admin_session:{id}` key, which invalidates every
+      // outstanding JWT for that admin immediately instead of only at the 8h
+      // `expiresIn` boundary.
+      const u = req.user as any
+      const activeSid = await redis.get(`admin_session:${u.sub}`)
+      if (!activeSid || activeSid !== u.sid) {
+        return reply.code(401).send({ error: 'Session expired — please log in again', session_expired: true })
+      }
+    } catch { reply.code(401).send({ error: 'Unauthorized', session_expired: true }) }
   }
 
   // Role-gate factory. Use as: { onRequest: [authenticate, requireRole('finance')] }
@@ -201,7 +217,12 @@ async function start() {
     }
 
     await db.query('UPDATE admin_users SET last_login_at = NOW() WHERE id = $1', [admin.id])
-    const token = app.jwt.sign({ sub: admin.id, username: admin.username, role: admin.role }, { expiresIn: '8h' })
+    // Session id gates every subsequent `authenticate` call (see above) — logging
+    // in again overwrites this key, which also means a second login elsewhere
+    // silently revokes the first session rather than allowing both concurrently.
+    const sessionId = crypto.randomUUID()
+    await redis.setex(`admin_session:${admin.id}`, ADMIN_SESSION_TTL_SECONDS, sessionId)
+    const token = app.jwt.sign({ sub: admin.id, username: admin.username, role: admin.role, sid: sessionId }, { expiresIn: '8h' })
     return reply.send({
       token,
       admin: { id: admin.id, username: admin.username, role: admin.role, totp_enabled: admin.totp_enabled },
@@ -317,6 +338,10 @@ async function start() {
     updates.push(`updated_at = NOW()`)
     params.push(id)
     await db.query(`UPDATE admin_users SET ${updates.join(', ')} WHERE id = $${idx}`, params)
+    // Deactivating or demoting only takes effect in the DB unless the admin's
+    // already-issued JWT is also cut off — otherwise it keeps authenticating
+    // (with its old role) for up to the remaining 8h of its lifetime.
+    await redis.del(`admin_session:${id}`)
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'admin_update', 'admin_user', $2, $3)`,
       [me.sub, id, JSON.stringify(body)])
     return reply.send({ success: true })
@@ -329,6 +354,9 @@ async function start() {
     const { password } = z.object({ password: z.string().min(10) }).parse(req.body)
     const hash = await bcrypt.hash(password, 12)
     await db.query('UPDATE admin_users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, id])
+    // Mirrors the player-facing reset-password flow's `redis.del(session:{id})` —
+    // a forced password reset must also kick out whatever session is already active.
+    await redis.del(`admin_session:${id}`)
     await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'admin_password_reset', 'admin_user', $2)`,
       [me.sub, id])
     return reply.send({ success: true })
