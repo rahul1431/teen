@@ -109,9 +109,7 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - → background: `docs/admin-panel/{banners,notifications}/*.md`, `docs/app/{home,missions,notifications}/*.md`
 
 ### Infra / deploy / DB / nginx / VPS
-- `docs/Bugs/create-env-files-excludes-core-api-from-shared-secrets.md`
 - `docs/Bugs/deploy-backend-health-check-checks-nothing.md`
-- `docs/Bugs/deploy-pipeline-live-path-skips-most-pm2-services.md`
 - `docs/Bugs/docker-compose-db-redis-exposed-with-hardcoded-credentials.md`
 - `docs/Bugs/nginx-fallback-config-http-only-and-unhardened.md`
 - `docs/Bugs/nginx-hestia-config-filename-drift-across-deploy-scripts.md`

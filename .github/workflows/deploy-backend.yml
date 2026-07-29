@@ -21,7 +21,7 @@ jobs:
           password: ${{ secrets.VPS_PASSWORD }}
           command_timeout: 20m
           script: |
-            cd /opt/teen
+            cd /opt/teen-prod
             git stash
             git pull origin claude/confident-archimedes-e2dd1k
             bash infra/deploy/go.sh

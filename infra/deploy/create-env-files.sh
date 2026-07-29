@@ -2,8 +2,17 @@
 # Run this ONCE to create .env files from examples
 # Edit each file with your actual credentials after running
 
-BASE=/opt/teen
-SERVICES=(auth-service user-service wallet-service game-gateway betting-service leaderboard-service notification-service admin-service)
+BASE=/opt/teen-prod
+# auth-service/user-service/betting-service/leaderboard-service/notification-service
+# were pre-consolidation services that no longer exist as separate deployables
+# (merged into core-api-service, per CLAUDE.md) -- core-api-service itself was
+# never in this list, so a fresh VPS would leave it on .env.example's JWT_SECRET/
+# INTERNAL_SERVICE_KEY placeholders, breaking auth/internal-call verification
+# platform-wide. monitoring-service/risk-service/churn-service/app-monitor-service/
+# bot-learning-service were also missing -- bot-learning-service's missing
+# INTERNAL_SERVICE_KEY was hit live on 2026-07-29 (services/bot-learning-service
+# had zero routes it could authenticate until this was patched by hand).
+SERVICES=(core-api-service wallet-service game-gateway admin-service monitoring-service risk-service churn-service app-monitor-service bot-learning-service)
 
 # Generate ONE value per shared secret so every service agrees. A mismatched
 # JWT_SECRET between auth-service (signs tokens) and game-gateway (verifies
@@ -53,6 +62,23 @@ DATABASE_URL=postgresql://teen:teen_secret_2024@localhost:5432/teen_db
 REDIS_URL=redis://:teen_redis_2024@localhost:6379
 ENV
   echo "Created: $LUDO_ENV"
+fi
+
+# Create Teen Patti engine env (Go binary, no JWT needed — same as Ludo).
+# This was never generated at all before 2026-07-29: the Go binary can't parse
+# dotenv itself, so a missing .env here silently falls back to the hardcoded
+# DB/Redis credentials baked into main.go rather than a hard failure. No PORT
+# here deliberately — ecosystem.config.js's LOAD_ENV() merges this file's keys
+# in *after* setting PORT: '3010' in its own env object, so a PORT line here
+# would silently override that default instead of just being redundant with it.
+TEEN_PATTI_ENV="$BASE/services/game-engines/teen-patti/.env"
+if [ ! -f "$TEEN_PATTI_ENV" ]; then
+cat > "$TEEN_PATTI_ENV" << ENV
+DATABASE_URL=postgresql://teen:teen_secret_2024@localhost:5432/teen_db
+REDIS_URL=redis://:teen_redis_2024@localhost:6379
+INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
+ENV
+  echo "Created: $TEEN_PATTI_ENV"
 fi
 
 echo ""

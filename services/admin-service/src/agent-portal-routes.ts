@@ -21,7 +21,7 @@ export async function registerAgentPortalRoutes(
     try {
       await req.jwtVerify()
       if ((req.user as any)?.role !== 'agent') return reply.code(403).send({ error: 'Forbidden' })
-    } catch { reply.code(401).send({ error: 'Unauthorized' }) }
+    } catch { reply.code(401).send({ error: 'Unauthorized', session_expired: true }) }
   }
 
   // POST /api/admin/agent-portal/auth/login

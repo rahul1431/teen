@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# One-shot: install workstation SSH key + run the tip/gifts/bot-fill deploy.
-# On the VPS:  cd /opt/teen && git pull && bash infra/deploy/go.sh
+# One-shot: install workstation SSH key + run the full-fleet deploy.
+# On the VPS:  cd /opt/teen-prod && git pull && bash infra/deploy/go.sh
+#
+# REPO was /opt/teen until 2026-07-29 — that directory isn't a git
+# checkout and nothing PM2 runs is served from it (every ecosystem.config.js
+# app's cwd is under /opt/teen-prod/services). See docs/infra/deploy-pipeline.md.
 set -euo pipefail
 
-REPO=/opt/teen
+REPO=/opt/teen-prod
 cd "$REPO"
 
 echo "==> Install workstation SSH key for root"
@@ -17,5 +21,5 @@ chown -R root:root /root/.ssh
 chmod 600 /root/.ssh/authorized_keys
 echo "    key installed ($(wc -l < /root/.ssh/authorized_keys) key(s) total)"
 
-echo "==> Run release deploy"
-bash "$REPO/infra/deploy/deploy-tip-gifts-botfill.sh"
+echo "==> Run full-fleet deploy"
+bash "$REPO/infra/deploy/deploy-all-services.sh"
