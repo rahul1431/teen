@@ -99,7 +99,7 @@ The missing lock around `/action`'s Redis read-modify-write is fixed 2026-07-29 
 
 ## Turn timeout (cross-reference)
 
-`docs/Bugs/teen-patti-no-turn-timeout.md` covers the gateway-side gap (Teen Patti has no AFK timer, unlike Ludo's `scheduleLudoAfkTimer`). From this engine's side, the underlying reason that gap can't easily be closed *here* is structural: `GameState` stores no per-player or per-turn timestamp at all — `CreatedAt` is the only time field on the whole struct, set once at deal time. The engine has no data from which "how long has the current turn been waiting" could even be computed without the caller (gateway) tracking it externally, which is exactly what `docs/Bugs/teen-patti-no-turn-timeout.md` says doesn't happen for humans today.
+Teen Patti *does* have a gateway-side AFK timer for human turns — `scheduleTeenPattiAfkTimer`/`autoFoldIdleTeenPattiTurn`, mirroring Ludo's `scheduleLudoAfkTimer`, live since 2026-07-12 (see `docs/backend-services/game-gateway/backend.md`). From this engine's side, that timer necessarily lives entirely in the gateway rather than here: `GameState` stores no per-player or per-turn timestamp at all — `CreatedAt` is the only time field on the whole struct, set once at deal time — so the engine itself has no data from which "how long has the current turn been waiting" could be computed; the gateway tracks the deadline externally (in Redis, shared across its multiple instances) instead.
 
 ## Test suite summary (`main_test.go`)
 

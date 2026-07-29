@@ -64,7 +64,7 @@ Runs once per hand, only if the room has ≥1 bot and ≥1 human. Looks up `winR
 
 **Bot-turn retry-once-then-abort** (`matchmaking.ts:678-690`): if a scheduled bot action throws (engine unreachable, lock exception, etc.), it's retried once after 2s; if that also throws, the game is force-ended via `handleGameEnd(roomId, {winner_id: null, prize: 0}, ...)` — no winner, zero prize, purely to unblock the table. A genuinely stuck bot turn forfeits the pot rather than refunding it.
 
-**No per-turn timeout anywhere server-side.** The engine stores no per-turn timestamp (`CreatedAt` is the only time field, set once at deal). The gateway has a 25s AFK auto-play timer for Ludo (`LUDO_TURN_TIMEOUT_MS`) but **no equivalent for Teen Patti** — a stuck human's turn is only ever unstuck by the room-level 15-minute `GameWatchdog` (which refunds *everyone* at the table, not just the stuck player) or an admin's `force-action` call. See `../../Bugs/teen-patti-no-turn-timeout.md`.
+**No per-turn timestamp inside the engine itself**, but the gateway compensates. The engine stores no per-turn timestamp (`CreatedAt` is the only time field, set once at deal) — but `game-gateway` has run its own 30s AFK auto-fold for human Teen Patti turns since 2026-07-12 (`scheduleTeenPattiAfkTimer`/`autoFoldIdleTeenPattiTurn`, Redis-authoritative deadline so it survives the gateway's 3-instance nginx routing — see `docs/backend-services/game-gateway/backend.md`), mirroring Ludo's equivalent timer. A stuck human is unstuck by that timer within 30s in the normal case; only if the gateway itself can't reach the engine does the room-level 15-minute `GameWatchdog` (which refunds everyone at the table) or an admin's `force-action` call become the fallback.
 
 ## Authentication and turn enforcement (fixed 2026-07-29)
 
@@ -89,6 +89,6 @@ Not covered by any test: the HTTP handlers themselves (no `httptest` usage anywh
 
 ## Bug references
 
-Already filed (not re-filed here): `../../Bugs/teen-patti-dda-hard-fallback-100-percent.md`, `../../Bugs/teen-patti-dda-admin-control-gap.md`, `../../Bugs/teen-patti-no-turn-timeout.md`, `../../Bugs/teen-patti-engine-url-env-example-broken.md`.
+Already filed (not re-filed here): `../../Bugs/teen-patti-dda-hard-fallback-100-percent.md`, `../../Bugs/teen-patti-dda-admin-control-gap.md`, `../../Bugs/teen-patti-engine-url-env-example-broken.md`.
 
 The engine-start-failure gap, the missing per-room lock, the missing authentication/turn-enforcement, and the unbounded raise noted in this pass were all fixed 2026-07-29 — see the sections above.

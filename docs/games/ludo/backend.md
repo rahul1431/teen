@@ -69,9 +69,9 @@ Net effect: a Ludo hand's `game_rooms` row and the wallet ledger are updated by 
 
 ## The AFK timer: constant is hardcoded, not read from config
 
-`MatchmakingService.LUDO_TURN_TIMEOUT_MS = 25000` (`services/game-gateway/src/matchmaking.ts:19`) is a compile-time constant. Separately, `infra/db/migrations/008_enable_ludo.sql` seeds `game_configs.special_rules.turn_timeout_seconds = 20` for Ludo — a value that reads exactly like it's meant to configure this timer. Grepping the entire codebase (every service, the admin panel, mobile) for `turn_timeout_seconds`/`turnTimeoutSeconds` turns up **only** the migration's `INSERT`/`UPDATE` — nothing ever selects or reads that field back out of `special_rules`. The actual enforced timeout is 25 seconds, unconditionally, for every Ludo room regardless of what the DB config says or how an admin might try to tune it. See `docs/Bugs/ludo-turn-timeout-config-not-wired.md`.
+`MatchmakingService.LUDO_TURN_TIMEOUT_MS = 30000` (`services/game-gateway/src/matchmaking.ts`) is a compile-time constant. Separately, `infra/db/migrations/008_enable_ludo.sql` seeds `game_configs.special_rules.turn_timeout_seconds = 20` for Ludo — a value that reads exactly like it's meant to configure this timer. Grepping the entire codebase (every service, the admin panel, mobile) for `turn_timeout_seconds`/`turnTimeoutSeconds` turns up **only** the migration's `INSERT`/`UPDATE` — nothing ever selects or reads that field back out of `special_rules`. The actual enforced timeout is 30 seconds, unconditionally, for every Ludo room regardless of what the DB config says or how an admin might try to tune it. See `docs/Bugs/ludo-turn-timeout-config-not-wired.md`.
 
-This compounds with a mobile-side inconsistency: the client's own visual AFK countdown displays a fixed 30-second ring (`_turnTimerSeconds` in `ludo_game_page.dart`) that neither matches the server's real 25s nor the DB's aspirational 20s — see `mobile.md` for the full timer-mismatch writeup (`docs/Bugs/ludo-client-afk-countdown-mismatched-duration.md`).
+The client's own visual AFK countdown (`_turnTimerSeconds` in `ludo_game_page.dart`) does match the server's 30s — that part was already fixed 2026-07-09 — but it's only visible during the roll phase, not the move phase; see `mobile.md` for the full writeup (`docs/Bugs/ludo-client-afk-countdown-mismatched-duration.md`, scope narrowed 2026-07-29). The DB's aspirational 20s remains a third, unread number in play.
 
 ## Test coverage
 
@@ -82,4 +82,3 @@ This compounds with a mobile-side inconsistency: the client's own visual AFK cou
 - `docs/backend-services/game-gateway/backend.md` — matchmaking room creation (with the Ludo-specific retry-once-then-cleanup on `/start` failure), `driveLudoBots()`, `scheduleLudoAfkTimer`/`autoPlayIdleLudoTurn`, `handleLudoEnd`, and the exact bridge calls (`POST /start`, `POST /action`, `POST /bot-turn`) this document doesn't re-derive.
 - `docs/Bugs/ludo-turn-timeout-config-not-wired.md` (new, this pass).
 - `docs/Bugs/ludo-client-afk-countdown-mismatched-duration.md` (new, this pass — see `mobile.md`).
-- `docs/Bugs/ludo-preferred-seat-color-selection-ignored-by-server.md` (new, this pass — see `mobile.md`).

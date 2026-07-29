@@ -34,12 +34,10 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/teen-patti-emoji-config-shared-across-games.md`
 - `docs/Bugs/teen-patti-engine-url-env-example-broken.md`
 - `docs/Bugs/teen-patti-lobby-fee-percent-hardcoded.md`
-- `docs/Bugs/teen-patti-no-turn-timeout.md`
 - → background: `docs/games/teen-patti/*.md`, `docs/backend-services/teen-patti-engine/*.md`
 
 ### Ludo
 - `docs/Bugs/ludo-client-afk-countdown-mismatched-duration.md`
-- `docs/Bugs/ludo-preferred-seat-color-selection-ignored-by-server.md`
 - `docs/Bugs/ludo-turn-timeout-config-not-wired.md`
 - → background: `docs/games/ludo/*.md`
 
@@ -90,7 +88,6 @@ Every topic folder (except `docs/infra/`) has exactly 4 files: an `overview.md` 
 - `docs/Bugs/churn-ml-model-never-retrains.md`
 - `docs/Bugs/churn-ml-service-no-memory-restart-limit.md`
 - `docs/Bugs/churn-service-admin-stats-field-mismatch.md`
-- `docs/Bugs/churn-service-reengagement-calls-lack-internal-auth-header.md`
 - `docs/Bugs/monitor-events-batch-size-mismatch.md`
 - `docs/Bugs/monitor-heartbeat-interval-exceeds-active-session-window.md`
 - `docs/Bugs/monitor-ws-message-event-type-not-persisted.md`
