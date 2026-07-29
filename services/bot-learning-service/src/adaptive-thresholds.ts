@@ -10,7 +10,9 @@ export interface CohortTarget {
   cohort_target_win_rate: number
 }
 
-const GAME_TYPES = ['teen_patti', 'ludo', 'aviator', 'matka'] as const
+// Aviator excluded: solo-crash, no game_rooms/game_participants rows exist for
+// it, so this join can never match anything for it. See profile-builder.ts.
+const GAME_TYPES = ['teen_patti', 'ludo', 'matka'] as const
 const DIFFICULTIES = ['easy', 'medium', 'hard'] as const
 const COHORT_TARGET_BOOST = 0.02 // Add 2% to player average
 

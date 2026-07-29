@@ -9,19 +9,6 @@ import {
 } from '@ant-design/icons'
 import { adminApi } from '../api/client'
 
-// "Play Style" has no backing gameplay concept — it's a decorative,
-// deterministic hash of the bot's id, kept as-is. "Skill Level" used to be
-// derived the same fake way; it's now the real bot_difficulty column.
-const PERSONALITIES = ['Aggressive (Bluffer)', 'Conservative (Tight)', 'Balanced (Adaptive)']
-const getBotPersonality = (botId: string) => {
-  let hash = 0
-  for (let i = 0; i < botId.length; i++) {
-    hash = botId.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  const pIdx = Math.abs(hash) % PERSONALITIES.length
-  return PERSONALITIES[pIdx]
-}
-
 const GAME_OPTIONS = [
   { value: 'teen_patti', label: 'Teen Patti' },
   { value: 'ludo', label: 'Ludo' },
@@ -182,15 +169,6 @@ export default function BotManagementPanel({ gameType }: { gameType?: string }) 
               title: 'Username',
               dataIndex: 'username',
               render: (v) => <span style={{ fontWeight: 'bold' }}>{v}</span>
-            },
-            {
-              title: 'Play Style',
-              key: 'style',
-              render: (_, r) => {
-                const personality = getBotPersonality(r.id)
-                const color = personality.startsWith('Aggressive') ? 'volcano' : personality.startsWith('Conservative') ? 'blue' : 'green'
-                return <Tag color={color}>{personality}</Tag>
-              }
             },
             {
               title: 'Game',

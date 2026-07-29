@@ -175,26 +175,48 @@ function persistRound(): void {
   })
 }
 
-// If the process died mid-round, refund every unsettled stake. A cashed-out
-// bet that never got credited also gets its stake back (logged) — conservative
-// but the player is never left out of pocket.
+// If the process died mid-round, settle every unsettled bet the same way
+// crashRound() would have: a bet that never confirmed a cashout gets its
+// locked stake refunded (we don't know if the round crashed before or after
+// it would have resolved, and crashAt is deliberately never persisted, so
+// refunding is the conservative default). A bet that DID confirm a cashout
+// (bet.cashedOut, with its real bet.payout already in the snapshot — persisted
+// on every bet mutation, same as crashRound's own settlement) is a completed
+// win the player already saw over the socket; it must be consumed + credited
+// its real payout, not merely refunded the stake, or the player's confirmed
+// winnings are silently forfeited. Same idempotency_key as crashRound's own
+// credit call, so this can never double-pay if crashRound somehow also runs.
 async function recoverOrphanedRound(): Promise<void> {
   try {
     const raw = await pubClient.get(ACTIVE_ROUND_KEY)
     if (!raw) return
     const snapshot = JSON.parse(raw) as { roundId: string; bets: Record<string, AvBet> }
     const bets = Object.values(snapshot.bets || {})
-    console.warn(`[aviator] recovering orphaned round ${snapshot.roundId} with ${bets.length} bet(s) — refunding stakes`)
+    console.warn(`[aviator] recovering orphaned round ${snapshot.roundId} with ${bets.length} bet(s)`)
     for (const bet of bets) {
       if (bet.settled) continue
-      if (bet.cashedOut) {
-        console.warn(`[aviator] recovery: user=${bet.userId} had cashed out (payout ₹${bet.payout}) but was not settled — refunding stake ₹${bet.amount} instead`)
+      const roomId = `${snapshot.roundId}_${bet.betIndex}`
+      if (bet.cashedOut && bet.payout > 0) {
+        console.warn(`[aviator] recovery: user=${bet.userId} had confirmed cashout (payout ₹${bet.payout}) — settling as a real win`)
+        await walletCallDurable('/internal/wallet/consume', {
+          user_id: bet.userId,
+          amount: bet.amount,
+          room_id: roomId,
+        })
+        await walletCallDurable('/internal/wallet/credit', {
+          user_id: bet.userId,
+          amount: bet.payout,
+          type: 'game_credit',
+          reference_id: snapshot.roundId,
+          idempotency_key: `aviator_cashout_${bet.userId}_${snapshot.roundId}_${bet.betIndex}`,
+        })
+      } else {
+        await walletCallDurable('/internal/wallet/unlock', {
+          user_id: bet.userId,
+          amount: bet.amount,
+          room_id: roomId,
+        })
       }
-      await walletCallDurable('/internal/wallet/unlock', {
-        user_id: bet.userId,
-        amount: bet.amount,
-        room_id: `${snapshot.roundId}_${bet.betIndex}`,
-      })
     }
     await pubClient.del(ACTIVE_ROUND_KEY)
   } catch (err) {

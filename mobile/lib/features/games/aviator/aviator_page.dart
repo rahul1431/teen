@@ -50,6 +50,7 @@ class _AviatorPageState extends State<AviatorPage>
   List<double> _history = [];
   String? _errorMsg;
   int _bettingSecondsLeft = 5;
+  int _bettingWindowSeconds = 5; // total window length, for the progress bar
   double? _balance;
   Timer? _bettingTimer;
   int _lastSequenceId = -1;
@@ -158,6 +159,7 @@ class _AviatorPageState extends State<AviatorPage>
       _crashAt = null;
       _history = _parseHistory(data?['history']);
       _bettingSecondsLeft = (ms / 1000).ceil();
+      _bettingWindowSeconds = _bettingSecondsLeft;
       _showWinBurst = false;
       _lastWinPrize = 0.0;
       _lastSequenceId = -1;
@@ -792,7 +794,8 @@ class _AviatorPageState extends State<AviatorPage>
             child: ClipRRect(
               borderRadius: BorderRadius.circular(6),
               child: LinearProgressIndicator(
-                value: (_bettingSecondsLeft / 5).clamp(0.0, 1.0),
+                value: (_bettingSecondsLeft / _bettingWindowSeconds)
+                    .clamp(0.0, 1.0),
                 backgroundColor: Colors.white.withValues(alpha: 0.08),
                 color: AppColors.gold,
                 minHeight: 6,

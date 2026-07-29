@@ -66,7 +66,7 @@ async function start() {
     (async () => {
       try {
         logger.info('Starting 6-hourly incremental profile rebuild')
-        for (const gameType of ['teen_patti', 'ludo', 'aviator']) {
+        for (const gameType of ['teen_patti', 'ludo']) {
           for (const difficulty of ['easy', 'medium', 'hard']) {
             try {
               await builder.rebuildProfilesIncremental(gameType, difficulty)
@@ -155,7 +155,7 @@ async function start() {
   app.post('/api/bots/rebuild', { onRequest: [authenticateInternal] }, async (_req, reply) => {
     // Non-blocking: start rebuild in background, return immediately
     builder.runRebuild().catch(err => logger.error({ err }, 'Manual rebuild failed'))
-    return reply.send({ success: true, data: { status: 'started', game_types: ['teen_patti', 'ludo', 'aviator'] } })
+    return reply.send({ success: true, data: { status: 'started', game_types: ['teen_patti', 'ludo'] } })
   })
 
   // GET /api/bots/config

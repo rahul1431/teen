@@ -24,7 +24,6 @@ interface BotConfig {
 const GAME_LABELS: Record<string, string> = {
   teen_patti: 'Teen Patti',
   ludo: 'Ludo',
-  aviator: 'Aviator',
 }
 
 const DIFF_COLORS: Record<string, string> = { easy: 'green', medium: 'orange', hard: 'red' }
@@ -109,7 +108,11 @@ export function BotLearningSection() {
     } catch { message.error('Failed to save override') }
   }
 
-  const gameTypes = [...new Set(profiles.map(p => p.game_type))]
+  // Aviator is solo-crash and never produces game_participants rows, so its
+  // bot_profiles entries are permanently-seeded placeholders that can never
+  // be learned from real data (see docs/Bugs/bot-learning-service-builds-dead-aviator-bot-profiles.md).
+  // Filtered out here rather than deleted server-side so the row stays available if that changes.
+  const gameTypes = [...new Set(profiles.map(p => p.game_type))].filter(g => g !== 'aviator')
 
   if (loading) return <Spin />
 

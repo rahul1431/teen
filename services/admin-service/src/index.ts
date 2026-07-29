@@ -80,9 +80,29 @@ function hasRole(actual: string | undefined, required: Role): boolean {
 // the token it gates.
 const ADMIN_SESSION_TTL_SECONDS = 8 * 60 * 60
 
-const app = Fastify({ logger: true })
+const app = Fastify({ logger: true, trustProxy: true })
 const db = new Pool({ connectionString: process.env.DATABASE_URL!, max: 20 })
 const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
+
+// Shared write path for admin_audit_log so every call site records ip_address
+// (req.ip, resolved from X-Forwarded-For via trustProxy above since Nginx sits
+// in front of this service) instead of each of the ~18 insert sites needing to
+// remember to pass it individually. See
+// docs/Bugs/audit-log-ip-address-never-recorded.md.
+async function logAdminAction(
+  queryable: { query: (text: string, params?: any[]) => Promise<any> },
+  req: any,
+  adminId: string,
+  action: string,
+  targetType: string | null,
+  targetId: string | null,
+  details?: any
+): Promise<void> {
+  await queryable.query(
+    `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details, ip_address) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [adminId, action, targetType, targetId, details === undefined ? null : JSON.stringify(details), req?.ip ?? null]
+  )
+}
 
 async function start() {
   const NOTIFICATION_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:3001'
@@ -252,7 +272,7 @@ async function start() {
       return reply.code(401).send({ error: 'Invalid code â€” clock skew or wrong app?' })
     }
     await db.query('UPDATE admin_users SET totp_enabled = true WHERE id = $1', [me.sub])
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, '2fa_enabled', 'admin_user', $1)`, [me.sub])
+    await logAdminAction(db, req, me.sub, '2fa_enabled', 'admin_user', me.sub)
     return reply.send({ success: true })
   })
 
@@ -266,7 +286,7 @@ async function start() {
       return reply.code(401).send({ error: 'Invalid code' })
     }
     await db.query('UPDATE admin_users SET totp_enabled = false, totp_secret = NULL WHERE id = $1', [me.sub])
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, '2fa_disabled', 'admin_user', $1)`, [me.sub])
+    await logAdminAction(db, req, me.sub, '2fa_disabled', 'admin_user', me.sub)
     return reply.send({ success: true })
   })
 
@@ -309,8 +329,7 @@ async function start() {
          RETURNING id, username, email, role, is_active, created_at`,
         [body.username, body.email, hash, body.role, me.sub]
       )
-      await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'admin_create', 'admin_user', $2, $3)`,
-        [me.sub, res.rows[0].id, JSON.stringify({ username: body.username, role: body.role })])
+      await logAdminAction(db, req, me.sub, 'admin_create', 'admin_user', res.rows[0].id, { username: body.username, role: body.role })
       return reply.send(res.rows[0])
     } catch (e: any) {
       if (e.code === '23505') return reply.code(400).send({ error: 'Username or email already exists' })
@@ -342,8 +361,7 @@ async function start() {
     // already-issued JWT is also cut off — otherwise it keeps authenticating
     // (with its old role) for up to the remaining 8h of its lifetime.
     await redis.del(`admin_session:${id}`)
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'admin_update', 'admin_user', $2, $3)`,
-      [me.sub, id, JSON.stringify(body)])
+    await logAdminAction(db, req, me.sub, 'admin_update', 'admin_user', id, body)
     return reply.send({ success: true })
   })
 
@@ -357,8 +375,7 @@ async function start() {
     // Mirrors the player-facing reset-password flow's `redis.del(session:{id})` —
     // a forced password reset must also kick out whatever session is already active.
     await redis.del(`admin_session:${id}`)
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'admin_password_reset', 'admin_user', $2)`,
-      [me.sub, id])
+    await logAdminAction(db, req, me.sub, 'admin_password_reset', 'admin_user', id)
     return reply.send({ success: true })
   })
 
@@ -376,7 +393,7 @@ async function start() {
     }
     const hash = await bcrypt.hash(new_password, 12)
     await db.query('UPDATE admin_users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, me.sub])
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'self_password_change', 'admin_user', $1)`, [me.sub])
+    await logAdminAction(db, req, me.sub, 'self_password_change', 'admin_user', me.sub)
     return reply.send({ success: true })
   })
 
@@ -450,8 +467,7 @@ async function start() {
     const { id } = req.params as any
     const { status } = z.object({ status: z.enum(['active', 'suspended', 'banned', 'paused_anomaly']) }).parse(req.body)
     await db.query('UPDATE users SET status = $1 WHERE id = $2', [status, id])
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'user', $3, $4)`,
-      [admin.sub, `set_status_${status}`, id, JSON.stringify({ status })])
+    await logAdminAction(db, req, admin.sub, `set_status_${status}`, 'user', id, { status })
     return reply.send({ success: true })
   })
 
@@ -469,8 +485,7 @@ async function start() {
       body: JSON.stringify({ user_id: id, amount, request_id: crypto.randomUUID(), description: description || 'Manual credit by admin' }),
     })
     if (!res.ok) return reply.code(res.status).send(await res.json().catch(() => ({ error: 'Wallet service error' })))
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'credit_wallet', 'user', $2, $3)`,
-      [admin.sub, id, JSON.stringify({ amount, description })])
+    await logAdminAction(db, req, admin.sub, 'credit_wallet', 'user', id, { amount, description })
     return reply.send({ success: true })
   })
 
@@ -488,8 +503,7 @@ async function start() {
       body: JSON.stringify({ user_id: id, amount, request_id: crypto.randomUUID(), description: description || 'Manual debit by admin' }),
     })
     if (!res.ok) return reply.code(res.status).send(await res.json().catch(() => ({ error: 'Wallet service error' })))
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'debit_wallet', 'user', $2, $3)`,
-      [admin.sub, id, JSON.stringify({ amount, description })])
+    await logAdminAction(db, req, admin.sub, 'debit_wallet', 'user', id, { amount, description })
     return reply.send({ success: true })
   })
 
@@ -503,8 +517,7 @@ async function start() {
     const res = await db.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2 RETURNING username', [hash, id])
     if (!res.rows.length) return reply.code(404).send({ error: 'User not found' })
     await redis.del(`session:${id}`)
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'user_password_reset', 'user', $2)`,
-      [admin.sub, id])
+    await logAdminAction(db, req, admin.sub, 'user_password_reset', 'user', id)
     return reply.send({ success: true })
   })
 
@@ -557,8 +570,7 @@ async function start() {
     await db.query('UPDATE users SET kyc_status = $1 WHERE id = $2', [status, id])
     await db.query(`UPDATE kyc_documents SET status = $1, rejection_reason = $2, reviewed_at = NOW(), reviewed_by = $3 WHERE user_id = $4`,
       [status, reason || null, admin.sub, id])
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'user', $3, $4)`,
-      [admin.sub, `kyc_${status}`, id, JSON.stringify({ status, reason })])
+    await logAdminAction(db, req, admin.sub, `kyc_${status}`, 'user', id, { status, reason })
 
     // Push notification to user
     if (status === 'approved' || status === 'rejected') {
@@ -882,8 +894,7 @@ async function start() {
       ]
     )
 
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'payment_order', $3, $4)`,
-      [admin.sub, `withdrawal_${newStatus}`, id, JSON.stringify({ reference, reason })])
+    await logAdminAction(db, req, admin.sub, `withdrawal_${newStatus}`, 'payment_order', id, { reference, reason })
 
     // Push notification to user
     const amt = parseFloat(row.rows[0].amount)
@@ -991,8 +1002,7 @@ async function start() {
         [JSON.stringify(meta), id])
     }
 
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'payment_order', $3, $4)`,
-      [admin.sub, `deposit_${action}`, id, JSON.stringify({ reference, reason })])
+    await logAdminAction(db, req, admin.sub, `deposit_${action}`, 'payment_order', id, { reference, reason })
 
     // Push notification to user
     const dAmt = parseFloat(row.rows[0].amount)
@@ -1106,8 +1116,7 @@ async function start() {
        b.qr_image_url, b.instructions, b.min_amount ?? 100, b.max_amount ?? 100000,
        b.is_active ?? true, b.sort_order ?? 0]
     )
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'payment_method_create', 'payment_method', $2)`,
-      [admin.sub, res.rows[0].id])
+    await logAdminAction(db, req, admin.sub, 'payment_method_create', 'payment_method', res.rows[0].id)
     return reply.send(res.rows[0])
   })
 
@@ -1139,8 +1148,7 @@ async function start() {
     updates.push(`updated_at = NOW()`)
     params.push(id)
     await db.query(`UPDATE payment_methods SET ${updates.join(', ')} WHERE id = $${idx}`, params)
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'payment_method_update', 'payment_method', $2)`,
-      [admin.sub, id])
+    await logAdminAction(db, req, admin.sub, 'payment_method_update', 'payment_method', id)
     return reply.send({ success: true })
   })
 
@@ -1158,8 +1166,7 @@ async function start() {
       }
       throw err
     }
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id) VALUES ($1, 'payment_method_delete', 'payment_method', $2)`,
-      [admin.sub, id])
+    await logAdminAction(db, req, admin.sub, 'payment_method_delete', 'payment_method', id)
     return reply.send({ success: true })
   })
 
@@ -1534,10 +1541,7 @@ async function start() {
       `INSERT INTO user_notes (user_id, admin_id, note, is_flag) VALUES ($1, $2, $3, true)`,
       [userId, admin.sub, 'Flagged as suspicious by Risk Center automated review']
     )
-    await db.query(
-      `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'risk_flag', 'user', $2, $3)`,
-      [admin.sub, userId, JSON.stringify({ status: 'suspicious' })]
-    )
+    await logAdminAction(db, req, admin.sub, 'risk_flag', 'user', userId, { status: 'suspicious' })
     return reply.send({ success: true })
   })
 
@@ -1633,8 +1637,7 @@ async function start() {
     updates.push(`updated_at = NOW()`)
     params.push(id)
     await db.query(`UPDATE support_tickets SET ${updates.join(', ')} WHERE id = $${idx}`, params)
-    await db.query(`INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'ticket_update', 'support_ticket', $2, $3)`,
-      [me.sub, id, JSON.stringify(body)])
+    await logAdminAction(db, req, me.sub, 'ticket_update', 'support_ticket', id, body)
     return reply.send({ success: true })
   })
 
@@ -3095,17 +3098,7 @@ async function start() {
             )
 
             // Log the override action to audit log
-            await client.query(
-              `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details, created_at)
-               VALUES ($1, $2, $3, $4, $5, NOW())`,
-              [
-                admin.sub,
-                'anomaly_override',
-                'player_anomaly',
-                anomalyId,
-                JSON.stringify({ reason, player_id: playerId })
-              ]
-            )
+            await logAdminAction(client, req, admin.sub, 'anomaly_override', 'player_anomaly', anomalyId, { reason, player_id: playerId })
           }
         }
 
@@ -3199,17 +3192,7 @@ async function start() {
       }
 
       // Log to audit
-      await db.query(
-        `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details, created_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())`,
-        [
-          admin.sub,
-          'anomaly_dismissed',
-          'player_anomaly',
-          anomalyId,
-          JSON.stringify({ reason })
-        ]
-      )
+      await logAdminAction(db, req, admin.sub, 'anomaly_dismissed', 'player_anomaly', anomalyId, { reason })
 
       return reply.send({
         success: true,

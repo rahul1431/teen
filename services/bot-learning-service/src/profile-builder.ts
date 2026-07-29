@@ -61,7 +61,14 @@ export interface ProfileVersion {
 
 const MIN_SAMPLE_SIZE = 50
 
-const GAME_TYPES = ['teen_patti', 'ludo', 'aviator'] as const
+// Aviator is solo-crash (registry.json: minPlayers 1, maxPlayers 1, supportsBots
+// false) — it never creates game_participants/game_rooms rows, so rebuildForGame
+// can never find qualifying data for it; results are tracked separately via
+// wallet_transactions idempotency_key LIKE 'aviator_cashout_%' (see
+// core-api-service's leaderboard plugin). Ludo bot decisions are likewise not
+// sourced from here (see bot-profile.ts's FALLBACK_PROFILES comment) but that's
+// a documented, deliberate placeholder rather than a structurally-dead query.
+const GAME_TYPES = ['teen_patti', 'ludo'] as const
 const DIFFICULTIES = ['easy', 'medium', 'hard'] as const
 const PROFILE_CACHE_TTL = 3600 // 1 hour
 
