@@ -131,3 +131,94 @@ export function createInitialState(
     turn_number: 0,
   }
 }
+
+const RANK_VALUE: Record<string, number> = {
+  A: 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, J: 11, Q: 12, K: 13,
+}
+
+export interface GroupCheck { valid: boolean; kind: 'sequence' | 'set' | null; pure: boolean }
+
+function isValidSequence(cards: Card[], wildRank: string): { valid: boolean; pure: boolean } {
+  if (cards.length < 3) return { valid: false, pure: false }
+  const jokers = cards.filter(c => isJoker(c, wildRank))
+  const naturals = cards.filter(c => !isJoker(c, wildRank))
+  if (naturals.length === 0) return { valid: false, pure: false }
+  const suit = naturals[0].suit
+  if (naturals.some(c => c.suit !== suit)) return { valid: false, pure: false }
+
+  const size = cards.length
+  const aceValues: (number | null)[] = naturals.some(c => c.rank === 'A') ? [1, 14] : [null]
+  for (const aceValue of aceValues) {
+    const values = naturals.map(c => (c.rank === 'A' && aceValue !== null ? aceValue : RANK_VALUE[c.rank]))
+    const uniqueValues = new Set(values)
+    if (uniqueValues.size !== values.length) continue // duplicate rank in this suit — can't be a run
+    const natMin = Math.min(...values)
+    const natMax = Math.max(...values)
+    // Jokers can extend the run past the naturals' own min/max, not just fill
+    // internal gaps — so search every window of length `size` that fully
+    // contains [natMin, natMax] and stays within the valid rank range.
+    // `maxRank` is 14 only when this candidate is treating Ace as high (the
+    // ace itself occupies 14); a filler joker can never invent a non-Ace 14.
+    const maxRank = aceValue === 14 ? 14 : 13
+    const minRank = 1
+    const lowStart = Math.max(minRank, natMax - size + 1)
+    const lowEnd = Math.min(natMin, maxRank - size + 1)
+    if (lowStart <= lowEnd) {
+      // A valid window exists; jokers fill whatever slots in it the naturals
+      // don't occupy — always exactly `size - naturals.length` slots, which
+      // is exactly `jokers.length` by construction of `cards`.
+      return { valid: true, pure: jokers.length === 0 }
+    }
+  }
+  return { valid: false, pure: false }
+}
+
+function isValidSet(cards: Card[], wildRank: string): boolean {
+  if (cards.length < 3 || cards.length > 4) return false
+  const jokers = cards.filter(c => isJoker(c, wildRank))
+  const naturals = cards.filter(c => !isJoker(c, wildRank))
+  if (naturals.length === 0) return false
+  const rank = naturals[0].rank
+  if (naturals.some(c => c.rank !== rank)) return false
+  const suits = naturals.map(c => c.suit)
+  if (new Set(suits).size !== suits.length) return false // duplicate suit — invalid
+  return naturals.length + jokers.length === cards.length
+}
+
+export function checkGroup(cards: Card[], wildRank: string): GroupCheck {
+  const seq = isValidSequence(cards, wildRank)
+  if (seq.valid) return { valid: true, kind: 'sequence', pure: seq.pure }
+  if (isValidSet(cards, wildRank)) return { valid: true, kind: 'set', pure: false }
+  return { valid: false, kind: null, pure: false }
+}
+
+export function validateDeclareGroups(
+  hand: Card[],
+  groupsOfIds: string[][],
+  wildRank: string,
+): { valid: boolean; reason?: string } {
+  const flatIds = groupsOfIds.flat()
+  if (flatIds.length !== 13) return { valid: false, reason: 'Groups must contain exactly 13 cards' }
+  const uniqueFlat = new Set(flatIds)
+  if (uniqueFlat.size !== flatIds.length) return { valid: false, reason: 'Duplicate card in groups' }
+  const handIdSet = new Set(hand.map(c => c.id))
+  for (const id of flatIds) {
+    if (!handIdSet.has(id)) return { valid: false, reason: 'Group references a card not in hand' }
+  }
+  const byId = new Map(hand.map(c => [c.id, c]))
+  let sequenceCount = 0
+  let pureSequenceCount = 0
+  for (const ids of groupsOfIds) {
+    if (ids.length < 3) return { valid: false, reason: 'Every group must have at least 3 cards' }
+    const cards = ids.map(id => byId.get(id)!)
+    const check = checkGroup(cards, wildRank)
+    if (!check.valid) return { valid: false, reason: 'One or more groups is not a valid sequence or set' }
+    if (check.kind === 'sequence') {
+      sequenceCount++
+      if (check.pure) pureSequenceCount++
+    }
+  }
+  if (sequenceCount < 2) return { valid: false, reason: 'Need at least 2 sequences' }
+  if (pureSequenceCount < 1) return { valid: false, reason: 'Need at least 1 pure sequence (no jokers)' }
+  return { valid: true }
+}
