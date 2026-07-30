@@ -27,7 +27,7 @@
       "id": "rummy",
       "name": "Rummy",
       "type": "multiplayer",
-      "status": "planned",
+      "status": "live",
       "engine": "services/game-engines/rummy",
       "minPlayers": 2,
       "maxPlayers": 6,
