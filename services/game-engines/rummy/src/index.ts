@@ -12,6 +12,7 @@ import {
   attemptDeclare,
   dropPlayer,
   forfeitPlayer,
+  findValidDeclareGrouping,
   RummyState,
   ActionResult,
   BotDifficulty,
@@ -133,9 +134,29 @@ async function start() {
             if (!body.card_id) return reply.code(400).send({ error: 'card_id required' })
             discardCard(state, idx, body.card_id)
           } else if (body.action === 'declare') {
-            if (!body.groups) return reply.code(400).send({ error: 'groups required' })
-            const { outcome, result: declareResult } = attemptDeclare(state, idx, body.groups)
-            if (!outcome.valid) declareRejectedReason = outcome.reason ?? 'Invalid declare'
+            // `groups` is OPTIONAL. There is no meld-arrangement UI yet, so a
+            // client that had to invent a grouping could only guess (the old
+            // mobile client chunked the hand in dealt order), and a wrong
+            // guess eliminates the player and forfeits their stake — a human
+            // could effectively never win. When groups are omitted (or empty)
+            // the server searches the hand for a legal partition itself.
+            // An explicitly-supplied grouping is still honoured verbatim, so
+            // a future "pick your own arrangement" UI keeps working.
+            let groups = body.groups
+            let serverComputed = false
+            if (!groups || groups.length === 0) {
+              serverComputed = true
+              groups = findValidDeclareGrouping(state.players[idx].hand, state.wild_rank) ?? []
+            }
+            const { outcome, result: declareResult } = attemptDeclare(state, idx, groups)
+            if (!outcome.valid) {
+              // A server-computed empty grouping means the search proved the
+              // hand cannot declare — report that instead of the generic
+              // "must contain exactly 13 cards" shape check that fires first.
+              declareRejectedReason = serverComputed && groups.length === 0
+                ? 'Your hand cannot declare yet — you need 2 sequences, at least one pure'
+                : outcome.reason ?? 'Invalid declare'
+            }
             result = declareResult
           } else if (body.action === 'drop') {
             result = dropPlayer(state, idx)

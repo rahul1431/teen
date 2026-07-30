@@ -1,4 +1,4 @@
-import { RummyState, Card, isJoker, checkGroup, validateDeclareGroups } from './rules'
+import { RummyState, Card, isJoker, checkGroup, validateDeclareGroups, findValidDeclareGrouping } from './rules'
 
 function cardValue(card: Card, wildRank: string): number {
   if (isJoker(card, wildRank)) return 0
@@ -83,11 +83,18 @@ export function chooseBotDiscard(state: RummyState, playerIdx: number): string {
 
 // Returns a valid declare grouping if the bot's current hand (14 cards,
 // post-draw) can legally declare right now, else null.
+//
+// Uses the EXACT search in rules.ts rather than greedyGroup above: greedy
+// doesn't backtrack, so it can extract a locally-valid meld that strands the
+// rest of the hand and then report "can't declare" on a hand that genuinely
+// wins. greedyGroup is still used for chooseBotDiscard's leftover heuristic,
+// where an approximate melding is all that's needed.
 export function tryBotDeclare(state: RummyState, playerIdx: number): string[][] | null {
   const player = state.players[playerIdx]
-  const { groups, leftover } = greedyGroup(player.hand, state.wild_rank)
-  if (leftover.length !== 1) return null
-  const groupIds = groups.map(g => g.map(c => c.id))
+  const groupIds = findValidDeclareGrouping(player.hand, state.wild_rank)
+  if (!groupIds) return null
+  // Defensive: the search already guarantees this, but a declare is
+  // irreversible (a rejected one eliminates the bot), so re-verify.
   const check = validateDeclareGroups(player.hand, groupIds, state.wild_rank)
   return check.valid ? groupIds : null
 }

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   buildDeck, createInitialState, isJoker, checkGroup, validateDeclareGroups,
   drawFromClosed, drawFromOpen, discardCard, attemptDeclare, dropPlayer, forfeitPlayer, reshuffleIfNeeded,
+  findValidDeclareGrouping,
 } from './rules'
 
 function makePlayers(n: number) {
@@ -266,5 +267,89 @@ describe('turn actions', () => {
     assert.equal(state.status, 'completed')
     // Verify that calling another mutator throws because game is completed
     assert.throws(() => discardCard(state, 0, state.players[0].hand[0]?.id || 'x'))
+  })
+})
+
+describe('findValidDeclareGrouping', () => {
+  // The exact search must find a winning partition even when the obvious
+  // greedy melding (coordination.ts's greedyGroup, which takes the largest
+  // group it can see first and never backtracks) walks into a dead end.
+  // Here greedy grabs the 4-card set of 5s (D5,C5,H5,S5 — first four cards in
+  // hand order), which steals S5 out of the S4-S5-S6-S7 run and strands
+  // S4,S6,S7 with no way to meld them.
+  const buriedDeclareHand = [
+    c('a1', '5', 'D'), c('a2', '5', 'C'), c('a3', '5', 'H'), c('a4', '5', 'S'),
+    c('b1', '4', 'S'), c('b2', '6', 'S'), c('b3', '7', 'S'),
+    c('d1', '2', 'H'), c('d2', '3', 'H'), c('d3', '4', 'H'),
+    c('e1', '9', 'D'), c('e2', '9', 'C'), c('e3', '9', 'S'),
+    c('z1', 'K', 'C'), // the leftover discard — nothing else can meld with it
+  ]
+
+  test('finds a valid declare that a greedy (non-backtracking) melding misses', () => {
+    const groups = findValidDeclareGrouping(buriedDeclareHand, '__NONE__')
+    assert.notEqual(groups, null)
+    // Whatever partition it picked must genuinely pass the declare rules.
+    assert.deepEqual(validateDeclareGroups(buriedDeclareHand, groups!, '__NONE__'), { valid: true })
+    const flat = groups!.flat()
+    assert.equal(flat.length, 13)
+    assert.equal(new Set(flat).size, 13)
+    const handIds = new Set(buriedDeclareHand.map(x => x.id))
+    for (const id of flat) assert.equal(handIds.has(id), true)
+    // The 4-card set of 5s can never be part of a winning partition here.
+    assert.equal(groups!.some(g => g.length === 4 && g.every(id => id.startsWith('a'))), false)
+  })
+
+  test('returns a grouping accepted by attemptDeclare end-to-end', () => {
+    const state = createInitialState('r', 100, makePlayers(2), 'medium', 2, 30, 5)
+    state.wild_rank = '__NONE__'
+    state.players[0].hand = buriedDeclareHand.map(x => ({ ...x }))
+    state.awaiting = 'discard'
+    const groups = findValidDeclareGrouping(state.players[0].hand, state.wild_rank)
+    const { outcome, result } = attemptDeclare(state, 0, groups!)
+    assert.equal(outcome.valid, true)
+    assert.equal(result?.winner_id, 'p0')
+    assert.equal(result?.reason, 'valid_declare')
+  })
+
+  test('returns null for a hand with no meld at all', () => {
+    const junk = [
+      c('1', '2', 'S'), c('2', '4', 'H'), c('3', '6', 'D'), c('4', '8', 'C'),
+      c('5', '10', 'S'), c('6', 'Q', 'H'), c('7', 'A', 'D'), c('8', '3', 'C'),
+      c('9', '5', 'S'), c('10', '7', 'H'), c('11', '9', 'D'), c('12', 'J', 'C'),
+      c('13', 'K', 'S'), c('14', '2', 'H'),
+    ]
+    assert.equal(findValidDeclareGrouping(junk, '__NONE__'), null)
+  })
+
+  test('returns null when the hand melds completely but has only one sequence', () => {
+    // Three sets + one pure sequence partitions all 13 cards, but the rules
+    // demand at least TWO sequences — no other partition can produce a second
+    // one (S4 has no other home, so S5/S6 are locked to it, and the aces/7s/9s
+    // can only ever form sets). An exhaustive search must still return null.
+    const oneSequenceHand = [
+      c('s1', 'A', 'S'), c('s2', 'A', 'H'), c('s3', 'A', 'D'), c('s4', 'A', 'C'),
+      c('t1', '7', 'S'), c('t2', '7', 'H'), c('t3', '7', 'D'),
+      c('u1', '9', 'S'), c('u2', '9', 'H'), c('u3', '9', 'D'),
+      c('v1', '4', 'S'), c('v2', '5', 'S'), c('v3', '6', 'S'),
+      c('z1', 'K', 'C'),
+    ]
+    assert.equal(findValidDeclareGrouping(oneSequenceHand, '__NONE__'), null)
+  })
+
+  test('returns null for a hand that is not 14 cards (nothing to discard)', () => {
+    assert.equal(findValidDeclareGrouping(buriedDeclareHand.slice(0, 13), '__NONE__'), null)
+  })
+
+  test('uses jokers when that is the only way to complete the grouping', () => {
+    const withJokers = [
+      c('p1', '3', 'S'), c('p2', '4', 'S'), c('p3', '5', 'S'), // pure sequence
+      c('q1', '8', 'H'), c('q2', '9', 'H'), c('q3', 'JOKER', 'JK'), // joker sequence
+      c('r1', 'Q', 'S'), c('r2', 'Q', 'H'), c('r3', 'JOKER', 'JK'), // joker set
+      c('w1', '2', 'D'), c('w2', '3', 'D'), c('w3', '4', 'D'), c('w4', '5', 'D'),
+      c('z1', 'K', 'C'),
+    ]
+    const groups = findValidDeclareGrouping(withJokers, '__NONE__')
+    assert.notEqual(groups, null)
+    assert.deepEqual(validateDeclareGroups(withJokers, groups!, '__NONE__'), { valid: true })
   })
 })

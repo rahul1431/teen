@@ -176,6 +176,100 @@ class RummyEngine {
     return true;
   }
 
+  // Exhaustive backtracking search for a legal declare grouping in a 14-card
+  // (post-draw) hand: 13 cards melded into valid sequences/sets with at least
+  // 2 sequences, one of them pure, leaving one card over as the discard.
+  // Returns the grouping as card-id lists, or null if NO partition of the
+  // hand can legally declare.
+  //
+  // Dart mirror of findValidDeclareGrouping in
+  // services/game-engines/rummy/src/rules.ts — the online path lets the
+  // server compute this, but offline practice has no server to ask. Keep the
+  // two in sync (same rule set, same algorithm) so practice and real tables
+  // never disagree about whether a hand can win.
+  List<List<String>>? findValidDeclareGrouping(List<RummyCard> hand, String wildRank) {
+    if (hand.length != 14) return null;
+    // Two decks are in play, so identical cards can repeat — trying the same
+    // rank+suit as the leftover discard twice would repeat an identical
+    // search (every rule check looks only at rank/suit).
+    final triedLeftover = <String>{};
+    for (var i = 0; i < hand.length; i++) {
+      if (!triedLeftover.add('${hand[i].rank}|${hand[i].suit}')) continue;
+      final remaining = List<RummyCard>.from(hand)..removeAt(i);
+      final found = _partitionSearch(remaining, wildRank, const [], 0, 0);
+      if (found != null) {
+        return found.map((g) => g.map((c) => c.id).toList()).toList();
+      }
+    }
+    return null;
+  }
+
+  // Partition `remaining` into valid 3-/4-card groups. Only combinations
+  // containing the lowest-index remaining card are tried — it has to land in
+  // some group, so this enumerates each distinct partition exactly once.
+  List<List<RummyCard>>? _partitionSearch(
+    List<RummyCard> remaining,
+    String wildRank,
+    List<List<RummyCard>> acc,
+    int sequences,
+    int pures,
+  ) {
+    if (remaining.isEmpty) {
+      return (sequences >= 2 && pures >= 1) ? List<List<RummyCard>>.from(acc) : null;
+    }
+    if (remaining.length < 3) return null;
+    // Prune: even if every group still to be formed were a pure sequence, the
+    // >=2 sequences / >=1 pure requirement could not be met from here.
+    final maxMoreGroups = remaining.length ~/ 3;
+    if (sequences + maxMoreGroups < 2) return null;
+    if (pures + maxMoreGroups < 1) return null;
+
+    final head = remaining[0];
+    final rest = remaining.sublist(1);
+    for (final size in const [3, 4]) {
+      final pickCount = size - 1;
+      if (rest.length < pickCount) continue;
+      for (final combo in _comboIndices(rest.length, pickCount)) {
+        final group = <RummyCard>[head, ...combo.map((i) => rest[i])];
+        final check = checkGroup(group, wildRank);
+        if (!check.valid) continue;
+        final used = combo.toSet();
+        final nextRemaining = <RummyCard>[];
+        for (var i = 0; i < rest.length; i++) {
+          if (!used.contains(i)) nextRemaining.add(rest[i]);
+        }
+        final found = _partitionSearch(
+          nextRemaining,
+          wildRank,
+          [...acc, group],
+          sequences + (check.kind == 'sequence' ? 1 : 0),
+          pures + (check.kind == 'sequence' && check.pure ? 1 : 0),
+        );
+        if (found != null) return found;
+      }
+    }
+    return null;
+  }
+
+  Iterable<List<int>> _comboIndices(int n, int k) sync* {
+    final picked = <int>[];
+    Iterable<List<int>> rec(int start) sync* {
+      if (picked.length == k) {
+        yield List<int>.from(picked);
+        return;
+      }
+      // Not enough entries left to finish this combination — stop early.
+      if (n - start < k - picked.length) return;
+      for (var i = start; i < n; i++) {
+        picked.add(i);
+        yield* rec(i + 1);
+        picked.removeLast();
+      }
+    }
+
+    yield* rec(0);
+  }
+
   ({bool valid, String? kind, bool pure}) checkGroup(List<RummyCard> cards, String wildRank) {
     final seq = _isValidSequence(cards, wildRank);
     if (seq.valid) return (valid: true, kind: 'sequence', pure: seq.pure);

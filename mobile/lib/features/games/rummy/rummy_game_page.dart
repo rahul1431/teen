@@ -151,22 +151,14 @@ class _RummyGamePageState extends State<RummyGamePage> {
   void _offlineDeclare() {
     final s = _offlineState;
     if (s == null || s.currentTurn != _mySeatIndex || s.awaiting != 'discard') return;
-    // Minimal v1 grouping UX: every 3 (or 4) consecutive selected cards in
-    // hand order becomes one group. Players arrange their hand via tap
-    // reordering (not implemented in this pass — see rummy_board.dart
-    // follow-up) so for now groups are inferred in fixed chunks of 3 from
-    // the hand's current order, using the trailing 4th card in the first
-    // group when 13 doesn't divide evenly by 3.
+    // There is no meld-arrangement UI yet, so the grouping is computed for the
+    // player by an exact search over their hand (same algorithm the server
+    // runs for online declares — see findValidDeclareGrouping). If the hand
+    // genuinely cannot declare, the search returns null and the empty grouping
+    // below takes the normal invalid-declare path: declaring is a commitment,
+    // exactly as it is online.
     final hand = s.players[_mySeatIndex].hand;
-    if (hand.length != 14) return;
-    final ids = hand.map((c) => c.id).toList()..removeLast();
-    final groups = <List<String>>[];
-    var i = 0;
-    while (i < ids.length) {
-      final size = (ids.length - i) == 4 ? 4 : 3;
-      groups.add(ids.sublist(i, i + size));
-      i += size;
-    }
+    final groups = _engine.findValidDeclareGrouping(hand, s.wildRank) ?? const <List<String>>[];
     final won = _engine.declare(s, _mySeatIndex, groups);
     setState(() {
       _banner = won
@@ -359,7 +351,10 @@ class _RummyGamePageState extends State<RummyGamePage> {
                 ),
                 ElevatedButton(
                   onPressed: canAct && !awaitingDraw
-                      ? (widget.offline ? _offlineDeclare : () => _onlineAction('declare', groups: _naiveGroupsFromHand(hand)))
+                      // Online: send no `groups` — the server computes a legal
+                      // grouping for the hand itself (see the /action declare
+                      // case in services/game-engines/rummy/src/index.ts).
+                      ? (widget.offline ? _offlineDeclare : () => _onlineAction('declare'))
                       : null,
                   style: ElevatedButton.styleFrom(backgroundColor: AppColors.green),
                   child: const Text('Declare'),
@@ -370,20 +365,5 @@ class _RummyGamePageState extends State<RummyGamePage> {
         ],
       ),
     );
-  }
-
-  // Same fixed-chunk grouping fallback as _offlineDeclare, for the online
-  // path. The server is authoritative regardless of what's submitted here.
-  List<List<String>> _naiveGroupsFromHand(List<Map<String, String>> hand) {
-    if (hand.length != 14) return [];
-    final ids = hand.map((c) => c['id']!).toList()..removeLast();
-    final groups = <List<String>>[];
-    var i = 0;
-    while (i < ids.length) {
-      final size = (ids.length - i) == 4 ? 4 : 3;
-      groups.add(ids.sublist(i, i + size));
-      i += size;
-    }
-    return groups;
   }
 }

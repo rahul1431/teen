@@ -225,6 +225,101 @@ export function validateDeclareGroups(
 
 export interface DeclareOutcome { valid: boolean; reason?: string }
 
+// Enumerate every k-sized combination of indices in [0, n).
+function* comboIndices(n: number, k: number): Generator<number[]> {
+  const picked: number[] = []
+  function* rec(start: number): Generator<number[]> {
+    if (picked.length === k) { yield picked.slice(); return }
+    // Not enough cards left to finish this combination — stop early.
+    if (n - start < k - picked.length) return
+    for (let i = start; i < n; i++) {
+      picked.push(i)
+      yield* rec(i + 1)
+      picked.pop()
+    }
+  }
+  yield* rec(0)
+}
+
+// Exhaustive backtracking partition of `remaining` into valid 3-/4-card
+// groups. Returns the first partition that also satisfies the declare rules
+// (>= 2 sequences, >= 1 of them pure), else null.
+//
+// Only combinations that CONTAIN the lowest-index remaining card are tried:
+// that card has to end up in some group, so this enumerates each distinct
+// partition exactly once instead of once per group ordering.
+function partitionSearch(
+  remaining: Card[],
+  wildRank: string,
+  acc: Card[][],
+  sequences: number,
+  pures: number,
+): Card[][] | null {
+  if (remaining.length === 0) {
+    return sequences >= 2 && pures >= 1 ? acc.slice() : null
+  }
+  if (remaining.length < 3) return null
+  // Prune: even if every group still to be formed were a pure sequence, the
+  // >=2 sequences / >=1 pure requirement could not be met from here.
+  const maxMoreGroups = Math.floor(remaining.length / 3)
+  if (sequences + maxMoreGroups < 2) return null
+  if (pures + maxMoreGroups < 1) return null
+
+  const head = remaining[0]
+  const rest = remaining.slice(1)
+  for (const size of [3, 4] as const) {
+    const pickCount = size - 1
+    if (rest.length < pickCount) continue
+    for (const combo of comboIndices(rest.length, pickCount)) {
+      const group = [head, ...combo.map(i => rest[i])]
+      const check = checkGroup(group, wildRank)
+      if (!check.valid) continue
+      const used = new Set(combo)
+      const nextRemaining = rest.filter((_, i) => !used.has(i))
+      const found = partitionSearch(
+        nextRemaining,
+        wildRank,
+        [...acc, group],
+        sequences + (check.kind === 'sequence' ? 1 : 0),
+        pures + (check.kind === 'sequence' && check.pure ? 1 : 0),
+      )
+      if (found) return found
+    }
+  }
+  return null
+}
+
+// Finds a legal declare grouping for a 14-card (post-draw) hand: 13 cards
+// melded into valid sequences/sets with at least 2 sequences, one of them
+// pure, and one card left over as the discard.
+//
+// This is an EXACT search, not the greedy melding in coordination.ts —
+// greedy can pull out a valid group that strands the rest of the hand and
+// then wrongly conclude the hand can't declare. Brute force with backtracking
+// is fine at this scale: 13 cards partition only as 3+3+3+4, most candidate
+// groups fail checkGroup immediately, so the recursion almost never goes
+// deep (a few thousand checkGroup calls for a typical hand).
+//
+// Returns the grouping as arrays of card ids (ready for
+// validateDeclareGroups/attemptDeclare), or null if NO partition of the hand
+// can legally declare.
+export function findValidDeclareGrouping(hand: Card[], wildRank: string): string[][] | null {
+  if (!Array.isArray(hand) || hand.length !== 14) return null
+  // Two decks are in play, so the hand can hold identical cards. Trying the
+  // same rank+suit as the leftover discard twice would repeat an identical
+  // search — every rule check looks only at rank/suit.
+  const triedLeftover = new Set<string>()
+  for (let i = 0; i < hand.length; i++) {
+    const key = `${hand[i].rank}|${hand[i].suit}`
+    if (triedLeftover.has(key)) continue
+    triedLeftover.add(key)
+    const remaining = hand.filter((_, j) => j !== i)
+    const found = partitionSearch(remaining, wildRank, [], 0, 0)
+    if (found) return found.map(g => g.map(c => c.id))
+  }
+  return null
+}
+
 export function advanceTurn(state: RummyState): void {
   const n = state.players.length
   let next = state.current_turn
