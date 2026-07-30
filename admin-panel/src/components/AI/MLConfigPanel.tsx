@@ -19,13 +19,6 @@ interface MLConfig {
     retrainFrequency: 'daily' | 'weekly' | 'monthly'
     enabled: boolean
   }
-  botSettings: {
-    maxWinRate: number // Cap bot win rate at X%
-    difficulty: 'easy' | 'medium' | 'hard'
-    decisionTreeDepth: number
-    aggressionLevel: number // 1-10
-    enabled: boolean
-  }
   rtpOptimizer: {
     minRakePercent: number
     maxRakePercent: number
@@ -220,80 +213,6 @@ export function MLConfigPanel() {
               </Form.Item>
             </Col>
           </Row>
-        </Card>
-
-        {/* Bot Settings */}
-        <Card title="ðŸ¤– Bot Settings" style={{ marginBottom: 24 }}>
-          <Row gutter={24}>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                label="Max Bot Win Rate (%)"
-                name={['botSettings', 'maxWinRate']}
-                tooltip="Cap bot win rate at X% (fair play: 48-52%)"
-              >
-                <Slider min={30} max={70} marks={{ 30: '30%', 50: '50%', 70: '70%' }} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                label="Decision Tree Depth"
-                name={['botSettings', 'decisionTreeDepth']}
-                tooltip="How deep the decision tree can grow (5-15 recommended)"
-              >
-                <InputNumber min={3} max={20} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={24}>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                label="Aggression Level (1-10)"
-                name={['botSettings', 'aggressionLevel']}
-                tooltip="How aggressive the bot plays (1=passive, 10=aggressive)"
-              >
-                <Slider min={1} max={10} marks={{ 1: 'passive', 5: 'balanced', 10: 'aggressive' }} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                label="Difficulty"
-                name={['botSettings', 'difficulty']}
-              >
-                <div style={{ display: 'flex', gap: 8 }}>
-                  {['easy', 'medium', 'hard'].map((diff) => (
-                    <Button
-                      key={diff}
-                      type="default"
-                      onClick={() =>
-                        form.setFieldValue(['botSettings', 'difficulty'], diff)
-                      }
-                      style={{
-                        backgroundColor:
-                          config.botSettings.difficulty === diff
-                            ? '#1890ff'
-                            : undefined,
-                        color:
-                          config.botSettings.difficulty === diff
-                            ? '#fff'
-                            : undefined,
-                      }}
-                    >
-                      {diff}
-                    </Button>
-                  ))}
-                </div>
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Form.Item
-            label="Enable Bots"
-            name={['botSettings', 'enabled']}
-            valuePropName="checked"
-          >
-            <Switch />
-          </Form.Item>
         </Card>
 
         {/* RTP Optimizer */}

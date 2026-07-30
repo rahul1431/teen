@@ -22,6 +22,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   bool _searching = false;
   String? _balance;
   double? _balanceValue;
+  double _feePercent = 5; // overwritten by the live game_configs value once loaded
   final _stakes = [10.0, 50.0, 100.0, 500.0, 1000.0];
 
   String get _variationLabel {
@@ -103,6 +104,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
     super.initState();
     _socket.connect();
     _loadBalance();
+    _loadFeePercent();
     _attachRoomJoinedListener();
     _errorSub = _socket.on(SocketEvents.errorEvent).listen((data) {
       if (!mounted) return;
@@ -155,6 +157,16 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
         _balance = value.toStringAsFixed(0);
       });
     } catch (_) {/* offline / no auth — leave as '—' */}
+  }
+
+  Future<void> _loadFeePercent() async {
+    try {
+      final res =
+          await ApiClient().dio.get('/api/game-configs/teen_patti');
+      final pct = res.data['rake_percent'];
+      if (!mounted || pct == null) return;
+      setState(() => _feePercent = double.parse(pct.toString()));
+    } catch (_) {/* offline / not found — keep the 5% default */}
   }
 
   void _joinMatchmaking() {
@@ -491,7 +503,8 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                       'Pot Limit',
                       _isNoLimit ? 'No Limit' : '₹${_potLimitFor(_selectedStake)}')),
               const SizedBox(width: 10),
-              Expanded(child: _statTile(Icons.percent_rounded, 'Fee', '5%')),
+              Expanded(child: _statTile(Icons.percent_rounded, 'Fee',
+                  '${_feePercent == _feePercent.roundToDouble() ? _feePercent.toInt() : _feePercent}%')),
             ],
           ),
           _buildReconnectNotice(),

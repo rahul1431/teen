@@ -26,7 +26,7 @@ export function gameConfigsPlugin(db: Pool) {
     app.get('/game-configs/:gameType', { onRequest: [app.authenticate] }, async (req, reply) => {
       const { gameType } = req.params as { gameType: string }
       const res = await db.query(
-        `SELECT game_type, is_active, special_rules, updated_at FROM game_configs WHERE game_type = $1`,
+        `SELECT game_type, is_active, rake_percent, special_rules, updated_at FROM game_configs WHERE game_type = $1`,
         [gameType],
       )
       if (!res.rows.length) return reply.code(404).send({ error: 'Game config not found' })
@@ -35,6 +35,7 @@ export function gameConfigsPlugin(db: Pool) {
       return {
         game_type: row.game_type,
         is_active: row.is_active,
+        rake_percent: row.rake_percent === null ? null : Number(row.rake_percent),
         updated_at: row.updated_at,
         special_rules: sanitizeSpecialRules(specialRules),
       }

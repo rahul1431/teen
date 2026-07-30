@@ -6,6 +6,7 @@ import { adminApi } from '../../api/client'
 interface BotProfile {
   game_type: string
   difficulty: string
+  win_rate_target: number
   fold_probability: number
   call_probability: number
   raise_probability: number
@@ -52,6 +53,7 @@ export function BotLearningSection() {
         // pg returns NUMERIC columns as strings — coerce before any .toFixed/math
         setProfiles((res.data.data.profiles ?? []).map((p: any) => ({
           ...p,
+          win_rate_target: Number(p.win_rate_target) || 0,
           fold_probability: Number(p.fold_probability) || 0,
           call_probability: Number(p.call_probability) || 0,
           raise_probability: Number(p.raise_probability) || 0,
@@ -98,6 +100,7 @@ export function BotLearningSection() {
   const saveOverride = async (gameType: string, difficulty: string, values: Record<string, unknown>) => {
     try {
       await adminApi.patch(`bots/profiles/${gameType}/${difficulty}`, {
+        win_rate_target:       parseFloat(String(values.win_rate_target)),
         fold_probability:      parseFloat(String(values.fold_probability)) / 100,
         call_probability:      parseFloat(String(values.call_probability)) / 100,
         avg_decision_delay_ms: parseInt(String(values.avg_decision_delay_ms)),
@@ -157,6 +160,7 @@ export function BotLearningSection() {
                       </Button>
                     }
                   >
+                    <Statistic title="Win Rate Target" value={profile.win_rate_target} suffix="%" valueStyle={{ fontSize: 14 }} />
                     <Statistic title="Fold %" value={Math.round(profile.fold_probability * 100)} suffix="%" valueStyle={{ fontSize: 14 }} />
                     <Statistic title="Call %" value={Math.round(profile.call_probability * 100)} suffix="%" valueStyle={{ fontSize: 14 }} />
                     <Statistic title="Raise %" value={Math.round(profile.raise_probability * 100)} suffix="%" valueStyle={{ fontSize: 14 }} />
@@ -173,12 +177,20 @@ export function BotLearningSection() {
                         layout="vertical"
                         style={{ marginTop: 12 }}
                         initialValues={{
+                          win_rate_target: profile.win_rate_target,
                           fold_probability: Math.round(profile.fold_probability * 100),
                           call_probability: Math.round(profile.call_probability * 100),
                           avg_decision_delay_ms: profile.avg_decision_delay_ms,
                         }}
                         onFinish={(vals) => saveOverride(gameType, difficulty, vals)}
                       >
+                        <Form.Item
+                          label="Win Rate Target %"
+                          name="win_rate_target"
+                          tooltip="Odds a human's best hand is swapped to a bot this hand (fair play: 48-52%)"
+                        >
+                          <Slider min={0} max={100} />
+                        </Form.Item>
                         <Form.Item label="Fold %" name="fold_probability">
                           <Slider min={5} max={70} />
                         </Form.Item>

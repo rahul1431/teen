@@ -410,7 +410,7 @@ func (s *Server) startGame(w http.ResponseWriter, r *http.Request) {
 			case "medium":
 				winRateTarget = 50.0
 			case "hard":
-				winRateTarget = 100.0 // default hard target is 100% for user testing
+				winRateTarget = 65.0 // matches seeded bot_profiles default (016_bot_learning.sql)
 			}
 		}
 	} else {
@@ -420,7 +420,7 @@ func (s *Server) startGame(w http.ResponseWriter, r *http.Request) {
 		case "medium":
 			winRateTarget = 50.0
 		case "hard":
-			winRateTarget = 100.0
+			winRateTarget = 65.0 // matches seeded bot_profiles default (016_bot_learning.sql)
 		}
 	}
 

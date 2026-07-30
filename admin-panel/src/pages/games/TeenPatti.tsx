@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag, Badge,
   Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col,
-  Input, Popconfirm, Modal, Typography, Spin, Upload, Grid, Tabs
+  Input, Popconfirm, Modal, Typography, Spin, Upload, Grid, Tabs, Alert
 } from 'antd'
 import { ReloadOutlined, EyeOutlined, PlusOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
@@ -308,6 +308,13 @@ export default function TeenPatti() {
             }
             loading={loadingEmojis}
           >
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="Shared across games"
+              description="This emoji list is not Teen Patti-specific — it also powers Ludo's in-game reaction tray. Changes here affect every game with reactions/chat."
+            />
             <Table
               dataSource={emojis}
               columns={emojiColumns}

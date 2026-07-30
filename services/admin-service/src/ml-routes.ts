@@ -21,13 +21,6 @@ const DEFAULT_CONFIG = {
     retrainFrequency: 'daily',
     enabled: true,
   },
-  botSettings: {
-    maxWinRate: 50,
-    difficulty: 'medium',
-    decisionTreeDepth: 8,
-    aggressionLevel: 5,
-    enabled: true,
-  },
   rtpOptimizer: {
     minRakePercent: 3,
     maxRakePercent: 7,
