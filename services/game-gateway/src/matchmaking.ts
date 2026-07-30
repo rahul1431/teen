@@ -1086,6 +1086,17 @@ export class MatchmakingService {
       this.scheduleBotTurn(roomId, engineState, realPlayers, bots)
     }
 
+    // Rummy's opening turn is always seat 0 (see the Go/TS engine's /start
+    // handler), so a fully-bot-filled table (or any table where seat 0 is a
+    // bot) needs its bot turn driven immediately here — nothing else kicks
+    // this off. Without this, a room where no human has acted yet has no
+    // other trigger: Task 8's join/action-routing paths only fire in
+    // response to a human action, which never happens if the bot never
+    // moves first.
+    if (engineState && gameType === 'rummy') {
+      void this.driveRummyBots(roomId)
+    }
+
     return roomId
   }
 
