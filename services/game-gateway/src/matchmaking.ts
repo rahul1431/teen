@@ -1968,17 +1968,51 @@ export class MatchmakingService {
     return `rummy:afk:${roomId}`
   }
 
+  private rummyTurnClaimKey(roomId: string, turnIdx: number): string {
+    return `rummy:turnclaim:${roomId}:${turnIdx}`
+  }
+
+  // Marks "a real player action is in flight for this turn" so the AFK
+  // auto-play backstop (autoPlayIdleRummyTurn) backs off instead of racing it
+  // to the engine — same mechanism and rationale as claimLudoTurn above.
+  // Without it both requests can reach the engine's per-room lock and the
+  // loser gets a 409, and that loser can be the player's own genuine tap.
+  // Best-effort: a missed claim just reopens the (rarer) pre-existing race.
+  async claimRummyTurn(roomId: string, turnIdx: number): Promise<void> {
+    try {
+      await this.redis.set(this.rummyTurnClaimKey(roomId, turnIdx), '1', 'PX', 4000)
+    } catch { /* best effort */ }
+  }
+
+  private async isRummyTurnClaimed(roomId: string, turnIdx: number): Promise<boolean> {
+    try {
+      return (await this.redis.get(this.rummyTurnClaimKey(roomId, turnIdx))) !== null
+    } catch {
+      return false
+    }
+  }
+
   // Fires when a human's turn has sat idle past the timeout. The minimum
-  // legal auto-action: draw from the closed pile, then discard the first
-  // card in hand (never declares on the player's behalf).
+  // legal auto-action: draw from the closed pile, then discard the card just
+  // drawn (never declares on the player's behalf).
   private async autoPlayIdleRummyTurn(roomId: string, expectedTurnIdx: number, expectedDeadline: number): Promise<void> {
     try {
       const raw = await this.redis.get(this.rummyAfkRedisKey(roomId))
-      if (raw) {
-        const current = JSON.parse(raw) as { turnIdx: number; deadline: number }
-        if (current.turnIdx !== expectedTurnIdx || current.deadline !== expectedDeadline) return
-      }
-    } catch { /* fall through to the local-only check below */ }
+      // An ABSENT key means this backstop has been cancelled or superseded —
+      // clearRummyAfkTimer deletes it the instant a real action arrives (see
+      // handleRummyAction/handleRummyLeave), and scheduleRummyAfkTimer always
+      // writes it (TTL 90s) well before this timer's own 30s deadline. Missing
+      // therefore never means "still owed"; it means "someone else took this
+      // turn". Proceeding on absence was fail-OPEN: a real action in flight
+      // deleted the very guard meant to make this back off, so the auto-play
+      // raced the player's own move.
+      if (!raw) return
+      const current = JSON.parse(raw) as { turnIdx: number; deadline: number }
+      if (current.turnIdx !== expectedTurnIdx || current.deadline !== expectedDeadline) return
+    } catch {
+      // Redis unreachable (not "key absent") — the local timer is the only
+      // backstop left, so fall through rather than stalling the table.
+    }
 
     const engineUrl = process.env.RUMMY_ENGINE_URL || 'http://127.0.0.1:3012'
     const state = await this.getRoomState(roomId)
@@ -1986,6 +2020,11 @@ export class MatchmakingService {
     const turnIdx = state.current_turn ?? 0
     const cur = state.players?.[turnIdx]
     if (!cur || (cur.is_bot ?? cur.isBot)) return
+
+    // A real action for this exact turn is already in flight (it claimed the
+    // instant the gateway received it — see handleRummyAction) — back off and
+    // let that action's own result stand instead of racing it to the engine.
+    if (await this.isRummyTurnClaimed(roomId, turnIdx)) return
 
     try {
       const drawRes = await fetch(`${engineUrl}/action`, {
@@ -1997,7 +2036,12 @@ export class MatchmakingService {
       if (!drawRes.ok) return
       const drawData = await drawRes.json() as any
       const handAfterDraw = drawData.state.players[turnIdx].hand
-      const discardCardId = handAfterDraw[0].id
+      // Discard the card we just drew — drawFromClosed push()es it onto the
+      // end of the hand, so it is the LAST element. Taking [0] threw away the
+      // oldest dealt card instead, actively damaging a hand the player has
+      // been building for the whole game. Discarding the drawn card is the
+      // true no-op: the hand ends the turn exactly as it started.
+      const discardCardId = handAfterDraw[handAfterDraw.length - 1].id
 
       const discardRes = await fetch(`${engineUrl}/action`, {
         method: 'POST',

@@ -254,7 +254,7 @@ async function start() {
           return handleLudoAction(conn, data.room_id, data)
         }
         if (rawState && (rawState.gameType === 'rummy' || rawState.game_type === 'rummy')) {
-          return handleRummyAction(conn, data.room_id, data)
+          return handleRummyAction(conn, data.room_id, data, rawState)
         }
         const { room_id, action, amount, sequence_num } = data
         return handleGameAction(conn, room_id, action, amount, sequence_num)
@@ -791,10 +791,21 @@ async function start() {
   // Rummy: forward draw/discard/declare/drop to the Rummy engine, broadcast
   // the new state to the room, then either finish or hand off to the bot
   // driver. Mirrors handleLudoAction.
-  async function handleRummyAction(conn: Conn, room_id: string, data: any): Promise<void> {
+  async function handleRummyAction(conn: Conn, room_id: string, data: any, currentState?: any): Promise<void> {
     const engineUrl = process.env.RUMMY_ENGINE_URL || 'http://127.0.0.1:3012'
     try {
+      // Cancel this room's pending AFK backstop the instant a real action is
+      // RECEIVED — before the engine round trip below (see clearLudoAfkTimer
+      // for the full writeup).
       matchmaking.clearRummyAfkTimer(room_id)
+      // Claim this turn immediately so an AFK auto-play that is already
+      // mid-flight (its Redis-deadline recheck ran a moment before this action
+      // arrived) sees the claim and backs off instead of also calling the
+      // engine for the same turn. Without it both reach the engine's per-room
+      // lock, the loser gets a 409, and that loser can be the player's own
+      // genuine tap. Mirrors handleLudoAction. See claimRummyTurn.
+      const currentTurnIdx = currentState?.current_turn ?? currentState?.currentTurn ?? 0
+      void matchmaking.claimRummyTurn(room_id, currentTurnIdx)
 
       const res = await fetch(`${engineUrl}/action`, {
         method: 'POST',
