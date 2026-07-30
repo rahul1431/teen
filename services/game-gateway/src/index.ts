@@ -820,7 +820,16 @@ async function start() {
       })
       if (!res.ok) {
         const msg = await res.text()
-        return hub.send(conn, 'error', { message: msg || 'Engine error' })
+        hub.send(conn, 'error', { message: msg || 'Engine error' })
+        // clearRummyAfkTimer ran above, so bailing out here would leave the
+        // room with no AFK backstop at all — a rejected action (409 "Not your
+        // turn", a bad declare payload, engine hiccup) would silently disarm
+        // the only thing that unsticks an idle table, and the 15-min room
+        // watchdog would be the sole remaining safety net. driveRummyBots
+        // re-reads the (unchanged) state and either drives the bot whose turn
+        // it is or re-arms a fresh AFK timer for the human.
+        void matchmaking.driveRummyBots(room_id)
+        return
       }
       const out = await res.json() as any
       const newState = out.state
@@ -847,6 +856,10 @@ async function start() {
     } catch (e) {
       console.error('Rummy action failed', e)
       hub.send(conn, 'error', { message: 'Engine unavailable' })
+      // Same reasoning as the !res.ok path above: the AFK timer was cleared
+      // before the round trip, so re-arm it rather than leaving the table with
+      // no backstop.
+      void matchmaking.driveRummyBots(room_id)
     }
   }
 
@@ -861,7 +874,12 @@ async function start() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ room_id, user_id: conn.userId }),
       })
-      if (!res.ok) return
+      if (!res.ok) {
+        // AFK timer was cleared above — re-arm it (or drive the bot whose turn
+        // it is) instead of leaving the table with no backstop.
+        void matchmaking.driveRummyBots(room_id)
+        return
+      }
       const out = await res.json() as any
       if (out.state) {
         await matchmaking.setRoomState(room_id, { ...out.state, gameType: 'rummy' })
@@ -879,6 +897,7 @@ async function start() {
       }
     } catch (e) {
       console.error('Rummy leave failed', e)
+      void matchmaking.driveRummyBots(room_id)
     }
   }
 
