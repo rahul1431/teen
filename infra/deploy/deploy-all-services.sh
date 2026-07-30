@@ -29,6 +29,7 @@ declare -A SERVICE_APPS=(
   [game-gateway]="teen-gateway teen-gateway-2 teen-gateway-3"
   [game-engines/aviator]="teen-aviator"
   [game-engines/ludo]="teen-ludo"
+  [game-engines/rummy]="teen-rummy"
   [admin-service]="teen-admin-svc"
   [monitoring-service]="teen-monitoring"
   [risk-service]="teen-risk"

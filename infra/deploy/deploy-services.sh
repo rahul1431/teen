@@ -42,6 +42,11 @@ cd "$BASE/services/game-engines/ludo"
 npm install --production=false
 npm run build
 
+echo "==> Installing Rummy engine dependencies..."
+cd "$BASE/services/game-engines/rummy"
+npm install --production=false
+npm run build
+
 echo "==> Building Teen Patti Go engine..."
 cd "$BASE/services/game-engines/teen-patti"
 /usr/local/go/bin/go mod tidy

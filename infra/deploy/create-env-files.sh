@@ -64,6 +64,20 @@ ENV
   echo "Created: $LUDO_ENV"
 fi
 
+# Create rummy engine env (HTTP engine behind the gateway, no JWT needed —
+# same shape as Ludo). PORT must match RUMMY_ENGINE_URL's port in the
+# game-gateway .env (the gateway defaults to http://127.0.0.1:3012).
+RUMMY_ENV="$BASE/services/game-engines/rummy/.env"
+if [ ! -f "$RUMMY_ENV" ]; then
+cat > "$RUMMY_ENV" << ENV
+PORT=3012
+NODE_ENV=production
+DATABASE_URL=postgresql://teen:teen_secret_2024@localhost:5432/teen_db
+REDIS_URL=redis://:teen_redis_2024@localhost:6379
+ENV
+  echo "Created: $RUMMY_ENV"
+fi
+
 # Create Teen Patti engine env (Go binary, no JWT needed — same as Ludo).
 # This was never generated at all before 2026-07-29: the Go binary can't parse
 # dotenv itself, so a missing .env here silently falls back to the hardcoded
