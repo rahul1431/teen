@@ -11,7 +11,7 @@ import {
   ControlOutlined, ThunderboltOutlined, AppstoreOutlined,
   UserOutlined, SafetyCertificateOutlined, ExperimentOutlined,
   IdcardOutlined, BlockOutlined, RocketOutlined, NumberOutlined,
-  CrownOutlined, AimOutlined,
+  CrownOutlined, AimOutlined, EyeOutlined,
   SoundOutlined, TagOutlined, PictureOutlined, FileTextOutlined,
   DollarOutlined, WarningOutlined, SafetyOutlined, AuditOutlined,
   BellOutlined, TrophyOutlined, CustomerServiceOutlined,
@@ -78,6 +78,7 @@ export function buildMenuItems(): MenuProps['items'] {
         { key: '/admin/risk-center', icon: createElement(WarningOutlined), label: link('/admin/risk-center', 'Risk Center') },
         { key: '/admin/security', icon: createElement(SafetyOutlined), label: link('/admin/security', 'Security') },
         { key: '/admin/kyc', icon: createElement(AuditOutlined), label: link('/admin/kyc', 'KYC Verification') },
+        { key: '/admin/game-rooms', icon: createElement(EyeOutlined), label: link('/admin/game-rooms', 'Live Game Rooms') },
       ],
     },
     {

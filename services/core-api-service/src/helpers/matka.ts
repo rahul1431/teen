@@ -67,17 +67,20 @@ export async function settleMatkaSession(
     if (!drawRes.rows.length) throw new Error('Draw not found')
     const draw = drawRes.rows[0]
 
+    const cfgRes = await client.query(`SELECT rake_percent FROM game_configs WHERE game_type = 'matka'`)
+    const rakeMultiplier = 1 - (Number(cfgRes.rows[0]?.rake_percent) || 0) / 100
+
     if (session === 'open') {
       await client.query(
         `UPDATE matka_draws SET open_panna = $1, open_digit = $2, status = 'open_declared' WHERE id = $3`,
         [panna, digit, drawId],
       )
       const wonRes = await client.query(
-        `UPDATE matka_bets SET status = 'won', payout = potential_payout
+        `UPDATE matka_bets SET status = 'won', payout = ROUND((potential_payout * $4)::numeric, 2)
          WHERE draw_id = $1 AND status = 'pending' AND session = 'open'
            AND ((bet_type = 'single' AND number = $2) OR (bet_type IN ('single_panna','double_panna','triple_panna') AND number = $3))
          RETURNING id, user_id, payout`,
-        [drawId, String(digit), panna],
+        [drawId, String(digit), panna, rakeMultiplier],
       )
       for (const row of wonRes.rows) {
         winners++
@@ -89,7 +92,8 @@ export async function settleMatkaSession(
       )
       settled = wonRes.rowCount! + lostRes.rowCount!
     } else {
-      const jodi = `${draw.open_digit ?? 0}${digit}`
+      if (draw.open_digit === null) throw new Error('Cannot declare Close before Open has been declared for this draw')
+      const jodi = `${draw.open_digit}${digit}`
       await client.query(
         `UPDATE matka_draws SET close_panna = $1, close_digit = $2, jodi = $3, status = 'settled' WHERE id = $4`,
         [panna, digit, jodi, drawId],
@@ -102,7 +106,7 @@ export async function settleMatkaSession(
       const fsVal = `${openPanna}${panna}`
 
       const wonRes = await client.query(
-        `UPDATE matka_bets SET status = 'won', payout = potential_payout
+        `UPDATE matka_bets SET status = 'won', payout = ROUND((potential_payout * $8)::numeric, 2)
          WHERE draw_id = $1 AND status = 'pending'
            AND ((bet_type = 'jodi' AND number = $2)
              OR (session = 'close' AND bet_type = 'single' AND number = $3)
@@ -111,7 +115,7 @@ export async function settleMatkaSession(
              OR (bet_type = 'half_sangam_b' AND number = $6)
              OR (bet_type = 'full_sangam' AND number = $7))
          RETURNING id, user_id, payout`,
-        [drawId, jodi, String(digit), panna, hsAVal, hsBVal, fsVal],
+        [drawId, jodi, String(digit), panna, hsAVal, hsBVal, fsVal, rakeMultiplier],
       )
       for (const row of wonRes.rows) {
         winners++

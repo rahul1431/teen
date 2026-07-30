@@ -53,17 +53,20 @@ class _LudoGamePageState extends State<LudoGamePage>
 
   bool _muted = false;
 
-  // Visible countdown while it's the local player's turn to roll — mirrors
-  // the server-side per-turn AFK auto-play window (LUDO_TURN_TIMEOUT_MS in
-  // game-gateway) so a slow player can actually see time running out
-  // instead of being surprised when their turn gets auto-played.
+  // Visible countdown for the local player's turn — covers both the roll
+  // and the token-move-selection phase, mirroring the server-side per-turn
+  // AFK auto-play window (LUDO_TURN_TIMEOUT_MS in game-gateway) so a slow
+  // player can actually see time running out instead of being surprised
+  // when their turn gets auto-played.
   static const int _turnTimerSeconds = 30;
   Timer? _turnTimer;
   int _turnSecondsLeft = _turnTimerSeconds;
 
   void _syncTurnTimer() {
-    final active =
-        _isMyTurn && _state?.awaiting == 'roll' && !_rolling && !_botBusy;
+    final active = _isMyTurn &&
+        (_state?.awaiting == 'roll' || _state?.awaiting == 'move') &&
+        !_rolling &&
+        !_botBusy;
     if (active) {
       _turnTimer ??= Timer.periodic(const Duration(seconds: 1), (t) {
         if (!mounted) {

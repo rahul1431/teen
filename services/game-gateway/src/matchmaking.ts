@@ -73,6 +73,9 @@ export class MatchmakingService {
   private timers = new Map<string, NodeJS.Timeout>()
   private botTimers = new Map<string, { timer: NodeJS.Timeout; turnIdx: number }>()
   private ludoAfkTimers = new Map<string, NodeJS.Timeout>()
+  // Fallback used when game_configs.special_rules.turn_timeout_seconds
+  // (admin-editable, seeded in 008_enable_ludo.sql) is missing or invalid —
+  // see getLudoAfkTimeoutMs(), which is the actual value used at runtime.
   private static readonly LUDO_TURN_TIMEOUT_MS = 30000
   private teenPattiAfkTimers = new Map<string, NodeJS.Timeout>()
   // Match client's 30s self-fold countdown (mobile/lib/features/games/teen_patti/game_page.dart
@@ -1462,12 +1465,31 @@ export class MatchmakingService {
   // authoritative in Redis (shared, same pattern as GameWatchdog) — every
   // instance's local setTimeout is just a wake-up mechanism that re-checks
   // Redis before acting.
+  // Reads the admin-configurable AFK window for Ludo (game_configs.special_rules
+  // .turn_timeout_seconds), falling back to LUDO_TURN_TIMEOUT_MS if the config
+  // row/field is missing or invalid. Queried fresh per turn (like bot_difficulty
+  // in startGame above) so an admin edit takes effect on the very next turn.
+  private async getLudoAfkTimeoutMs(): Promise<number> {
+    try {
+      const res = await this.db.query(
+        `SELECT (special_rules->>'turn_timeout_seconds')::numeric AS turn_timeout_seconds
+         FROM game_configs WHERE game_type = 'ludo'`,
+      )
+      const seconds = Number(res.rows[0]?.turn_timeout_seconds)
+      if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000
+    } catch (err) {
+      console.error('[matchmaking] Failed to query ludo turn_timeout_seconds from game_configs', err)
+    }
+    return MatchmakingService.LUDO_TURN_TIMEOUT_MS
+  }
+
   private async scheduleLudoAfkTimer(roomId: string, turnIdx: number): Promise<void> {
     const existing = this.ludoAfkTimers.get(roomId)
     if (existing) clearTimeout(existing)
     this.ludoAfkTimers.delete(roomId)
 
-    const deadline = Date.now() + MatchmakingService.LUDO_TURN_TIMEOUT_MS
+    const timeoutMs = await this.getLudoAfkTimeoutMs()
+    const deadline = Date.now() + timeoutMs
     try {
       await this.redis.setex(
         this.ludoAfkRedisKey(roomId),
@@ -1479,7 +1501,7 @@ export class MatchmakingService {
     const timer = setTimeout(() => {
       this.ludoAfkTimers.delete(roomId)
       void this.autoPlayIdleLudoTurn(roomId, turnIdx, deadline)
-    }, MatchmakingService.LUDO_TURN_TIMEOUT_MS)
+    }, timeoutMs)
     this.ludoAfkTimers.set(roomId, timer)
   }
 

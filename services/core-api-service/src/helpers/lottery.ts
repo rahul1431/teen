@@ -44,6 +44,9 @@ export async function settleLottery(
     const tiers: PrizeTier[] = draw.prize_tiers || []
     const ticketPrice = Number(draw.ticket_price)
 
+    const cfgRes = await client.query(`SELECT rake_percent FROM game_configs WHERE game_type = 'lottery'`)
+    const rakeMultiplier = 1 - (Number(cfgRes.rows[0]?.rake_percent) || 0) / 100
+
     await client.query(
       `UPDATE lottery_draws SET winning_number = $1, status = 'settled' WHERE id = $2`,
       [winningNumber, drawId],
@@ -55,7 +58,7 @@ export async function settleLottery(
     for (const t of ticketsRes.rows) {
       const tier = findMatchingTier(t.ticket_number, winningNumber, tiers)
       if (tier) {
-        const prize = ticketPrice * Number(tier.multiplier)
+        const prize = Math.round(ticketPrice * Number(tier.multiplier) * rakeMultiplier * 100) / 100
         await client.query(`UPDATE lottery_tickets SET is_winner = true, prize = $1 WHERE id = $2`, [prize, t.id])
         winners++
         paid += prize

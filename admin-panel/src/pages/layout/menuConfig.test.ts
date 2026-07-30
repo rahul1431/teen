@@ -23,6 +23,7 @@ const EXPECTED_KEYS = [
   '/admin/notifications',
   '/admin/notifications-history',
   '/admin/risk-center',
+  '/admin/game-rooms',
   '/admin/ai-control',
   '/admin/support',
   '/admin/leaderboard',

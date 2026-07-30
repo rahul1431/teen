@@ -53,6 +53,8 @@ export function bettingPlugin(db: Pool) {
       const body = z.object({ market_id: z.string().uuid(), bet_type: z.string(), session: z.enum(['open', 'close']).default('open'), number: z.string(), amount: z.number().positive() }).parse(req.body)
       const err = validateMatkaBet(body.bet_type, body.number)
       if (err) return reply.code(400).send({ error: err })
+      const matkaCfg = await db.query(`SELECT is_active FROM game_configs WHERE game_type = 'matka'`)
+      if (matkaCfg.rows.length && matkaCfg.rows[0].is_active === false) return reply.code(403).send({ error: 'Matka betting is currently disabled' })
       const draw = await todayDraw(body.market_id)
       if (draw.status === 'settled') return reply.code(409).send({ error: 'Market closed for today' })
       
@@ -148,6 +150,8 @@ export function bettingPlugin(db: Pool) {
       if (!drawRes.rows.length) return reply.code(409).send({ error: 'Draw not open' })
       const draw = drawRes.rows[0]
       if (!/^[0-9]{4}$/.test(ticketNumClean)) return reply.code(400).send({ error: 'Ticket number must be exactly 4 digits.' })
+      const lotteryCfg = await db.query(`SELECT is_active FROM game_configs WHERE game_type = 'lottery'`)
+      if (lotteryCfg.rows.length && lotteryCfg.rows[0].is_active === false) return reply.code(403).send({ error: 'Lottery is currently disabled' })
       
       const checkRes = await db.query(`SELECT 1 FROM lottery_tickets WHERE draw_id = $1 AND ticket_number = $2`, [body.draw_id, ticketNumClean])
       if (checkRes.rows.length > 0) return reply.code(409).send({ error: 'Ticket number is already reserved by another player' })
@@ -466,10 +470,14 @@ export function bettingPlugin(db: Pool) {
     })
 
     // ══ INTERNAL ══
-    app.post('/internal/matka/declare', { onRequest: [internal] }, async (req) => {
+    app.post('/internal/matka/declare', { onRequest: [internal] }, async (req, reply) => {
       const body = z.object({ draw_id: z.string().uuid(), session: z.enum(['open', 'close']), panna: z.string().regex(/^[0-9]{3}$/) }).parse(req.body)
-      const res = await settleMatkaSession(db, body.draw_id, body.session, body.panna)
-      return { success: true, ...res }
+      try {
+        const res = await settleMatkaSession(db, body.draw_id, body.session, body.panna)
+        return { success: true, ...res }
+      } catch (err: any) {
+        return reply.code(409).send({ error: err.message || 'Declare failed' })
+      }
     })
 
     app.post('/internal/lottery/create', { onRequest: [internal] }, async (req) => {
