@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
-import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'rummy_engine.dart';
 
@@ -25,7 +24,6 @@ class RummyGamePage extends StatefulWidget {
 class _RummyGamePageState extends State<RummyGamePage> {
   final _engine = RummyEngine();
   final _socket = SocketService();
-  final _api = ApiClient();
   final _subs = <StreamSubscription>[];
 
   RummyEngineState? _offlineState;
@@ -228,7 +226,6 @@ class _RummyGamePageState extends State<RummyGamePage> {
   }
 
   // ── Shared UI ─────────────────────────────────────────────────────────
-  RummyEngineState? get _offline => widget.offline ? _offlineState : null;
   bool get _isMyTurn => widget.offline
       ? _offlineState?.currentTurn == _mySeatIndex
       : (_onlineState?['current_turn'] == _mySeatIndex);

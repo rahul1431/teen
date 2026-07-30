@@ -1037,7 +1037,17 @@ export class MatchmakingService {
     }
 
     const gameState = engineState || fallbackState
-    // Always cache in gateway key so game:action handler can find the room
+    // Always cache in gateway key so game:action handler can find the room.
+    // NOTE: this cache intentionally still carries full player hands for
+    // Rummy (the `cards: undefined` strip below is a no-op for Rummy, whose
+    // private field is `hand` — see RummyPlayer in
+    // services/game-engines/rummy/src/rules.ts). Unlike Teen Patti, Rummy
+    // has no separate raw-state Redis key (Teen Patti's reconnect path reads
+    // `tp:game:${room_id}` to recover a reconnecting player's own cards), so
+    // this cache is the only place a reconnecting Rummy player's own hand
+    // can be recovered from. Redaction for Rummy therefore happens at every
+    // SEND site instead (join_room's personalization below, and
+    // broadcastRummyStateUpdate for in-game broadcasts) — never at write time.
     await this.redis.setex(`game:room:${roomId}`, 3600, JSON.stringify({
       ...fallbackState,
       // Include engine players (with cards) if available, but strip private cards from shared state
@@ -1060,12 +1070,20 @@ export class MatchmakingService {
       this.hub.joinRoom(p.userId, roomId)
       this.hub.sendToUser(p.userId, 'room:joined', {
         room_id: roomId,
-        players: (engineState?.players ?? gatewayPlayers).map((ep: any) => ({
-          ...ep,
-          userId: ep.user_id ?? ep.userId,
-          cards: undefined, // opponents' cards hidden
-        })),
+        players: (engineState?.players ?? gatewayPlayers).map((ep: any) => {
+          const epId = ep.user_id ?? ep.userId
+          return {
+            ...ep,
+            userId: epId,
+            cards: undefined, // opponents' cards hidden
+            // Rummy: only the recipient's own hand stays intact — every other
+            // seat's hand is redacted to a count (mirrors broadcastRummyStateUpdate).
+            hand: epId === p.userId ? ep.hand : undefined,
+            hand_count: gameType === 'rummy' && epId !== p.userId && Array.isArray(ep.hand) ? ep.hand.length : undefined,
+          }
+        }),
         my_cards: myPlayerData?.cards ?? [],
+        my_hand: myPlayerData?.hand ?? [],
         your_seat: gatewayPlayers.find(pl => pl.userId === p.userId)?.seat,
         game_type: gameType,
         stake,
@@ -1798,6 +1816,31 @@ export class MatchmakingService {
   private rummyAfkTimers = new Map<string, NodeJS.Timeout>()
   private static readonly RUMMY_TURN_TIMEOUT_MS = 30000
 
+  // Rummy hands change every turn (unlike Ludo's public board or Teen
+  // Patti's mostly-static per-round hand), so a single shared sendToRoom
+  // broadcast can't work without leaking every player's cards to everyone
+  // in the room. Send each real player a personalized copy: their own hand
+  // intact, every other player's hand redacted to just a count.
+  // Not private: called cross-file from index.ts's handleRummyAction/
+  // handleRummyLeave (same pattern as the already-public driveRummyBots,
+  // clearRummyAfkTimer, handleRummyEnd).
+  broadcastRummyStateUpdate(roomId: string, payload: { state: any; last_action?: any; result?: any; declare_rejected_reason?: any; ts?: number }): void {
+    const players = payload.state?.players ?? []
+    for (const p of players) {
+      if (p.is_bot) continue
+      const redactedPlayers = players.map((other: any) =>
+        other.user_id === p.user_id
+          ? other
+          : { ...other, hand: undefined, hand_count: Array.isArray(other.hand) ? other.hand.length : undefined },
+      )
+      this.hub.sendToUser(p.user_id, 'game:state_update', {
+        room_id: roomId,
+        ...payload,
+        state: { ...payload.state, players: redactedPlayers },
+      })
+    }
+  }
+
   // Drive consecutive bot turns for a Rummy room until it's a human's turn
   // or the game ends. Mirrors driveLudoBots exactly.
   async driveRummyBots(roomId: string): Promise<void> {
@@ -1825,8 +1868,7 @@ export class MatchmakingService {
         const data = await res.json() as any
         const newState = data.state
         await this.setRoomState(roomId, { ...newState, gameType: 'rummy' })
-        this.hub.sendToRoom(roomId, 'game:state_update', {
-          room_id: roomId,
+        this.broadcastRummyStateUpdate(roomId, {
           state: newState,
           last_action: { user_id: cur.user_id ?? cur.userId, action: 'bot' },
           result: data.result ?? null,
@@ -1913,8 +1955,7 @@ export class MatchmakingService {
       this.hub.sendToUser(cur.user_id ?? cur.userId, 'error', {
         message: 'You took too long — your turn was played automatically.',
       })
-      this.hub.sendToRoom(roomId, 'game:state_update', {
-        room_id: roomId,
+      this.broadcastRummyStateUpdate(roomId, {
         state: newState,
         last_action: { user_id: cur.user_id ?? cur.userId, action: 'auto_afk' },
         result: data.result ?? null,

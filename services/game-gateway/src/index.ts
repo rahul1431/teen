@@ -320,15 +320,34 @@ async function start() {
           }
 
           const gameType = rawState.gameType ?? rawState.game_type
+          const isRummy = gameType === 'rummy'
+          // Rummy: the cached rawState (game:room:<id>) carries every
+          // player's FULL hand — unlike Teen Patti, Rummy has no separate
+          // raw-state Redis key to pull from, so this cache doubles as the
+          // only place a reconnecting player's own hand can be recovered
+          // from. It must never be forwarded verbatim: redact every other
+          // seat's hand to just a count before it goes out, on both the
+          // `players` field and the embedded `state.players` (the mobile
+          // client reads its own hand from state.players[mySeat].hand).
+          let myHand: any[] = []
+          const outgoingPlayers = rawState.players?.map((p: any) => {
+            const pid = p.userId ?? p.user_id
+            const isMe = pid === conn.userId
+            if (isRummy && isMe) myHand = p.hand ?? []
+            return {
+              ...p,
+              userId: pid,
+              cards: undefined, // ensure opponents' cards hidden
+              hand: isRummy && !isMe ? undefined : p.hand,
+              hand_count: isRummy && !isMe && Array.isArray(p.hand) ? p.hand.length : undefined,
+            }
+          })
           // Send room:joined event to sync this connection
           hub.send(conn, 'room:joined', {
             room_id,
-            players: rawState.players?.map((p: any) => ({
-              ...p,
-              userId: p.userId ?? p.user_id,
-              cards: undefined, // ensure opponents' cards hidden
-            })),
+            players: outgoingPlayers,
             my_cards: myCards,
+            my_hand: isRummy ? myHand : undefined,
             your_seat: rawState.players?.findIndex((p: any) => (p.userId ?? p.user_id) === conn.userId) + 1,
             game_type: gameType,
             stake: rawState.stake,
@@ -336,7 +355,7 @@ async function start() {
             current_turn: rawState.currentTurn ?? rawState.current_turn ?? 0,
             dealer_id: rawState.dealer_id ?? rawState.DealerID,
             min_bet: rawState.minBet ?? rawState.min_bet ?? rawState.stake,
-            state: (gameType === 'ludo' || gameType === 'rummy') ? rawState : undefined,
+            state: gameType === 'ludo' ? rawState : (isRummy ? { ...rawState, players: outgoingPlayers } : undefined),
           })
 
           // Bot recovery: if it's currently a bot's turn, trigger/drive the bot
@@ -787,8 +806,7 @@ async function start() {
         amount: 0,
       })
       await matchmaking.setRoomState(room_id, { ...newState, gameType: 'rummy' })
-      hub.sendToRoom(room_id, 'game:state_update', {
-        room_id,
+      matchmaking.broadcastRummyStateUpdate(room_id, {
         state: newState,
         last_action: { user_id: conn.userId, action: data.action },
         ts: Date.now(),
@@ -821,8 +839,7 @@ async function start() {
       const out = await res.json() as any
       if (out.state) {
         await matchmaking.setRoomState(room_id, { ...out.state, gameType: 'rummy' })
-        hub.sendToRoom(room_id, 'game:state_update', {
-          room_id,
+        matchmaking.broadcastRummyStateUpdate(room_id, {
           state: out.state,
           last_action: { user_id: conn.userId, action: 'leave' },
           ts: Date.now(),
