@@ -112,6 +112,17 @@ module.exports = {
       env: NODE_OPTS,
     },
     {
+      name: 'teen-rummy',
+      cwd: `${BASE}/game-engines/rummy`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('game-engines/rummy'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '200M',
+      env: NODE_OPTS,
+    },
+    {
       name: 'teen-tp-engine',
       cwd: `${BASE}/game-engines/teen-patti`,
       script: './teen-patti-engine',
