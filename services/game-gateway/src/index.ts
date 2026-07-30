@@ -1394,9 +1394,17 @@ async function start() {
       [roomId]
     )
 
-    // 3. Delete states from Redis
+    // 3. Delete states from Redis. Each engine keeps its OWN authoritative
+    // state under its own key, separate from the gateway's game:room:<id>
+    // cache — leaving one behind means the engine still answers /action for a
+    // room the admin terminated and everyone was already refunded for, so a
+    // stale client could keep playing a game that no longer exists.
     await redis.del(`game:room:${roomId}`)
     await redis.del(`tp:game:${roomId}`)
+    await redis.del(`rummy:game:${roomId}`)
+    // NOTE: ludo:game:<roomId> has the same gap and is deliberately left alone
+    // here (out of scope for the Rummy work) rather than fixed blind.
+    await redis.del(`rummy:afk:${roomId}`)
 
     // 4. Broadcast termination event to players in the room
     hub.sendToRoom(roomId, 'game:terminated', { message: 'Game terminated by administrator. Stake refunded.' })
