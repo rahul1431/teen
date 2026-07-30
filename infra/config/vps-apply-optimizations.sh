@@ -22,8 +22,11 @@ pm2 start ecosystem.config.js --only teen-core-api
 echo "=== [4/5] Restart PM2 ecosystem ==="
 cd $BASE
 pm2 reload ecosystem.config.js
-# gateway now runs 1 instance; bot-learning is disabled
-pm2 delete teen-auth teen-user teen-leaderboard teen-notify teen-betting teen-bot-learning 2>/dev/null || true
+# Pre-consolidation process names (merged into teen-core-api) — safe no-op
+# if already gone. teen-bot-learning is NOT in this group: it's a live app
+# in ecosystem.config.js running the nightly bot-profile rebuild job, and
+# must not be deleted here.
+pm2 delete teen-auth teen-user teen-leaderboard teen-notify teen-betting 2>/dev/null || true
 pm2 save
 
 echo "=== [5/5] Reload nginx ==="

@@ -17,6 +17,28 @@ import { WalletService } from './wallet.service'
 // Where uploaded deposit screenshots are stored (served by nginx at /uploads/).
 const UPLOAD_DIR = process.env.UPLOAD_DIR || '/opt/teen/uploads/deposits'
 
+// Platform-wide deposit/withdrawal amount limits — configurable via .env
+// (see services/wallet-service/.env.example) rather than hardcoded.
+const MIN_DEPOSIT_AMOUNT = parseFloat(process.env.MIN_DEPOSIT_AMOUNT || '10')
+const MAX_DEPOSIT_AMOUNT = parseFloat(process.env.MAX_DEPOSIT_AMOUNT || '100000')
+const MIN_WITHDRAWAL_AMOUNT = parseFloat(process.env.MIN_WITHDRAWAL_AMOUNT || '100')
+const MAX_WITHDRAWAL_AMOUNT = parseFloat(process.env.MAX_WITHDRAWAL_AMOUNT || '50000')
+
+// Withdrawal window: 10 AM - 9 PM India time. Mirrors the client-side gate in
+// wallet_page.dart's _withdrawOpen, but enforced here against server/IST
+// time rather than the device's (spoofable) local clock — see
+// docs/Bugs/withdrawal-hours-restriction-is-client-side-only.md.
+const WITHDRAWAL_WINDOW_START_HOUR = 10
+const WITHDRAWAL_WINDOW_END_HOUR = 21
+
+function isWithdrawalWindowOpen(): boolean {
+  const istHour = parseInt(
+    new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', hour: 'numeric', hourCycle: 'h23' }).format(new Date()),
+    10
+  )
+  return istHour >= WITHDRAWAL_WINDOW_START_HOUR && istHour < WITHDRAWAL_WINDOW_END_HOUR
+}
+
 // Credit the referrer when their referee makes their first deposit.
 // Idempotency key `referral_reward:<referral_id>` guarantees exactly-once credit.
 async function tryTriggerReferralReward(userId: string, db: Pool, walletSvc: any): Promise<void> {
@@ -162,7 +184,7 @@ async function start() {
   // POST /wallet/deposit/create-order
   app.post('/wallet/deposit/create-order', { onRequest: [authenticate] }, async (req, reply) => {
     const user = req.user as any
-    const body = z.object({ amount: z.number().min(10).max(100000) }).parse(req.body)
+    const body = z.object({ amount: z.number().min(MIN_DEPOSIT_AMOUNT).max(MAX_DEPOSIT_AMOUNT) }).parse(req.body)
 
     if (!razorpay) {
       return reply.code(503).send({ error: 'Online payment gateway not configured. Use manual deposit.' })
@@ -476,8 +498,12 @@ async function start() {
   app.post('/wallet/withdraw/request', { onRequest: [authenticate] }, async (req, reply) => {
     const user = req.user as any
     const body = z.object({
-      amount: z.number().min(100).max(50000),
+      amount: z.number().min(MIN_WITHDRAWAL_AMOUNT).max(MAX_WITHDRAWAL_AMOUNT),
     }).parse(req.body)
+
+    if (!isWithdrawalWindowOpen()) {
+      return reply.code(403).send({ error: `Withdrawals are open ${WITHDRAWAL_WINDOW_START_HOUR}:00 AM - ${WITHDRAWAL_WINDOW_END_HOUR - 12}:00 PM IST` })
+    }
 
     // KYC check first
     const kycRes = await db.query('SELECT kyc_status FROM users WHERE id = $1', [user.sub])
