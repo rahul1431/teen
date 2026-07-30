@@ -253,6 +253,9 @@ async function start() {
         if (rawState && (rawState.gameType === 'ludo' || rawState.game_type === 'ludo')) {
           return handleLudoAction(conn, data.room_id, data)
         }
+        if (rawState && (rawState.gameType === 'rummy' || rawState.game_type === 'rummy')) {
+          return handleRummyAction(conn, data.room_id, data)
+        }
         const { room_id, action, amount, sequence_num } = data
         return handleGameAction(conn, room_id, action, amount, sequence_num)
       }
@@ -263,6 +266,9 @@ async function start() {
         const rawState = await matchmaking.getRoomState(data.room_id)
         if (rawState && (rawState.gameType === 'ludo' || rawState.game_type === 'ludo')) {
           return handleLudoLeave(conn, data.room_id)
+        }
+        if (rawState && (rawState.gameType === 'rummy' || rawState.game_type === 'rummy')) {
+          return handleRummyLeave(conn, data.room_id)
         }
         return
       }
@@ -330,7 +336,7 @@ async function start() {
             current_turn: rawState.currentTurn ?? rawState.current_turn ?? 0,
             dealer_id: rawState.dealer_id ?? rawState.DealerID,
             min_bet: rawState.minBet ?? rawState.min_bet ?? rawState.stake,
-            state: gameType === 'ludo' ? rawState : undefined,
+            state: (gameType === 'ludo' || gameType === 'rummy') ? rawState : undefined,
           })
 
           // Bot recovery: if it's currently a bot's turn, trigger/drive the bot
@@ -340,6 +346,8 @@ async function start() {
             console.log(`[ws] join_room bot recovery: driving bot turn for room=${room_id} turn=${currentIdx}`)
             if (rawState.gameType === 'ludo' || rawState.game_type === 'ludo') {
               void matchmaking.driveLudoBots(room_id)
+            } else if (rawState.gameType === 'rummy' || rawState.game_type === 'rummy') {
+              void matchmaking.driveRummyBots(room_id)
             } else {
               const realPlayers = (rawState.players ?? []).filter((p: any) => !(p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
               const bots = (rawState.players ?? []).filter((p: any) => (p.isBot || p.is_bot)).map((p: any) => ({ userId: p.userId ?? p.user_id, username: p.username }))
@@ -743,6 +751,91 @@ async function start() {
       }
     } catch (e) {
       console.error('Ludo leave failed', e)
+    }
+  }
+
+  // Rummy: forward draw/discard/declare/drop to the Rummy engine, broadcast
+  // the new state to the room, then either finish or hand off to the bot
+  // driver. Mirrors handleLudoAction.
+  async function handleRummyAction(conn: Conn, room_id: string, data: any): Promise<void> {
+    const engineUrl = process.env.RUMMY_ENGINE_URL || 'http://127.0.0.1:3012'
+    try {
+      matchmaking.clearRummyAfkTimer(room_id)
+
+      const res = await fetch(`${engineUrl}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          room_id,
+          user_id: conn.userId,
+          action: data.action,
+          card_id: data.card_id,
+          groups: data.groups,
+        }),
+      })
+      if (!res.ok) {
+        const msg = await res.text()
+        return hub.send(conn, 'error', { message: msg || 'Engine error' })
+      }
+      const out = await res.json() as any
+      const newState = out.state
+      monitorEmitter.emit('game_action', {
+        game_type: 'rummy',
+        room_id,
+        user_id: conn.userId,
+        action: data.action,
+        amount: 0,
+      })
+      await matchmaking.setRoomState(room_id, { ...newState, gameType: 'rummy' })
+      hub.sendToRoom(room_id, 'game:state_update', {
+        room_id,
+        state: newState,
+        last_action: { user_id: conn.userId, action: data.action },
+        ts: Date.now(),
+        result: out.result ?? null,
+        declare_rejected_reason: out.declare_rejected_reason ?? null,
+      })
+      if (out.result) {
+        await matchmaking.handleRummyEnd(room_id, out.result)
+      } else {
+        void matchmaking.driveRummyBots(room_id)
+      }
+    } catch (e) {
+      console.error('Rummy action failed', e)
+      hub.send(conn, 'error', { message: 'Engine unavailable' })
+    }
+  }
+
+  // A real player tapped Leave in a Rummy game — forfeit. Consistent with
+  // Ludo: no refund, game continues or ends via last-player-standing.
+  async function handleRummyLeave(conn: Conn, room_id: string): Promise<void> {
+    const engineUrl = process.env.RUMMY_ENGINE_URL || 'http://127.0.0.1:3012'
+    try {
+      matchmaking.clearRummyAfkTimer(room_id)
+      const res = await fetch(`${engineUrl}/leave`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id, user_id: conn.userId }),
+      })
+      if (!res.ok) return
+      const out = await res.json() as any
+      if (out.state) {
+        await matchmaking.setRoomState(room_id, { ...out.state, gameType: 'rummy' })
+        hub.sendToRoom(room_id, 'game:state_update', {
+          room_id,
+          state: out.state,
+          last_action: { user_id: conn.userId, action: 'leave' },
+          ts: Date.now(),
+          result: out.result ?? null,
+        })
+      }
+      if (out.result) {
+        await matchmaking.handleRummyEnd(room_id, out.result)
+      } else {
+        void matchmaking.driveRummyBots(room_id)
+      }
+    } catch (e) {
+      console.error('Rummy leave failed', e)
     }
   }
 
