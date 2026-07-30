@@ -963,6 +963,79 @@ export class MatchmakingService {
       return roomId
     }
 
+    // Rummy runs on its own engine too (draw/discard/declare turns, no
+    // dice/cards-in-common-pot shape) — same dedicated-engine pattern as Ludo.
+    if (gameType === 'rummy') {
+      const engineUrl = process.env.RUMMY_ENGINE_URL || 'http://127.0.0.1:3012'
+      const rummyConfigRes = await this.db.query(
+        `SELECT rake_percent, special_rules FROM game_configs WHERE game_type = 'rummy'`,
+      )
+      const rakePercent = Number(rummyConfigRes.rows[0]?.rake_percent) || 5
+      const specialRules = rummyConfigRes.rows[0]?.special_rules || {}
+      const callRummyStart = () => fetch(`${engineUrl}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          room_id: roomId,
+          stake,
+          rake_percent: rakePercent,
+          deck_count: specialRules.deck_count || 2,
+          turn_timeout_seconds: specialRules.turn_timeout_seconds || 30,
+          bot_difficulty: botDifficulty,
+          players: gatewayPlayers.map(p => ({
+            user_id: p.userId,
+            username: p.username,
+            seat: p.seat,
+            is_bot: p.isBot,
+            bot_difficulty: p.botDifficulty,
+          })),
+        }),
+        signal: AbortSignal.timeout(5000),
+      })
+      try {
+        const res = await callRummyStart()
+        if (res.ok) engineState = await res.json()
+        else console.error(`Rummy engine /start returned ${res.status}`)
+      } catch (e) {
+        console.error('Rummy engine unavailable, will retry once', e)
+      }
+
+      if (!engineState) {
+        await new Promise(r => setTimeout(r, 1500))
+        try {
+          const res = await callRummyStart()
+          if (res.ok) engineState = await res.json()
+          else console.error(`Rummy engine /start retry returned ${res.status}`)
+        } catch (e) {
+          console.error('Rummy engine still unavailable after retry', e)
+        }
+      }
+
+      if (!engineState) {
+        if (stake > 0) {
+          for (const p of allPlayers) {
+            try {
+              await fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/unlock`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+                body: JSON.stringify({ user_id: p.userId, amount: stake, room_id: roomId }),
+              })
+            } catch (unlockErr) {
+              console.error(`Failed to unlock wallet for user=${p.userId} after Rummy engine start failure:`, unlockErr)
+            }
+          }
+        }
+        await this.db.query("UPDATE game_rooms SET status = 'cancelled' WHERE id = $1", [roomId])
+          .catch(e => console.error('Failed to mark cancelled Rummy room', e))
+        for (const p of realPlayers) {
+          this.hub.sendToUser(p.userId, 'error', {
+            message: 'Could not start the table — your stake has been refunded. Please try again.',
+          })
+        }
+        return roomId
+      }
+    }
+
     const gameState = engineState || fallbackState
     // Always cache in gateway key so game:action handler can find the room
     await this.redis.setex(`game:room:${roomId}`, 3600, JSON.stringify({
@@ -1709,6 +1782,191 @@ export class MatchmakingService {
       prize: result.prize,
       rankings: result.rankings ?? [],
     })
+  }
+
+  private rummyAfkTimers = new Map<string, NodeJS.Timeout>()
+  private static readonly RUMMY_TURN_TIMEOUT_MS = 30000
+
+  // Drive consecutive bot turns for a Rummy room until it's a human's turn
+  // or the game ends. Mirrors driveLudoBots exactly.
+  async driveRummyBots(roomId: string): Promise<void> {
+    const engineUrl = process.env.RUMMY_ENGINE_URL || 'http://127.0.0.1:3012'
+    for (let guard = 0; guard < 400; guard++) {
+      void GameWatchdog.touch(this.redis, roomId)
+      const state = await this.getRoomState(roomId)
+      if (!state || state.status === 'completed') return
+      const turnIdx = state.current_turn ?? 0
+      const cur = state.players?.[turnIdx]
+      if (!cur || !(cur.is_bot ?? cur.isBot)) {
+        void this.scheduleRummyAfkTimer(roomId, turnIdx)
+        return
+      }
+
+      await new Promise(r => setTimeout(r, 1200))
+      try {
+        const res = await fetch(`${engineUrl}/bot-turn`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ room_id: roomId, user_id: cur.user_id ?? cur.userId }),
+          signal: AbortSignal.timeout(5000),
+        })
+        if (!res.ok) return
+        const data = await res.json() as any
+        const newState = data.state
+        await this.setRoomState(roomId, { ...newState, gameType: 'rummy' })
+        this.hub.sendToRoom(roomId, 'game:state_update', {
+          room_id: roomId,
+          state: newState,
+          last_action: { user_id: cur.user_id ?? cur.userId, action: 'bot' },
+          result: data.result ?? null,
+        })
+        if (data.result) { await this.handleRummyEnd(roomId, data.result); return }
+      } catch (e) {
+        console.error('Rummy bot turn error', e)
+        return
+      }
+    }
+  }
+
+  private async scheduleRummyAfkTimer(roomId: string, turnIdx: number): Promise<void> {
+    const existing = this.rummyAfkTimers.get(roomId)
+    if (existing) clearTimeout(existing)
+    this.rummyAfkTimers.delete(roomId)
+
+    const state = await this.getRoomState(roomId)
+    const timeoutMs = (state?.turn_timeout_seconds ? state.turn_timeout_seconds * 1000 : null) || MatchmakingService.RUMMY_TURN_TIMEOUT_MS
+    const deadline = Date.now() + timeoutMs
+    try {
+      await this.redis.setex(this.rummyAfkRedisKey(roomId), 90, JSON.stringify({ turnIdx, deadline }))
+    } catch { /* Redis hiccup — local timer below still provides a backstop */ }
+
+    const timer = setTimeout(() => {
+      this.rummyAfkTimers.delete(roomId)
+      void this.autoPlayIdleRummyTurn(roomId, turnIdx, deadline)
+    }, timeoutMs)
+    this.rummyAfkTimers.set(roomId, timer)
+  }
+
+  clearRummyAfkTimer(roomId: string): void {
+    const existing = this.rummyAfkTimers.get(roomId)
+    if (existing) clearTimeout(existing)
+    this.rummyAfkTimers.delete(roomId)
+    this.redis.del(this.rummyAfkRedisKey(roomId)).catch(() => {})
+  }
+
+  private rummyAfkRedisKey(roomId: string): string {
+    return `rummy:afk:${roomId}`
+  }
+
+  // Fires when a human's turn has sat idle past the timeout. The minimum
+  // legal auto-action: draw from the closed pile, then discard the first
+  // card in hand (never declares on the player's behalf).
+  private async autoPlayIdleRummyTurn(roomId: string, expectedTurnIdx: number, expectedDeadline: number): Promise<void> {
+    try {
+      const raw = await this.redis.get(this.rummyAfkRedisKey(roomId))
+      if (raw) {
+        const current = JSON.parse(raw) as { turnIdx: number; deadline: number }
+        if (current.turnIdx !== expectedTurnIdx || current.deadline !== expectedDeadline) return
+      }
+    } catch { /* fall through to the local-only check below */ }
+
+    const engineUrl = process.env.RUMMY_ENGINE_URL || 'http://127.0.0.1:3012'
+    const state = await this.getRoomState(roomId)
+    if (!state || state.status === 'completed') return
+    const turnIdx = state.current_turn ?? 0
+    const cur = state.players?.[turnIdx]
+    if (!cur || (cur.is_bot ?? cur.isBot)) return
+
+    try {
+      const drawRes = await fetch(`${engineUrl}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: roomId, user_id: cur.user_id ?? cur.userId, action: 'draw_closed' }),
+        signal: AbortSignal.timeout(5000),
+      })
+      if (!drawRes.ok) return
+      const drawData = await drawRes.json() as any
+      const handAfterDraw = drawData.state.players[turnIdx].hand
+      const discardCardId = handAfterDraw[0].id
+
+      const discardRes = await fetch(`${engineUrl}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: roomId, user_id: cur.user_id ?? cur.userId, action: 'discard', card_id: discardCardId }),
+        signal: AbortSignal.timeout(5000),
+      })
+      if (!discardRes.ok) return
+      const data = await discardRes.json() as any
+      const newState = data.state
+      await this.setRoomState(roomId, { ...newState, gameType: 'rummy' })
+      this.hub.sendToUser(cur.user_id ?? cur.userId, 'error', {
+        message: 'You took too long — your turn was played automatically.',
+      })
+      this.hub.sendToRoom(roomId, 'game:state_update', {
+        room_id: roomId,
+        state: newState,
+        last_action: { user_id: cur.user_id ?? cur.userId, action: 'auto_afk' },
+        result: data.result ?? null,
+      })
+      if (data.result) { await this.handleRummyEnd(roomId, data.result); return }
+      void this.driveRummyBots(roomId)
+    } catch (e) {
+      console.error('Rummy AFK auto-play failed', e)
+    }
+  }
+
+  // Settlement — mirrors handleLudoEnd exactly (wallet settle-game call,
+  // retry-once, Redis reconcile-failed dead-letter list on repeated failure).
+  async handleRummyEnd(roomId: string, result: any): Promise<void> {
+    this.clearRummyAfkTimer(roomId)
+    try {
+      const parts = await this.db.query(
+        'SELECT user_id, entry_fee_deducted, is_bot FROM game_participants WHERE room_id = $1',
+        [roomId],
+      )
+      const players = parts.rows.map(r => ({ user_id: r.user_id, entry_fee: parseFloat(r.entry_fee_deducted) || 0 }))
+
+      const effectiveWinnerId = result?.winner_id || null
+      const effectivePrize = effectiveWinnerId ? Number(result.prize) : 0
+
+      console.log(`[gateway] handleRummyEnd room=${roomId} winner=${result?.winner_id} prize=${effectivePrize}`)
+
+      const settlePayload = JSON.stringify({
+        room_id: roomId,
+        winner_id: effectiveWinnerId,
+        prize: effectivePrize,
+        players,
+        idempotency_key: `settle_${roomId}`,
+      })
+      const callSettle = () => fetch(`${process.env.WALLET_SERVICE_URL}/internal/wallet/settle-game`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+        body: settlePayload,
+      })
+
+      let settleRes = await callSettle()
+      let errBody = ''
+      if (!settleRes.ok) {
+        errBody = await settleRes.text().catch(() => '(unreadable)')
+        console.error(`[gateway] settle-game failed ${settleRes.status} for Rummy room ${roomId}, retrying once:`, errBody)
+        await new Promise(r => setTimeout(r, 2000))
+        settleRes = await callSettle()
+        if (!settleRes.ok) errBody = await settleRes.text().catch(() => '(unreadable)')
+      }
+      if (!settleRes.ok) {
+        console.error(`[gateway] settle-game failed again ${settleRes.status} for Rummy room ${roomId}:`, errBody)
+        try {
+          await this.redis.rpush('rummy:reconcile:failed', JSON.stringify({
+            room_id: roomId, winner_id: effectiveWinnerId, prize: effectivePrize, players,
+            failed_at: Date.now(), reason: `settle-game HTTP ${settleRes.status}: ${errBody}`,
+          }))
+        } catch (redisErr) {
+          console.error(`[RECONCILE-NEEDED] Could not record settle-game failure for room=${roomId}`, redisErr)
+        }
+      }
+    } catch (err) {
+      console.error(`[gateway] handleRummyEnd failed for room=${roomId}:`, err)
+    }
   }
 
   async handleGameEnd(roomId: string, result: any, realPlayers: MatchmakingEntry[], state: any): Promise<void> {
