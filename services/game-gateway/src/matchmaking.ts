@@ -970,7 +970,14 @@ export class MatchmakingService {
       const rummyConfigRes = await this.db.query(
         `SELECT rake_percent, special_rules FROM game_configs WHERE game_type = 'rummy'`,
       )
-      const rakePercent = Number(rummyConfigRes.rows[0]?.rake_percent) || 5
+      // `Number(...) || 5` silently turned an admin-configured 0% rake into 5%
+      // — real money, taken from every pot, against an explicit admin setting.
+      // Distinguish "not set / unparseable" from "set to 0": only the former
+      // falls back. (pg returns numeric columns as strings, so Number('0') === 0
+      // is the value we must preserve here.)
+      const rawRakePercent = rummyConfigRes.rows[0]?.rake_percent
+      const parsedRakePercent = rawRakePercent == null ? NaN : Number(rawRakePercent)
+      const rakePercent = Number.isFinite(parsedRakePercent) ? parsedRakePercent : 5
       const specialRules = rummyConfigRes.rows[0]?.special_rules || {}
       const callRummyStart = () => fetch(`${engineUrl}/start`, {
         method: 'POST',
