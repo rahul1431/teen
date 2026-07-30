@@ -1034,20 +1034,58 @@ export class MatchmakingService {
         }
         return roomId
       }
+
+      // Self-contained from here, exactly like the Ludo branch above — this
+      // must NOT fall through to the shared post-branch code, which is shaped
+      // for Teen Patti: it caches a fallbackState-derived object with no
+      // current_turn/awaiting/open_pile/wild_rank and sends a room:joined with
+      // no usable `state`, so the opening player's client sat frozen
+      // (_isMyTurn false, no piles) until the first game:state_update landed.
+      const rummyState = engineState
+      // Cache the FULL engine state, hands included. Deliberate: unlike Teen
+      // Patti (which keeps a separate tp:game:<id> raw-state key), this cache
+      // is the only place a reconnecting Rummy player's own hand can be
+      // recovered from. Redaction happens at every SEND site instead — see
+      // redactRummyStateForUser.
+      await this.redis.setex(`game:room:${roomId}`, 3600, JSON.stringify({ ...rummyState, gameType: 'rummy', stake }))
+
+      console.log(`[matchmaking] emitting room:joined (rummy) to ${realPlayers.length} players for room=${roomId}`)
+      for (const p of realPlayers) {
+        this.hub.joinRoom(p.userId, roomId)
+        // Same per-player redaction as join_room and every in-game broadcast:
+        // own hand visible, opponents' hands reduced to a count, closed_pile
+        // replaced by closed_count.
+        const redacted = this.redactRummyStateForUser(rummyState, p.userId)
+        const myHand = rummyState.players?.find((ep: any) => (ep.user_id ?? ep.userId) === p.userId)?.hand ?? []
+        this.hub.sendToUser(p.userId, 'room:joined', {
+          room_id: roomId,
+          game_type: 'rummy',
+          stake,
+          state: redacted,
+          players: redacted.players,
+          my_hand: myHand,
+          your_seat: gatewayPlayers.find(pl => pl.userId === p.userId)?.seat,
+          current_turn: rummyState.current_turn ?? 0,
+          pot: stake * allPlayers.length,
+          private_code: privateCode,
+        })
+      }
+
+      // Rummy's opening turn is always seat 0 (see the engine's /start
+      // handler), so a table where seat 0 is a bot needs its turn driven from
+      // here — nothing else kicks it off. join_room's bot-recovery path only
+      // fires in response to a client action, which never happens if the bot
+      // never moves first.
+      void this.driveRummyBots(roomId)
+      return roomId
     }
 
+    // Shared post-branch path — Teen Patti (and any future game with the same
+    // state shape). Ludo and Rummy return from their own branches above and
+    // never reach here; the Rummy-shaped handling that remains below is
+    // defence-in-depth only.
     const gameState = engineState || fallbackState
     // Always cache in gateway key so game:action handler can find the room.
-    // NOTE: this cache intentionally still carries full player hands for
-    // Rummy (the `cards: undefined` strip below is a no-op for Rummy, whose
-    // private field is `hand` — see RummyPlayer in
-    // services/game-engines/rummy/src/rules.ts). Unlike Teen Patti, Rummy
-    // has no separate raw-state Redis key (Teen Patti's reconnect path reads
-    // `tp:game:${room_id}` to recover a reconnecting player's own cards), so
-    // this cache is the only place a reconnecting Rummy player's own hand
-    // can be recovered from. Redaction for Rummy therefore happens at every
-    // SEND site instead (join_room's personalization below, and
-    // broadcastRummyStateUpdate for in-game broadcasts) — never at write time.
     await this.redis.setex(`game:room:${roomId}`, 3600, JSON.stringify({
       ...fallbackState,
       // Include engine players (with cards) if available, but strip private cards from shared state
@@ -1102,17 +1140,6 @@ export class MatchmakingService {
     // Auto-play bot turns if it's a bot's turn first
     if (engineState && gameType === 'teen_patti') {
       this.scheduleBotTurn(roomId, engineState, realPlayers, bots)
-    }
-
-    // Rummy's opening turn is always seat 0 (see the Go/TS engine's /start
-    // handler), so a fully-bot-filled table (or any table where seat 0 is a
-    // bot) needs its bot turn driven immediately here — nothing else kicks
-    // this off. Without this, a room where no human has acted yet has no
-    // other trigger: Task 8's join/action-routing paths only fire in
-    // response to a human action, which never happens if the bot never
-    // moves first.
-    if (engineState && gameType === 'rummy') {
-      void this.driveRummyBots(roomId)
     }
 
     return roomId
@@ -1841,23 +1868,34 @@ export class MatchmakingService {
   // indicator card is shown face-up to all players at deal time).
   broadcastRummyStateUpdate(roomId: string, payload: { state: any; last_action?: any; result?: any; declare_rejected_reason?: any; ts?: number }): void {
     const players = payload.state?.players ?? []
-    const closedCount = Array.isArray(payload.state?.closed_pile) ? payload.state.closed_pile.length : undefined
     for (const p of players) {
       if (p.is_bot) continue
       const pid = p.user_id ?? p.userId
       if (!pid) continue // unresolvable identity — never send a payload we can't attribute
-      const redactedPlayers = players.map((other: any) => {
-        const otherPid = other.user_id ?? other.userId
-        return otherPid && otherPid === pid
-          ? other
-          : { ...other, hand: undefined, hand_count: Array.isArray(other.hand) ? other.hand.length : undefined }
-      })
       this.hub.sendToUser(pid, 'game:state_update', {
         room_id: roomId,
         ...payload,
-        state: { ...payload.state, players: redactedPlayers, closed_pile: undefined, closed_count: closedCount },
+        state: this.redactRummyStateForUser(payload.state, pid),
       })
     }
+  }
+
+  // Builds one recipient's view of a Rummy state: their own hand intact,
+  // every other seat's hand replaced by a count, and closed_pile replaced by
+  // closed_count (see the writeup above broadcastRummyStateUpdate for why
+  // both matter). Every Rummy send site must go through this — the cached
+  // game:room:<id> state deliberately keeps full hands for reconnect
+  // recovery, so redaction only ever happens on the way out.
+  redactRummyStateForUser(state: any, userId: string): any {
+    const players = state?.players ?? []
+    const closedCount = Array.isArray(state?.closed_pile) ? state.closed_pile.length : undefined
+    const redactedPlayers = players.map((other: any) => {
+      const otherPid = other.user_id ?? other.userId
+      return otherPid && otherPid === userId
+        ? other
+        : { ...other, hand: undefined, hand_count: Array.isArray(other.hand) ? other.hand.length : undefined }
+    })
+    return { ...state, players: redactedPlayers, closed_pile: undefined, closed_count: closedCount }
   }
 
   // Drive consecutive bot turns for a Rummy room until it's a human's turn
