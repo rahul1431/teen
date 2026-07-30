@@ -65,8 +65,13 @@ export function chooseBotDiscard(state: RummyState, playerIdx: number): string {
   const player = state.players[playerIdx]
   const { leftover } = greedyGroup(player.hand, state.wild_rank)
   const pool = leftover.length > 0 ? leftover : player.hand
-  const nonJokers = pool.filter(c => !isJoker(c, state.wild_rank))
-  const candidates = nonJokers.length > 0 ? nonJokers : pool
+  const poolNonJokers = pool.filter(c => !isJoker(c, state.wild_rank))
+  const handNonJokers = player.hand.filter(c => !isJoker(c, state.wild_rank))
+  // Never discard a joker while the hand holds ANY non-joker card, even one
+  // greedyGroup happened to lock inside a completed meld — breaking that
+  // meld by discarding one of its cards is still better than surrendering
+  // a joker to the open pile.
+  const candidates = poolNonJokers.length > 0 ? poolNonJokers : handNonJokers.length > 0 ? handNonJokers : pool
   let worst = candidates[0]
   let worstValue = cardValue(worst, state.wild_rank)
   for (const c of candidates) {
