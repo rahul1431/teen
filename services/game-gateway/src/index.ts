@@ -342,6 +342,19 @@ async function start() {
               hand_count: isRummy && !isMe && Array.isArray(p.hand) ? p.hand.length : undefined,
             }
           })
+          // Rummy: closed_pile is the face-down draw pile, sent as an
+          // ordered array of the deterministic deck's card ids. Since the
+          // deck is fixed (buildDeck emits c0..c105), a recipient holding
+          // their own hand + the full open_pile + wild_indicator + the full
+          // closed_pile can compute the exact set-complement against the
+          // known deck and reconstruct every opponent's hand exactly (on a
+          // 2-player table: own 13 + shared piles leaves exactly the
+          // opponent's 13 remaining cards, no guessing required). The array
+          // order also reveals every future closed-pile draw in advance
+          // (drawFromClosed pops from the end). Replace it with just a
+          // count. open_pile/wild_indicator are untouched — both are
+          // legitimately public in real Rummy.
+          const rummyClosedCount = isRummy && Array.isArray(rawState.closed_pile) ? rawState.closed_pile.length : undefined
           // Send room:joined event to sync this connection
           hub.send(conn, 'room:joined', {
             room_id,
@@ -355,7 +368,9 @@ async function start() {
             current_turn: rawState.currentTurn ?? rawState.current_turn ?? 0,
             dealer_id: rawState.dealer_id ?? rawState.DealerID,
             min_bet: rawState.minBet ?? rawState.min_bet ?? rawState.stake,
-            state: gameType === 'ludo' ? rawState : (isRummy ? { ...rawState, players: outgoingPlayers } : undefined),
+            state: gameType === 'ludo'
+              ? rawState
+              : (isRummy ? { ...rawState, players: outgoingPlayers, closed_pile: undefined, closed_count: rummyClosedCount } : undefined),
           })
 
           // Bot recovery: if it's currently a bot's turn, trigger/drive the bot

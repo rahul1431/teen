@@ -1824,19 +1824,38 @@ export class MatchmakingService {
   // Not private: called cross-file from index.ts's handleRummyAction/
   // handleRummyLeave (same pattern as the already-public driveRummyBots,
   // clearRummyAfkTimer, handleRummyEnd).
+  //
+  // Also strips `closed_pile` (the face-down draw pile) from every outgoing
+  // copy, replacing it with just its length as `closed_count`. The deck is
+  // built deterministically (fixed ids `c0`..`c105`, see buildDeck in
+  // services/game-engines/rummy/src/rules.ts), so a recipient who has their
+  // own hand + the full open_pile + wild_indicator + the full closed_pile
+  // array can compute the exact set-complement against the known deck and
+  // reconstruct every opponent's hand exactly (on a 2-player table this is
+  // immediate: own 13 + shared piles leaves exactly the opponent's 13 known
+  // cards). closed_pile is also an ordered array and drawFromClosed()
+  // pop()s from it, so leaving it in also reveals the exact sequence of
+  // every future closed-pile draw for the rest of the hand. open_pile and
+  // wild_indicator are left untouched — both are legitimately public in
+  // real Rummy (the discard pile is visible to everyone, and the wild
+  // indicator card is shown face-up to all players at deal time).
   broadcastRummyStateUpdate(roomId: string, payload: { state: any; last_action?: any; result?: any; declare_rejected_reason?: any; ts?: number }): void {
     const players = payload.state?.players ?? []
+    const closedCount = Array.isArray(payload.state?.closed_pile) ? payload.state.closed_pile.length : undefined
     for (const p of players) {
       if (p.is_bot) continue
-      const redactedPlayers = players.map((other: any) =>
-        other.user_id === p.user_id
+      const pid = p.user_id ?? p.userId
+      if (!pid) continue // unresolvable identity — never send a payload we can't attribute
+      const redactedPlayers = players.map((other: any) => {
+        const otherPid = other.user_id ?? other.userId
+        return otherPid && otherPid === pid
           ? other
-          : { ...other, hand: undefined, hand_count: Array.isArray(other.hand) ? other.hand.length : undefined },
-      )
-      this.hub.sendToUser(p.user_id, 'game:state_update', {
+          : { ...other, hand: undefined, hand_count: Array.isArray(other.hand) ? other.hand.length : undefined }
+      })
+      this.hub.sendToUser(pid, 'game:state_update', {
         room_id: roomId,
         ...payload,
-        state: { ...payload.state, players: redactedPlayers },
+        state: { ...payload.state, players: redactedPlayers, closed_pile: undefined, closed_count: closedCount },
       })
     }
   }
