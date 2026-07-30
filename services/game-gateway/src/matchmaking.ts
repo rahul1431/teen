@@ -1896,11 +1896,16 @@ export class MatchmakingService {
   redactRummyStateForUser(state: any, userId: string): any {
     const players = state?.players ?? []
     const closedCount = Array.isArray(state?.closed_pile) ? state.closed_pile.length : undefined
+    // Showdown: once the game is completed the WINNER's hand becomes public.
+    // This is real money — the table has to be able to see the winning meld
+    // for the result to be trustworthy, rather than taking the server's word
+    // for it. Losers' hands stay redacted (they're nobody else's business, and
+    // each player still sees their own via the `otherPid === userId` branch).
+    const revealedId = state?.status === 'completed' ? (state?.winner_id ?? null) : null
     const redactedPlayers = players.map((other: any) => {
       const otherPid = other.user_id ?? other.userId
-      return otherPid && otherPid === userId
-        ? other
-        : { ...other, hand: undefined, hand_count: Array.isArray(other.hand) ? other.hand.length : undefined }
+      if (otherPid && (otherPid === userId || otherPid === revealedId)) return other
+      return { ...other, hand: undefined, hand_count: Array.isArray(other.hand) ? other.hand.length : undefined }
     })
     return { ...state, players: redactedPlayers, closed_pile: undefined, closed_count: closedCount }
   }

@@ -329,17 +329,25 @@ async function start() {
           // seat's hand to just a count before it goes out, on both the
           // `players` field and the embedded `state.players` (the mobile
           // client reads its own hand from state.players[mySeat].hand).
+          //
+          // Exception: once the game is completed the WINNER's hand is public
+          // (real money — the winning meld has to be verifiable at showdown).
+          // Mirrors matchmaking.redactRummyStateForUser.
+          const rummyRevealId = isRummy && rawState.status === 'completed'
+            ? (rawState.winner_id ?? null)
+            : null
           let myHand: any[] = []
           const outgoingPlayers = rawState.players?.map((p: any) => {
             const pid = p.userId ?? p.user_id
             const isMe = pid === conn.userId
             if (isRummy && isMe) myHand = p.hand ?? []
+            const hideHand = isRummy && !isMe && !(rummyRevealId && pid === rummyRevealId)
             return {
               ...p,
               userId: pid,
               cards: undefined, // ensure opponents' cards hidden
-              hand: isRummy && !isMe ? undefined : p.hand,
-              hand_count: isRummy && !isMe && Array.isArray(p.hand) ? p.hand.length : undefined,
+              hand: hideHand ? undefined : p.hand,
+              hand_count: hideHand && Array.isArray(p.hand) ? p.hand.length : undefined,
             }
           })
           // Rummy: closed_pile is the face-down draw pile, sent as an
