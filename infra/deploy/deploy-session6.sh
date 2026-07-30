@@ -50,8 +50,11 @@ pm2 save
 
 echo "==> Reload nginx (ensure /aviator/ websocket route is present)"
 # The /aviator/ block lives in infra/nginx/hestia-proxy.conf. If your HestiaCP
-# custom config does not yet include it, paste that block into:
-#   /home/<hestia_user>/conf/web/game.myonlinejoker.com/nginx.ssl.conf_proxy
+# custom config does not yet include it, paste that block into both live
+# filenames (HestiaCP only serves these two — see nginx-protect.sh and
+# deploy-services.sh):
+#   /home/<hestia_user>/conf/web/game.myonlinejoker.com/nginx.conf_api
+#   /home/<hestia_user>/conf/web/game.myonlinejoker.com/nginx.ssl.conf_api
 # then:
 nginx -t && systemctl reload nginx
 

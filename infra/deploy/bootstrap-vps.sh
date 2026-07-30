@@ -38,6 +38,12 @@ ufw allow 80/tcp
 ufw allow 443/tcp
 ufw --force enable
 
+echo "==> Installing nginx-protect.sh cron (restores hand-authored nginx"
+echo "    config if HestiaCP overwrites it — runs every 30 min once the"
+echo "    repo is cloned; harmless no-op until then)..."
+CRON_LINE="*/30 * * * * /opt/teen-prod/infra/scripts/nginx-protect.sh >> /var/log/nginx-protect.log 2>&1"
+( crontab -l 2>/dev/null | grep -vF "nginx-protect.sh" ; echo "$CRON_LINE" ) | crontab -
+
 echo "==> Bootstrap complete!"
 echo ""
 echo "Next steps:"

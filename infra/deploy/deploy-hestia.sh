@@ -31,9 +31,13 @@ npm install 2>/dev/null
 npm run build
 
 echo "==> Setting up Hestia Nginx proxy config..."
+# Filenames must match what nginx-protect.sh and deploy-services.sh use
+# (nginx.conf_api / nginx.ssl.conf_api) — HestiaCP only serves those two,
+# so writing to any other name silently has no effect on live traffic.
 NGINX_CONF_DIR="/home/${HESTIA_USER}/conf/web/game.myonlinejoker.com"
 mkdir -p "$NGINX_CONF_DIR"
-cp "$BASE/infra/nginx/hestia-proxy.conf" "$NGINX_CONF_DIR/nginx.conf_proxy"
+cp "$BASE/infra/nginx/hestia-proxy.conf" "$NGINX_CONF_DIR/nginx.conf_api"
+cp "$BASE/infra/nginx/hestia-proxy.conf" "$NGINX_CONF_DIR/nginx.ssl.conf_api"
 
 # Reload Nginx via Hestia
 v-restart-web 2>/dev/null || nginx -s reload 2>/dev/null || systemctl reload nginx

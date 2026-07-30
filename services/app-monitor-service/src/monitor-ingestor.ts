@@ -5,7 +5,7 @@ import { Logger } from 'pino'
 import { GeoResult } from './geo'
 
 export interface AppEvent {
-  event_type: 'screen_view' | 'api_call' | 'ws_event' | 'error' | 'lifecycle' | 'game_event' | 'location'
+  event_type: 'screen_view' | 'api_call' | 'ws_event' | 'ws_message' | 'error' | 'lifecycle' | 'game_event' | 'location'
   screen?: string
   endpoint?: string
   method?: string
@@ -88,7 +88,7 @@ export interface ScreenFunnelRow {
 }
 
 const ALLOWED_EVENT_TYPES = new Set([
-  'screen_view', 'api_call', 'ws_event', 'error', 'lifecycle', 'game_event', 'location'
+  'screen_view', 'api_call', 'ws_event', 'ws_message', 'error', 'lifecycle', 'game_event', 'location'
 ])
 
 export function deriveLastScreenGame(events: AppEvent[]): { last_screen: string | null; last_game: string | null } {
@@ -243,8 +243,11 @@ export class MonitorIngestor {
   private async _updateRedisCounters(deviceId: string, events: AppEvent[]): Promise<void> {
     const pipeline = this.redis.pipeline()
 
-    // Active session: refresh 35s TTL key for this device
-    pipeline.set(`monitor:session:${deviceId}`, '1', 'EX', 35)
+    // Active session: refresh TTL key for this device. Must stay in sync with
+    // the '90 seconds' window used by getSessions/getLivePlayers/getGeoDistribution
+    // below, and comfortably longer than the client's 45s heartbeat period
+    // (mobile/lib/core/monitor/monitor_service.dart) plus flush-timer phase drift.
+    pipeline.set(`monitor:session:${deviceId}`, '1', 'EX', 90)
 
     // Error sliding window (5 min) using sorted set
     const errorEvents = events.filter(e => e.event_type === 'error')
@@ -259,7 +262,7 @@ export class MonitorIngestor {
   }
 
   async getStats(): Promise<MonitorStats> {
-    // Active sessions: count Redis keys set by devices in last 35s
+    // Active sessions: count Redis keys set by devices in last 90s
     let activeSessions = 0
     const stream = this.redis.scanStream({ match: 'monitor:session:*', count: 100 })
     await new Promise<void>((resolve, reject) => {

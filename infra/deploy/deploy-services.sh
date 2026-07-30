@@ -71,6 +71,7 @@ if [ -d "$HESTIA_NGINX_DIR" ]; then
 else
   mkdir -p /etc/nginx/snippets
   cp "$BASE/infra/nginx/proxy-headers.conf" /etc/nginx/snippets/
+  cp "$BASE/infra/nginx/game-locations.conf" /etc/nginx/snippets/
   cp "$BASE/infra/nginx/game.myonlinejoker.com.conf" /etc/nginx/sites-available/game.myonlinejoker.com
   ln -sf /etc/nginx/sites-available/game.myonlinejoker.com /etc/nginx/sites-enabled/
   rm -f /etc/nginx/sites-enabled/default

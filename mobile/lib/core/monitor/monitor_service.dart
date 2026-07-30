@@ -150,11 +150,17 @@ class MonitorService {
     });
   }
 
+  // Server rejects any batch over this size (services/app-monitor-service/src/
+  // index.ts) and only accepts one batch per 8s per device, so the queue must
+  // stay at or under the server's max — chunking one oversized flush into
+  // several requests would just have the later chunks hit the rate limit.
+  static const _maxQueueSize = 100;
+
   /// Add an event to the queue. Silently drops if not initialized or queue is full.
   void enqueue(Map<String, dynamic> event) {
     if (!_initialized) return;
     try {
-      if (_queue.length >= 200) _queue.removeAt(0); // cap memory at 200 events
+      if (_queue.length >= _maxQueueSize) _queue.removeAt(0);
       _queue.add({
         ...event,
         'ts': DateTime.now().toUtc().toIso8601String(),
@@ -183,7 +189,7 @@ class MonitorService {
     } catch (_) {
       // Re-enqueue on failure (respecting cap)
       for (final e in batch) {
-        if (_queue.length < 200) _queue.add(e);
+        if (_queue.length < _maxQueueSize) _queue.add(e);
       }
     }
   }
