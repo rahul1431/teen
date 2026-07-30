@@ -243,4 +243,28 @@ describe('turn actions', () => {
     assert.equal(result?.rake_fee, 20)
     assert.equal(result?.prize, 180)
   })
+
+  test('drawFromOpen moves a card into the hand and flips awaiting to discard', () => {
+    const state = createInitialState('r', 100, makePlayers(2), 'medium', 2, 30, 5)
+    const before = state.players[0].hand.length
+    const openPileLength = state.open_pile.length
+    drawFromOpen(state, 0)
+    assert.equal(state.players[0].hand.length, before + 1)
+    assert.equal(state.open_pile.length, openPileLength - 1)
+    assert.equal(state.awaiting, 'discard')
+  })
+
+  test('invalid declare causing last-player-standing ends game and prevents further calls', () => {
+    const state = createInitialState('r', 100, makePlayers(2), 'medium', 2, 30, 5)
+    drawFromClosed(state, 0)
+    const junkGroups = [state.players[0].hand.slice(0, 3).map(c => c.id), state.players[0].hand.slice(3, 6).map(c => c.id), state.players[0].hand.slice(6, 9).map(c => c.id), state.players[0].hand.slice(9, 13).map(c => c.id)]
+    const { outcome, result } = attemptDeclare(state, 0, junkGroups)
+    assert.equal(outcome.valid, false)
+    assert.equal(state.players[0].is_eliminated, true)
+    assert.equal(result?.winner_id, 'p1') // Player 1 is the last remaining
+    assert.equal(result?.reason, 'last_player_standing')
+    assert.equal(state.status, 'completed')
+    // Verify that calling another mutator throws because game is completed
+    assert.throws(() => discardCard(state, 0, state.players[0].hand[0]?.id || 'x'))
+  })
 })

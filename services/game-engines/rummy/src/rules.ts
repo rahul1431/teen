@@ -268,6 +268,7 @@ export function reshuffleIfNeeded(state: RummyState): void {
 }
 
 export function drawFromClosed(state: RummyState, playerIdx: number): Card {
+  if (state.status !== 'active') throw new Error('Game already over')
   if (state.awaiting !== 'draw') throw new Error('Not awaiting a draw')
   if (playerIdx !== state.current_turn) throw new Error('Not your turn')
   reshuffleIfNeeded(state)
@@ -280,6 +281,7 @@ export function drawFromClosed(state: RummyState, playerIdx: number): Card {
 }
 
 export function drawFromOpen(state: RummyState, playerIdx: number): Card {
+  if (state.status !== 'active') throw new Error('Game already over')
   if (state.awaiting !== 'draw') throw new Error('Not awaiting a draw')
   if (playerIdx !== state.current_turn) throw new Error('Not your turn')
   const card = state.open_pile.pop()
@@ -291,6 +293,7 @@ export function drawFromOpen(state: RummyState, playerIdx: number): Card {
 }
 
 export function discardCard(state: RummyState, playerIdx: number, cardId: string): void {
+  if (state.status !== 'active') throw new Error('Game already over')
   if (state.awaiting !== 'discard') throw new Error('Not awaiting a discard')
   if (playerIdx !== state.current_turn) throw new Error('Not your turn')
   const player = state.players[playerIdx]
@@ -308,6 +311,7 @@ export function attemptDeclare(
   playerIdx: number,
   groupsOfIds: string[][],
 ): { outcome: DeclareOutcome; result: ActionResult | null } {
+  if (state.status !== 'active') throw new Error('Game already over')
   if (state.awaiting !== 'discard') throw new Error('Draw before declaring')
   if (playerIdx !== state.current_turn) throw new Error('Not your turn')
   const player = state.players[playerIdx]
@@ -325,6 +329,7 @@ export function attemptDeclare(
 }
 
 export function dropPlayer(state: RummyState, playerIdx: number): ActionResult | null {
+  if (state.status !== 'active') throw new Error('Game already over')
   if (playerIdx !== state.current_turn) throw new Error('Not your turn')
   if (state.awaiting !== 'draw') throw new Error('Cannot drop mid-turn — draw or discard first')
   const player = state.players[playerIdx]
