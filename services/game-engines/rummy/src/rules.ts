@@ -222,3 +222,126 @@ export function validateDeclareGroups(
   if (pureSequenceCount < 1) return { valid: false, reason: 'Need at least 1 pure sequence (no jokers)' }
   return { valid: true }
 }
+
+export interface DeclareOutcome { valid: boolean; reason?: string }
+
+export function advanceTurn(state: RummyState): void {
+  const n = state.players.length
+  let next = state.current_turn
+  for (let i = 0; i < n; i++) {
+    next = (next + 1) % n
+    if (!state.players[next].is_eliminated && !state.players[next].has_dropped) {
+      state.current_turn = next
+      state.awaiting = 'draw'
+      state.turn_number++
+      return
+    }
+  }
+}
+
+function activePlayers(state: RummyState): RummyPlayer[] {
+  return state.players.filter(p => !p.is_eliminated && !p.has_dropped)
+}
+
+function settleWinner(state: RummyState, winnerId: string, reason: ActionResult['reason']): ActionResult {
+  const pot = Math.round(state.stake * state.players.length * 100) / 100
+  const rakeFee = Math.round(pot * (state.rake_percent / 100) * 100) / 100
+  const prize = Math.round((pot - rakeFee) * 100) / 100
+  state.status = 'completed'
+  state.winner_id = winnerId
+  return { winner_id: winnerId, prize, rake_fee: rakeFee, reason }
+}
+
+function checkLastPlayerStanding(state: RummyState): ActionResult | null {
+  const active = activePlayers(state)
+  if (active.length === 1) return settleWinner(state, active[0].user_id, 'last_player_standing')
+  return null
+}
+
+export function reshuffleIfNeeded(state: RummyState): void {
+  if (state.closed_pile.length > 0) return
+  if (state.open_pile.length <= 1) return
+  const top = state.open_pile[state.open_pile.length - 1]
+  const rest = state.open_pile.slice(0, -1)
+  state.closed_pile = shuffle(rest)
+  state.open_pile = [top]
+}
+
+export function drawFromClosed(state: RummyState, playerIdx: number): Card {
+  if (state.awaiting !== 'draw') throw new Error('Not awaiting a draw')
+  if (playerIdx !== state.current_turn) throw new Error('Not your turn')
+  reshuffleIfNeeded(state)
+  const card = state.closed_pile.pop()
+  if (!card) throw new Error('No cards left to draw')
+  state.players[playerIdx].hand.push(card)
+  state.players[playerIdx].has_drawn = true
+  state.awaiting = 'discard'
+  return card
+}
+
+export function drawFromOpen(state: RummyState, playerIdx: number): Card {
+  if (state.awaiting !== 'draw') throw new Error('Not awaiting a draw')
+  if (playerIdx !== state.current_turn) throw new Error('Not your turn')
+  const card = state.open_pile.pop()
+  if (!card) throw new Error('Open pile is empty')
+  state.players[playerIdx].hand.push(card)
+  state.players[playerIdx].has_drawn = true
+  state.awaiting = 'discard'
+  return card
+}
+
+export function discardCard(state: RummyState, playerIdx: number, cardId: string): void {
+  if (state.awaiting !== 'discard') throw new Error('Not awaiting a discard')
+  if (playerIdx !== state.current_turn) throw new Error('Not your turn')
+  const player = state.players[playerIdx]
+  const idx = player.hand.findIndex(c => c.id === cardId)
+  if (idx === -1) throw new Error('Card not in hand')
+  const [card] = player.hand.splice(idx, 1)
+  state.open_pile.push(card)
+  player.has_drawn = false
+  player.has_taken_turn = true
+  advanceTurn(state)
+}
+
+export function attemptDeclare(
+  state: RummyState,
+  playerIdx: number,
+  groupsOfIds: string[][],
+): { outcome: DeclareOutcome; result: ActionResult | null } {
+  if (state.awaiting !== 'discard') throw new Error('Draw before declaring')
+  if (playerIdx !== state.current_turn) throw new Error('Not your turn')
+  const player = state.players[playerIdx]
+  const check = validateDeclareGroups(player.hand, groupsOfIds, state.wild_rank)
+  if (!check.valid) {
+    player.is_eliminated = true
+    player.has_drawn = false
+    player.has_taken_turn = true
+    const lastStanding = checkLastPlayerStanding(state)
+    if (!lastStanding) advanceTurn(state)
+    return { outcome: check, result: lastStanding }
+  }
+  const result = settleWinner(state, player.user_id, 'valid_declare')
+  return { outcome: check, result }
+}
+
+export function dropPlayer(state: RummyState, playerIdx: number): ActionResult | null {
+  if (playerIdx !== state.current_turn) throw new Error('Not your turn')
+  if (state.awaiting !== 'draw') throw new Error('Cannot drop mid-turn — draw or discard first')
+  const player = state.players[playerIdx]
+  if (player.has_taken_turn) throw new Error('First Drop is only available before your first turn')
+  player.has_dropped = true
+  const result = checkLastPlayerStanding(state)
+  if (!result) advanceTurn(state)
+  return result
+}
+
+export function forfeitPlayer(state: RummyState, userId: string): ActionResult | null {
+  const idx = state.players.findIndex(p => p.user_id === userId)
+  if (idx === -1 || state.status === 'completed') return null
+  const player = state.players[idx]
+  if (player.is_eliminated || player.has_dropped) return null
+  player.is_eliminated = true
+  const result = checkLastPlayerStanding(state)
+  if (!result && idx === state.current_turn) advanceTurn(state)
+  return result
+}

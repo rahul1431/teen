@@ -1,6 +1,9 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildDeck, createInitialState, isJoker, checkGroup, validateDeclareGroups } from './rules'
+import {
+  buildDeck, createInitialState, isJoker, checkGroup, validateDeclareGroups,
+  drawFromClosed, drawFromOpen, discardCard, attemptDeclare, dropPlayer, forfeitPlayer, reshuffleIfNeeded,
+} from './rules'
 
 function makePlayers(n: number) {
   return Array.from({ length: n }, (_, i) => ({
@@ -153,5 +156,91 @@ describe('validateDeclareGroups', () => {
     const hand = validHand13()
     const result = validateDeclareGroups(hand, [['1', '2', '3'], ['4', '5', '6']], '__NONE__')
     assert.equal(result.valid, false)
+  })
+})
+
+describe('turn actions', () => {
+  test('drawFromClosed moves a card into the hand and flips awaiting to discard', () => {
+    const state = createInitialState('r', 100, makePlayers(2), 'medium', 2, 30, 5)
+    const before = state.players[0].hand.length
+    drawFromClosed(state, 0)
+    assert.equal(state.players[0].hand.length, before + 1)
+    assert.equal(state.awaiting, 'discard')
+  })
+
+  test('drawFromClosed throws if it is not that player\'s turn', () => {
+    const state = createInitialState('r', 100, makePlayers(2), 'medium', 2, 30, 5)
+    assert.throws(() => drawFromClosed(state, 1))
+  })
+
+  test('discardCard removes the card from hand, pushes it to open_pile, and advances the turn', () => {
+    const state = createInitialState('r', 100, makePlayers(3), 'medium', 2, 30, 5)
+    drawFromClosed(state, 0)
+    const cardId = state.players[0].hand[0].id
+    discardCard(state, 0, cardId)
+    assert.equal(state.players[0].hand.some(c => c.id === cardId), false)
+    assert.equal(state.open_pile[state.open_pile.length - 1].id, cardId)
+    assert.equal(state.current_turn, 1)
+    assert.equal(state.awaiting, 'draw')
+  })
+
+  test('reshuffleIfNeeded rebuilds the closed pile from the open pile (keeping its top card) once empty', () => {
+    const state = createInitialState('r', 100, makePlayers(2), 'medium', 2, 30, 5)
+    state.open_pile = [{ id: 'a', rank: '2', suit: 'S' }, { id: 'b', rank: '3', suit: 'S' }, { id: 'c', rank: '4', suit: 'S' }]
+    state.closed_pile = []
+    reshuffleIfNeeded(state)
+    assert.equal(state.open_pile.length, 1)
+    assert.equal(state.open_pile[0].id, 'c')
+    assert.equal(state.closed_pile.length, 2)
+  })
+
+  test('an invalid declare eliminates the declarer and play continues to the next active player', () => {
+    const state = createInitialState('r', 100, makePlayers(3), 'medium', 2, 30, 5)
+    drawFromClosed(state, 0)
+    const junkGroups = [state.players[0].hand.slice(0, 3).map(c => c.id), state.players[0].hand.slice(3, 6).map(c => c.id), state.players[0].hand.slice(6, 9).map(c => c.id), state.players[0].hand.slice(9, 13).map(c => c.id)]
+    const { outcome, result } = attemptDeclare(state, 0, junkGroups)
+    assert.equal(outcome.valid, false)
+    assert.equal(state.players[0].is_eliminated, true)
+    assert.equal(result, null) // 2 players still active (1, 2), not last-player-standing
+    assert.equal(state.current_turn, 1)
+  })
+
+  test('dropPlayer before any draw removes them from turn order without elimination', () => {
+    const state = createInitialState('r', 100, makePlayers(3), 'medium', 2, 30, 5)
+    dropPlayer(state, 0)
+    assert.equal(state.players[0].has_dropped, true)
+    assert.equal(state.current_turn, 1)
+  })
+
+  test('dropPlayer after already taking a turn throws (First Drop only)', () => {
+    const state = createInitialState('r', 100, makePlayers(2), 'medium', 2, 30, 5)
+    drawFromClosed(state, 0)
+    discardCard(state, 0, state.players[0].hand[0].id)
+    drawFromClosed(state, 1)
+    discardCard(state, 1, state.players[1].hand[0].id)
+    assert.throws(() => dropPlayer(state, 0))
+  })
+
+  test('last player standing (via drop) wins automatically', () => {
+    const state = createInitialState('r', 100, makePlayers(2), 'medium', 2, 30, 5)
+    const result = dropPlayer(state, 0)
+    assert.equal(result?.winner_id, 'p1')
+    assert.equal(state.status, 'completed')
+    assert.equal(result?.reason, 'last_player_standing')
+  })
+
+  test('forfeitPlayer eliminates a user by id and ends the game if they were last active', () => {
+    const state = createInitialState('r', 100, makePlayers(2), 'medium', 2, 30, 5)
+    const result = forfeitPlayer(state, 'p0')
+    assert.equal(result?.winner_id, 'p1')
+    assert.equal(state.status, 'completed')
+  })
+
+  test('settlement math: pot minus rake goes to the winner', () => {
+    const state = createInitialState('r', 100, makePlayers(2), 'medium', 2, 30, 10)
+    const result = dropPlayer(state, 0)
+    // pot = 100 * 2 = 200; rake 10% = 20; prize = 180
+    assert.equal(result?.rake_fee, 20)
+    assert.equal(result?.prize, 180)
   })
 })
