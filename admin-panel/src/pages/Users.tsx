@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Table, Input, Select, Button, Tag, Space, Modal, Descriptions, InputNumber,
   message, Popconfirm, Tabs, List, Empty, Form, Checkbox, Tooltip,
@@ -16,6 +17,7 @@ type User = {
 }
 
 export default function Users() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
   const [total, setTotal] = useState(0)
@@ -43,6 +45,23 @@ export default function Users() {
   }
 
   useEffect(() => { fetchUsers() /* eslint-disable-next-line */ }, [page, search, statusFilter])
+
+  // Deep-link from Risk Center etc: /admin/users?id=<userId> opens that user's
+  // detail modal directly instead of landing on the generic paginated list.
+  useEffect(() => {
+    const deepLinkId = searchParams.get('id')
+    if (!deepLinkId) return
+    adminApi.get('/users', { params: { id: deepLinkId, is_bot: false } }).then(res => {
+      const user = (res.data.users ?? [])[0]
+      if (user) setSelectedUser(user)
+      else message.error('User not found')
+    }).finally(() => {
+      const next = new URLSearchParams(searchParams)
+      next.delete('id')
+      setSearchParams(next, { replace: true })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const updateStatus = async (userId: string, status: string) => {
     await adminApi.patch(`/users/${userId}/status`, { status })

@@ -27,13 +27,31 @@ async function start() {
     connectionString: process.env.DATABASE_URL,
   })
 
-  const fraudDetector = new FraudDetector(redis, pool, logger, {
+  const envConfig = {
     coLocationThreshold: parseInt(process.env.FRAUD_CO_LOCATION_THRESHOLD || '3'),
     winRateAnomalyThreshold: parseFloat(process.env.FRAUD_WIN_RATE_THRESHOLD || '95'),
     velocityLimitHours: parseInt(process.env.FRAUD_VELOCITY_HOURS || '1'),
     referralChainDepth: parseInt(process.env.FRAUD_REFERRAL_DEPTH || '2'),
     enabled: process.env.FRAUD_DETECTION_ENABLED !== 'false',
-  })
+  }
+
+  // Admin-saved thresholds (via the ML Configuration panel, `ml:config` key
+  // in Redis) take precedence over the `.env` defaults at boot, so a value
+  // saved before this process last restarted isn't silently reverted.
+  let initialConfig = envConfig
+  try {
+    const cached = await redis.get('ml:config')
+    if (cached) {
+      const parsed = JSON.parse(cached)
+      if (parsed?.fraudDetection) {
+        initialConfig = { ...envConfig, ...parsed.fraudDetection }
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, 'Failed to read initial ml:config from Redis — falling back to env')
+  }
+
+  const fraudDetector = new FraudDetector(redis, pool, logger, initialConfig)
 
   // Health check endpoint
   app.get('/health', async (request, reply) => {
@@ -44,163 +62,12 @@ async function start() {
     })
   })
 
-  // Get recent fraud alerts
-  app.get<{ Querystring: { limit?: string; action?: string } }>(
-    '/api/risk/alerts',
-    async (request, reply) => {
-      try {
-        const limit = Math.min(parseInt(request.query.limit || '50'), 500)
-        const action = request.query.action
-
-        let query = `
-          SELECT id, user_id, game_type, rule_triggered, fraud_score, confidence,
-                 evidence, action, created_at
-          FROM fraud_events
-          WHERE created_at > NOW() - INTERVAL '24 hours'
-        `
-        const params: any[] = []
-
-        if (action && ['allow', 'slow_lane', 'block'].includes(action)) {
-          query += ` AND action = $${params.length + 1}`
-          params.push(action)
-        }
-
-        query += ` ORDER BY fraud_score DESC, created_at DESC LIMIT $${params.length + 1}`
-        params.push(limit)
-
-        const result = await pool.query(query, params)
-
-        return reply.send({
-          success: true,
-          data: {
-            alerts: result.rows,
-            count: result.rows.length,
-            total: result.rows.length,
-            timestamp: new Date().toISOString(),
-          },
-        })
-      } catch (err) {
-        logger.error({ err }, 'Failed to fetch fraud alerts')
-        return reply.code(500).send({
-          success: false,
-          error: 'Failed to fetch fraud alerts',
-        })
-      }
-    }
-  )
-
-  // Get fraud history for a user
-  app.get<{ Params: { userId: string }; Querystring: { limit?: string } }>(
-    '/api/risk/user/:userId/history',
-    async (request, reply) => {
-      try {
-        const limit = Math.min(parseInt(request.query.limit || '50'), 500)
-        const history = await fraudDetector.getUserFraudHistory(
-          request.params.userId,
-          limit
-        )
-
-        return reply.send({
-          success: true,
-          data: {
-            userId: request.params.userId,
-            events: history,
-            count: history.length,
-          },
-        })
-      } catch (err) {
-        logger.error({ err }, 'Failed to fetch user fraud history')
-        return reply.code(500).send({
-          success: false,
-          error: 'Failed to fetch user fraud history',
-        })
-      }
-    }
-  )
-
-  // Get fraud statistics
-  app.get<{ Querystring: { hours?: string } }>('/api/risk/stats', async (request, reply) => {
-    try {
-      const hours = Math.min(parseInt(request.query.hours || '24'), 168)
-
-      const result = await pool.query(
-        `SELECT
-           COUNT(*) as total_alerts,
-           COUNT(CASE WHEN action = 'block' THEN 1 END) as blocks,
-           COUNT(CASE WHEN action = 'slow_lane' THEN 1 END) as slow_lanes,
-           AVG(fraud_score) as avg_score,
-           MAX(fraud_score) as max_score,
-           COUNT(DISTINCT user_id) as unique_users,
-           COUNT(DISTINCT rule_triggered) as rules_triggered
-         FROM fraud_events
-         WHERE created_at > NOW() - INTERVAL '${hours} hours'`,
-        []
-      )
-
-      const stats = result.rows[0]
-
-      return reply.send({
-        success: true,
-        data: {
-          timeWindow: `${hours} hours`,
-          stats: {
-            totalAlerts: parseInt(stats.total_alerts || '0'),
-            blocks: parseInt(stats.blocks || '0'),
-            slowLanes: parseInt(stats.slow_lanes || '0'),
-            avgScore: parseFloat(stats.avg_score || '0').toFixed(2),
-            maxScore: parseFloat(stats.max_score || '0').toFixed(2),
-            uniqueUsers: parseInt(stats.unique_users || '0'),
-            rulesTriggered: parseInt(stats.rules_triggered || '0'),
-          },
-          timestamp: new Date().toISOString(),
-        },
-      })
-    } catch (err) {
-      logger.error({ err }, 'Failed to fetch fraud statistics')
-      return reply.code(500).send({
-        success: false,
-        error: 'Failed to fetch fraud statistics',
-      })
-    }
-  })
-
-  // Manually flag a user (requires admin)
-  app.post<{ Params: { userId: string }; Body: { isFlagged: boolean; reason: string } }>(
-    '/api/risk/user/:userId/flag',
-    {
-      onRequest: [
-        async (req, reply) => {
-          const key = req.headers['x-internal-key']
-          const expected = process.env.INTERNAL_SERVICE_KEY
-          if (!expected || key !== expected) {
-            return reply.code(403).send({ error: 'Forbidden' })
-          }
-        }
-      ]
-    },
-    async (request, reply) => {
-      try {
-        const { isFlagged, reason } = request.body
-
-        await fraudDetector.setUserFlag(request.params.userId, isFlagged, reason)
-
-        return reply.send({
-          success: true,
-          data: {
-            userId: request.params.userId,
-            flagged: isFlagged,
-            message: `User ${isFlagged ? 'flagged' : 'unflagged'} successfully`,
-          },
-        })
-      } catch (err) {
-        logger.error({ err }, 'Failed to set user flag')
-        return reply.code(500).send({
-          success: false,
-          error: 'Failed to set user flag',
-        })
-      }
-    }
-  )
+  // Note: risk-service is purely a background scoring worker — it consumes
+  // game events from Redis Streams, writes verdicts to `fraud_events`, and
+  // publishes `fraud:alerts`/`fraud:flagged:*`. It has no HTTP data API of
+  // its own; admin-service's `/api/admin/fraud-*` and
+  // `/api/admin/user/:userId/fraud-*` routes are the sole consumer-facing
+  // surface for querying that data (see docs/Bugs/risk-service-http-api-orphaned-and-duplicated.md).
 
   // Subscribe to monitoring service events via Redis Streams
   const processEvents = async () => {
@@ -282,8 +149,7 @@ async function start() {
       try {
         const config = JSON.parse(message)
         if (config.fraudDetection) {
-          logger.info({ config: config.fraudDetection }, 'Fraud config updated')
-          // Config is automatically used next time fraudDetector methods are called
+          fraudDetector.updateConfig(config.fraudDetection)
         }
       } catch (err) {
         logger.error({ err }, 'Failed to parse config message')

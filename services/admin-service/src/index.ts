@@ -435,11 +435,12 @@ async function start() {
 
   // GET /api/admin/users
   app.get('/api/admin/users', { onRequest: [authenticate] }, async (req, reply) => {
-    const { page = 1, limit = 20, search, status, is_bot = 'false', game_type } = req.query as any
+    const { page = 1, limit = 20, search, status, is_bot = 'false', game_type, id } = req.query as any
     const offset = (parseInt(page) - 1) * parseInt(limit)
     const conditions: string[] = ['u.is_bot = $1']
     const params: any[] = [is_bot !== 'false']
     let idx = 2
+    if (id) { conditions.push(`u.id = $${idx}`); params.push(id); idx++ }
     if (search) { conditions.push(`(u.username ILIKE $${idx} OR u.phone ILIKE $${idx})`); params.push(`%${search}%`); idx++ }
     if (status) { conditions.push(`u.status = $${idx}`); params.push(status); idx++ }
     if (game_type) { conditions.push(`u.preferred_game_type = $${idx}`); params.push(game_type); idx++ }
@@ -1407,7 +1408,7 @@ async function start() {
           WHERE type IN ('game_credit','game_debit') AND created_at > NOW() - INTERVAL '30 days'
           GROUP BY user_id
           HAVING SUM(CASE WHEN type='game_credit' THEN amount ELSE 0 END)
-               > 3 * NULLIF(SUM(CASE WHEN type='game_debit' THEN amount ELSE 0 END), 0)
+               > 1.5 * NULLIF(SUM(CASE WHEN type='game_debit' THEN amount ELSE 0 END), 0)
           AND SUM(CASE WHEN type='game_debit' THEN amount ELSE 0 END) > 500
         )
       `),

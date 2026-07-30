@@ -34,6 +34,20 @@ export class FraudDetector {
   }
 
   /**
+   * Merge admin-saved threshold changes into the live config, so the
+   * "ML Configuration" panel's "changes take effect immediately" claim is
+   * actually true — see docs/Bugs/risk-service-ml-config-hot-reload-noop.md.
+   */
+  updateConfig(partial: Partial<FraudConfig>): void {
+    this.config = { ...this.config, ...partial }
+    this.logger.info({ config: this.config }, 'Fraud detector config updated live')
+  }
+
+  getConfig(): FraudConfig {
+    return this.config
+  }
+
+  /**
    * Analyze game event for fraud signals
    */
   async analyzeGameEvent(event: any): Promise<FraudEvent | null> {
@@ -312,82 +326,4 @@ export class FraudDetector {
     }
   }
 
-  /**
-   * Get fraud events for a user
-   */
-  async getUserFraudHistory(user_id: string, limit: number = 50): Promise<any[]> {
-    try {
-      const result = await this.pool.query(
-        `SELECT * FROM fraud_events
-         WHERE user_id = $1
-         ORDER BY created_at DESC
-         LIMIT $2`,
-        [user_id, limit]
-      )
-      return result.rows
-    } catch (err) {
-      this.logger.error({ err }, 'Failed to fetch fraud history')
-      throw err
-    }
-  }
-
-  /**
-   * Get recent fraud alerts
-   */
-  async getRecentAlerts(limit: number = 100): Promise<any[]> {
-    try {
-      const result = await this.pool.query(
-        `SELECT * FROM fraud_events
-         WHERE action IN ('slow_lane', 'block')
-         AND created_at > NOW() - INTERVAL '24 hours'
-         ORDER BY fraud_score DESC, created_at DESC
-         LIMIT $1`,
-        [limit]
-      )
-      return result.rows
-    } catch (err) {
-      this.logger.error({ err }, 'Failed to fetch fraud alerts')
-      throw err
-    }
-  }
-
-  /**
-   * Manually flag or unflag a user
-   */
-  async setUserFlag(
-    user_id: string,
-    isFlagged: boolean,
-    reason: string
-  ): Promise<void> {
-    try {
-      if (isFlagged) {
-        await this.redis.setex(
-          `fraud:flagged:${user_id}`,
-          86400 * 7, // 7 days
-          JSON.stringify({ manual_flag: true, reason })
-        )
-      } else {
-        await this.redis.del(`fraud:flagged:${user_id}`)
-      }
-
-      // Log to audit trail (fraud_score/confidence are NOT NULL columns)
-      await this.pool.query(
-        `INSERT INTO fraud_events (
-          user_id, rule_triggered, fraud_score, confidence, evidence, action, created_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-        [
-          user_id,
-          'manual_flag',
-          isFlagged ? 1 : 0,
-          1,
-          `Manual ${isFlagged ? 'flag' : 'unflag'}: ${reason}`,
-          isFlagged ? 'block' : 'allow',
-        ]
-      )
-    } catch (err) {
-      this.logger.error({ err }, 'Failed to set user flag')
-      throw err
-    }
-  }
 }
