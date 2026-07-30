@@ -25,6 +25,7 @@ const Aviator = React.lazy(() => import('./pages/games/Aviator'))
 const Matka = React.lazy(() => import('./pages/games/Matka'))
 const Lottery = React.lazy(() => import('./pages/games/Lottery'))
 const Cricket = React.lazy(() => import('./pages/games/Cricket'))
+const Rummy = React.lazy(() => import('./pages/games/Rummy'))
 const Leaderboard = React.lazy(() => import('./pages/Leaderboard'))
 const Security = React.lazy(() => import('./pages/Security'))
 const Changelog = React.lazy(() => import('./pages/Changelog'))
@@ -83,6 +84,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="games/matka" element={<Matka />} />
             <Route path="games/lottery" element={<Lottery />} />
             <Route path="games/cricket" element={<Cricket />} />
+            <Route path="games/rummy" element={<Rummy />} />
             <Route path="admin-users" element={<AdminUsers />} />
             <Route path="profile" element={<Profile />} />
             <Route path="risk-center" element={<RiskCenter />} />

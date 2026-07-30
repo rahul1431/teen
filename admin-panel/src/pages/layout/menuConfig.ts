@@ -56,6 +56,7 @@ export function buildMenuItems(): MenuProps['items'] {
         { key: '/admin/games/matka', icon: createElement(NumberOutlined), label: link('/admin/games/matka', 'Satta Matka') },
         { key: '/admin/games/lottery', icon: createElement(CrownOutlined), label: link('/admin/games/lottery', 'Lottery') },
         { key: '/admin/games/cricket', icon: createElement(AimOutlined), label: link('/admin/games/cricket', 'Cricket') },
+        { key: '/admin/games/rummy', icon: createElement(IdcardOutlined), label: link('/admin/games/rummy', 'Rummy') },
       ],
     },
     {

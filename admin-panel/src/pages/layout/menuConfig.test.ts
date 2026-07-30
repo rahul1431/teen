@@ -13,6 +13,7 @@ const EXPECTED_KEYS = [
   '/admin/games/matka',
   '/admin/games/lottery',
   '/admin/games/cricket',
+  '/admin/games/rummy',
   '/admin/marketing',
   '/admin/promo-codes',
   '/admin/banners',
