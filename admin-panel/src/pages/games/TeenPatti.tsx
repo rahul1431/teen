@@ -8,6 +8,11 @@ import { ReloadOutlined, EyeOutlined, PlusOutlined, DeleteOutlined, UploadOutlin
 import { adminApi } from '../../api/client'
 import BotManagementPanel from '../../components/BotManagementPanel'
 import GamePnlDashboard from '../../components/GamePnlDashboard'
+import { BotTrainingConfigPanel } from '../../components/BotTrainingConfigPanel'
+import { BotMetricsTable } from '../../components/BotMetricsTable'
+import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
+import { BotTrainingTrendChart } from '../../components/BotTrainingTrendChart'
+import { MLTrainingPanel } from '../../components/MLTrainingPanel'
 
 const { Text } = Typography
 
@@ -459,6 +464,19 @@ export default function TeenPatti() {
         )}
       </Drawer>
     </div>
-    ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="teen_patti" /> }, { key: 'analytics', label: 'Analytics', children: <GamePnlDashboard gameType="teen_patti" /> }]} />
+    ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="teen_patti" /> }, { key: 'analytics', label: 'Analytics', children: <GamePnlDashboard gameType="teen_patti" /> }, { key: 'bot-training', label: 'Bot Training', children: (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+        <Alert
+          type="info"
+          showIcon
+          message="Shared across games"
+          description="This election/coordination config is not Teen Patti-specific — the same settings and session history also drive Ludo's bot-vs-real-player outcomes (bot_learning_sessions has no per-game split yet). Changes here take effect on both games' next hands."
+        />
+        <BotTrainingConfigPanel />
+        <BotTrainingTrendChart />
+        <BotMetricsTable gameType="teen_patti" />
+        <BotTrainingAuditTrail />
+      </div>
+    ) }, { key: 'ml-training', label: 'ML Training', children: <MLTrainingPanel gameType="teen_patti" /> }]} />
   )
 }

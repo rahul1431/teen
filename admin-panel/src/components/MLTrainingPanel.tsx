@@ -14,7 +14,7 @@ interface PlaystyleTier {
 
 interface MlTrainingStatus {
   canary_pct: number
-  post_cutover_ludo_rows: number
+  post_cutover_rows: number
   min_training_rows_required: number
   training_ready: boolean
   difficulty_model_trained: boolean | null
@@ -22,9 +22,14 @@ interface MlTrainingStatus {
   churn_ml_service_reachable: boolean
   playstyle_tiers: PlaystyleTier[]
   move_decisions_logged: number
+  supports_playstyle_ml: boolean
 }
 
-export const MLTrainingPanel: React.FC = () => {
+interface MLTrainingPanelProps {
+  gameType?: 'ludo' | 'teen_patti'
+}
+
+export const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ gameType = 'ludo' }) => {
   const [status, setStatus] = useState<MlTrainingStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [pendingPct, setPendingPct] = useState<number | null>(null)
@@ -32,9 +37,12 @@ export const MLTrainingPanel: React.FC = () => {
   const [training, setTraining] = useState(false)
   const [runningAnomalyScan, setRunningAnomalyScan] = useState(false)
 
+  const gameLabel = gameType === 'ludo' ? 'Ludo' : 'Teen Patti'
+
   const fetchStatus = async () => {
+    setLoading(true)
     try {
-      const res = await adminApi.get<MlTrainingStatus>('/ludo/ml-training/status')
+      const res = await adminApi.get<MlTrainingStatus>(`/${gameType}/ml-training/status`)
       setStatus(res.data)
       setPendingPct(res.data.canary_pct)
     } catch {
@@ -46,13 +54,14 @@ export const MLTrainingPanel: React.FC = () => {
 
   useEffect(() => {
     fetchStatus()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameType])
 
   const saveCanaryPct = async () => {
     if (pendingPct === null) return
     setSavingPct(true)
     try {
-      await adminApi.patch('/ludo/ml-training/canary', { pct: pendingPct })
+      await adminApi.patch(`/${gameType}/ml-training/canary`, { pct: pendingPct })
       message.success(`Canary rollout set to ${pendingPct}%`)
       fetchStatus()
     } catch {
@@ -65,7 +74,7 @@ export const MLTrainingPanel: React.FC = () => {
   const trainNow = async () => {
     setTraining(true)
     try {
-      const res = await adminApi.post('/ludo/ml-training/train-difficulty')
+      const res = await adminApi.post(`/${gameType}/ml-training/train-difficulty`)
       message.success(
         `Trained: ${(res.data.test_accuracy * 100).toFixed(1)}% test accuracy on ${res.data.samples} samples`
       )
@@ -80,7 +89,7 @@ export const MLTrainingPanel: React.FC = () => {
   const runAnomalyScan = async () => {
     setRunningAnomalyScan(true)
     try {
-      const res = await adminApi.post('/ludo/ml-training/run-anomaly-detection')
+      const res = await adminApi.post(`/${gameType}/ml-training/run-anomaly-detection`)
       message.success(
         `Scanned ${res.data.num_players} players, found ${res.data.num_anomalies} anomalies`
       )
@@ -98,31 +107,29 @@ export const MLTrainingPanel: React.FC = () => {
       <Card title="Personalized Difficulty (ML)" bordered={false}>
         <Paragraph type="secondary">
           Recommends easy/medium/hard bot difficulty per real player based on their
-          skill and engagement — not a win-rate target. See{' '}
-          <Text code>PERSONALIZATION_CANARY_PCT_LUDO</Text> rollout design doc for
-          details.
+          skill and engagement — not a win-rate target. Rollout is per-game via{' '}
+          <Text code>game_configs.personalization_canary_pct</Text>.
         </Paragraph>
 
         <Row gutter={[24, 16]} style={{ marginBottom: 16 }}>
           <Col xs={24} sm={8}>
             <Statistic
               title="Training Data Readiness"
-              value={status.post_cutover_ludo_rows}
+              value={status.post_cutover_rows}
               suffix={`/ ${status.min_training_rows_required}`}
               valueStyle={{ color: status.training_ready ? '#52c41a' : undefined }}
             />
             <Progress
               percent={Math.min(
                 100,
-                Math.round((status.post_cutover_ludo_rows / status.min_training_rows_required) * 100)
+                Math.round((status.post_cutover_rows / status.min_training_rows_required) * 100)
               )}
               size="small"
               status={status.training_ready ? 'success' : 'active'}
               showInfo={false}
             />
             <Text type="secondary" style={{ fontSize: 12 }}>
-              Real post-fix Ludo games with a known winner (see Game History fix,
-              2026-07-25)
+              Real post-fix {gameLabel} games with a known winner
             </Text>
           </Col>
           <Col xs={24} sm={8}>
@@ -194,42 +201,44 @@ export const MLTrainingPanel: React.FC = () => {
         </Space>
       </Card>
 
-      <Card title="Bot Playstyle ML" bordered={false}>
-        <Paragraph type="secondary">
-          Medium/hard Ludo bots take captures and avoid exposed tokens with a
-          probability learned from real players at that skill tier, instead
-          of always doing so — falling back to the old deterministic rule
-          (always take/avoid) whenever a tier has no trained data yet.
-        </Paragraph>
-        <Table
-          size="small"
-          pagination={false}
-          rowKey="difficulty"
-          dataSource={status.playstyle_tiers}
-          columns={[
-            { title: 'Tier', dataIndex: 'difficulty' },
-            {
-              title: 'Capture Probability',
-              dataIndex: 'capture_probability',
-              render: (v: number | null) => (v !== null ? `${(v * 100).toFixed(0)}%` : 'No trained data (default: always)'),
-            },
-            {
-              title: 'Safe-Play Probability',
-              dataIndex: 'safe_play_probability',
-              render: (v: number | null) => (v !== null ? `${(v * 100).toFixed(0)}%` : 'No trained data (default: hard-only)'),
-            },
-            {
-              title: 'Sample Size',
-              dataIndex: 'sample_size',
-              render: (v: number | null) => v ?? '—',
-            },
-          ]}
-        />
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {status.move_decisions_logged} real-player move decisions logged
-          so far (see <Text code>ludo_move_decisions</Text>).
-        </Text>
-      </Card>
+      {status.supports_playstyle_ml && (
+        <Card title="Bot Playstyle ML" bordered={false}>
+          <Paragraph type="secondary">
+            Medium/hard Ludo bots take captures and avoid exposed tokens with a
+            probability learned from real players at that skill tier, instead
+            of always doing so — falling back to the old deterministic rule
+            (always take/avoid) whenever a tier has no trained data yet.
+          </Paragraph>
+          <Table
+            size="small"
+            pagination={false}
+            rowKey="difficulty"
+            dataSource={status.playstyle_tiers}
+            columns={[
+              { title: 'Tier', dataIndex: 'difficulty' },
+              {
+                title: 'Capture Probability',
+                dataIndex: 'capture_probability',
+                render: (v: number | null) => (v !== null ? `${(v * 100).toFixed(0)}%` : 'No trained data (default: always)'),
+              },
+              {
+                title: 'Safe-Play Probability',
+                dataIndex: 'safe_play_probability',
+                render: (v: number | null) => (v !== null ? `${(v * 100).toFixed(0)}%` : 'No trained data (default: hard-only)'),
+              },
+              {
+                title: 'Sample Size',
+                dataIndex: 'sample_size',
+                render: (v: number | null) => v ?? '—',
+              },
+            ]}
+          />
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {status.move_decisions_logged} real-player move decisions logged
+            so far (see <Text code>ludo_move_decisions</Text>).
+          </Text>
+        </Card>
+      )}
     </div>
   )
 }
