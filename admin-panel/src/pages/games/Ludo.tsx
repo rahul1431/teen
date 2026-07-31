@@ -12,6 +12,7 @@ import { BotMetricsTable } from '../../components/BotMetricsTable'
 import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
 import { BotTrainingTrendChart } from '../../components/BotTrainingTrendChart'
 import { MLTrainingPanel } from '../../components/MLTrainingPanel'
+import { BotLearningSection } from '../../components/AI/BotLearningSection'
 
 export default function Ludo() {
   const screens = Grid.useBreakpoint()
@@ -184,6 +185,7 @@ export default function Ludo() {
         <BotTrainingTrendChart />
         <BotMetricsTable />
         <BotTrainingAuditTrail />
+        <BotLearningSection gameType="ludo" />
       </div>
     ) }, { key: 'ml-training', label: 'ML Training', children: <MLTrainingPanel /> }]} />
   )

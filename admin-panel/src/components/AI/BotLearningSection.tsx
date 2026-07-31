@@ -29,7 +29,14 @@ const GAME_LABELS: Record<string, string> = {
 
 const DIFF_COLORS: Record<string, string> = { easy: 'green', medium: 'orange', hard: 'red' }
 
-export function BotLearningSection() {
+interface BotLearningSectionProps {
+  // When set, only that game's profile cards are shown (used on the
+  // per-game Bot Training tabs). Omit to show every game (AI Control
+  // Center's old placement, kept for any other future cross-game view).
+  gameType?: string
+}
+
+export function BotLearningSection({ gameType: gameTypeFilter }: BotLearningSectionProps = {}) {
   const [profiles, setProfiles] = useState<BotProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [rebuilding, setRebuilding] = useState(false)
@@ -115,7 +122,9 @@ export function BotLearningSection() {
   // bot_profiles entries are permanently-seeded placeholders that can never
   // be learned from real data (see docs/Bugs/bot-learning-service-builds-dead-aviator-bot-profiles.md).
   // Filtered out here rather than deleted server-side so the row stays available if that changes.
-  const gameTypes = [...new Set(profiles.map(p => p.game_type))].filter(g => g !== 'aviator')
+  const gameTypes = [...new Set(profiles.map(p => p.game_type))]
+    .filter(g => g !== 'aviator')
+    .filter(g => !gameTypeFilter || g === gameTypeFilter)
 
   if (loading) return <Spin />
 
@@ -128,6 +137,7 @@ export function BotLearningSection() {
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ color: '#888', fontSize: 12 }}>
           Profiles rebuilt nightly from real player data. Sample size shows how many real players were used.
+          {gameTypeFilter && ' Rebuild runs for every game at once — there is no per-game rebuild.'}
         </span>
         <Button
           icon={<SyncOutlined spin={rebuilding} />}
@@ -212,7 +222,11 @@ export function BotLearningSection() {
       ))}
 
       <Divider orientation="left">Bot Config</Divider>
-      <Card title="Schedule & Sampling Config" style={{ maxWidth: 480 }}>
+      <Card
+        title="Schedule & Sampling Config"
+        style={{ maxWidth: 480 }}
+        extra={gameTypeFilter ? <Tag>Applies to all games</Tag> : undefined}
+      >
         {config && (
           <Form form={configForm} layout="vertical" onFinish={saveConfig} initialValues={config}>
             <Form.Item label="Rebuild hour (0â€“23 UTC)" name="rebuild_hour">

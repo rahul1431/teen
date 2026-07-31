@@ -13,6 +13,7 @@ import { BotMetricsTable } from '../../components/BotMetricsTable'
 import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
 import { BotTrainingTrendChart } from '../../components/BotTrainingTrendChart'
 import { MLTrainingPanel } from '../../components/MLTrainingPanel'
+import { BotLearningSection } from '../../components/AI/BotLearningSection'
 
 const { Text } = Typography
 
@@ -476,6 +477,7 @@ export default function TeenPatti() {
         <BotTrainingTrendChart />
         <BotMetricsTable gameType="teen_patti" />
         <BotTrainingAuditTrail />
+        <BotLearningSection gameType="teen_patti" />
       </div>
     ) }, { key: 'ml-training', label: 'ML Training', children: <MLTrainingPanel gameType="teen_patti" /> }]} />
   )

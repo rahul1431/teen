@@ -1,8 +1,8 @@
 ﻿import { useState, useEffect } from 'react'
 import { Card, Form, Slider, InputNumber, Switch, Button, Space, message, Divider, Alert, Row, Col } from 'antd'
+import { Link } from 'react-router-dom'
 import { SaveOutlined, ReloadOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
-import { BotLearningSection } from './BotLearningSection'
 
 interface MLConfig {
   fraudDetection: {
@@ -287,7 +287,21 @@ export function MLConfigPanel() {
         </Space>
       </Form>
 
-      <BotLearningSection />
+      <Alert
+        style={{ marginTop: 24 }}
+        type="info"
+        showIcon
+        message="Bot Learning moved to the game pages"
+        description={
+          <span>
+            Per-difficulty bot behavior (win-rate target, fold/call/raise %, decision
+            delay) now lives on each game's own Bot Training tab, alongside the
+            related coordination and difficulty-ML controls:{' '}
+            <Link to="/admin/games/teen-patti">Teen Patti</Link> ·{' '}
+            <Link to="/admin/games/ludo">Ludo</Link>.
+          </span>
+        }
+      />
     </div>
   )
 }
