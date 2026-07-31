@@ -1212,6 +1212,33 @@ export class MatchmakingService {
       // I5: Extract the engine call + state-broadcast into a reusable closure so we can retry once
       const doAction = async () => {
         const isSeen = currentPlayer.isSeen || currentPlayer.is_seen || false
+
+        // The engine caps a raise at min(stake * 4, potLimit - pot) — mirrors
+        // maxRaiseFor() in main.go. A bot's fixed 2x-minBet raise can exceed
+        // that once the pot is near its limit; sending it anyway got a 400
+        // from the engine on every retry (the amount never changed), which
+        // force-ended the whole hand with a null winner and a ₹0 prize. Clamp
+        // to the engine's actual ceiling, and fall back to 'call' if there's
+        // no room left for a raise big enough to be valid (seen requires
+        // >= minBet*2, blind requires >= minBet).
+        if (action === 'raise') {
+          const stake = state.stake ?? state.Stake ?? minBet
+          const pot = state.pot ?? state.Pot ?? 0
+          const potLimit = state.pot_limit ?? state.PotLimit ?? 0
+          const noLimit = state.no_limit ?? state.NoLimit ?? false
+          let maxRaise = stake * 4
+          if (!noLimit && potLimit > 0) {
+            const headroom = Math.max(0, potLimit - pot)
+            maxRaise = Math.min(maxRaise, headroom)
+          }
+          const minValidRaise = isSeen ? minBet * 2 : minBet
+          if (maxRaise < minValidRaise) {
+            action = 'call'
+          } else {
+            amount = Math.min(amount, maxRaise)
+          }
+        }
+
         let extraBet = 0
         if (action === 'call') {
           extraBet = isSeen ? minBet * 2 : minBet
