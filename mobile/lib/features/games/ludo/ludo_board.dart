@@ -925,7 +925,7 @@ class _BoardPainter extends CustomPainter {
     ];
     for (var seat = 0; seat < 4; seat++) {
       final color = _seatColors[seat];
-      for (var j = 0; j < _homeLanes[seat].length - 1; j++) {
+      for (var j = 0; j < _homeLanes[seat].length; j++) {
         final c = _homeLanes[seat][j];
         final rect = Rect.fromLTWH(c[0] * s, c[1] * s, s, s);
         canvas.drawRect(rect, _flatFill(color));
