@@ -484,6 +484,9 @@ class _TokenSpriteState extends State<_TokenSprite>
   late final AnimationController _move = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 300));
   double _from = 0, _to = 0;
+  // Real destination progress for this move. Usually equals _to, except when
+  // the move ends at 57 (finished) — see _animateSteps.
+  double _finalValue = 0;
   int _lastTick = 0;
 
   // One-shot flourish: capture pop-in (sent home) and home-arrival bounce.
@@ -540,9 +543,16 @@ class _TokenSpriteState extends State<_TokenSprite>
 
   void _animateSteps(double from, double to) {
     _from = from;
-    _to = to;
+    _finalValue = to;
+    // Progress 56 (last home-lane cell) and 57 (finished) render at the
+    // identical pixel — both are the goal triangle's centroid. Animating a
+    // full step between them covers zero visual distance, so the token
+    // would freeze in the goal square for an extra beat before "landing".
+    // Cap the animated target at 56 and snap straight to the real value
+    // (_finalValue) on completion instead.
+    _to = to > 56 ? 56.0 : to;
     _lastTick = from.floor();
-    final steps = (to - from).abs();
+    final steps = (_to - from).abs();
     // ~150ms per cell, clamped, so a 6-step move reads clearly without dragging.
     _move.duration =
         Duration(milliseconds: (150 * steps).round().clamp(200, 1400));
@@ -564,9 +574,9 @@ class _TokenSpriteState extends State<_TokenSprite>
 
   void _onMoveDone(AnimationStatus st) {
     if (st != AnimationStatus.completed) return;
-    _display = _to;
+    _display = _finalValue;
     // Landing feedback: home arrival flourish, else a safe-cell chime.
-    if (_to >= 57) {
+    if (_finalValue >= 57) {
       _homeFlourish = true;
       _fx.forward(from: 0);
     } else if (_to <= 50) {
