@@ -166,10 +166,14 @@ Offset tokenPosition(int seatIndex, int tokenIndex, int progress, double size) {
     final cell = _track[absoluteCell(seatIndex, progress)];
     return _cellCenter(cell[0], cell[1], size);
   }
-  if (progress <= 56) {
+  if (progress <= 55) {
     final cell = _homeLanes[seatIndex % 4][progress - 51];
     return _cellCenter(cell[0], cell[1], size);
   }
+  // progress 56 lands on the home lane's 6th cell, which sits geometrically
+  // inside the centre triangle (same coordinates as _goalCentroid below) —
+  // falling through here keeps it visually and key-wise identical to
+  // "finished" instead of a separate state that silently overlapped it.
   // Finished: rest at the centroid of this seat's own goal triangle. When
   // several of the same colour finish, _buildTokens clusters them with the
   // same tight diamond offsets used everywhere else tokens share a cell —
@@ -299,7 +303,7 @@ class _LudoBoardState extends State<LudoBoard>
         String cellKey;
         if (prog <= 50) {
           cellKey = 'track_${absoluteCell(seatIdx, prog)}';
-        } else if (prog < kHomeProgress) {
+        } else if (prog < kHomeProgress - 1) {
           cellKey = 'home_${seatIdx}_$prog';
         } else {
           cellKey = 'goal_$seatIdx';
@@ -331,7 +335,7 @@ class _LudoBoardState extends State<LudoBoard>
           String cellKey;
           if (progress <= 50) {
             cellKey = 'track_${absoluteCell(seatIdx, progress)}';
-          } else if (progress < kHomeProgress) {
+          } else if (progress < kHomeProgress - 1) {
             cellKey = 'home_${seatIdx}_$progress';
           } else {
             cellKey = 'goal_$seatIdx';
