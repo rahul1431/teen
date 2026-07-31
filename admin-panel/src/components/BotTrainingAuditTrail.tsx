@@ -15,7 +15,11 @@ interface AuditSession {
   createdAt: string
 }
 
-export const BotTrainingAuditTrail: React.FC = () => {
+interface BotTrainingAuditTrailProps {
+  gameType?: 'ludo' | 'teen_patti'
+}
+
+export const BotTrainingAuditTrail: React.FC<BotTrainingAuditTrailProps> = ({ gameType = 'ludo' }) => {
   const [sessions, setSessions] = useState<AuditSession[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -27,7 +31,8 @@ export const BotTrainingAuditTrail: React.FC = () => {
 
   useEffect(() => {
     fetchSessions()
-  }, [page, filters])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, filters, gameType])
 
   const fetchSessions = async () => {
     setLoading(true)
@@ -39,7 +44,7 @@ export const BotTrainingAuditTrail: React.FC = () => {
       if (filters.botId) params.append('botId', filters.botId.toString())
       if (filters.success !== undefined) params.append('success', filters.success ? 'true' : 'false')
 
-      const response = await adminApi.get(`/ludo/bot-training/sessions?${params}`)
+      const response = await adminApi.get(`/${gameType}/bot-training/sessions?${params}`)
       setSessions(response.data.sessions || [])
       setTotal(response.data.total || 0)
     } catch (error) {

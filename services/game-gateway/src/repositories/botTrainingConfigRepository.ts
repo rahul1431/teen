@@ -13,8 +13,10 @@ export interface BotTrainingConfig {
   winnerBotDiceBias: number // 0.0 - 1.0; skews the winner bot's OWN dice rolls toward high faces (0 = fair). Simulation showed this plateaus around 0.3-0.5 (~60% win rate) -- the three-consecutive-sixes forfeit rule caps further gains from higher bias.
 }
 
-const CONFIG_REDIS_KEY = 'ludo:bot-training:config'
-const CONFIG_DB_KEY = 'ludo_bot_training_config'
+export type BotTrainingGameType = string
+
+const configRedisKey = (gameType: BotTrainingGameType) => `bot-training:config:${gameType}`
+const configDbKey = (gameType: BotTrainingGameType) => `bot_training_config:${gameType}`
 
 const DEFAULT_CONFIG: BotTrainingConfig = {
   enabled: false,
@@ -34,9 +36,9 @@ export class BotTrainingConfigRepository {
     private db: Pool,
   ) {}
 
-  async getConfig(): Promise<BotTrainingConfig> {
+  async getConfig(gameType: BotTrainingGameType): Promise<BotTrainingConfig> {
     // Try Redis first
-    const cached = await this.redis.get(CONFIG_REDIS_KEY)
+    const cached = await this.redis.get(configRedisKey(gameType))
     if (cached) {
       return { ...DEFAULT_CONFIG, ...JSON.parse(cached) }
     }
@@ -44,7 +46,7 @@ export class BotTrainingConfigRepository {
     // Fall back to database
     const res = await this.db.query(
       `SELECT value FROM admin_config WHERE key = $1`,
-      [CONFIG_DB_KEY]
+      [configDbKey(gameType)]
     )
 
     if (!res.rows || !res.rows[0]) {
@@ -53,11 +55,11 @@ export class BotTrainingConfigRepository {
 
     const config = { ...DEFAULT_CONFIG, ...(res.rows[0].value as Partial<BotTrainingConfig>) }
     // Cache it
-    await this.redis.setex(CONFIG_REDIS_KEY, 3600, JSON.stringify(config))
+    await this.redis.setex(configRedisKey(gameType), 3600, JSON.stringify(config))
     return config
   }
 
-  async updateConfig(config: BotTrainingConfig): Promise<void> {
+  async updateConfig(gameType: BotTrainingGameType, config: BotTrainingConfig): Promise<void> {
     // Validate ranges
     if (config.targetWinRate < 0.5 || config.targetWinRate > 1.0) {
       throw new Error('targetWinRate must be between 0.5 and 1.0')
@@ -84,14 +86,14 @@ export class BotTrainingConfigRepository {
     // Update database
     await this.db.query(
       `INSERT INTO admin_config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
-      [CONFIG_DB_KEY, config]
+      [configDbKey(gameType), config]
     )
 
     // Update Redis cache
-    await this.redis.setex(CONFIG_REDIS_KEY, 3600, JSON.stringify(config))
+    await this.redis.setex(configRedisKey(gameType), 3600, JSON.stringify(config))
   }
 
-  async invalidateCache(): Promise<void> {
-    await this.redis.del(CONFIG_REDIS_KEY)
+  async invalidateCache(gameType: BotTrainingGameType): Promise<void> {
+    await this.redis.del(configRedisKey(gameType))
   }
 }

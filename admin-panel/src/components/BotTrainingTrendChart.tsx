@@ -20,18 +20,23 @@ interface TrendPoint {
   targetWinRate: number
 }
 
-export const BotTrainingTrendChart: React.FC = () => {
+interface BotTrainingTrendChartProps {
+  gameType?: 'ludo' | 'teen_patti'
+}
+
+export const BotTrainingTrendChart: React.FC<BotTrainingTrendChartProps> = ({ gameType = 'ludo' }) => {
   const [trend, setTrend] = useState<TrendPoint[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     fetchTrend()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameType])
 
   const fetchTrend = async () => {
     setLoading(true)
     try {
-      const response = await adminApi.get('/ludo/bot-training/trend', { params: { days: 30 } })
+      const response = await adminApi.get(`/${gameType}/bot-training/trend`, { params: { days: 30 } })
       setTrend(response.data.trend || [])
     } catch (error) {
       setTrend([])

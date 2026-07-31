@@ -38,7 +38,11 @@ const WINNER_SKILL_OPTIONS = [
   { label: 'Expert — full move scoring, tuned by boldness below', value: 'expert' },
 ]
 
-export const BotTrainingConfigPanel: React.FC = () => {
+interface BotTrainingConfigPanelProps {
+  gameType?: 'ludo' | 'teen_patti'
+}
+
+export const BotTrainingConfigPanel: React.FC<BotTrainingConfigPanelProps> = ({ gameType = 'ludo' }) => {
   const [config, setConfig] = useState<BotTrainingConfig | null>(null)
   const [effectiveBoldness, setEffectiveBoldness] = useState<number | undefined>(undefined)
   const [loading, setLoading] = useState(true)
@@ -47,11 +51,13 @@ export const BotTrainingConfigPanel: React.FC = () => {
 
   useEffect(() => {
     fetchConfig()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameType])
 
   const fetchConfig = async () => {
+    setLoading(true)
     try {
-      const response = await adminApi.get('/ludo/bot-training/config')
+      const response = await adminApi.get(`/${gameType}/bot-training/config`)
       // Convert targetWinRate from decimal (0.85-1.0) to percentage (85-100) for display
       const configForDisplay = {
         ...response.data,
@@ -75,7 +81,7 @@ export const BotTrainingConfigPanel: React.FC = () => {
         ...values,
         targetWinRate: values.targetWinRate / 100,
       }
-      await adminApi.patch('/ludo/bot-training/config', configToSave)
+      await adminApi.patch(`/${gameType}/bot-training/config`, configToSave)
       setConfig(values)
       message.success('Bot training config updated')
     } catch (error) {
@@ -191,7 +197,11 @@ export const BotTrainingConfigPanel: React.FC = () => {
         <Form.Item
           name="winnerBotDiceBias"
           label="Winner Bot Dice Bias"
-          help="Skews the winner bot's OWN dice rolls toward high faces (0 = completely fair, same as every other player). This is direct outcome manipulation, not move-choice AI. Simulation showed this plateaus around 0.3-0.5 (~60% win rate) -- the three-consecutive-sixes forfeit rule caps further gains from pushing higher."
+          help={
+            gameType === 'teen_patti'
+              ? "Ludo-only mechanic (there are no dice in Teen Patti) — saved but has no effect on Teen Patti gameplay. Teen Patti's own win-rate steering is the Bot Learning win-rate target on this page's Bot Learning section below, not this slider."
+              : "Skews the winner bot's OWN dice rolls toward high faces (0 = completely fair, same as every other player). This is direct outcome manipulation, not move-choice AI. Simulation showed this plateaus around 0.3-0.5 (~60% win rate) -- the three-consecutive-sixes forfeit rule caps further gains from pushing higher."
+          }
         >
           <Slider min={0} max={1} step={0.1} marks={{ 0: 'Fair', 0.4: 'Recommended', 1: 'Max' }} />
         </Form.Item>

@@ -2,6 +2,7 @@ import { Database } from '../db'
 
 export interface BotLearningSession {
   gameId: string
+  gameType: string
   winnerBotId: string
   actualWinnerId: string
   botIds: string[]
@@ -13,6 +14,7 @@ export interface BotLearningSession {
 }
 
 export interface SessionsQuery {
+  gameType: string
   page?: number
   limit?: number
   startDate?: string
@@ -31,6 +33,9 @@ export class BotTrainingSessionsRepository {
 
     let whereClause = '1=1'
     const params: any[] = []
+
+    params.push(query.gameType)
+    whereClause += ` AND game_type = $${params.length}`
 
     if (query.startDate) {
       params.push(query.startDate)
@@ -64,6 +69,7 @@ export class BotTrainingSessionsRepository {
 
     const sessions = rows.rows.map((row: any) => ({
       gameId: row.game_id,
+      gameType: row.game_type,
       winnerBotId: row.winner_bot_id,
       actualWinnerId: row.actual_winner_id,
       botIds: row.bot_ids,

@@ -418,6 +418,7 @@ describe('BotCoordination - GameRecorder', () => {
     it('should record coordinated game with correct fields', async () => {
       const outcome: GameOutcome = {
         gameId: 'game-123',
+        gameType: 'ludo',
         actualWinnerId: 'bot-1',
         botTrainingMetadata: {
           winnerBotId: 'bot-1',
@@ -455,19 +456,21 @@ describe('BotCoordination - GameRecorder', () => {
       // Verify parameters
       const params = query.params
       expect(params[0]).toBe('game-123') // gameId
-      expect(params[1]).toBe('bot-1') // winnerBotId
-      expect(params[2]).toBe('bot-1') // actualWinnerId
-      expect(params[3]).toBe(JSON.stringify(['bot-1', 'bot-2'])) // botIds
-      expect(params[4]).toBe('rp-100') // rpId
-      expect(params[5]).toBe('lifetime_winrate') // strategy
-      expect(params[6]).toBe(0.75) // targetWinRate
-      expect(params[8]).toBeDefined() // rpPerformance JSON
-      expect(params[9]).toBe(true) // coordination_success (bot won)
+      expect(params[1]).toBe('ludo') // gameType
+      expect(params[2]).toBe('bot-1') // winnerBotId
+      expect(params[3]).toBe('bot-1') // actualWinnerId
+      expect(params[4]).toBe(JSON.stringify(['bot-1', 'bot-2'])) // botIds
+      expect(params[5]).toBe('rp-100') // rpId
+      expect(params[6]).toBe('lifetime_winrate') // strategy
+      expect(params[7]).toBe(0.75) // targetWinRate
+      expect(params[9]).toBeDefined() // rpPerformance JSON
+      expect(params[10]).toBe(true) // coordination_success (bot won)
     })
 
     it('should record game with coordination_success=true when bot wins', async () => {
       const outcome: GameOutcome = {
         gameId: 'game-win',
+        gameType: 'ludo',
         actualWinnerId: 'bot-5',
         botTrainingMetadata: {
           winnerBotId: 'bot-5',
@@ -484,12 +487,13 @@ describe('BotCoordination - GameRecorder', () => {
       await recorder.recordCoordinatedGame(outcome)
 
       const params = mockDb.lastQueries[0].params
-      expect(params[9]).toBe(true) // coordination_success
+      expect(params[10]).toBe(true) // coordination_success
     })
 
     it('should record coordination_success=false when the elected bot loses, regardless of targetWinRate', async () => {
       const outcome: GameOutcome = {
         gameId: 'game-loss',
+        gameType: 'ludo',
         actualWinnerId: 'rp-100',
         botTrainingMetadata: {
           winnerBotId: 'bot-5',
@@ -506,12 +510,13 @@ describe('BotCoordination - GameRecorder', () => {
       await recorder.recordCoordinatedGame(outcome)
 
       const params = mockDb.lastQueries[0].params
-      expect(params[9]).toBe(false)
+      expect(params[10]).toBe(false)
     })
 
     it('should skip non-coordinated games (no botTrainingMetadata)', async () => {
       const outcome: GameOutcome = {
         gameId: 'game-no-coordination',
+        gameType: 'ludo',
         actualWinnerId: 'bot-1',
         botPerformance: {},
         rpPerformance: {},
@@ -531,6 +536,7 @@ describe('BotCoordination - GameRecorder', () => {
 
       const outcome: GameOutcome = {
         gameId: 'game-db-error',
+        gameType: 'ludo',
         actualWinnerId: 'bot-1',
         botTrainingMetadata: {
           winnerBotId: 'bot-1',
@@ -622,6 +628,7 @@ describe('BotCoordination - Integration', () => {
     // Record game
     const outcome: GameOutcome = {
       gameId: 'integration-game-1',
+      gameType: 'ludo',
       actualWinnerId: elected,
       botTrainingMetadata: {
         winnerBotId: elected,

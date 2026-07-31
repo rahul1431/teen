@@ -3,6 +3,7 @@ import { ElectionAlgorithm } from './electionAlgorithm'
 
 export interface GameOutcome {
   gameId: string
+  gameType: string
   actualWinnerId: string | null
   botTrainingMetadata?: {
     winnerBotId: string
@@ -36,11 +37,12 @@ export class GameRecorder {
     try {
       await this.db.query(
         `INSERT INTO bot_learning_sessions (
-          game_id, winner_bot_id, actual_winner_id, bot_ids, rp_id,
+          game_id, game_type, winner_bot_id, actual_winner_id, bot_ids, rp_id,
           strategy_used, target_win_rate, bot_performance, rp_performance, coordination_success
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           outcome.gameId,
+          outcome.gameType,
           metadata.winnerBotId,
           outcome.actualWinnerId,
           JSON.stringify(metadata.botIds),

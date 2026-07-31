@@ -181,10 +181,10 @@ export default function Ludo() {
     </div>
     ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="ludo" /> }, { key: 'analytics', label: 'Analytics', children: <GamePnlDashboard gameType="ludo" /> }, { key: 'bot-training', label: 'Bot Training', children: (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-        <BotTrainingConfigPanel />
-        <BotTrainingTrendChart />
-        <BotMetricsTable />
-        <BotTrainingAuditTrail />
+        <BotTrainingConfigPanel gameType="ludo" />
+        <BotTrainingTrendChart gameType="ludo" />
+        <BotMetricsTable gameType="ludo" />
+        <BotTrainingAuditTrail gameType="ludo" />
         <BotLearningSection gameType="ludo" />
       </div>
     ) }, { key: 'ml-training', label: 'ML Training', children: <MLTrainingPanel /> }]} />

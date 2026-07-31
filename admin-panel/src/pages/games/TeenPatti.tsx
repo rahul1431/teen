@@ -470,13 +470,13 @@ export default function TeenPatti() {
         <Alert
           type="info"
           showIcon
-          message="Shared across games"
-          description="This election/coordination config is not Teen Patti-specific — the same settings and session history also drive Ludo's bot-vs-real-player outcomes (bot_learning_sessions has no per-game split yet). Changes here take effect on both games' next hands."
+          message="Skill / Boldness / Dice Bias only affect Ludo"
+          description="Independent from Ludo's config as of 2026-07-31 (own sliders, own session history). Enabled/Strategy/Target Win Rate control which bot is elected to win a Teen Patti hand and are recorded to the audit trail below, but Winner Bot Skill, Boldness, and Dice Bias are Ludo engine-only mechanics right now — they're saved but have no effect on Teen Patti gameplay. Teen Patti's actual win-rate steering happens via the DDAS win-rate target in Bot Learning below."
         />
-        <BotTrainingConfigPanel />
-        <BotTrainingTrendChart />
+        <BotTrainingConfigPanel gameType="teen_patti" />
+        <BotTrainingTrendChart gameType="teen_patti" />
         <BotMetricsTable gameType="teen_patti" />
-        <BotTrainingAuditTrail />
+        <BotTrainingAuditTrail gameType="teen_patti" />
         <BotLearningSection gameType="teen_patti" />
       </div>
     ) }, { key: 'ml-training', label: 'ML Training', children: <MLTrainingPanel gameType="teen_patti" /> }]} />

@@ -370,7 +370,7 @@ export class MatchmakingService {
     }
     let bots: MatchmakingEntry[]
     if (gameType === 'ludo' && botsNeeded === 3) {
-      const botTrainingCfg = await this.botTrainingConfig.getConfig()
+      const botTrainingCfg = await this.botTrainingConfig.getConfig('ludo')
       bots = botTrainingCfg.enabled && botTrainingCfg.strategy === 'tiered_hard_wins'
         ? (await this.getTierDiverseBots(gameType, stake)) ?? (await this.getBots(gameType, botsNeeded, stake))
         : await this.getBots(gameType, botsNeeded, stake)
@@ -707,8 +707,11 @@ export class MatchmakingService {
       botDifficulty: botDifficulty,  // I3: default bot difficulty written into room state
     }
 
-    // Load bot training config
-    const config = await this.botTrainingConfig.getConfig()
+    // Load bot training config (per-game — Teen Patti and Ludo have
+    // independent sliders/history since 2026-07-31; any other game type
+    // sharing this generic startGame path, e.g. Rummy, gets its own
+    // isolated key too rather than accidentally reading/writing either one)
+    const config = await this.botTrainingConfig.getConfig(gameType)
     const botCount = gatewayPlayers.filter(p => p.isBot).length
 
     let botCoordinationForEngine: {
@@ -1844,6 +1847,7 @@ export class MatchmakingService {
       const botTraining = JSON.parse(botTrainingRaw)
       await this.gameRecorder.recordCoordinatedGame({
         gameId: roomId,
+        gameType: 'ludo',
         actualWinnerId: result?.winner_id || null,
         botTrainingMetadata: botTraining,
         botPerformance: result?.botPerformance || {},
@@ -2224,6 +2228,7 @@ export class MatchmakingService {
       const botTraining = JSON.parse(botTrainingRaw)
       await this.gameRecorder.recordCoordinatedGame({
         gameId: roomId,
+        gameType: 'teen_patti',
         actualWinnerId: result.winner_id || null,
         botTrainingMetadata: botTraining,
         botPerformance: result.botPerformance || {},
