@@ -11,6 +11,7 @@ const createMockPool = () => {
 const createMockRedis = () => {
   return {
     del: jest.fn().mockResolvedValue(0),
+    set: jest.fn().mockResolvedValue('OK'),
     setex: jest.fn().mockResolvedValue('OK'),
     get: jest.fn().mockResolvedValue(null),
     publish: jest.fn().mockResolvedValue(0),
@@ -236,5 +237,104 @@ describe('ProfileBuilder - Ludo capture/safe-play aggregation', () => {
     const [, , , , , , , , , , captureProbability, safePlayProbability] = ludoInsertParams!
     expect(captureProbability).toBeNull()
     expect(safePlayProbability).toBeNull()
+  })
+})
+
+describe('ProfileBuilder - Teen Patti fold/call aggregation', () => {
+  let pool: any
+  let redis: any
+  let logger: any
+  let builder: ProfileBuilder
+
+  beforeEach(() => {
+    pool = createMockPool()
+    redis = createMockRedis()
+    logger = createMockLogger()
+    builder = new ProfileBuilder(pool, redis, logger)
+  })
+
+  afterEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('computes fold_probability and call_probability from teen_patti_move_decisions for teen_patti, not from the win-rate heuristic', async () => {
+    const configRows = [
+      { key: 'min_sample_size', value: '50' },
+      { key: 'stream_lookback_days', value: '7' },
+      { key: 'history_lookback_days', value: '30' },
+      { key: 'easy_percentile_max', value: '25' },
+      { key: 'medium_percentile_min', value: '40' },
+      { key: 'medium_percentile_max', value: '60' },
+      { key: 'hard_percentile_min', value: '75' },
+    ]
+    const playerRows = Array(300).fill(null).map((_, i) => ({
+      user_id: `user_${i}`, games_played: 10, total_profit: 100 + i, avg_profit: 10, wins: 5, avg_stake: 10,
+    }))
+
+    const insertParamsByGameType: Record<string, any[][]> = { teen_patti: [], ludo: [], aviator: [] }
+    pool.query.mockImplementation(async (sql: string, params?: any[]) => {
+      if (sql.includes('SELECT key, value FROM bot_learning_config')) return { rows: configRows }
+      if (sql.includes('game_participants')) return { rows: playerRows }
+      if (sql.includes('FROM teen_patti_move_decisions')) return { rows: [{ fold_rate: '0.10', call_rate: '0.60' }] }
+      if (sql.includes('INSERT INTO bot_profiles') && params) {
+        const gameType = params[0]
+        insertParamsByGameType[gameType]?.push(params)
+        return { rows: [] }
+      }
+      return { rows: [] }
+    })
+
+    await builder.runRebuild()
+
+    // Teen Patti rows get the real fold/call rates from teen_patti_move_decisions.
+    expect(insertParamsByGameType.teen_patti.length).toBeGreaterThan(0)
+    for (const params of insertParamsByGameType.teen_patti) {
+      const [, , , foldProbability, callProbability] = params
+      expect(foldProbability).toBeCloseTo(0.10)
+      expect(callProbability).toBeCloseTo(0.60)
+    }
+
+    // Ludo has no teen_patti_move_decisions rows for its players -- must
+    // fall through to the win-rate heuristic, not the injected TP rates.
+    expect(insertParamsByGameType.ludo.length).toBeGreaterThan(0)
+    for (const params of insertParamsByGameType.ludo) {
+      const [, , , foldProbability, callProbability] = params
+      expect(foldProbability).not.toBeCloseTo(0.10)
+      expect(callProbability).not.toBeCloseTo(0.60)
+    }
+  })
+
+  it('falls back to the win-rate heuristic when the tier is below min_sample_size', async () => {
+    const configRows = [
+      { key: 'min_sample_size', value: '1000' }, // unreachable -- forces the below-threshold path
+      { key: 'stream_lookback_days', value: '7' },
+      { key: 'history_lookback_days', value: '30' },
+      { key: 'easy_percentile_max', value: '25' },
+      { key: 'medium_percentile_min', value: '40' },
+      { key: 'medium_percentile_max', value: '60' },
+      { key: 'hard_percentile_min', value: '75' },
+    ]
+    const playerRows = Array(1200).fill(null).map((_, i) => ({
+      user_id: `user_${i}`, games_played: 10, total_profit: 100 + i, avg_profit: 10, wins: 5, avg_stake: 10,
+    }))
+
+    let teenPattiInsertParams: any[] | null = null
+    pool.query.mockImplementation(async (sql: string, params?: any[]) => {
+      if (sql.includes('SELECT key, value FROM bot_learning_config')) return { rows: configRows }
+      if (sql.includes('game_participants')) return { rows: playerRows }
+      if (sql.includes('FROM teen_patti_move_decisions')) return { rows: [{ fold_rate: '0.10', call_rate: '0.60' }] }
+      if (sql.includes('INSERT INTO bot_profiles') && params && params[0] === 'teen_patti') {
+        teenPattiInsertParams = params
+        return { rows: [] }
+      }
+      return { rows: [] }
+    })
+
+    await builder.runRebuild()
+
+    expect(teenPattiInsertParams).not.toBeNull()
+    const [, , , foldProbability, callProbability] = teenPattiInsertParams!
+    expect(foldProbability).not.toBeCloseTo(0.10)
+    expect(callProbability).not.toBeCloseTo(0.60)
   })
 })

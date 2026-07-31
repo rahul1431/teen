@@ -552,6 +552,9 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 				(req.UserID == state.PendingSideshow.RequesterID || req.UserID == state.PendingSideshow.TargetID) {
 				state.PendingSideshow = nil
 			}
+			if !state.Players[playerIdx].IsBot {
+				s.logMoveDecision(req.RoomID, req.UserID, "fold", state.Players[playerIdx].IsSeen)
+			}
 		case "call":
 			callAmount := state.MinBet
 			if state.Players[playerIdx].IsSeen {
@@ -559,6 +562,9 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 			}
 			state.Players[playerIdx].Bet += callAmount
 			state.Pot += callAmount
+			if !state.Players[playerIdx].IsBot {
+				s.logMoveDecision(req.RoomID, req.UserID, "call", state.Players[playerIdx].IsSeen)
+			}
 		case "raise":
 			raiseAmount := req.Amount
 			isSeen := state.Players[playerIdx].IsSeen
@@ -588,6 +594,9 @@ func (s *Server) processAction(w http.ResponseWriter, r *http.Request) {
 				state.Players[playerIdx].Bet += raiseAmount
 				state.Pot += raiseAmount
 				state.MinBet = raiseAmount
+			}
+			if !state.Players[playerIdx].IsBot {
+				s.logMoveDecision(req.RoomID, req.UserID, "raise", isSeen)
 			}
 		case "show":
 			activeCount := 0
@@ -895,6 +904,24 @@ func (s *Server) determineWinner(state *GameState) *GameResult {
 		HandRank: handRankName,
 		AllHands: allHands,
 	}
+}
+
+// logMoveDecision records a real (non-bot) player's fold/call/raise choice
+// for bot-learning-service's profile-builder to learn fold_probability/
+// call_probability from, instead of deriving them purely from win rate
+// (see teen_patti_move_decisions migration). Mirrors the Ludo engine's
+// ludo_move_decisions logging: fire-and-forget, never blocks the action.
+func (s *Server) logMoveDecision(roomID, userID, action string, isSeen bool) {
+	go func() {
+		ctx := context.Background()
+		_, err := s.db.Exec(ctx,
+			`INSERT INTO teen_patti_move_decisions (room_id, user_id, action, is_seen) VALUES ($1, $2, $3, $4)`,
+			roomID, userID, action, isSeen,
+		)
+		if err != nil {
+			log.Printf("[teen-patti] Failed to log move decision: %v", err)
+		}
+	}()
 }
 
 func (s *Server) saveCompletedGame(roomID string, result *GameResult) {

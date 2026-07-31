@@ -11,6 +11,7 @@ const createMockPool = () => {
 const createMockRedis = () => {
   return {
     del: jest.fn().mockResolvedValue(0),
+    set: jest.fn().mockResolvedValue('OK'),
     setex: jest.fn().mockResolvedValue('OK'),
     get: jest.fn().mockResolvedValue(null),
     publish: jest.fn().mockResolvedValue(0),

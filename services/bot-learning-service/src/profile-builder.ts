@@ -290,9 +290,6 @@ export class ProfileBuilder {
     const mediumPlayers = players.slice(medMin, medMax)
     const hardPlayers   = players.slice(hardMin)
 
-    // Step 3: Enrich with Redis stream action data
-    const streamData = await this.getStreamActionData(gameType, cfg.stream_lookback_days)
-
     // Step 4: Build and upsert each tier
     const tierData: Array<{ difficulty: 'easy' | 'medium' | 'hard'; players: typeof players }> = [
       { difficulty: 'easy',   players: easyPlayers },
@@ -306,12 +303,32 @@ export class ProfileBuilder {
       const avgStake = tierPlayers.reduce((s: number, p: any) => s + parseFloat(p.avg_stake ?? '10'), 0) / tierPlayers.length
       const avgWinRate = tierPlayers.reduce((s: number, p: any) => s + (p.wins / p.games_played) * 100, 0) / tierPlayers.length
 
-      // Use stream data if available, otherwise derive from win rate
-      const streamStats = streamData[difficulty]
-      const foldProb   = streamStats?.fold_probability   ?? this.deriveFromWinRate(avgWinRate, 'fold')
-      const callProb   = streamStats?.call_probability   ?? this.deriveFromWinRate(avgWinRate, 'call')
+      // Teen Patti-only: fold/call rates learned from real players' actual
+      // pack/chaal/raise choices (teen_patti_move_decisions, logged by the Go
+      // engine), not just guessed from win rate. NULL below this tier's
+      // sample-size threshold falls through to the win-rate heuristic below,
+      // same fallback shape as Ludo's capture/safe-play gate.
+      let learnedFoldRate: number | null = null
+      let learnedCallRate: number | null = null
+      if (gameType === 'teen_patti' && tierPlayers.length >= cfg.min_sample_size) {
+        const tierUserIds = tierPlayers.map((p: any) => p.user_id)
+        const decisionRes = await this.pool.query(
+          `SELECT
+             COUNT(*) FILTER (WHERE action = 'fold')::float / NULLIF(COUNT(*), 0) AS fold_rate,
+             COUNT(*) FILTER (WHERE action = 'call')::float / NULLIF(COUNT(*), 0) AS call_rate
+           FROM teen_patti_move_decisions
+           WHERE user_id = ANY($1) AND created_at > NOW() - INTERVAL '${parseInt(String(cfg.stream_lookback_days), 10)} days'`,
+          [tierUserIds]
+        )
+        const row = decisionRes.rows[0]
+        learnedFoldRate = row?.fold_rate != null ? parseFloat(row.fold_rate) : null
+        learnedCallRate = row?.call_rate != null ? parseFloat(row.call_rate) : null
+      }
+
+      const foldProb   = learnedFoldRate  ?? this.deriveFromWinRate(avgWinRate, 'fold')
+      const callProb   = learnedCallRate  ?? this.deriveFromWinRate(avgWinRate, 'call')
       const raiseProb  = 1 - foldProb - callProb
-      const delayMs    = streamStats?.avg_delay_ms       ?? this.deriveDelayFromDifficulty(difficulty)
+      const delayMs    = this.deriveDelayFromDifficulty(difficulty)
 
       const normalizedFold  = Math.max(0.05, Math.min(0.70, foldProb))
       const normalizedCall  = Math.max(0.15, Math.min(0.75, callProb))
@@ -426,11 +443,6 @@ export class ProfileBuilder {
 
       this.logger.info({ gameType, difficulty, sampleSize: tierPlayers.length, winRate: avgWinRate.toFixed(1) }, 'Profile upserted')
     }
-  }
-
-  private async getStreamActionData(_gameType: string, _lookbackDays: number): Promise<Record<string, any>> {
-    // Phase 4: enrich profiles from Redis stream events
-    return {}
   }
 
   private deriveFromWinRate(winRate: number, type: 'fold' | 'call'): number {
