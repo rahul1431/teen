@@ -12,6 +12,7 @@ import { adminApi } from '../api/client'
 const GAME_OPTIONS = [
   { value: 'teen_patti', label: 'Teen Patti' },
   { value: 'ludo', label: 'Ludo' },
+  { value: 'rummy', label: 'Rummy' },
   { value: 'lottery', label: 'Lottery (ticket fill)' },
 ]
 

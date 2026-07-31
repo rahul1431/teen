@@ -2677,7 +2677,7 @@ async function start() {
       username: z.string(),
       phone: z.string().optional(),
       initial_balance: z.number().nonnegative().default(10000),
-      preferred_game_type: z.enum(['teen_patti', 'ludo', 'lottery']),
+      preferred_game_type: z.enum(['teen_patti', 'ludo', 'lottery', 'rummy']),
     }).parse(req.body)
 
     const phone = body.phone || `999${Math.floor(1000000 + Math.random() * 9000000)}`

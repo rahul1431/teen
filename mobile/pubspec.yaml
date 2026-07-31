@@ -1,6 +1,6 @@
 name: myonlinejoker
 description: MyOnlineJoker Gaming Platform
-version: 1.3.4+2107
+version: 1.3.7+4201
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

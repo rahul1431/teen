@@ -25,6 +25,7 @@ class AppColors {
   static const List<Color> matkaGrad      = [Color(0xFFC2410C), Color(0xFF7A2208)];
   static const List<Color> lotteryGrad    = [Color(0xFF0D9488), Color(0xFF064E45)];
   static const List<Color> cricketGrad    = [Color(0xFF15803D), Color(0xFF0A4521)];
+  static const List<Color> rummyGrad      = [Color(0xFF0F766E), Color(0xFF042F2B)];
 
   // Ludo token colours (seat order). Values match the board's tuned "reference
   // board" palette in ludo_board.dart so avatars/chips/borders elsewhere on the

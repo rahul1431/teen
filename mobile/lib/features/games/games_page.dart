@@ -22,6 +22,8 @@ class GamesPage extends StatelessWidget {
           const Color(0xFF60A5FA), '/games/aviator'),
       _Game(locale.t('ludo'), '🎲', 'Race your tokens home', AppColors.ludoGrad,
           const Color(0xFFCE93D8), '/games/ludo'),
+      _Game(locale.t('rummy'), '🂡', 'Meld sets and sequences', AppColors.rummyGrad,
+          const Color(0xFF5EEAD4), '/games/rummy/lobby'),
       _Game(locale.t('cricket'), '🏏', 'Bet on live matches', AppColors.cricketGrad,
           const Color(0xFF86EFAC), '/games/cricket'),
       _Game(locale.t('matka'), '🏺', 'Pick your lucky numbers', AppColors.matkaGrad,

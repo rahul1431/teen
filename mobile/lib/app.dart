@@ -23,6 +23,7 @@ import 'features/games/ludo/ludo_game_page.dart';
 import 'features/games/ludo/ludo_friends_page.dart';
 import 'features/games/ludo/ludo_history_page.dart';
 import 'features/games/rummy/rummy_game_page.dart';
+import 'features/games/rummy/rummy_lobby_page.dart';
 import 'features/games/betting/matka_page.dart';
 import 'features/games/betting/lottery_page.dart';
 import 'features/games/betting/cricket_page.dart';
@@ -132,6 +133,7 @@ final GoRouter _router = GoRouter(
     GoRoute(path: '/games/ludo/history', builder: (_, __) => const LudoHistoryPage()),
     GoRoute(path: '/games/ludo/practice', builder: (_, __) => const LudoGamePage(offline: true)),
     GoRoute(path: '/games/ludo/play/:roomId', builder: (_, s) => LudoGamePage(roomId: s.pathParameters['roomId']!, initialData: s.extra as Map<String, dynamic>?)),
+    GoRoute(path: '/games/rummy/lobby', builder: (_, __) => const RummyLobbyPage()),
     GoRoute(path: '/games/rummy/practice', builder: (_, __) => const RummyGamePage(offline: true)),
     GoRoute(path: '/games/rummy/play/:roomId', builder: (_, s) => RummyGamePage(roomId: s.pathParameters['roomId']!, initialData: s.extra as Map<String, dynamic>?)),
     GoRoute(path: '/referral', builder: (_, __) => const ReferralPage()),
