@@ -1402,9 +1402,17 @@ async function start() {
     await redis.del(`game:room:${roomId}`)
     await redis.del(`tp:game:${roomId}`)
     await redis.del(`rummy:game:${roomId}`)
-    // NOTE: ludo:game:<roomId> has the same gap and is deliberately left alone
-    // here (out of scope for the Rummy work) rather than fixed blind.
     await redis.del(`rummy:afk:${roomId}`)
+    // Same reasoning as rummy:game:<id> above: the Ludo engine keeps its own
+    // authoritative copy under ludo:game:<id>, separate from the gateway's
+    // game:room:<id> cache deleted above. Left alone deliberately in the
+    // Rummy fix as out of scope; closing it now — a stale client (or the
+    // gateway's own driveLudoBots loop, still holding this room_id) could
+    // otherwise keep calling the engine's /action or /bot-turn for a room
+    // that was already refunded and marked completed, producing a second,
+    // real winner_id/prize on top of the refund already issued.
+    await redis.del(`ludo:game:${roomId}`)
+    await redis.del(`ludo:afk:${roomId}`)
 
     // 4. Broadcast termination event to players in the room
     hub.sendToRoom(roomId, 'game:terminated', { message: 'Game terminated by administrator. Stake refunded.' })

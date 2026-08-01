@@ -1827,20 +1827,36 @@ export class MatchmakingService {
     const afkTimer = this.ludoAfkTimers.get(roomId)
     if (afkTimer) { clearTimeout(afkTimer); this.ludoAfkTimers.delete(roomId) }
     this.redis.del(this.ludoAfkRedisKey(roomId)).catch(() => {})
+
+    const effectiveWinnerId = result?.winner_id || null
+    const effectivePrize    = effectiveWinnerId ? Number(result.prize) : 0
+    console.log(`[gateway] handleLudoEnd room=${roomId} winner=${result?.winner_id} prize=${effectivePrize}`)
+
+    // Tell the player their game ended FIRST, before any of the settlement/
+    // persistence/telemetry work below. That work used to run first, all
+    // inside one shared try/catch (or, for the bot-coordination block, no
+    // try/catch at all) — a throw anywhere in it (a wallet-service network
+    // blip, a bot-training insert hitting a schema constraint, a bad Redis
+    // read) meant this broadcast never ran, leaving the player staring at a
+    // frozen board with no win/loss dialog ever shown. Nothing past this
+    // point is allowed to block it again.
+    this.hub.sendToRoom(roomId, 'game:result', {
+      room_id: roomId,
+      winner_id: result.winner_id,
+      prize: result.prize,
+      rankings: result.rankings ?? [],
+    })
+
+    let players: { user_id: string; entry_fee: number }[] = []
     try {
       const parts = await this.db.query(
         'SELECT user_id, entry_fee_deducted, is_bot FROM game_participants WHERE room_id = $1',
         [roomId]
       )
-      const players = parts.rows.map(r => ({
+      players = parts.rows.map(r => ({
         user_id: r.user_id,
         entry_fee: parseFloat(r.entry_fee_deducted) || 0
       }))
-
-      const effectiveWinnerId = result?.winner_id || null
-      const effectivePrize    = effectiveWinnerId ? Number(result.prize) : 0
-
-      console.log(`[gateway] handleLudoEnd room=${roomId} winner=${result?.winner_id} prize=${effectivePrize}`)
 
       // idempotency_key makes a retry safe (settle-game won't double-credit).
       // Previously a single failure here was only console.error'd with no
@@ -1891,29 +1907,14 @@ export class MatchmakingService {
           console.error(`[gateway] settle-game Ludo room=${roomId}: consume failed for users [${settleBody.consume_errors.join(', ')}] — funds stranded in locked_balance until reconciled`)
         }
       }
-
-      // Persist the exact finishing order and payout per player. The wallet
-      // settle-game call above only moves money (winner credit); without this,
-      // game_participants.final_rank/prize_won stay at their defaults (NULL/0)
-      // for every Ludo player forever, so Game History (admin + mobile) can't
-      // show anything but a generic loss.
-      const rankings: { user_id: string }[] = result?.rankings ?? []
-      for (let i = 0; i < rankings.length; i++) {
-        const userId = rankings[i].user_id
-        const finalRank = i + 1
-        const prizeWon = userId === effectiveWinnerId ? effectivePrize : 0
-        await this.db.query(
-          'UPDATE game_participants SET prize_won = $1, final_rank = $2 WHERE room_id = $3 AND user_id = $4',
-          [prizeWon, finalRank, roomId, userId]
-        )
-      }
     } catch (e) {
       console.error('Failed to settle Ludo game', e)
       try {
         await this.redis.rpush('ludo:reconcile:failed', JSON.stringify({
           room_id: roomId,
-          winner_id: result?.winner_id ?? null,
-          prize: Number(result?.prize) || 0,
+          winner_id: effectiveWinnerId,
+          prize: effectivePrize,
+          players,
           failed_at: Date.now(),
           reason: `settle-game threw: ${e instanceof Error ? e.message : String(e)}`,
         }))
@@ -1922,41 +1923,76 @@ export class MatchmakingService {
       }
     }
 
-    // Record coordinated game if applicable
-    const botTrainingRaw = await this.redis.get(`room:${roomId}:botTraining`)
-    if (botTrainingRaw) {
-      const botTraining = JSON.parse(botTrainingRaw)
-      await this.gameRecorder.recordCoordinatedGame({
-        gameId: roomId,
-        gameType: 'ludo',
-        actualWinnerId: result?.winner_id || null,
-        botTrainingMetadata: botTraining,
-        botPerformance: result?.botPerformance || {},
-        rpPerformance: result?.rpPerformance || {},
-      })
-
-      // Invalidate bot stats cache so next election uses fresh data
-      for (const botId of botTraining.botIds) {
-        await this.botStatsLoader.invalidateStats(botId)
+    // Persist the exact finishing order and payout per player, independent of
+    // whether settle-game above succeeded — money and history are separate
+    // concerns, and settle-game's own retry/reconcile queue only ever
+    // re-moves money, it never re-runs this write. Previously this lived
+    // inside the same try/catch as the settle-game call, so a thrown fetch
+    // (not just a non-OK response) skipped this block entirely: the room's
+    // money eventually reconciled correctly but every player's Game History
+    // entry stayed corrupted at its default (prize_won 0, final_rank NULL)
+    // forever, with nothing left to ever fix it.
+    try {
+      const rankings: { user_id: string }[] = result?.rankings ?? []
+      for (let i = 0; i < rankings.length; i++) {
+        const userId = rankings[i].user_id
+        // A null winner means the game ended with nobody actually finishing
+        // (abandoned, or the room ran out of active humans). rankings' tie-
+        // break by `finished` count is meaningless there — everyone still in
+        // the game is typically tied at 0 and gets ordered by seat, not by
+        // real standing. Writing that order as final_rank produced rows like
+        // "final_rank: 1, prize_won: 0" — indistinguishable from a real win
+        // that somehow paid nothing. Leave final_rank NULL instead when there
+        // is no winner; prize_won 0 already correctly says "you got nothing".
+        const finalRank = effectiveWinnerId ? i + 1 : null
+        const prizeWon = userId === effectiveWinnerId ? effectivePrize : 0
+        await this.db.query(
+          'UPDATE game_participants SET prize_won = $1, final_rank = $2 WHERE room_id = $3 AND user_id = $4',
+          [prizeWon, finalRank, roomId, userId]
+        )
       }
+    } catch (e) {
+      console.error(`[gateway] Failed to persist Ludo final rankings for room=${roomId}`, e)
     }
 
-    // Clean up coordination metadata
-    await this.redis.del(`room:${roomId}:botTraining`)
+    // Record coordinated game if applicable. This is bot-training telemetry,
+    // not part of settling the game for the player — a failure here (e.g. the
+    // game had no winner and bot_learning_sessions.actual_winner_id is
+    // NOT NULL) must never be allowed to reach here and block anything below,
+    // and previously nothing after this block ran once it threw.
+    try {
+      const botTrainingRaw = await this.redis.get(`room:${roomId}:botTraining`)
+      if (botTrainingRaw) {
+        const botTraining = JSON.parse(botTrainingRaw)
+        await this.gameRecorder.recordCoordinatedGame({
+          gameId: roomId,
+          gameType: 'ludo',
+          actualWinnerId: effectiveWinnerId,
+          botTrainingMetadata: botTraining,
+          botPerformance: result?.botPerformance || {},
+          rpPerformance: result?.rpPerformance || {},
+        })
 
-    monitorEmitter.emit('game_result', {
-      game_type: 'ludo',
-      room_id: roomId,
-      winner_id: result?.winner_id,
-      prize_amount: Number(result?.prize) || 0,
-    })
+        // Invalidate bot stats cache so next election uses fresh data
+        for (const botId of botTraining.botIds) {
+          await this.botStatsLoader.invalidateStats(botId)
+        }
+      }
+      await this.redis.del(`room:${roomId}:botTraining`)
+    } catch (e) {
+      console.error(`[gateway] Failed to record/clean up bot coordination for room=${roomId}`, e)
+    }
 
-    this.hub.sendToRoom(roomId, 'game:result', {
-      room_id: roomId,
-      winner_id: result.winner_id,
-      prize: result.prize,
-      rankings: result.rankings ?? [],
-    })
+    try {
+      monitorEmitter.emit('game_result', {
+        game_type: 'ludo',
+        room_id: roomId,
+        winner_id: result?.winner_id,
+        prize_amount: Number(result?.prize) || 0,
+      })
+    } catch (e) {
+      console.error(`[gateway] game_result telemetry emit failed for room=${roomId}`, e)
+    }
   }
 
   private rummyAfkTimers = new Map<string, NodeJS.Timeout>()

@@ -38,9 +38,14 @@ class MockRedisCache {
   async get() { return null }
   async del() {}
   async setex() {}
+  async rpush() {}
 }
 
-const mockHub = { sendToRoom: () => {}, sendToUser: () => {} } as any
+let broadcasts: any[] = []
+const mockHub = {
+  sendToRoom: (roomId: string, event: string, payload: any) => { broadcasts.push({ roomId, event, payload }) },
+  sendToUser: () => {},
+} as any
 
 async function run() {
   process.env.WALLET_SERVICE_URL = 'http://wallet.test'
@@ -91,6 +96,55 @@ async function run() {
   const forLast = updates.find(q => q.params.includes('p3'))
   assert('last place (p3) gets final_rank 4', !!forLast && forLast.params.includes(4),
     JSON.stringify(forLast?.params))
+
+  const resultBroadcast = broadcasts.find(b => b.event === 'game:result' && b.roomId === 'room-1')
+  assert('game:result was broadcast to the room', !!resultBroadcast)
+
+  // --- A null winner (abandoned game) must not write a misleading rank ---
+  broadcasts = []
+  const pool2 = new MockPool()
+  const service2 = new MatchmakingService(mockRedis, pool2 as any, mockHub)
+  pool2.setQueryResult(partsQuery, ['room-2'], [
+    { user_id: 'q1', entry_fee_deducted: '50', is_bot: false },
+    { user_id: 'q2', entry_fee_deducted: '50', is_bot: true },
+  ])
+  await service2.handleLudoEnd('room-2', {
+    winner_id: null,
+    prize: 0,
+    rankings: [
+      { user_id: 'q1', finished: 0 },
+      { user_id: 'q2', finished: 0 },
+    ],
+  })
+  const noWinnerUpdates = pool2.queries.filter(q => q.sql.includes('UPDATE game_participants') && q.sql.includes('final_rank'))
+  const forQ1 = noWinnerUpdates.find(q => q.params.includes('q1'))
+  assert('abandoned game: final_rank is NULL, not a tie-broken rank', !!forQ1 && forQ1.params[1] === null,
+    JSON.stringify(forQ1?.params))
+  assert('abandoned game: prize_won is 0', !!forQ1 && forQ1.params[0] === 0,
+    JSON.stringify(forQ1?.params))
+  const q2ResultBroadcast = broadcasts.find(b => b.event === 'game:result' && b.roomId === 'room-2')
+  assert('game:result still broadcast for a null-winner game', !!q2ResultBroadcast)
+
+  // --- A throwing settle-game call must not block the result broadcast or ---
+  // --- the ranking-persistence write that follows it.                    ---
+  broadcasts = []
+  global.fetch = (async () => { throw new Error('ECONNREFUSED (simulated)') }) as any
+  const pool3 = new MockPool()
+  const service3 = new MatchmakingService(mockRedis, pool3 as any, mockHub)
+  pool3.setQueryResult(partsQuery, ['room-3'], [
+    { user_id: 'r1', entry_fee_deducted: '50', is_bot: false },
+  ])
+  await service3.handleLudoEnd('room-3', {
+    winner_id: 'r1',
+    prize: 95,
+    rankings: [{ user_id: 'r1', finished: 4 }],
+  })
+  const r3ResultBroadcast = broadcasts.find(b => b.event === 'game:result' && b.roomId === 'room-3')
+  assert('game:result still broadcast when settle-game throws', !!r3ResultBroadcast)
+  const r3Updates = pool3.queries.filter(q => q.sql.includes('UPDATE game_participants') && q.sql.includes('final_rank'))
+  const forR1 = r3Updates.find(q => q.params.includes('r1'))
+  assert('ranking is still persisted when settle-game throws (the historical bug)',
+    !!forR1 && forR1.params[0] === 95 && forR1.params[1] === 1, JSON.stringify(forR1?.params))
 
   global.fetch = originalFetch
 

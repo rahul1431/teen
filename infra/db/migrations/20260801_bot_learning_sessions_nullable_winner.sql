@@ -1,0 +1,14 @@
+-- A coordinated game can genuinely end with no winner (a Ludo room abandoned
+-- before anyone finished, e.g. the sole real player forfeits). The gateway
+-- already records that case as actual_winner_id = null, but the column was
+-- NOT NULL, so every one of those inserts threw a constraint violation.
+--
+-- That failure was caught locally inside GameRecorder.recordCoordinatedGame
+-- (it only logs), so it never crashed the game-end flow -- but it did mean
+-- these games were silently never recorded for bot-training analysis, and it
+-- was a symptom that helped trace a separate, real bug: the code around this
+-- insert used to have no failure isolation of its own, so a slower-arriving
+-- version of the same fix (see handleLudoEnd) had this insert positioned
+-- where a throw here could have blocked the player-facing game:result
+-- broadcast. Making the column nullable removes the error at its source.
+ALTER TABLE bot_learning_sessions ALTER COLUMN actual_winner_id DROP NOT NULL;
