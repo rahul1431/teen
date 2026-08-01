@@ -17,6 +17,7 @@ services/game-engines/teen-patti/teen-patti-engine
 *.env.local
 .env.dev
 **/.env.dev
+docs/ops/*.local.md
 
 # VPS manual-deploy backup artifacts — should never be committed
 *.bak-*
@@ -66,3 +67,4 @@ npm-debug.log*
 .vscode/
 .superpowers/
 .worktrees/
+services/game-engines/teen-patti/teen-patti-engine.exe
