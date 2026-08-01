@@ -2261,7 +2261,17 @@ async function start() {
         FROM cricket_match_players
         GROUP BY player_id
       ) mp ON mp.player_id = p.id
-      LEFT JOIN cricket_countries c ON c.name = p.team_name
+      -- LATERAL ... LIMIT 1 rather than a plain join on name: joining countries
+      -- by name duplicated every player whenever two country rows shared a name
+      -- (the admin panel once showed 72 India players for a 36-row table).
+      -- Prefer the explicit country_id, fall back to name for rows that predate
+      -- it, and never return more than one country row per player.
+      LEFT JOIN LATERAL (
+        SELECT cc.flag_url FROM cricket_countries cc
+        WHERE cc.id = p.country_id OR (p.country_id IS NULL AND cc.name = p.team_name)
+        ORDER BY (cc.id = p.country_id) DESC
+        LIMIT 1
+      ) c ON TRUE
       ORDER BY p.team_name ASC, p.role ASC, p.name ASC
     `)
     return reply.send({ players: res.rows })

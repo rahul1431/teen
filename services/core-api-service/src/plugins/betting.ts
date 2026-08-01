@@ -819,7 +819,20 @@ export function bettingPlugin(db: Pool) {
         let count = 0
         for (const c of (data.data || [])) {
           if (!c.id || !c.name || !c.genericFlag) continue
-          await db.query(`INSERT INTO cricket_countries (id, name, flag_url) VALUES ($1,$2,$3) ON CONFLICT (id) DO UPDATE SET name=$2, flag_url=$3`, [c.id.toLowerCase(), c.name, c.genericFlag])
+          // Country names are unique (idx_cricket_countries_name_unique). Skip
+          // any row whose name is already owned by a different id rather than
+          // letting the whole sync abort on a unique violation — that is how a
+          // second 'India' row got created before the constraint existed, which
+          // then duplicated every India player in the admin list.
+          await db.query(
+            `INSERT INTO cricket_countries (id, name, flag_url)
+             SELECT $1, $2, $3
+             WHERE NOT EXISTS (
+               SELECT 1 FROM cricket_countries WHERE lower(name) = lower($2) AND id <> $1
+             )
+             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, flag_url = EXCLUDED.flag_url`,
+            [c.id.toLowerCase(), c.name, c.genericFlag],
+          )
           count++
         }
         return { success: true, count }
