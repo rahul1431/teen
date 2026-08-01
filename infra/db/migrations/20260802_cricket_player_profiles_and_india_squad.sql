@@ -60,10 +60,14 @@ ON CONFLICT (id) DO UPDATE SET wikidata_id = EXCLUDED.wikidata_id;
 -- ones that already are. A dry run against production found 23 of these 32 were
 -- already present (from earlier seeds and squad syncs), so an insert-only seed
 -- would have left the best-known players with no batting/bowling style at all.
+-- No ON COMMIT DROP: migrate.sh runs statements in autocommit, so the table
+-- would be dropped the instant it was created and every later reference would
+-- fail. Dropped explicitly at the end of the file instead.
+DROP TABLE IF EXISTS curated_squad;
 CREATE TEMP TABLE curated_squad (
   name TEXT, role TEXT, credits NUMERIC(4,1), team_name TEXT,
   country_id TEXT, batting_style TEXT, bowling_style TEXT
-) ON COMMIT DROP;
+);
 
 INSERT INTO curated_squad (name, role, credits, team_name, country_id, batting_style, bowling_style)
 VALUES
@@ -129,3 +133,5 @@ WHERE lower(p.name) = lower(v.name)
 UPDATE cricket_fantasy_players
 SET country_id = 'india'
 WHERE team_name = 'India' AND country_id IS NULL;
+
+DROP TABLE IF EXISTS curated_squad;
