@@ -8,7 +8,10 @@ import 'dart:math';
 /// faithful port of `rules.ts` — keep them in sync.
 
 const int kMainTrack = 52;
-const int kHomeProgress = 57; // exact value a token must reach to finish (last square box)
+// Exact value a token must reach to finish. 51..55 are the five home-column
+// cells the board actually draws; 56 is the seat's centre triangle. Must stay
+// equal to HOME_PROGRESS in services/game-engines/ludo/src/rules.ts.
+const int kHomeProgress = 56;
 const int kTokensPerPlayer = 4;
 const List<int> kStartOffsets = [0, 13, 26, 39];
 const Set<int> kSafeCells = {0, 8, 13, 21, 26, 34, 39, 47};
@@ -20,7 +23,7 @@ class LudoPlayer {
   final int seat;
   final bool isBot;
   final String color;
-  List<int> tokens; // progress per token: -1 base, 0..50 track, 51..57 home col
+  List<int> tokens; // progress: -1 base, 0..50 track, 51..55 home col, 56 home
   int finished;
   String status; // 'active' | 'finished'
 
@@ -121,7 +124,7 @@ class LudoEngine {
     final out = <int>[];
     for (var t = 0; t < p.tokens.length; t++) {
       final prog = p.tokens[t];
-      if (prog == kHomeProgress) continue;
+      if (prog >= kHomeProgress) continue;
       if (prog == -1) {
         if (dice == 6) out.add(t);
         continue;
@@ -172,7 +175,7 @@ class LudoEngine {
     var captured = false;
     var reachedHome = false;
 
-    if (newProg == kHomeProgress) {
+    if (newProg >= kHomeProgress) {
       p.finished += 1;
       reachedHome = true;
       if (p.finished >= kTokensPerPlayer) p.status = 'finished';

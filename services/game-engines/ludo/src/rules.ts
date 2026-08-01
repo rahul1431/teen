@@ -5,16 +5,23 @@ import crypto from 'crypto'
 //  - One shared 52-cell main track, absolute cells 0..51.
 //  - Each seat has a fixed start offset on that track:
 //      seat 0 → 0, seat 1 → 13, seat 2 → 26, seat 3 → 39.
-//  - A token's per-player "progress" runs 0..57:
+//  - A token's per-player "progress" runs 0..56:
 //      -1            → in base (yard), needs a 6 to enter play
 //       0..50        → on the main track; absolute cell = (offset + progress) % 52
-//       51..56       → in the 6-cell home column (private to that seat)
-//       57           → HOME (finished); reached only by an exact roll
+//       51..55       → in the 5-cell home column (private to that seat)
+//       56           → HOME (finished, the seat's centre triangle); exact roll only
+//
+//    The home column is FIVE cells, not six. On the 15x15 board the client
+//    draws, each arm's private column is the middle file of that arm outside
+//    the 3x3 centre square — e.g. red is col 7, rows 9..13. Row 8 is already
+//    inside the centre square, so a 6th column cell has nowhere to exist and
+//    the centre triangle is the very next step after the 5th. Counting to 57
+//    made every token owe one extra step that the board could not show.
 //  - Safe cells (no capture): every seat start (0,13,26,39) and the four
 //    star squares (8,21,34,47), all in absolute-cell terms.
 
 export const MAIN_TRACK = 52
-export const HOME_PROGRESS = 57
+export const HOME_PROGRESS = 56
 export const TOKENS_PER_PLAYER = 4
 export const START_OFFSETS = [0, 13, 26, 39]
 export const SAFE_CELLS = new Set([0, 8, 13, 21, 26, 34, 39, 47])
@@ -116,7 +123,10 @@ export function movableTokens(state: LudoState, playerIdx: number, dice: number)
   const movable: number[] = []
   for (let t = 0; t < player.tokens.length; t++) {
     const prog = player.tokens[t]
-    if (prog === HOME_PROGRESS) continue          // already home
+    // >= not ===: a game already in flight when HOME_PROGRESS dropped from 57
+    // to 56 can hold a token at 57, which must still count as home rather than
+    // becoming permanently unmovable.
+    if (prog >= HOME_PROGRESS) continue           // already home
     if (prog === -1) {
       if (dice === 6) movable.push(t)              // only a 6 leaves base
       continue
@@ -189,7 +199,7 @@ export function applyMove(
   const newProg = player.tokens[tokenIndex]
   let reachedHome = false
 
-  if (newProg === HOME_PROGRESS) {
+  if (newProg >= HOME_PROGRESS) {
     player.finished += 1
     reachedHome = true
     if (player.finished >= TOKENS_PER_PLAYER) player.status = 'finished'

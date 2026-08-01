@@ -62,38 +62,39 @@ const List<List<int>> _track = [
   [6, 14],
 ];
 
+// Five cells per seat — progress 51..55. There is deliberately no sixth entry:
+// the next cell along each lane ([7,8] red, [6,7] green, [7,6] yellow, [8,7]
+// blue) lies inside the 3x3 centre square (rows/cols 6..8), which _drawCenter
+// paints over afterwards, so it could never be seen. Progress 56 is HOME and
+// renders in the seat's centre triangle via _goalPoint.
 const List<List<List<int>>> _homeLanes = [
   [
     [7, 13],
     [7, 12],
     [7, 11],
     [7, 10],
-    [7, 9],
-    [7, 8]
+    [7, 9]
   ],
   [
     [1, 7],
     [2, 7],
     [3, 7],
     [4, 7],
-    [5, 7],
-    [6, 7]
+    [5, 7]
   ],
   [
     [7, 1],
     [7, 2],
     [7, 3],
     [7, 4],
-    [7, 5],
-    [7, 6]
+    [7, 5]
   ],
   [
     [13, 7],
     [12, 7],
     [11, 7],
     [10, 7],
-    [9, 7],
-    [8, 7]
+    [9, 7]
   ],
 ];
 
@@ -166,53 +167,39 @@ Offset tokenPosition(int seatIndex, int tokenIndex, int progress, double size) {
     final cell = _track[absoluteCell(seatIndex, progress)];
     return _cellCenter(cell[0], cell[1], size);
   }
-  if (progress <= 55) {
-    // Only 5 of _homeLanes' 6 entries are ever visible: the 6th (index 5,
-    // grid cell e.g. [7,8] for red) sits inside the 3x3 centre square's own
-    // footprint (rows/cols 6-8) and gets painted over by _drawCenter's
-    // triangles every frame — the physical board simply has no room for a
-    // 6th distinct coloured cell between the track and the centre. Progress
-    // 56 is therefore handled below as already being inside the triangle.
+  if (progress < kHomeProgress) {
+    // 51..55 — the five drawn home-column cells.
     final cell = _homeLanes[seatIndex % 4][progress - 51];
     return _cellCenter(cell[0], cell[1], size);
   }
-  if (progress == 56) {
-    // Last home-lane step: rest at the mouth of this seat's goal triangle
-    // (close to the centre square's edge, not the shared centre point).
-    return _goalPoint(seatIndex, size, 0.2);
-  }
-  // Finished (progress 57): rest deeper inside the triangle — clearly past
-  // the progress-56 mouth position, and still far enough from the shared
-  // centre point that all four colours' finished tokens don't visually
-  // converge on the same spot.
-  return _goalPoint(seatIndex, size, 0.65);
+  // HOME (progress 56): sit in this seat's own centre triangle.
+  return _goalPoint(seatIndex, size);
 }
 
-// A point inside this seat's own goal triangle, `f` fraction of the way from
-// the triangle's outer edge (f=0, flush with the centre square's border) to
-// the shared centre point (f=1). Matches _drawCenter's triangle assignment
-// (top=seat2 yellow, right=seat3 blue, bottom=seat0 red, left=seat1 green).
-Offset _goalPoint(int seatIndex, double size, double f) {
+// Resting point for a finished token, inside this seat's own centre triangle.
+// Matches _drawCenter's assignment (top=seat2 yellow, right=seat3 blue,
+// bottom=seat0 red, left=seat1 green).
+//
+// Placed at the MIDPOINT between the triangle's outer edge and the shared
+// centre point. That is not arbitrary: the triangle is 1.5 cells tall and its
+// half-width at a given depth equals its remaining distance to the apex, while
+// a token is 1.28 cells wide (0.64 half). At the midpoint the token clears the
+// outer edge and still keeps 0.75 of half-width around it, so it renders fully
+// inside its own colour. Sitting deeper (nearer the apex) is what made all four
+// colours' finished tokens overhang the apex and appear bunched in the centre.
+Offset _goalPoint(int seatIndex, double size) {
   final s = size / 15.0;
   const centre = Offset(7.5, 7.5);
-  late Offset baseMid;
-  switch (seatIndex % 4) {
-    case 0: // red — bottom triangle
-      baseMid = const Offset(7.5, 9);
-      break;
-    case 1: // green — left triangle
-      baseMid = const Offset(6, 7.5);
-      break;
-    case 2: // yellow — top triangle
-      baseMid = const Offset(7.5, 6);
-      break;
-    default: // blue — right triangle
-      baseMid = const Offset(9, 7.5);
-      break;
-  }
+  const baseMids = [
+    Offset(7.5, 9), // seat0 red — bottom triangle
+    Offset(6, 7.5), // seat1 green — left triangle
+    Offset(7.5, 6), // seat2 yellow — top triangle
+    Offset(9, 7.5), // seat3 blue — right triangle
+  ];
+  final baseMid = baseMids[seatIndex % 4];
   return Offset(
-    (baseMid.dx + (centre.dx - baseMid.dx) * f) * s,
-    (baseMid.dy + (centre.dy - baseMid.dy) * f) * s,
+    (baseMid.dx + (centre.dx - baseMid.dx) * 0.5) * s,
+    (baseMid.dy + (centre.dy - baseMid.dy) * 0.5) * s,
   );
 }
 
@@ -582,7 +569,7 @@ class _TokenSpriteState extends State<_TokenSprite>
     if (st != AnimationStatus.completed) return;
     _display = _to;
     // Landing feedback: home arrival flourish, else a safe-cell chime.
-    if (_to >= 57) {
+    if (_to >= kHomeProgress) {
       _homeFlourish = true;
       _fx.forward(from: 0);
     } else if (_to <= 50) {

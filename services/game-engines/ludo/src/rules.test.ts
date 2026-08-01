@@ -23,6 +23,33 @@ function makeState(overrides?: Partial<LudoState>): LudoState {
   return { ...state, ...overrides }
 }
 
+// The board the mobile client draws is a 15x15 grid whose centre 3x3 (rows and
+// cols 6..8) is the goal. Each seat's private home column is the middle file of
+// its arm OUTSIDE that centre square — red is col 7, rows 9..13 — so it is five
+// cells, and the centre triangle is the step immediately after the fifth. These
+// assertions pin the total to that geometry: HOME_PROGRESS drifted to 57 once,
+// which made every token owe a seventh step the board had nowhere to draw, and
+// the finished token rendered on top of a home-column cell.
+describe('home column length matches the drawn board', () => {
+  test('the home run is 5 column cells (51..55) plus the goal at 56', () => {
+    assert.equal(HOME_PROGRESS, 56)
+    const homeColumnCells = HOME_PROGRESS - 1 - 50
+    assert.equal(homeColumnCells, 5)
+  })
+
+  test('a token leaving the last track cell needs exactly 6 steps to finish', () => {
+    // progress 50 is the last main-track cell; 56 is home.
+    assert.equal(HOME_PROGRESS - 50, 6)
+  })
+
+  test('progress 50 is the last cell with a main-track square', () => {
+    assert.notEqual(absoluteCell(0, 50), -1)
+    for (let p = 51; p <= HOME_PROGRESS; p++) {
+      assert.equal(absoluteCell(0, p), -1, `progress ${p} must be off-track`)
+    }
+  })
+})
+
 describe('movableTokens', () => {
   test('a token in base can only move on a 6', () => {
     const state = makeState()
@@ -32,9 +59,9 @@ describe('movableTokens', () => {
 
   test('excludes a token that would overshoot HOME_PROGRESS', () => {
     const state = makeState()
-    state.players[0].tokens = [55, -1, -1, -1] // needs exactly 2 to finish
-    assert.deepEqual(movableTokens(state, 0, 3), []) // 55+3=58 > 57, overshoot
-    assert.deepEqual(movableTokens(state, 0, 2), [0]) // exact
+    state.players[0].tokens = [55, -1, -1, -1] // needs exactly 1 to finish
+    assert.deepEqual(movableTokens(state, 0, 3), []) // 55+3=58 > 56, overshoot
+    assert.deepEqual(movableTokens(state, 0, 1), [0]) // exact
   })
 
   test('a finished token (HOME_PROGRESS) is never movable', () => {
@@ -132,7 +159,7 @@ describe('applyMove', () => {
 
   test('reaching HOME_PROGRESS on the 4th token produces a winner result', () => {
     const state = makeState()
-    state.players[0].tokens = [HOME_PROGRESS, HOME_PROGRESS, HOME_PROGRESS, 55]
+    state.players[0].tokens = [HOME_PROGRESS, HOME_PROGRESS, HOME_PROGRESS, 54]
     state.players[0].finished = 3
     state.dice = 2
     state.movable_tokens = [3]
@@ -169,7 +196,7 @@ describe('applyMove', () => {
 describe('buildResult / rake', () => {
   test('rake is 5% of the pot, rounded to paise; prize is the remainder', () => {
     const state = makeState({ stake: 33 }) // 33 * 4 = 132 pot
-    state.players[0].tokens = [HOME_PROGRESS, HOME_PROGRESS, HOME_PROGRESS, 55]
+    state.players[0].tokens = [HOME_PROGRESS, HOME_PROGRESS, HOME_PROGRESS, 54]
     state.players[0].finished = 3
     state.dice = 2
     state.movable_tokens = [3]
@@ -188,7 +215,7 @@ describe('buildResult / rake', () => {
     state.players[1].finished = 2
     state.players[2].finished = 3
     state.players[3].finished = 0
-    state.players[0].tokens = [HOME_PROGRESS, HOME_PROGRESS, HOME_PROGRESS, 55]
+    state.players[0].tokens = [HOME_PROGRESS, HOME_PROGRESS, HOME_PROGRESS, 54]
     state.dice = 2
     state.movable_tokens = [3]
     state.awaiting = 'move'
