@@ -166,41 +166,54 @@ Offset tokenPosition(int seatIndex, int tokenIndex, int progress, double size) {
     final cell = _track[absoluteCell(seatIndex, progress)];
     return _cellCenter(cell[0], cell[1], size);
   }
-  if (progress <= 56) {
+  if (progress <= 55) {
+    // Only 5 of _homeLanes' 6 entries are ever visible: the 6th (index 5,
+    // grid cell e.g. [7,8] for red) sits inside the 3x3 centre square's own
+    // footprint (rows/cols 6-8) and gets painted over by _drawCenter's
+    // triangles every frame — the physical board simply has no room for a
+    // 6th distinct coloured cell between the track and the centre. Progress
+    // 56 is therefore handled below as already being inside the triangle.
     final cell = _homeLanes[seatIndex % 4][progress - 51];
     return _cellCenter(cell[0], cell[1], size);
   }
-  // Finished (progress 57): rest well inside this seat's own goal triangle.
-  // When several of the same colour finish, _buildTokens clusters them with
-  // the same tight diamond offsets used everywhere else tokens share a cell.
-  return _goalCentroid(seatIndex, size);
+  if (progress == 56) {
+    // Last home-lane step: rest at the mouth of this seat's goal triangle
+    // (close to the centre square's edge, not the shared centre point).
+    return _goalPoint(seatIndex, size, 0.2);
+  }
+  // Finished (progress 57): rest deeper inside the triangle — clearly past
+  // the progress-56 mouth position, and still far enough from the shared
+  // centre point that all four colours' finished tokens don't visually
+  // converge on the same spot.
+  return _goalPoint(seatIndex, size, 0.65);
 }
 
-// A point inside this seat's own goal triangle, matching _drawCenter's
-// triangle assignment (top=seat2 yellow, right=seat3 blue, bottom=seat0
-// red, left=seat1 green).
-//
-// This is deliberately NOT the triangle's vertex-averaged centroid: for
-// these particular vertices that centroid lands exactly 1/3 of the way
-// from the outer edge to the centre point — which is pixel-identical to
-// the centre of the home lane's 6th cell (progress 56, the last cell
-// _before_ the triangle). Using it made the "finished" token render on
-// top of the last home-lane cell, so reaching progress 57 looked like no
-// move happened at all. Sitting further in (5/6 of the way to the centre
-// point) keeps the finished token visually inside the triangle but clearly
-// past the last home-lane cell.
-Offset _goalCentroid(int seatIndex, double size) {
+// A point inside this seat's own goal triangle, `f` fraction of the way from
+// the triangle's outer edge (f=0, flush with the centre square's border) to
+// the shared centre point (f=1). Matches _drawCenter's triangle assignment
+// (top=seat2 yellow, right=seat3 blue, bottom=seat0 red, left=seat1 green).
+Offset _goalPoint(int seatIndex, double size, double f) {
   final s = size / 15.0;
+  const centre = Offset(7.5, 7.5);
+  late Offset baseMid;
   switch (seatIndex % 4) {
     case 0: // red — bottom triangle
-      return Offset(7.5 * s, 7.75 * s);
+      baseMid = const Offset(7.5, 9);
+      break;
     case 1: // green — left triangle
-      return Offset(7.25 * s, 7.5 * s);
+      baseMid = const Offset(6, 7.5);
+      break;
     case 2: // yellow — top triangle
-      return Offset(7.5 * s, 7.25 * s);
+      baseMid = const Offset(7.5, 6);
+      break;
     default: // blue — right triangle
-      return Offset(7.75 * s, 7.5 * s);
+      baseMid = const Offset(9, 7.5);
+      break;
   }
+  return Offset(
+    (baseMid.dx + (centre.dx - baseMid.dx) * f) * s,
+    (baseMid.dy + (centre.dy - baseMid.dy) * f) * s,
+  );
 }
 
 // ── Board widget ─────────────────────────────────────────────────────────────
