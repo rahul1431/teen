@@ -141,7 +141,7 @@ func TestStrengthTableCoversAllHands(t *testing.T) {
 
 func baseSituation() botSituation {
 	return botSituation{
-		opponents: 1, callCost: 20, pot: 100, round: 2, isSeen: true,
+		opponents: 1, callCost: 20, pot: 100, chaals: 1, isSeen: true,
 		aggression: 0.5, foldP: 0.30, callP: 0.47, raiseP: 0.23, minBet: 10,
 	}
 }
@@ -172,7 +172,7 @@ func TestBlindBotIgnoresItsCards(t *testing.T) {
 func TestBlindBotSeesCards(t *testing.T) {
 	s := baseSituation()
 	s.isSeen = false
-	s.round = 3 // seeChance = 0.20*3 - 0.10*0.5 = 0.55
+	s.chaals = 3 // seeChance = 0.18*3 + 0.10 - 0.10*0.5 = 0.59
 	r := never()
 	r.see = 0.1
 	action, amount, _ := decideBot(s, r)
@@ -180,10 +180,24 @@ func TestBlindBotSeesCards(t *testing.T) {
 		t.Errorf("got %s/%.2f, want see/0", action, amount)
 	}
 
-	// Round 0: nobody has acted yet, so there is nothing to see about.
-	s.round = 0
+	// The chance must RISE with the price already paid. GameState.Round is a
+	// constant 1 in this engine, so anything keyed on it never moves — that bug
+	// left bots blind for most of a hand and is what this asserts against.
+	prev := -1.0
+	for _, c := range []float64{0, 1, 2, 3, 4} {
+		s.chaals = c
+		chance := clamp(0.18*s.chaals+0.10-0.10*s.aggression, 0, 0.85)
+		if chance <= prev {
+			t.Errorf("seeChance did not rise at chaals=%.0f: %.3f after %.3f", c, chance, prev)
+		}
+		prev = chance
+	}
+
+	// Freshly dealt, having paid only the ante, a bot usually has not looked yet.
+	s.chaals = 0
+	r.see = 0.5
 	if action, _, _ := decideBot(s, r); action == "see" {
-		t.Errorf("saw cards on round 0 with seeChance 0")
+		t.Errorf("looked at cards immediately on the deal")
 	}
 }
 

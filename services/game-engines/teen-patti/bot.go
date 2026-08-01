@@ -65,7 +65,17 @@ type botSituation struct {
 	opponents  int     // active players other than this bot
 	callCost   float64 // what calling costs right now
 	pot        float64
-	round      int
+	// chaals is how many betting rounds this bot has already paid for:
+	// (its total bet / the table stake) - 1, since everyone antes one stake at
+	// the deal. This is the hand's clock.
+	//
+	// GameState.Round is NOT that clock. It is set to 1 in startGame and never
+	// incremented anywhere in the engine, so keying anything on it produces a
+	// constant. An earlier version of this file used it for the see-decision
+	// and the result was a flat ~17% chance per turn that never rose, which
+	// left bots blind for most of a hand and made the whole hand-strength path
+	// below mostly unreachable in real games.
+	chaals     float64
 	isSeen     bool
 	canShow    bool // exactly two players left, so "show" is legal
 	aggression float64
@@ -184,11 +194,13 @@ func decideBot(s botSituation, r botRolls) (action string, amount float64, reaso
 	// is both unfair and — because it would bet blind hands with uncanny
 	// accuracy — the most detectable form of cheating there is.
 	//
-	// What a blind bot decides instead is whether to look. Humans mostly go a
-	// round or two blind (it's half price) and then see; aggressive players ride
-	// blind longer because the discount is the whole point.
+	// What a blind bot decides instead is whether to look. The trigger is the
+	// price it has already paid, not a turn counter: a player who has matched
+	// three chaals blind is very likely to look before matching a fourth.
+	// Aggressive players ride blind longer, because the half-price discount is
+	// the whole point of staying blind.
 	if !s.isSeen {
-		seeChance := clamp(0.20*float64(s.round)-0.10*s.aggression, 0, 0.85)
+		seeChance := clamp(0.18*s.chaals+0.10-0.10*s.aggression, 0, 0.85)
 		if r.see < seeChance {
 			return "see", 0, "looked at cards"
 		}
@@ -363,11 +375,19 @@ func (s *Server) decideBotAction(w http.ResponseWriter, r *http.Request) {
 		callCost = state.MinBet * 2
 	}
 
+	// Everyone antes one stake at the deal, so subtract it to get the number of
+	// betting rounds actually paid for. Guard the divide: a zero-stake table
+	// would otherwise make every bot look at its cards immediately.
+	chaals := 0.0
+	if state.Stake > 0 {
+		chaals = math.Max(0, p.Bet/state.Stake-1)
+	}
+
 	sit := botSituation{
 		opponents:  active - 1,
 		callCost:   callCost,
 		pot:        state.Pot,
-		round:      state.Round,
+		chaals:     chaals,
 		isSeen:     p.IsSeen,
 		canShow:    active == 2,
 		aggression: clamp(req.Aggression, 0, 1),
