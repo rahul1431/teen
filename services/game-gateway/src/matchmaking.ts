@@ -4,7 +4,7 @@ import { v4 as uuid } from 'uuid'
 import crypto from 'crypto'
 import { RealtimeHub } from './realtime'
 import { GameWatchdog } from './watchdog'
-import { getBotProfile, pickBotAction, pickBotDelay } from './bot-profile'
+import { getBotProfile, getLudoBotProfile, pickBotAction, pickBotDelay, TeenPattiBotProfile } from './bot-profile'
 import { monitorEmitter } from './monitor-emitter'
 import { isInPersonalizationCanary, isInCanaryPercent, getPersonalizedDifficulty } from './personalized-difficulty-client'
 import { BotStatsLoader } from './botCoordination/botStatsLoader'
@@ -507,6 +507,51 @@ export class MatchmakingService {
   // distinct difficulty tier present among the seated bots (per-bot
   // overrides from resolveBotDifficulties mean this can't be fetched once
   // per room), and returns each bot's own profile keyed by userId.
+  /**
+   * Ask the Teen Patti engine what this bot should play.
+   *
+   * The engine owns the decision because it owns the deal; the gateway only
+   * ever sees redacted state, which is why the old local pickBotAction bet the
+   * same way with a trail as with 7-high. The trained rates ride along in the
+   * request rather than the engine fetching them, so the Go process needs no
+   * HTTP client or cache of its own.
+   *
+   * Any failure falls back to the local draw. A bot that stalls is worse than a
+   * bot that plays its profile without looking at its cards, which is exactly
+   * the behaviour that was live before this split.
+   */
+  private async askEngineForBotAction(
+    roomId: string,
+    currentPlayer: any,
+    profile: TeenPattiBotProfile
+  ): Promise<'fold' | 'call' | 'raise'> {
+    const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
+    try {
+      const res = await fetch(`${engineUrl}/bot/decide`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+        body: JSON.stringify({
+          room_id: roomId,
+          user_id: currentPlayer.user_id ?? currentPlayer.userId,
+          fold_probability: profile.fold_probability,
+          call_probability: profile.call_probability,
+          raise_probability: profile.raise_probability,
+        }),
+        signal: AbortSignal.timeout(1000),
+      })
+      if (res.ok) {
+        const decision = await res.json() as { action?: string }
+        if (decision.action === 'fold' || decision.action === 'call' || decision.action === 'raise') {
+          return decision.action
+        }
+      }
+      console.warn(`[gateway] Bot decide returned ${res.status} for room ${roomId} — drawing locally`)
+    } catch (err) {
+      console.warn(`[gateway] Bot decide failed for room ${roomId}: ${(err as Error).message} — drawing locally`)
+    }
+    return pickBotAction(profile)
+  }
+
   private async resolveLudoTrainedProfiles(
     botDifficulties: Map<string, string>
   ): Promise<Map<string, { capture_probability?: number | null; safe_play_probability?: number | null }>> {
@@ -514,7 +559,7 @@ export class MatchmakingService {
     const distinctTiers = new Set(Array.from(botDifficulties.values()))
     const profileByTier = new Map<string, any>()
     for (const tier of distinctTiers) {
-      profileByTier.set(tier, await getBotProfile(this.redis, 'ludo', tier as 'easy' | 'medium' | 'hard'))
+      profileByTier.set(tier, await getLudoBotProfile(this.redis, tier))
     }
     for (const [botId, tier] of botDifficulties) {
       const profile = profileByTier.get(tier)
@@ -1199,7 +1244,15 @@ export class MatchmakingService {
     const resolvedDifficulties = await this.resolveBotDifficulties([actingBotId], roomWideDifficulty)
     const botDifficulty = (resolvedDifficulties.get(actingBotId) ?? roomWideDifficulty) as 'easy' | 'medium' | 'hard'
     const botProfile = await getBotProfile(this.redis, gameType, botDifficulty)
-    const botAction = pickBotAction(botProfile)
+    // The Teen Patti brain now lives in the Go engine (bot.go), which is the
+    // only component that can see the bot's cards — the gateway holds redacted
+    // state. We still own the delay and the turn timer; the engine only decides
+    // *what* to play. Aviator has no engine-side brain, so it keeps drawing
+    // locally. On any engine failure we fall back to the local draw rather than
+    // stalling the bot's turn.
+    const botAction = gameType === 'teen_patti'
+      ? await this.askEngineForBotAction(roomId, currentPlayer, botProfile)
+      : pickBotAction(botProfile)
     const botDelay = pickBotDelay(botProfile)
 
     const timer = setTimeout(async () => {

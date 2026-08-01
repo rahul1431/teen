@@ -1,98 +1,70 @@
 import { Redis } from 'ioredis'
-import axios from 'axios'
+import { getTeenPattiBotProfile, TeenPattiBotProfile } from './bot-profile/teen-patti'
+import { getLudoBotProfile, LudoBotProfile } from './bot-profile/ludo'
 
-export interface BotDecisionProfile {
-  fold_probability: number
-  call_probability: number
-  raise_probability: number
-  avg_decision_delay_ms: number
-  // Ludo-only trained fields (sub-project #3) — meaningless/absent for
-  // Teen Patti and Aviator, which use fold/call/raise instead.
-  capture_probability?: number | null
-  safe_play_probability?: number | null
+export { pickBotAction, pickBotDelay } from './bot-profile/teen-patti'
+export { getTeenPattiBotProfile, getLudoBotProfile }
+export type { TeenPattiBotProfile, LudoBotProfile }
+
+/**
+ * Per-game bot profile routing.
+ *
+ * Each game's bots are now trained and served by their own service
+ * (services/bot-training/<game>), and each has its own client module under
+ * ./bot-profile/. This file only dispatches; it holds no game logic.
+ *
+ * The previous single BotDecisionProfile carried every game's fields at once,
+ * so Ludo profiles arrived with meaningless fold/call/raise values and Teen
+ * Patti ones with permanently-null capture/safe-play fields. Callers that know
+ * their game should import the specific client directly — getBotProfile below
+ * exists only for paths where the game type is known at runtime.
+ */
+
+/** @deprecated Import TeenPattiBotProfile or LudoBotProfile instead. Retained
+ *  so existing call sites keep compiling through the split. */
+export type BotDecisionProfile = TeenPattiBotProfile & Partial<LudoBotProfile>
+
+// Aviator's bots reuse Teen Patti's fold/call/raise decision shape but have no
+// training service of their own — there is no aviator move-decision log to
+// learn from, and its rooms are solo-crash (registry.json: maxPlayers 1), so
+// these constants are the whole profile rather than a fallback.
+const AVIATOR_PROFILES: Record<string, TeenPattiBotProfile> = {
+  easy:   { fold_probability: 0.50, call_probability: 0.40, raise_probability: 0.10, avg_decision_delay_ms: 3500 },
+  medium: { fold_probability: 0.35, call_probability: 0.45, raise_probability: 0.20, avg_decision_delay_ms: 2500 },
+  hard:   { fold_probability: 0.20, call_probability: 0.40, raise_probability: 0.40, avg_decision_delay_ms: 1500 },
 }
 
-// Hardcoded fallbacks used when bot-learning-service is unreachable
-const FALLBACK_PROFILES: Record<string, Record<string, BotDecisionProfile>> = {
-  teen_patti: {
-    easy:   { fold_probability: 0.45, call_probability: 0.45, raise_probability: 0.10, avg_decision_delay_ms: 2800 },
-    medium: { fold_probability: 0.30, call_probability: 0.47, raise_probability: 0.23, avg_decision_delay_ms: 2000 },
-    hard:   { fold_probability: 0.18, call_probability: 0.42, raise_probability: 0.40, avg_decision_delay_ms: 1400 },
-  },
-  // No 'ludo' entry: Ludo has no fold/call/raise decisions (it's a roll/move
-  // game), and its bots never go through getBotProfile() below — they're
-  // driven by the Ludo engine's own difficulty-aware chooseBotToken() instead
-  // (see services/game-engines/ludo/src/rules.ts). A copy-pasted fold/call/
-  // raise entry used to sit here unreferenced; removed to avoid the confusion
-  // of a config that looked wired but never actually did anything for Ludo.
-  aviator: {
-    easy:   { fold_probability: 0.50, call_probability: 0.40, raise_probability: 0.10, avg_decision_delay_ms: 3500 },
-    medium: { fold_probability: 0.35, call_probability: 0.45, raise_probability: 0.20, avg_decision_delay_ms: 2500 },
-    hard:   { fold_probability: 0.20, call_probability: 0.40, raise_probability: 0.40, avg_decision_delay_ms: 1500 },
-  },
-}
-
-const CACHE_TTL = 3600
-const BOT_LEARNING_URL = process.env.BOT_LEARNING_SERVICE_URL || 'http://localhost:3014'
-
+/**
+ * Runtime-dispatched profile lookup, for call sites whose game type comes from
+ * room state. Returns the union shape so existing callers keep compiling.
+ */
 export async function getBotProfile(
   redis: Redis,
   gameType: string,
   difficulty: string,
   logger?: { warn: (msg: string) => void }
 ): Promise<BotDecisionProfile> {
-  const validDifficulty = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium'
-  const cacheKey = `bot:profile:${gameType}:${validDifficulty}`
+  const tier = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium'
 
-  // Check Redis cache first (set by bot-learning-service with 1hr TTL)
-  try {
-    const cached = await redis.get(cacheKey)
-    if (cached) return JSON.parse(cached) as BotDecisionProfile
-  } catch {
-    // Redis unavailable — continue to HTTP fallback
-  }
-
-  // Fetch from bot-learning-service (500ms timeout — bot decisions can't wait long)
-  try {
-    const res = await axios.get(`${BOT_LEARNING_URL}/api/bots/profile`, {
-      params: { game_type: gameType, difficulty: validDifficulty },
-      timeout: 500,
-      headers: { 'x-internal-key': process.env.INTERNAL_SERVICE_KEY || '' },
-    })
-    if (res.data?.success && res.data?.data) {
-      const p = res.data.data
-      const profile: BotDecisionProfile = {
-        fold_probability:      parseFloat(p.fold_probability),
-        call_probability:      parseFloat(p.call_probability),
-        raise_probability:     parseFloat(p.raise_probability),
-        avg_decision_delay_ms: parseInt(p.avg_decision_delay_ms, 10),
-        capture_probability:   p.capture_probability   != null ? parseFloat(p.capture_probability)   : null,
-        safe_play_probability: p.safe_play_probability != null ? parseFloat(p.safe_play_probability) : null,
-      }
-      // Cache in gateway's own Redis so next call is instant
-      redis.setex(cacheKey, CACHE_TTL, JSON.stringify(profile)).catch(() => {})
-      return profile
+  if (gameType === 'ludo') {
+    const ludo = await getLudoBotProfile(redis, tier, logger)
+    // Ludo never reaches pickBotAction — it has no betting round — but the
+    // union return type needs these fields present. Zeroed rather than guessed:
+    // a mistaken call site then produces an obvious "always raises" bug instead
+    // of a plausible-looking one that ships unnoticed.
+    return {
+      fold_probability: 0,
+      call_probability: 0,
+      raise_probability: 0,
+      avg_decision_delay_ms: ludo.avg_decision_delay_ms,
+      capture_probability: ludo.capture_probability,
+      safe_play_probability: ludo.safe_play_probability,
     }
-  } catch {
-    // Service unreachable — fall through to hardcoded fallback silently
-    logger?.warn(`[bot-profile] bot-learning-service unavailable for ${gameType}:${validDifficulty}, using hardcoded fallback`)
   }
 
-  // Hardcoded fallback
-  return (
-    FALLBACK_PROFILES[gameType]?.[validDifficulty] ??
-    FALLBACK_PROFILES.teen_patti.medium
-  )
-}
+  if (gameType === 'aviator') {
+    return AVIATOR_PROFILES[tier] ?? AVIATOR_PROFILES.medium
+  }
 
-export function pickBotAction(profile: BotDecisionProfile): 'fold' | 'call' | 'raise' {
-  const rand = Math.random()
-  if (rand < profile.fold_probability) return 'fold'
-  if (rand < profile.fold_probability + profile.call_probability) return 'call'
-  return 'raise'
-}
-
-export function pickBotDelay(profile: BotDecisionProfile): number {
-  // Add ±30% jitter so bots don't feel robotic
-  return Math.round(profile.avg_decision_delay_ms * (0.7 + Math.random() * 0.6))
+  return getTeenPattiBotProfile(redis, tier, logger)
 }

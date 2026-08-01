@@ -238,5 +238,34 @@ module.exports = {
       max_memory_restart: '150M',
       env: NODE_OPTS,
     },
+
+    // ── Per-game bot training: one process per game ──
+    // Split out of teen-bot-learning, which trained both games from one class
+    // over a shared table. Each owns its own profile table, its own training
+    // config, and its own rebuild schedule, so retuning one game's bots can no
+    // longer change the other's. teen-bot-learning keeps the game-agnostic
+    // work it also does: anomaly response, drift detection, streaming eval.
+    {
+      name: 'teen-patti-bot-training',
+      cwd: `${BASE}/bot-training/teen-patti`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('bot-training/teen-patti'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '150M',
+      env: { ...NODE_OPTS, PORT: 3023 },
+    },
+    {
+      name: 'ludo-bot-training',
+      cwd: `${BASE}/bot-training/ludo`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('bot-training/ludo'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '150M',
+      env: { ...NODE_OPTS, PORT: 3024 },
+    },
   ],
 }

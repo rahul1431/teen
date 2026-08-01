@@ -1008,6 +1008,7 @@ func main() {
 	mux.HandleFunc("/start", requireInternalKey(srv.startGame))
 	mux.HandleFunc("/action", requireInternalKey(srv.processAction))
 	mux.HandleFunc("/state", requireInternalKey(srv.getState))
+	mux.HandleFunc("/bot/decide", requireInternalKey(srv.decideBotAction))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok","service":"teen-patti-engine"}`))
 	})
