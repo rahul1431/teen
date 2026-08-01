@@ -10,6 +10,7 @@ import { rollOutcome } from '../helpers/scratch'
 import { settleFantasyLeague, settleCricketSession } from '../helpers/cricket'
 import { aggregateScorecard, computeFantasyPoints, DEFAULT_SCORING_RULES } from '../helpers/fantasy-scoring'
 import { cricApiFetch } from '../helpers/cricapi-client'
+import { enrichPlayers } from '../helpers/wikidata-cricket'
 import { initPool } from '../db/pool'
 import { registerDailyLotteryRoutes } from '../modules/lottery/daily/routes'
 import { startLotteryDailyScheduler } from '../modules/lottery/daily/scheduler'
@@ -626,14 +627,14 @@ export function bettingPlugin(db: Pool) {
       // credits uses z.coerce.number() because the admin panel round-trips
       // this value from cricket_fantasy_players.credits (NUMERIC column),
       // which node-postgres returns as a string, not a JS number.
-      const body = z.object({ name: z.string(), role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']), credits: z.coerce.number().min(5.0).max(15.0), team_name: z.string(), avatar_url: z.string().optional() }).parse(req.body)
-      const res = await db.query(`INSERT INTO cricket_fantasy_players (name, role, credits, team_name, avatar_url) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [body.name, body.role, body.credits, body.team_name, body.avatar_url || null])
+      const body = z.object({ name: z.string(), role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']), credits: z.coerce.number().min(5.0).max(15.0), team_name: z.string(), avatar_url: z.string().optional(), batting_style: z.string().nullish(), bowling_style: z.string().nullish() }).parse(req.body)
+      const res = await db.query(`INSERT INTO cricket_fantasy_players (name, role, credits, team_name, avatar_url, batting_style, bowling_style) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [body.name, body.role, body.credits, body.team_name, body.avatar_url || null, body.batting_style || null, body.bowling_style || null])
       return { success: true, player: res.rows[0] }
     })
 
     app.patch('/internal/cricket/fantasy/players/:id', { onRequest: [internal] }, async (req, reply) => {
       const { id } = req.params as { id: string }
-      const body = z.object({ name: z.string().optional(), role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']).optional(), credits: z.coerce.number().min(5.0).max(15.0).optional(), team_name: z.string().optional(), avatar_url: z.string().optional() }).parse(req.body)
+      const body = z.object({ name: z.string().optional(), role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']).optional(), credits: z.coerce.number().min(5.0).max(15.0).optional(), team_name: z.string().optional(), avatar_url: z.string().optional(), batting_style: z.string().nullable().optional(), bowling_style: z.string().nullable().optional() }).parse(req.body)
       const fields: string[] = [], params: any[] = [id]
       let i = 2
       for (const [key, val] of Object.entries(body)) {
@@ -669,6 +670,52 @@ export function bettingPlugin(db: Pool) {
       if (!fields.length) return reply.code(400).send({ error: 'No fields to update' })
       const res = await db.query(`UPDATE cricket_sessions SET ${fields.join(', ')} WHERE id = $1 RETURNING *`, params)
       return { success: true, session: res.rows[0] }
+    })
+
+    // Bulk-create the over-bracket sessions for a match in one call. Sessions
+    // are always the same shape — "runs at the end of over N" for a run of
+    // consecutive overs — and creating them one at a time is the slowest part
+    // of setting a match up. Ranges already covered by an existing session are
+    // skipped, so this is safe to re-run as a match progresses.
+    app.post('/internal/cricket/session/bulk-create', { onRequest: [internal] }, async (req, reply) => {
+      const body = z.object({
+        match_id: z.string().uuid(),
+        label_template: z.string().default('{over} over runs'),
+        from_over: z.number().int().min(1),
+        to_over: z.number().int().min(1),
+        // Expected runs at the first over in the range, and how much that
+        // expectation grows per over — together these generate each bracket.
+        base_runs: z.number().int().min(0),
+        runs_per_over: z.number().min(0).default(8),
+        // Bracket width: a session on "45-47" is min 45, max 47.
+        bracket_width: z.number().int().min(0).default(2),
+        odds_yes: z.number().default(1.0),
+        odds_no: z.number().default(1.0),
+      }).parse(req.body)
+
+      if (body.to_over < body.from_over) return reply.code(400).send({ error: 'to_over must be greater than or equal to from_over' })
+
+      const mRes = await db.query('SELECT status FROM cricket_matches WHERE id = $1', [body.match_id])
+      if (!mRes.rows.length) return reply.code(404).send({ error: 'Match not found' })
+      if (['settled', 'closed'].includes(mRes.rows[0].status)) return reply.code(400).send({ error: 'Cannot add sessions to a settled or closed match' })
+
+      const existing = (await db.query('SELECT label FROM cricket_sessions WHERE match_id = $1', [body.match_id]))
+        .rows.map(r => String(r.label))
+
+      const created: any[] = []
+      const skipped: string[] = []
+      for (let over = body.from_over; over <= body.to_over; over++) {
+        const label = body.label_template.replace('{over}', String(over))
+        if (existing.includes(label)) { skipped.push(label); continue }
+        const min = Math.round(body.base_runs + (over - body.from_over) * body.runs_per_over)
+        const r = await db.query(
+          `INSERT INTO cricket_sessions (match_id, label, min_runs, max_runs, odds_yes, odds_no)
+           VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+          [body.match_id, label, min, min + body.bracket_width, body.odds_yes, body.odds_no],
+        )
+        created.push(r.rows[0])
+      }
+      return { success: true, created: created.length, skipped, sessions: created }
     })
 
     app.post('/internal/cricket/session/settle', { onRequest: [internal] }, async (req) => {
@@ -847,13 +894,36 @@ export function bettingPlugin(db: Pool) {
           for (const p of (team.players || [])) {
             if (!p.id) continue
             const role = p.role?.toLowerCase().replace(/[^a-z]/g, '').includes('keeper') ? 'wicket_keeper' : p.role?.toLowerCase().includes('bowl') ? 'bowler' : p.role?.toLowerCase().includes('allrounder') ? 'all_rounder' : 'batsman'
-            const fallbackAvatar = `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.name)}`
-            await upsertFantasyPlayer({ name: p.name, externalId: p.id, role, teamName: team.teamName, avatarUrl: fallbackAvatar })
+            // Prefer the real squad photo the API already returned; the DiceBear
+            // cartoon is only a last resort (and is what the Wikidata enrichment
+            // pass later treats as a placeholder worth replacing).
+            const avatar = p.playerImg && !/no_?img|placeholder/i.test(p.playerImg)
+              ? p.playerImg
+              : `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.name)}`
+            await upsertFantasyPlayer({ name: p.name, externalId: p.id, role, teamName: team.teamName, avatarUrl: avatar })
             playersSeeded++
           }
         }
         return { success: true, teamsSeeded, playersSeeded }
       } catch (e: any) { return reply.code(500).send({ error: `Series squad sync failed: ${e.message}` }) }
+    })
+
+    // Fill in player photos, DOB and Wikidata IDs from Wikidata/Wikimedia
+    // Commons. Keyless and unmetered, unlike the CricAPI routes above, so this
+    // can be re-run as often as needed. Only writes columns that are currently
+    // empty unless `force` is set, so admin corrections survive a re-sync.
+    app.post('/internal/cricket/players/enrich', { onRequest: [internal] }, async (req, reply) => {
+      const body = z.object({
+        player_id: z.string().uuid().optional(),
+        team_name: z.string().optional(),
+        force: z.boolean().default(false),
+      }).parse(req.body ?? {})
+      try {
+        const res = await enrichPlayers(db, { playerId: body.player_id, teamName: body.team_name, force: body.force })
+        return { success: true, ...res }
+      } catch (e: any) {
+        return reply.code(502).send({ error: `Player enrichment failed: ${e.message}` })
+      }
     })
 
     app.post('/internal/cricket/sync-squad', { onRequest: [internal] }, async (req, reply) => {
@@ -867,8 +937,13 @@ export function bettingPlugin(db: Pool) {
           for (const p of (team.players || [])) {
             if (!p.id) continue
             const role = p.role?.toLowerCase().replace(/[^a-z]/g, '').includes('keeper') ? 'wicket_keeper' : p.role?.toLowerCase().includes('bowl') ? 'bowler' : p.role?.toLowerCase().includes('allrounder') ? 'all_rounder' : 'batsman'
-            const fallbackAvatar = `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.name)}`
-            const pId = await upsertFantasyPlayer({ name: p.name, externalId: p.id, role, teamName: team.teamName, avatarUrl: fallbackAvatar })
+            // Prefer the real squad photo the API already returned; the DiceBear
+            // cartoon is only a last resort (and is what the Wikidata enrichment
+            // pass later treats as a placeholder worth replacing).
+            const avatar = p.playerImg && !/no_?img|placeholder/i.test(p.playerImg)
+              ? p.playerImg
+              : `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.name)}`
+            const pId = await upsertFantasyPlayer({ name: p.name, externalId: p.id, role, teamName: team.teamName, avatarUrl: avatar })
             await db.query(`INSERT INTO cricket_match_players (match_id, player_id, runs_scored, balls_faced, fours, sixes, wickets, runs_conceded, overs_bowled, catches, stumpings, run_outs, fantasy_points) VALUES ($1,$2,0,0,0,0,0,0,0.0,0,0,0,0.0) ON CONFLICT (match_id, player_id) DO NOTHING`, [match_id, pId])
             playersSeeded++
           }

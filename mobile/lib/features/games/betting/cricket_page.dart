@@ -1023,6 +1023,55 @@ class _DraftTeamScreenState extends State<_DraftTeamScreen>
     }
   }
 
+  // Player photos come from Wikimedia Commons under CC-style licences, which
+  // require the photographer and licence to be credited. This is that credit —
+  // it must stay reachable from wherever the photos are shown.
+  void _showPhotoCredits() {
+    final credited = _players
+        .where((p) => (p['image_credit'] ?? '').toString().isNotEmpty)
+        .toList();
+
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.cardBg,
+        title: const Text('Photo Credits',
+            style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: credited.isEmpty
+              ? const Text(
+                  'Player photos are sourced from Wikimedia Commons.',
+                  style: TextStyle(
+                      color: AppColors.textSecondary, fontSize: 12),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: credited.length,
+                  itemBuilder: (_, i) {
+                    final p = credited[i];
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Text(
+                        '${p['name']} — ${p['image_credit']}',
+                        style: const TextStyle(
+                            color: AppColors.textSecondary, fontSize: 11),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close',
+                style: TextStyle(color: AppColors.gold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final teamA = widget.match['team_a_short'] ?? 'IND';
@@ -1044,6 +1093,13 @@ class _DraftTeamScreenState extends State<_DraftTeamScreen>
               : 'Choose Captain & Vice Captain',
           style: const TextStyle(fontSize: 16),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline, size: 20),
+            tooltip: 'Photo credits',
+            onPressed: _showPhotoCredits,
+          ),
+        ],
         bottom: _currentStep == 0
             ? TabBar(
                 controller: _roleTabs,
@@ -1157,8 +1213,19 @@ class _DraftTeamScreenState extends State<_DraftTeamScreen>
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
                   fontSize: 13)),
+          // Team, then playing style when we have it — the style is what tells
+          // a picker whether a bowler suits the pitch, so it belongs on the
+          // draft row rather than buried in a detail sheet.
           subtitle: Text(
-            (p['team_name'] ?? '').toString().toUpperCase(),
+            [
+              (p['team_name'] ?? '').toString().toUpperCase(),
+              if ((p['bowling_style'] ?? '').toString().isNotEmpty)
+                p['bowling_style']
+              else if ((p['batting_style'] ?? '').toString().isNotEmpty)
+                p['batting_style'],
+            ].join('  •  '),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style:
                 const TextStyle(color: AppColors.textSecondary, fontSize: 10),
           ),

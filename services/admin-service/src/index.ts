@@ -2193,6 +2193,13 @@ async function start() {
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
+  // Generate a whole run of over-bracket sessions at once instead of adding
+  // them one form submission at a time.
+  app.post('/api/admin/betting/cricket/session/bulk-create', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/session/bulk-create', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
   app.post('/api/admin/betting/cricket/session/settle', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/session/settle', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
@@ -2274,6 +2281,15 @@ async function start() {
 
   app.patch('/api/admin/betting/cricket/fantasy/players/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const r = await callBetting(`/internal/cricket/fantasy/players/${(req.params as any).id}`, req.body, 'PATCH')
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  // Pull player photos/DOB/Wikidata IDs from Wikidata + Wikimedia Commons.
+  // Keyless and unmetered (unlike the CricAPI sync routes), so it's safe to run
+  // for a whole team. A full 30-player team takes ~30s because the resolver
+  // paces its outbound requests, hence the longer client timeout in the UI.
+  app.post('/api/admin/betting/cricket/fantasy/players/enrich', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/players/enrich', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 

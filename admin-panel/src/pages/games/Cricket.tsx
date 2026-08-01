@@ -118,6 +118,8 @@ export default function Cricket() {
   // --- Fantasy States ---
   const [players, setPlayers] = useState<any[]>([])
   const [loadingPlayers, setLoadingPlayers] = useState(false)
+  const [enriching, setEnriching] = useState(false)
+  const [playerTeamFilter, setPlayerTeamFilter] = useState<string | undefined>()
   const [playerOpen, setPlayerOpen] = useState(false)
   const [editingPlayer, setEditingPlayer] = useState<any>(null)
   const [leagueOpen, setLeagueOpen] = useState(false)
@@ -130,6 +132,9 @@ export default function Cricket() {
   const [sessionFor, setSessionFor] = useState<any>(null)
   const [editingSession, setEditingSession] = useState<any>(null)
   const [sForm] = Form.useForm()
+  const [bulkSessionFor, setBulkSessionFor] = useState<any>(null)
+  const [bulkSaving, setBulkSaving] = useState(false)
+  const [bulkForm] = Form.useForm()
 
   // --- Players Section States (View / Map) ---
   const [viewingPlayer, setViewingPlayer] = useState<any>(null)
@@ -350,6 +355,35 @@ export default function Cricket() {
       .finally(() => setLoadingPlayers(false))
   }
 
+  // Pull photos/DOB/Wikidata IDs for the whole roster, or just the team the
+  // admin has filtered to. The resolver paces its own outbound requests, so a
+  // 30-player squad takes roughly half a minute — well past the default axios
+  // timeout, hence the explicit override.
+  const enrichPlayerData = async () => {
+    setEnriching(true)
+    try {
+      const r = await adminApi.post(
+        '/betting/cricket/fantasy/players/enrich',
+        playerTeamFilter ? { team_name: playerTeamFilter } : {},
+        { timeout: 300000 },
+      )
+      const { updated, imagesDownloaded, notFound } = r.data
+      message.success(`Updated ${updated} player(s), downloaded ${imagesDownloaded} photo(s).`)
+      if (notFound?.length) {
+        message.warning(
+          `No public profile found for ${notFound.length}: ${notFound.slice(0, 5).join(', ')}` +
+          `${notFound.length > 5 ? '…' : ''}. Add their photo by hand via Edit.`,
+          8,
+        )
+      }
+      loadPlayers()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Could not fetch player profiles')
+    } finally {
+      setEnriching(false)
+    }
+  }
+
   const loadSeriesCatalog = () => {
     adminApi.get('/betting/cricket/series-catalog').then(r => setSeriesCatalog(r.data.series || []))
   }
@@ -406,12 +440,14 @@ export default function Cricket() {
     try {
       if (editingPlayer) {
         await adminApi.patch(`/betting/cricket/fantasy/players/${editingPlayer.id}`, {
-          name: v.name, role: v.role, credits: v.credits, team_name: v.team_name, avatar_url: v.avatar_url
+          name: v.name, role: v.role, credits: v.credits, team_name: v.team_name, avatar_url: v.avatar_url,
+          batting_style: v.batting_style ?? null, bowling_style: v.bowling_style ?? null
         })
         message.success('Player updated')
       } else {
         await adminApi.post('/betting/cricket/fantasy/players', {
-          name: v.name, role: v.role, credits: v.credits, team_name: v.team_name, avatar_url: v.avatar_url
+          name: v.name, role: v.role, credits: v.credits, team_name: v.team_name, avatar_url: v.avatar_url,
+          batting_style: v.batting_style ?? null, bowling_style: v.bowling_style ?? null
         })
         message.success('Player added globally')
       }
@@ -525,6 +561,35 @@ export default function Cricket() {
       loadMatches()
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'Failed')
+    }
+  }
+
+  const openBulkSessionModal = (match: any) => {
+    setBulkSessionFor(match)
+    bulkForm.resetFields()
+    bulkForm.setFieldsValue({
+      label_template: '{over} Over Runs',
+      from_over: 1, to_over: 20,
+      base_runs: 8, runs_per_over: 8, bracket_width: 2,
+    })
+  }
+
+  const saveBulkSessions = async (v: any) => {
+    setBulkSaving(true)
+    try {
+      const r = await adminApi.post('/betting/cricket/session/bulk-create', {
+        match_id: bulkSessionFor.id, ...v,
+      })
+      message.success(`Created ${r.data.created} session(s).`)
+      if (r.data.skipped?.length) {
+        message.info(`Skipped ${r.data.skipped.length} that already existed.`)
+      }
+      setBulkSessionFor(null)
+      loadMatches()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to create sessions')
+    } finally {
+      setBulkSaving(false)
     }
   }
 
@@ -954,6 +1019,7 @@ export default function Cricket() {
                         </Button>
                       )}
                       <Button size="small" onClick={() => openSessionModal(m)}>+ Session</Button>
+                      <Button size="small" onClick={() => openBulkSessionModal(m)}>+ Bulk</Button>
                       <Popconfirm title="Delete this match?" description="Blocked if it has an active fantasy contest with joined entries." onConfirm={() => deleteMatch(m.id)}>
                         <Button size="small" danger icon={<DeleteOutlined />} />
                       </Popconfirm>
@@ -1270,12 +1336,40 @@ export default function Cricket() {
       label: '🧢 Players',
       children: (
         <Card title="Fantasy Players — full roster management"
-          extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openPlayerModal()}>Add Player</Button>}
+          extra={
+            <Space>
+              <Select
+                allowClear
+                placeholder="Filter by team"
+                style={{ width: 180 }}
+                value={playerTeamFilter}
+                onChange={setPlayerTeamFilter}
+                options={Array.from(new Set(players.map(p => p.team_name).filter(Boolean)))
+                  .sort().map(t => ({ label: t, value: t }))}
+              />
+              <Button loading={enriching} onClick={() => enrichPlayerData()}>
+                Fetch Photos & Profiles
+              </Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => openPlayerModal()}>Add Player</Button>
+            </Space>
+          }
           loading={loadingPlayers}
         >
+          <Alert
+            type="info" showIcon style={{ marginBottom: 12 }}
+            message="Photos and profiles come from Wikidata / Wikimedia Commons"
+            description={
+              <span>
+                Free and unmetered — no CricAPI quota is consumed, so this can be re-run any time.
+                It only fills in fields that are still empty, so anything you have edited by hand is kept.
+                Filter to a team first to enrich just that squad. Photos are downloaded and re-hosted on
+                this server, and their licence credit is stored for attribution.
+              </span>
+            }
+          />
           <Table
             rowKey="id"
-            dataSource={players}
+            dataSource={playerTeamFilter ? players.filter(p => p.team_name === playerTeamFilter) : players}
             scroll={{ x: 'max-content' }}
             columns={[
               {
@@ -1293,6 +1387,35 @@ export default function Cricket() {
               },
               { title: 'Role', dataIndex: 'role', render: (r: string) => <Tag color="blue">{r.toUpperCase().replace('_', ' ')}</Tag> },
               { title: 'Team / Country', dataIndex: 'team_name' },
+              {
+                title: 'Style',
+                render: (p: any) => (
+                  <div style={{ fontSize: 12, lineHeight: 1.4 }}>
+                    <div>{p.batting_style || <Text type="secondary">—</Text>}</div>
+                    {p.bowling_style && <Text type="secondary">{p.bowling_style}</Text>}
+                  </div>
+                ),
+              },
+              {
+                title: 'Age',
+                dataIndex: 'date_of_birth',
+                render: (dob: string | null) => dob
+                  ? Math.floor((Date.now() - new Date(dob).getTime()) / 31557600000)
+                  : <Text type="secondary">—</Text>,
+              },
+              {
+                // Makes it obvious at a glance which rows the enrichment pass
+                // still hasn't resolved, so an admin knows where to step in
+                // and upload a photo by hand.
+                title: 'Profile',
+                render: (p: any) => {
+                  const hasPhoto = p.avatar_url && !String(p.avatar_url).includes('dicebear.com')
+                  if (!p.enriched_at) return <Tag>Not fetched</Tag>
+                  return hasPhoto
+                    ? <Tag color="green">Complete</Tag>
+                    : <Tag color="orange">No photo found</Tag>
+                },
+              },
               { title: 'Credits', dataIndex: 'credits', render: (c: number) => Number(c).toFixed(1) },
               { title: 'Matches', dataIndex: 'matches_played' },
               { title: 'Total Points', dataIndex: 'total_points', render: (v: number) => Number(v).toFixed(1) },
@@ -1454,7 +1577,80 @@ export default function Cricket() {
             <InputNumber min={5.0} max={15.0} step={0.5} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="team_name" label="Team / Country" rules={[{ required: true }]}><Input placeholder="e.g. India" /></Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="batting_style" label="Batting Style">
+                <Select allowClear placeholder="Select" options={[
+                  { value: 'Right-handed', label: 'Right-handed' },
+                  { value: 'Left-handed', label: 'Left-handed' },
+                ]} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="bowling_style" label="Bowling Style">
+                <Select allowClear showSearch placeholder="Select or type" options={[
+                  'Right-arm fast', 'Right-arm fast-medium', 'Right-arm medium',
+                  'Right-arm off break', 'Right-arm leg break',
+                  'Left-arm fast', 'Left-arm medium-fast',
+                  'Slow left-arm orthodox', 'Slow left-arm wrist-spin',
+                ].map(v => ({ value: v, label: v }))} />
+              </Form.Item>
+            </Col>
+          </Row>
           <PlayerAvatarUploadField form={pForm} />
+        </Form>
+      </Modal>
+
+      {/* Bulk-generate over-bracket sessions for a match */}
+      <Modal
+        open={!!bulkSessionFor}
+        title={`Generate Sessions${bulkSessionFor ? ` — ${bulkSessionFor.team_a} vs ${bulkSessionFor.team_b}` : ''}`}
+        onCancel={() => setBulkSessionFor(null)}
+        onOk={() => bulkForm.submit()}
+        okText="Generate"
+        confirmLoading={bulkSaving}
+      >
+        <Alert
+          type="info" showIcon style={{ marginBottom: 16 }}
+          message="Creates one session per over in the range"
+          description="Each bracket starts at the expected runs for that over and widens by the bracket size. Sessions whose label already exists on this match are skipped, so it is safe to re-run."
+        />
+        <Form form={bulkForm} layout="vertical" onFinish={saveBulkSessions}>
+          <Form.Item
+            name="label_template" label="Label Template" rules={[{ required: true }]}
+            extra="{over} is replaced by the over number — e.g. '6 Over Runs'."
+          >
+            <Input placeholder="{over} Over Runs" />
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="from_over" label="From Over" rules={[{ required: true }]}>
+                <InputNumber min={1} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="to_over" label="To Over" rules={[{ required: true }]}>
+                <InputNumber min={1} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item name="base_runs" label="Runs at First Over" rules={[{ required: true }]}>
+                <InputNumber min={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="runs_per_over" label="Runs / Over" rules={[{ required: true }]}>
+                <InputNumber min={0} step={0.5} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="bracket_width" label="Bracket Width" rules={[{ required: true }]}>
+                <InputNumber min={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
 
