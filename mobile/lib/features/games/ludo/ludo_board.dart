@@ -166,37 +166,40 @@ Offset tokenPosition(int seatIndex, int tokenIndex, int progress, double size) {
     final cell = _track[absoluteCell(seatIndex, progress)];
     return _cellCenter(cell[0], cell[1], size);
   }
-  if (progress <= 55) {
+  if (progress <= 56) {
     final cell = _homeLanes[seatIndex % 4][progress - 51];
     return _cellCenter(cell[0], cell[1], size);
   }
-  // progress 56 lands on the home lane's 6th cell, which sits geometrically
-  // inside the centre triangle (same coordinates as _goalCentroid below) —
-  // falling through here keeps it visually and key-wise identical to
-  // "finished" instead of a separate state that silently overlapped it.
-  // Finished: rest at the centroid of this seat's own goal triangle. When
-  // several of the same colour finish, _buildTokens clusters them with the
-  // same tight diamond offsets used everywhere else tokens share a cell —
-  // so the goal looks like every other stack on the board, not a spread-out
-  // row that can crowd toward the triangle's edge.
+  // Finished (progress 57): rest well inside this seat's own goal triangle.
+  // When several of the same colour finish, _buildTokens clusters them with
+  // the same tight diamond offsets used everywhere else tokens share a cell.
   return _goalCentroid(seatIndex, size);
 }
 
-// Centroid of this seat's own goal triangle, matching _drawCenter's
+// A point inside this seat's own goal triangle, matching _drawCenter's
 // triangle assignment (top=seat2 yellow, right=seat3 blue, bottom=seat0
-// red, left=seat1 green). Staying at the centroid keeps clustered tokens
-// well inside the coloured area regardless of how many share it.
+// red, left=seat1 green).
+//
+// This is deliberately NOT the triangle's vertex-averaged centroid: for
+// these particular vertices that centroid lands exactly 1/3 of the way
+// from the outer edge to the centre point — which is pixel-identical to
+// the centre of the home lane's 6th cell (progress 56, the last cell
+// _before_ the triangle). Using it made the "finished" token render on
+// top of the last home-lane cell, so reaching progress 57 looked like no
+// move happened at all. Sitting further in (5/6 of the way to the centre
+// point) keeps the finished token visually inside the triangle but clearly
+// past the last home-lane cell.
 Offset _goalCentroid(int seatIndex, double size) {
   final s = size / 15.0;
   switch (seatIndex % 4) {
     case 0: // red — bottom triangle
-      return Offset(7.5 * s, 8.5 * s);
+      return Offset(7.5 * s, 7.75 * s);
     case 1: // green — left triangle
-      return Offset(6.5 * s, 7.5 * s);
+      return Offset(7.25 * s, 7.5 * s);
     case 2: // yellow — top triangle
-      return Offset(7.5 * s, 6.5 * s);
+      return Offset(7.5 * s, 7.25 * s);
     default: // blue — right triangle
-      return Offset(8.5 * s, 7.5 * s);
+      return Offset(7.75 * s, 7.5 * s);
   }
 }
 
@@ -303,7 +306,7 @@ class _LudoBoardState extends State<LudoBoard>
         String cellKey;
         if (prog <= 50) {
           cellKey = 'track_${absoluteCell(seatIdx, prog)}';
-        } else if (prog < kHomeProgress - 1) {
+        } else if (prog < kHomeProgress) {
           cellKey = 'home_${seatIdx}_$prog';
         } else {
           cellKey = 'goal_$seatIdx';
@@ -335,7 +338,7 @@ class _LudoBoardState extends State<LudoBoard>
           String cellKey;
           if (progress <= 50) {
             cellKey = 'track_${absoluteCell(seatIdx, progress)}';
-          } else if (progress < kHomeProgress - 1) {
+          } else if (progress < kHomeProgress) {
             cellKey = 'home_${seatIdx}_$progress';
           } else {
             cellKey = 'goal_$seatIdx';
@@ -484,9 +487,6 @@ class _TokenSpriteState extends State<_TokenSprite>
   late final AnimationController _move = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 300));
   double _from = 0, _to = 0;
-  // Real destination progress for this move. Usually equals _to, except when
-  // the move ends at 57 (finished) — see _animateSteps.
-  double _finalValue = 0;
   int _lastTick = 0;
 
   // One-shot flourish: capture pop-in (sent home) and home-arrival bounce.
@@ -543,14 +543,7 @@ class _TokenSpriteState extends State<_TokenSprite>
 
   void _animateSteps(double from, double to) {
     _from = from;
-    _finalValue = to;
-    // Progress 56 (last home-lane cell) and 57 (finished) render at the
-    // identical pixel — both are the goal triangle's centroid. Animating a
-    // full step between them covers zero visual distance, so the token
-    // would freeze in the goal square for an extra beat before "landing".
-    // Cap the animated target at 56 and snap straight to the real value
-    // (_finalValue) on completion instead.
-    _to = to > 56 ? 56.0 : to;
+    _to = to;
     _lastTick = from.floor();
     final steps = (_to - from).abs();
     // ~150ms per cell, clamped, so a 6-step move reads clearly without dragging.
@@ -574,9 +567,9 @@ class _TokenSpriteState extends State<_TokenSprite>
 
   void _onMoveDone(AnimationStatus st) {
     if (st != AnimationStatus.completed) return;
-    _display = _finalValue;
+    _display = _to;
     // Landing feedback: home arrival flourish, else a safe-cell chime.
-    if (_finalValue >= 57) {
+    if (_to >= 57) {
       _homeFlourish = true;
       _fx.forward(from: 0);
     } else if (_to <= 50) {
