@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"math/rand"
 	"testing"
 )
 
@@ -314,5 +315,86 @@ func TestPotOddsMatter(t *testing.T) {
 	ef, _, _ := tiltedWeights(expensive, 0.5, expensive.callCost/(expensive.pot+expensive.callCost))
 	if !(ef > cf) {
 		t.Errorf("fold weight did not rise with a worse price: cheap %.3f, expensive %.3f", cf, ef)
+	}
+}
+
+// --- Escalation brake ----------------------------------------------------
+
+// Two seen bots heads-up used to trade chaals indefinitely: every raise
+// re-armed the other, and because pot odds improve as the pot grows, fold
+// weight collapsed to zero for both. Observed live on a 10-rupee table — a 475
+// pot over 16 actions, bot versus bot.
+//
+// This simulates that duel and asserts it terminates.
+func TestHeadsUpDuelTerminates(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+
+	const stake, trials = 10.0, 400
+	worst, total := 0, 0
+
+	for trial := 0; trial < trials; trial++ {
+		pot := stake * 2
+		minBet := stake
+		// Two middling hands: both playable, neither a monster. This is the
+		// pairing that ran away — a clear favourite ends it quickly by showing.
+		strengths := [2]float64{0.55, 0.60}
+		actions := 0
+
+		for ; actions < 200; actions++ {
+			s := botSituation{
+				strength: strengths[actions%2], opponents: 1,
+				callCost: minBet * 2, pot: pot, chaals: float64(actions / 2),
+				potRatio: pot / stake, isSeen: true, canShow: true,
+				aggression: 0.67, foldP: 0.18, callP: 0.42, raiseP: 0.40, minBet: minBet,
+			}
+			r := botRolls{
+				action: rng.Float64(), see: rng.Float64(), bluff: rng.Float64(),
+				trap: rng.Float64(), show: rng.Float64(),
+			}
+			action, amount, _ := decideBot(s, r)
+			if action == "fold" || action == "show" {
+				break
+			}
+			pot += amount
+			if action == "raise" {
+				minBet = amount / 2
+			}
+		}
+
+		total += actions
+		if actions > worst {
+			worst = actions
+		}
+	}
+
+	avg := float64(total) / trials
+	t.Logf("heads-up duel: average %.1f actions, worst %d", avg, worst)
+	if avg > 8 {
+		t.Errorf("duels average %.1f actions — escalation is not damped", avg)
+	}
+	if worst > 30 {
+		t.Errorf("worst duel ran %d actions — a hand can still run away", worst)
+	}
+}
+
+// The brake must not turn bots into pushovers: a strong hand should still be
+// willing to raise in a normal-sized pot.
+func TestBrakeLeavesNormalPotsAlone(t *testing.T) {
+	s := baseSituation()
+	s.strength = 0.92
+	s.potRatio = 3 // freshly dealt three-handed pot
+	s.canShow = false
+	s.opponents = 2
+
+	raises := 0
+	for i := 0; i < 200; i++ {
+		r := never()
+		r.action = float64(i) / 200
+		if action, _, _ := decideBot(s, r); action == "raise" {
+			raises++
+		}
+	}
+	if raises == 0 {
+		t.Errorf("a strong hand never raised in a normal pot — the brake is too strong")
 	}
 }

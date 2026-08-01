@@ -61,10 +61,10 @@ type botSituation struct {
 	// Percentile strength of the bot's own hand, 0..1. Only meaningful once
 	// IsSeen — a blind player has genuinely not looked at their cards, and the
 	// policy must not cheat by peeking. See decideBot.
-	strength   float64
-	opponents  int     // active players other than this bot
-	callCost   float64 // what calling costs right now
-	pot        float64
+	strength  float64
+	opponents int     // active players other than this bot
+	callCost  float64 // what calling costs right now
+	pot       float64
 	// chaals is how many betting rounds this bot has already paid for:
 	// (its total bet / the table stake) - 1, since everyone antes one stake at
 	// the deal. This is the hand's clock.
@@ -75,7 +75,11 @@ type botSituation struct {
 	// and the result was a flat ~17% chance per turn that never rose, which
 	// left bots blind for most of a hand and made the whole hand-strength path
 	// below mostly unreachable in real games.
-	chaals     float64
+	chaals float64
+	// potRatio is the pot measured in table stakes. It is the hand's escalation
+	// gauge: a fresh three-handed pot sits near 3, and anything past ~20 means
+	// the betting has run long.
+	potRatio   float64
 	isSeen     bool
 	canShow    bool // exactly two players left, so "show" is legal
 	aggression float64
@@ -160,6 +164,25 @@ func tiltedWeights(s botSituation, winProb, potOdds float64) (float64, float64, 
 	}
 	tilt := clamp(signal*(0.6+0.8*s.aggression), -1, 1)
 
+	// Pot odds alone are the wrong stopping rule in a game with more betting to
+	// come. As the pot grows the price of one call approaches zero, so the ratio
+	// above says "call" for literally any hand — fold weight collapses and a
+	// hopeless hand calls forever. That is the engine of the escalation this
+	// brake exists to stop.
+	//
+	// A weak hand may still be dragged along by a good price, but only a little:
+	// the real cost of continuing is not this one chaal, it is every chaal after
+	// it too.
+	if winProb < 0.5 {
+		tilt = math.Min(tilt, 0.2)
+	}
+
+	// Independently, damp raising as the pot bloats. Calling a big pot down is
+	// reasonable; re-raising it is what makes the loop run away.
+	if bloat := clamp(s.potRatio/50, 0, 1); bloat > 0 && tilt > 0 {
+		tilt *= 1 - 0.6*bloat
+	}
+
 	// Call is the "no strong opinion" action, so its weight shrinks as
 	// conviction grows in *either* direction, and the mass it gives up goes to
 	// whichever side the tilt points. Leaving call fixed was the original bug
@@ -229,11 +252,25 @@ func decideBot(s botSituation, r botRolls) (action string, amount float64, reaso
 		potOdds = s.callCost / (s.pot + s.callCost)
 	}
 
-	// Show: heads-up with a hand that is very likely ahead, take the money now
-	// rather than let a worse hand keep drawing chips out of position. Not
-	// always — always-showing is itself a tell.
-	if s.canShow && winProb > 0.80 && r.show < 0.5 {
-		return "show", s.callCost, "strong heads-up, forcing showdown"
+	// Show: heads-up, end it. Two seen bots with playable hands will otherwise
+	// trade chaals indefinitely — neither has a reason to fold and each raise
+	// re-arms the other. Observed live: a 10-rupee table reaching a 475 pot over
+	// 16 actions, entirely bot-versus-bot.
+	//
+	// The chance rises with hand strength (as before) AND with how bloated the
+	// pot has grown relative to the table stake. That second term is what
+	// terminates the loop: the longer a heads-up hand runs, the more likely
+	// someone calls it, which is exactly what human players do rather than
+	// re-raising forever.
+	if s.canShow {
+		// The strength term is deliberately small: showing is mostly a response
+		// to a hand that has run long, not to holding a good hand, which would
+		// make every show a readable tell. The bloat term only starts past a
+		// normal heads-up pot (~6 stakes), so ordinary hands still get to play.
+		showChance := 0.15*winProb + clamp((s.potRatio-6)/45, 0, 0.60)
+		if r.show < showChance {
+			return "show", s.callCost, "heads-up showdown"
+		}
 	}
 
 	// Trap: a monster occasionally just calls, so that raising isn't a perfect
@@ -379,8 +416,10 @@ func (s *Server) decideBotAction(w http.ResponseWriter, r *http.Request) {
 	// betting rounds actually paid for. Guard the divide: a zero-stake table
 	// would otherwise make every bot look at its cards immediately.
 	chaals := 0.0
+	potRatio := 0.0
 	if state.Stake > 0 {
 		chaals = math.Max(0, p.Bet/state.Stake-1)
+		potRatio = state.Pot / state.Stake
 	}
 
 	sit := botSituation{
@@ -388,6 +427,7 @@ func (s *Server) decideBotAction(w http.ResponseWriter, r *http.Request) {
 		callCost:   callCost,
 		pot:        state.Pot,
 		chaals:     chaals,
+		potRatio:   potRatio,
 		isSeen:     p.IsSeen,
 		canShow:    active == 2,
 		aggression: clamp(req.Aggression, 0, 1),
