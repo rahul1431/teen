@@ -60,13 +60,17 @@ describe('chooseBotTokenCoordinated', () => {
       aggressiveness: 1.0, // Max aggressiveness, but should be ignored
     }
 
-    // With a 6 roll: token 0 moves from 5 -> 11, token 1 moves from 20 -> 26
-    // Token at index 0 (from seat 1 offset 13) -> progress 5 = absolute cell 18 (13+5)
-    // Other bot token at seat 2 offset 26, progress 3 = absolute cell 29 (26+3)
-    // No direct capture scenario here, but winner should use normal logic
+    // A 6 makes all four tokens movable: 0 and 1 advance, 2 and 3 can leave
+    // base. No capture is available, so this only checks that the winner bot
+    // routes through normal move scoring rather than the helper path.
+    //
+    // Tokens 2 and 3 are legal answers and are in fact the *right* ones — the
+    // scored bot spends a 6 opening a third token instead of shuffling one
+    // already on the track. The previous cascade never did this (it always
+    // advanced the most-progressed token), which is why this assertion used to
+    // read [0, 1].
     const result = chooseBotTokenCoordinated(state, 1, 6, metadata)
-    // Result should be a valid token index (0 or 1)
-    assert.ok([0, 1].includes(result), 'winner bot should use normal move logic')
+    assert.ok([0, 1, 2, 3].includes(result), 'winner bot should use normal move logic')
   })
 
   test('low aggressiveness (0.1) falls back to normal logic', () => {

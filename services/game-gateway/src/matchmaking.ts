@@ -4,7 +4,20 @@ import { v4 as uuid } from 'uuid'
 import crypto from 'crypto'
 import { RealtimeHub } from './realtime'
 import { GameWatchdog } from './watchdog'
-import { getBotProfile, getLudoBotProfile, pickBotAction, pickBotDelay, TeenPattiBotProfile } from './bot-profile'
+import { aggressionUnit, getBotProfile, getLudoBotProfile, pickBotAction, pickBotDelay, TeenPattiBotProfile } from './bot-profile'
+
+/**
+ * Actions the Teen Patti engine's bot brain may return.
+ *
+ * Wider than fold/call/raise since the brain moved into the engine: it can now
+ * see the bot's cards, so it can also decide to look at them ('see') and to
+ * force a showdown heads-up ('show'). 'see' is turn-holding — the engine does
+ * not advance current_turn for it — which is why it needs no special casing
+ * here: the post-action scheduleBotTurn finds the same bot still on turn and
+ * drives it again, this time as a seen player.
+ */
+type BotAction = 'fold' | 'call' | 'raise' | 'see' | 'show'
+const ENGINE_BOT_ACTIONS: BotAction[] = ['fold', 'call', 'raise', 'see', 'show']
 import { monitorEmitter } from './monitor-emitter'
 import { isInPersonalizationCanary, isInCanaryPercent, getPersonalizedDifficulty } from './personalized-difficulty-client'
 import { BotStatsLoader } from './botCoordination/botStatsLoader'
@@ -524,7 +537,7 @@ export class MatchmakingService {
     roomId: string,
     currentPlayer: any,
     profile: TeenPattiBotProfile
-  ): Promise<'fold' | 'call' | 'raise'> {
+  ): Promise<{ action: BotAction; amount: number | null }> {
     const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
     try {
       const res = await fetch(`${engineUrl}/bot/decide`, {
@@ -536,20 +549,31 @@ export class MatchmakingService {
           fold_probability: profile.fold_probability,
           call_probability: profile.call_probability,
           raise_probability: profile.raise_probability,
+          // Scales how hard the engine lets the hand override the trained rates,
+          // how often it bluffs, and how much it over-bets a strong hand.
+          aggression: aggressionUnit(profile),
         }),
         signal: AbortSignal.timeout(1000),
       })
       if (res.ok) {
-        const decision = await res.json() as { action?: string }
-        if (decision.action === 'fold' || decision.action === 'call' || decision.action === 'raise') {
-          return decision.action
+        const decision = await res.json() as { action?: string; amount?: number }
+        if (ENGINE_BOT_ACTIONS.includes(decision.action as BotAction)) {
+          // The engine sizes its own raises (bigger with a bigger edge) and
+          // knows the table's raise ceiling, which this process does not.
+          // Taking its amount is the whole reason it returns one; recomputing
+          // a flat 2x here would throw that away and put every bot back on the
+          // fixed bet size that made them identifiable.
+          const amount = typeof decision.amount === 'number' && decision.amount > 0 ? decision.amount : null
+          return { action: decision.action as BotAction, amount }
         }
       }
       console.warn(`[gateway] Bot decide returned ${res.status} for room ${roomId} — drawing locally`)
     } catch (err) {
       console.warn(`[gateway] Bot decide failed for room ${roomId}: ${(err as Error).message} — drawing locally`)
     }
-    return pickBotAction(profile)
+    // Fall back to the profile-only draw. It plays worse, but a bot that stalls
+    // is worse than a bot that plays badly.
+    return { action: pickBotAction(profile), amount: null }
   }
 
   private async resolveLudoTrainedProfiles(
@@ -1250,9 +1274,10 @@ export class MatchmakingService {
     // *what* to play. Aviator has no engine-side brain, so it keeps drawing
     // locally. On any engine failure we fall back to the local draw rather than
     // stalling the bot's turn.
-    const botAction = gameType === 'teen_patti'
+    const decision = gameType === 'teen_patti'
       ? await this.askEngineForBotAction(roomId, currentPlayer, botProfile)
-      : pickBotAction(botProfile)
+      : { action: pickBotAction(botProfile) as BotAction, amount: null as number | null }
+    const botAction = decision.action
     const botDelay = pickBotDelay(botProfile)
 
     const timer = setTimeout(async () => {
@@ -1263,7 +1288,10 @@ export class MatchmakingService {
       // Hoist action/amount so the catch block can use them in the retry (I5)
       let action: any = botAction
       const minBet = state.min_bet ?? state.MinBet ?? state.stake
-      let amount = action === 'raise' ? minBet * 2 : minBet
+      // Prefer the engine's own sizing — it scales the raise to the edge and
+      // already clamped it to the table ceiling. The flat 2x is only the
+      // fallback for a local draw, where no engine amount exists.
+      let amount = decision.amount ?? (action === 'raise' ? minBet * 2 : minBet)
 
       // I5: Extract the engine call + state-broadcast into a reusable closure so we can retry once
       const doAction = async () => {

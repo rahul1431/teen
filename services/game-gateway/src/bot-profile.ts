@@ -2,7 +2,7 @@ import { Redis } from 'ioredis'
 import { getTeenPattiBotProfile, TeenPattiBotProfile } from './bot-profile/teen-patti'
 import { getLudoBotProfile, LudoBotProfile } from './bot-profile/ludo'
 
-export { pickBotAction, pickBotDelay } from './bot-profile/teen-patti'
+export { aggressionUnit, pickBotAction, pickBotDelay } from './bot-profile/teen-patti'
 export { getTeenPattiBotProfile, getLudoBotProfile }
 export type { TeenPattiBotProfile, LudoBotProfile }
 
@@ -29,9 +29,9 @@ export type BotDecisionProfile = TeenPattiBotProfile & Partial<LudoBotProfile>
 // learn from, and its rooms are solo-crash (registry.json: maxPlayers 1), so
 // these constants are the whole profile rather than a fallback.
 const AVIATOR_PROFILES: Record<string, TeenPattiBotProfile> = {
-  easy:   { fold_probability: 0.50, call_probability: 0.40, raise_probability: 0.10, avg_decision_delay_ms: 3500 },
-  medium: { fold_probability: 0.35, call_probability: 0.45, raise_probability: 0.20, avg_decision_delay_ms: 2500 },
-  hard:   { fold_probability: 0.20, call_probability: 0.40, raise_probability: 0.40, avg_decision_delay_ms: 1500 },
+  easy:   { fold_probability: 0.50, call_probability: 0.40, raise_probability: 0.10, avg_decision_delay_ms: 3500, aggression_score: null },
+  medium: { fold_probability: 0.35, call_probability: 0.45, raise_probability: 0.20, avg_decision_delay_ms: 2500, aggression_score: null },
+  hard:   { fold_probability: 0.20, call_probability: 0.40, raise_probability: 0.40, avg_decision_delay_ms: 1500, aggression_score: null },
 }
 
 /**
@@ -57,6 +57,7 @@ export async function getBotProfile(
       call_probability: 0,
       raise_probability: 0,
       avg_decision_delay_ms: ludo.avg_decision_delay_ms,
+      aggression_score: null,
       capture_probability: ludo.capture_probability,
       safe_play_probability: ludo.safe_play_probability,
     }

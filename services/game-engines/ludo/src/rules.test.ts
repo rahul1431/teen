@@ -405,3 +405,80 @@ describe('chooseBotToken with a trainedProfile', () => {
     }
   })
 })
+
+// --- Scored move selection ------------------------------------------------
+//
+// These pin the behaviours the old capture -> safe -> most-progressed cascade
+// could not express at all, because its priority order was fixed.
+
+describe('chooseBotToken scoring', () => {
+  test('spends a 6 opening a token from base instead of shuffling one already out', () => {
+    const state = makeState()
+    // One token on the track with nothing to gain, three still in base.
+    state.players[0].tokens = [20, -1, -1, -1]
+    const t = chooseBotToken(state, 0, 6, 'medium')
+    assert.ok([1, 2, 3].includes(t), `expected a base token to enter play, got ${t}`)
+  })
+
+  test('finishes a token when the roll is exact, over advancing another', () => {
+    const state = makeState()
+    // token0 needs exactly 3 to reach HOME_PROGRESS; token1 is further along
+    // the track and is what "advance the most-progressed token" would pick.
+    state.players[0].tokens = [HOME_PROGRESS - 3, HOME_PROGRESS - 4, -1, -1]
+    const t = chooseBotToken(state, 0, 3, 'hard')
+    assert.equal(t, 0, 'should bring the token home rather than advance the other')
+  })
+
+  test('prefers the more valuable capture when two are available', () => {
+    const state = makeState()
+    // Both moves capture. Seat0 offset 0: token0 5+4=9, token1 20+4=24.
+    state.players[0].tokens = [5, 20, -1, -1]
+    // Seat1 offset 13: progress 48 -> (13+48)%52 = 9. A barely-started token.
+    state.players[1].tokens = [48, -1, -1, -1]
+    // Seat2 offset 26: progress 50 -> (26+50)%52 = 24. Nearly home.
+    state.players[2].tokens = [50, -1, -1, -1]
+
+    assert.equal(
+      chooseBotToken(state, 0, 4, 'hard'),
+      1,
+      'should send back the opponent token that had travelled furthest',
+    )
+  })
+
+  test('hard walks away from a square where it is already under threat', () => {
+    const state = makeState()
+    // token0 sits on absolute cell 5, with an opponent 2 behind it at cell 3.
+    // token1 has nothing to gain by moving. Both destinations are otherwise
+    // unremarkable, so escaping the threat should decide it.
+    state.players[0].tokens = [5, 30, -1, -1]
+    state.players[1].tokens = [42, -1, -1, -1] // (13+42)%52 = 3
+    const escaped = chooseBotToken(state, 0, 5, 'hard')
+    const from = absoluteCell(0, state.players[0].tokens[escaped])
+    assert.equal(from, 5, `expected the threatened token to move, got the one on cell ${from}`)
+  })
+
+  test('a declined capture still picks the best alternative, not a random one', () => {
+    const state = makeState()
+    // token0 captures; token1 is deep in the home column and safe; token2/3 are
+    // in base but a 4 cannot free them.
+    state.players[0].tokens = [5, 48, -1, -1]
+    state.players[1].tokens = [48, -1, -1, -1] // captured at cell 9
+    for (let i = 0; i < 50; i++) {
+      const t = chooseBotToken(state, 0, 4, 'hard', { capture_probability: 0 })
+      assert.equal(t, 1, 'declining a capture must still be a considered choice')
+    }
+  })
+
+  test('never forfeits a turn when the only legal move is a capture', () => {
+    const state = makeState()
+    state.players[0].tokens = [5, -1, -1, -1] // only token0 can move on a 4
+    state.players[1].tokens = [48, -1, -1, -1]
+    for (let i = 0; i < 20; i++) {
+      assert.equal(
+        chooseBotToken(state, 0, 4, 'hard', { capture_probability: 0 }),
+        0,
+        'must play the capture rather than pass when it is the only legal move',
+      )
+    }
+  })
+})

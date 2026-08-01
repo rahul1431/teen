@@ -402,6 +402,144 @@ export function findSafeMoves(state: LudoState, playerIdx: number, dice: number,
   })
 }
 
+/**
+ * How much each difficulty cares about safety when the trained dial is null.
+ *
+ * This is the "no trained data → use the deterministic rule" default, and it
+ * keeps the old shape: hard was the only tier that considered exposure at all,
+ * medium weighed progress over danger, easy was oblivious.
+ */
+const DEFAULT_SAFETY_WEIGHT: Record<BotDifficulty, number> = {
+  easy: 0,
+  medium: 0.35,
+  hard: 1,
+}
+
+/** Score contributions, named so the tuning is legible rather than magic. */
+const SCORE = {
+  reachHome: 100,     // a token home is permanent progress and grants another roll
+  capture: 80,        // sends an opponent all the way back, and grants another roll
+  capturedProgress: 0.6, // ...worth more the further that token had come
+  enterFromBase: 60,  // more tokens in play = more choices every subsequent turn
+  enterHomeColumn: 40, // past cell 50 nothing can ever capture it again
+  safeCell: 25,       // a star cell is immune to capture
+  blockade: 15,       // two of our own tokens on a cell cannot be captured
+  progress: 0.12,     // mild preference for advancing, and the final tiebreaker
+  exposureBase: 20,   // being capturable at all
+  exposureProgress: 0.5, // ...and losing a well-advanced token hurts much more
+}
+
+/**
+ * Threat probability at a destination cell: the chance at least one opponent
+ * rolls exactly the gap to it next turn.
+ *
+ * Each opponent token 1..6 cells behind hits on one of six faces, so n threats
+ * miss together with probability (5/6)^n. Tokens sitting *on* the destination
+ * are skipped — this move captures them, so they are not a future threat.
+ */
+function threatAt(state: LudoState, playerIdx: number, cell: number): number {
+  if (cell === -1 || SAFE_CELLS.has(cell)) return 0
+  let threats = 0
+  for (let p = 0; p < state.players.length; p++) {
+    if (p === playerIdx) continue
+    for (const tp of state.players[p].tokens) {
+      const oc = absoluteCell(p, tp)
+      if (oc === -1 || oc === cell) continue
+      const dist = (cell - oc + MAIN_TRACK) % MAIN_TRACK
+      if (dist >= 1 && dist <= 6) threats++
+    }
+  }
+  return threats === 0 ? 0 : 1 - Math.pow(5 / 6, threats)
+}
+
+/** The single opponent token this move would capture, if any. */
+function captureTargetProgress(state: LudoState, playerIdx: number, cell: number): number | null {
+  if (cell === -1 || SAFE_CELLS.has(cell)) return null
+  for (let p = 0; p < state.players.length; p++) {
+    if (p === playerIdx) continue
+    const here = state.players[p].tokens.filter((tp) => absoluteCell(p, tp) === cell)
+    if (here.length === 1) return here[0]
+  }
+  return null
+}
+
+/**
+ * Score one candidate move. Higher is better.
+ *
+ * This replaced a fixed cascade (capture → safe → most-progressed) that could
+ * only ever express one priority order. The cascade had two concrete blind
+ * spots: it never spent a 6 bringing a token out of base, because
+ * "most-progressed" always preferred a token already on the track — so bots
+ * routinely played three-quarters of a game with one token out — and it never
+ * valued *finishing* a token, so it would decline an exact roll home to advance
+ * a different token one square further.
+ *
+ * `safetyWeight` scales every safety term together — both seeking safe cells
+ * and avoiding exposure. Gating them as one dial is what lets the trained
+ * safe_play_probability mean a single coherent thing ("how much do real players
+ * at this tier care about getting caught") instead of two.
+ */
+export function scoreBotMove(
+  state: LudoState,
+  playerIdx: number,
+  token: number,
+  dice: number,
+  safetyWeight: number,
+): number {
+  const player = state.players[playerIdx]
+  const prog = player.tokens[token]
+  const entering = prog === -1
+  const newProg = entering ? 0 : prog + dice
+  const dest = absoluteCell(playerIdx, newProg)
+
+  let score = newProg * SCORE.progress
+
+  if (entering) score += SCORE.enterFromBase
+  if (newProg >= HOME_PROGRESS) return score + SCORE.reachHome
+  if (newProg > 50) score += SCORE.enterHomeColumn // in the home column, untouchable
+
+  const captured = captureTargetProgress(state, playerIdx, dest)
+  if (captured !== null) score += SCORE.capture + captured * SCORE.capturedProgress
+
+  // A cell already holding one of our own tokens becomes a blockade, which is
+  // immune to capture — so it counts as safety, not just a bonus.
+  const ownHere = dest !== -1 && player.tokens.some((tp, i) => i !== token && absoluteCell(playerIdx, tp) === dest)
+
+  if (dest !== -1 && SAFE_CELLS.has(dest)) score += SCORE.safeCell * safetyWeight
+  if (ownHere) score += SCORE.blockade * safetyWeight
+
+  // Price the *change* in exposure, not the exposure at the destination.
+  //
+  // Scoring the destination alone punishes a token for standing somewhere
+  // dangerous even when every square it can reach is just as dangerous, and it
+  // gives no credit at all for stepping out of an opponent's range. The
+  // difference says the thing that actually matters: is this move walking into
+  // trouble, or out of it?
+  const riskAfter = ownHere ? 0 : threatAt(state, playerIdx, dest)
+  const riskBefore = entering ? 0 : threatAt(state, playerIdx, absoluteCell(playerIdx, prog))
+  score -= (riskAfter - riskBefore) * (SCORE.exposureBase + newProg * SCORE.exposureProgress) * safetyWeight
+
+  return score
+}
+
+/**
+ * Pick a token for a bot to move from the allowed set.
+ *
+ * Difficulty scales how much the bot thinks:
+ *  - easy:   mostly plays a random legal move, so newer players have room to
+ *            win; when it does think, it ignores safety entirely.
+ *  - medium: full move scoring with a light regard for danger.
+ *  - hard:   full move scoring with full regard for danger.
+ *
+ * The two trained dials still gate the two behaviours the training pipeline
+ * actually learns from human play, and null still means "no data → use the
+ * deterministic default" rather than a number:
+ *  - capture_probability  — how often a real player takes an available capture.
+ *    Declining removes capturing moves from consideration entirely, so the bot
+ *    picks the best *non*-capturing move rather than a random one.
+ *  - safe_play_probability — how much a real player weighs safety, applied as
+ *    the safetyWeight above.
+ */
 export function chooseBotToken(
   state: LudoState,
   playerIdx: number,
@@ -411,42 +549,37 @@ export function chooseBotToken(
 ): number {
   const movable = movableTokens(state, playerIdx, dice)
   if (movable.length === 0) return -1
-  const player = state.players[playerIdx]
 
   if (difficulty === 'easy' && Math.random() < 0.8) {
     return movable[Math.floor(Math.random() * movable.length)]
   }
 
-  const capturingMove = findCapturingMove(state, playerIdx, dice, movable)
-  if (capturingMove !== -1) {
-    const captureProbability = trainedProfile?.capture_probability
-    if (captureProbability == null || Math.random() < captureProbability) {
-      return capturingMove
-    }
-    // Trained data says: at this rate, a real player would NOT take this
-    // capture. Fall through to the same advance-most-progressed logic
-    // used when there's genuinely no capture available.
+  const trainedSafety = trainedProfile?.safe_play_probability
+  const safetyWeight = trainedSafety == null ? DEFAULT_SAFETY_WEIGHT[difficulty] : trainedSafety
+
+  // Decide up front whether this bot is taking captures this turn. Rolling once
+  // per turn rather than per candidate keeps the decision coherent: a bot that
+  // "isn't taking captures right now" shouldn't take a different one instead.
+  let candidates = movable
+  const captureProbability = trainedProfile?.capture_probability
+  if (captureProbability != null && Math.random() >= captureProbability) {
+    const nonCapturing = movable.filter((t) => {
+      const prog = state.players[playerIdx].tokens[t]
+      if (prog === -1) return true
+      return captureTargetProgress(state, playerIdx, absoluteCell(playerIdx, prog + dice)) === null
+    })
+    // Only drop captures if something else is legal — never forfeit the turn.
+    if (nonCapturing.length > 0) candidates = nonCapturing
   }
 
-  if (difficulty === 'hard') {
-    const safeMoves = findSafeMoves(state, playerIdx, dice, movable)
-    if (safeMoves.length > 0) {
-      const safePlayProbability = trainedProfile?.safe_play_probability
-      if (safePlayProbability == null || Math.random() < safePlayProbability) {
-        let best = safeMoves[0]
-        for (const t of safeMoves) if (player.tokens[t] > player.tokens[best]) best = t
-        return best
-      }
-      // Trained data says: at this rate, a real player would take the
-      // exposed move anyway. Fall through to advance-most-progressed
-      // over ALL movable tokens (not just the safe subset).
+  let best = candidates[0]
+  let bestScore = scoreBotMove(state, playerIdx, best, dice, safetyWeight)
+  for (const t of candidates) {
+    const score = scoreBotMove(state, playerIdx, t, dice, safetyWeight)
+    if (score > bestScore) {
+      best = t
+      bestScore = score
     }
-  }
-
-  // Otherwise advance the most-progressed movable token.
-  let best = movable[0]
-  for (const t of movable) {
-    if (player.tokens[t] > player.tokens[best]) best = t
   }
   return best
 }

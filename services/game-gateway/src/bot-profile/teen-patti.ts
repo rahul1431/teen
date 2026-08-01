@@ -14,6 +14,30 @@ export interface TeenPattiBotProfile {
   call_probability: number
   raise_probability: number
   avg_decision_delay_ms: number
+  /**
+   * Trained aggression on the trainer's own 0..10-ish scale —
+   * (raise / (call + fold)) * 10, see trainer.ts. Null on a freshly seeded row
+   * that has never been rebuilt. Use aggressionUnit() rather than reading this
+   * directly; the engine wants 0..1.
+   */
+  aggression_score: number | null
+}
+
+/**
+ * Normalise a profile's aggression to the 0..1 the engine's bot brain expects.
+ *
+ * When the trained score is missing we recompute it from the rates instead of
+ * assuming a middling 0.5, because it is defined as a function of them — a
+ * fold-heavy profile with no rebuild yet is still a passive bot, and guessing
+ * 0.5 would make it bluff.
+ */
+export function aggressionUnit(profile: TeenPattiBotProfile): number {
+  let score = profile.aggression_score
+  if (score === null || !Number.isFinite(score)) {
+    const passive = profile.call_probability + profile.fold_probability
+    score = passive > 0 ? (profile.raise_probability / passive) * 10 : 10
+  }
+  return Math.max(0, Math.min(1, score / 10))
 }
 
 // Used when the training service is unreachable. These must stay identical to
@@ -21,9 +45,9 @@ export interface TeenPattiBotProfile {
 // that "service down" and "table untrained" produce the same bot behaviour
 // rather than two subtly different ones.
 export const FALLBACK: Record<string, TeenPattiBotProfile> = {
-  easy:   { fold_probability: 0.45, call_probability: 0.45, raise_probability: 0.10, avg_decision_delay_ms: 2800 },
-  medium: { fold_probability: 0.30, call_probability: 0.47, raise_probability: 0.23, avg_decision_delay_ms: 2000 },
-  hard:   { fold_probability: 0.18, call_probability: 0.42, raise_probability: 0.40, avg_decision_delay_ms: 1400 },
+  easy:   { fold_probability: 0.45, call_probability: 0.45, raise_probability: 0.10, avg_decision_delay_ms: 2800, aggression_score: null },
+  medium: { fold_probability: 0.30, call_probability: 0.47, raise_probability: 0.23, avg_decision_delay_ms: 2000, aggression_score: null },
+  hard:   { fold_probability: 0.18, call_probability: 0.42, raise_probability: 0.40, avg_decision_delay_ms: 1400, aggression_score: null },
 }
 
 const CACHE_TTL = 3600
@@ -59,6 +83,11 @@ export async function getTeenPattiBotProfile(
         call_probability:      parseFloat(p.call_probability),
         raise_probability:     parseFloat(p.raise_probability),
         avg_decision_delay_ms: parseInt(p.avg_decision_delay_ms, 10),
+        // NUMERIC arrives as a string; null must survive as null so
+        // aggressionUnit can tell "untrained" from a real zero.
+        aggression_score: p.aggression_score === null || p.aggression_score === undefined
+          ? null
+          : parseFloat(p.aggression_score),
       }
       redis.setex(cacheKey, CACHE_TTL, JSON.stringify(profile)).catch(() => {})
       return profile
