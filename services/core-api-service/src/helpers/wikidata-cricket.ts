@@ -359,7 +359,21 @@ export async function enrichPlayers(
          wikidata_id      = COALESCE($1, wikidata_id),
          batting_style    = COALESCE($2, batting_style),
          bowling_style    = COALESCE($3, bowling_style),
-         date_of_birth    = COALESCE($4::date, date_of_birth),
+         -- A forced run means "replace this with what upstream actually says",
+         -- so the date is written even when that is nothing. COALESCE alone
+         -- cannot undo a bad date: rows written before the precision check
+         -- hold a fabricated 1 January that a re-fetch returning no date would
+         -- silently preserve. Safe to overwrite because we only reach this
+         -- UPDATE for a player who was positively identified — an unresolved
+         -- player is counted in notFound and skipped entirely, so a transient
+         -- lookup failure can never blank a good date.
+         --
+         -- Deliberately NOT extended to the other columns. batting_style and
+         -- bowling_style are curated in the squad seeds precisely because
+         -- Wikidata does not populate them, so overwriting on force would wipe
+         -- every style in the database.
+         date_of_birth    = CASE WHEN $9 THEN $4::date
+                                 ELSE COALESCE($4::date, date_of_birth) END,
          image_credit     = COALESCE($5, image_credit),
          image_source_url = COALESCE($6, image_source_url),
          avatar_url       = COALESCE($7, avatar_url),
@@ -368,7 +382,7 @@ export async function enrichPlayers(
       [
         profile.wikidataId ?? null, profile.battingStyle ?? null, profile.bowlingStyle ?? null,
         profile.dateOfBirth ?? null, profile.imageCredit ?? null, profile.imageSourceUrl ?? null,
-        avatarUrl, player.id,
+        avatarUrl, player.id, opts.force ?? false,
       ],
     )
     result.updated++
