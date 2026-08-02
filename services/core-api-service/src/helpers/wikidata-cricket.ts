@@ -74,10 +74,19 @@ async function fromWikidata(name: string, countryQid?: string, playerQid?: strin
   const escaped = name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
   const build = (selector: string) => `
     SELECT ?p (SAMPLE(?img) AS ?image) (SAMPLE(?dob) AS ?born)
+           (SAMPLE(?dobPrec) AS ?bornPrecision)
            (SAMPLE(?batLabel) AS ?bat) (SAMPLE(?bowlLabel) AS ?bowl) WHERE {
       ${selector}
       OPTIONAL { ?p wdt:P18 ?img }
-      OPTIONAL { ?p wdt:P569 ?dob }
+      # Read the date through the full statement node rather than wdt:P569 so
+      # its precision comes with it. Plenty of cricketers have only a birth
+      # YEAR recorded (Haris Rauf is stored as +1995-00-00, precision 9), and
+      # the truncating wdt: shortcut hands that back as 1995-01-01 - an exact
+      # birthday we would then display as fact. See the precision check below.
+      OPTIONAL {
+        ?p p:P569/psv:P569 ?dobNode .
+        ?dobNode wikibase:timeValue ?dob ; wikibase:timePrecision ?dobPrec .
+      }
       OPTIONAL { ?p wdt:P741 ?bt . ?bt rdfs:label ?batLabel FILTER(lang(?batLabel) = "en") }
       OPTIONAL { ?p wdt:P5126 ?bw . ?bw rdfs:label ?bowlLabel FILTER(lang(?bowlLabel) = "en") }
     } GROUP BY ?p LIMIT 1`
@@ -115,11 +124,16 @@ async function fromWikidata(name: string, countryQid?: string, playerQid?: strin
 
   const entity = firstValue(b, 'p')
   const dob = firstValue(b, 'born')
+  // Wikidata's precision codes: 9 = year, 10 = month, 11 = day. Anything less
+  // than a full day is not a birthday, so we store nothing rather than the
+  // 1 January the shortcut would imply — a blank date reads as unknown, a wrong
+  // one reads as fact.
+  const dobPrecision = Number(firstValue(b, 'bornPrecision') ?? 0)
   return {
     wikidataId: entity ? entity.split('/').pop() : undefined,
     imageUrl: firstValue(b, 'image'),
     // Wikidata returns a full xsd:dateTime; the column is a DATE.
-    dateOfBirth: dob ? dob.slice(0, 10) : undefined,
+    dateOfBirth: dob && dobPrecision >= 11 ? dob.slice(0, 10) : undefined,
     battingStyle: firstValue(b, 'bat'),
     bowlingStyle: firstValue(b, 'bowl'),
   }
