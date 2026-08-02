@@ -97,6 +97,20 @@ async function fromWikidata(name: string, countryQid?: string, playerQid?: strin
   let b = pinned ? await run(build(`VALUES ?p { wd:${pinned} }`)) : undefined
   if (!b && country) b = await run(build(`${byLabel} ?p wdt:P27 wd:${country} .`))
   if (!b) b = await run(build(byLabel))
+
+  // Last resort: go via the English Wikipedia article of the same name and use
+  // whichever entity it points at. Wikidata's label is often a formal spelling
+  // nobody uses — "Vaibhav Suryavanshi" for the player everyone (and the
+  // article title) writes as "Vaibhav Sooryavanshi" — and an exact-label match
+  // silently returns nothing for those. Redirects are followed, so common
+  // alternate spellings land on the right article. The occupation triple stays
+  // in the query so a same-named non-cricketer can't sneak in this way.
+  if (!b) {
+    const viaArticle = await qidFromWikipedia(name)
+    if (viaArticle) {
+      b = await run(build(`VALUES ?p { wd:${viaArticle} } ?p wdt:P106 wd:${CRICKETER_QID} .`))
+    }
+  }
   if (!b) return {}
 
   const entity = firstValue(b, 'p')
@@ -109,6 +123,21 @@ async function fromWikidata(name: string, countryQid?: string, playerQid?: strin
     battingStyle: firstValue(b, 'bat'),
     bowlingStyle: firstValue(b, 'bowl'),
   }
+}
+
+// The Wikidata entity behind an English Wikipedia article title. Only ever
+// used as a fallback for names Wikidata's own label search can't match.
+async function qidFromWikipedia(title: string): Promise<string | undefined> {
+  const data = await getJson('https://en.wikipedia.org/w/api.php', {
+    action: 'query', titles: title, prop: 'pageprops', ppprop: 'wikibase_item',
+    format: 'json', redirects: '1', origin: '*',
+  })
+  const pages = data?.query?.pages || {}
+  for (const page of Object.values<any>(pages)) {
+    const qid = page?.pageprops?.wikibase_item
+    if (typeof qid === 'string' && /^Q\d+$/.test(qid)) return qid
+  }
+  return undefined
 }
 
 // The English Wikipedia article an entity links to, which is often a
@@ -210,14 +239,19 @@ export async function resolvePlayerProfile(
     // Wikidata unreachable or the query timed out — still try Wikipedia below.
   }
 
-  if (!profile.imageUrl) {
+  // Only chase a photo once we know WHICH person we're talking about, and only
+  // from the article that person's entity links to. Looking the article up by
+  // bare name instead would undo the identification above and attach a
+  // stranger's face: /wiki/Spencer_Johnson is an author (the cricketer is at
+  // "Spencer Johnson (cricketer)"), and a name that matches no cricketer at all
+  // would still return a photo — "Steve Jobs" resolved to no player yet yielded
+  // his portrait, which enrichPlayers would then have saved as an avatar.
+  // Without an identity the honest result is no photo, which surfaces the
+  // player in `notFound` instead of quietly mislabelling them.
+  if (!profile.imageUrl && profile.wikidataId) {
     try {
-      // Prefer the article the resolved entity actually links to. Looking the
-      // article up by bare name would undo the disambiguation done above —
-      // en.wikipedia.org/wiki/Spencer_Johnson is an author, not the cricketer,
-      // whose article sits at "Spencer Johnson (cricketer)".
-      const title = profile.wikidataId ? await articleTitle(profile.wikidataId) : undefined
-      profile.imageUrl = await imageFromWikipedia(title || name)
+      const title = await articleTitle(profile.wikidataId)
+      if (title) profile.imageUrl = await imageFromWikipedia(title)
     } catch {
       // No image from either source; the player keeps whatever avatar they have.
     }
