@@ -58,20 +58,45 @@ function firstValue(binding: any, key: string): string | undefined {
 // cricketer" so we don't pick up an unrelated person who happens to share a
 // name. SAMPLE + GROUP BY collapses players who have several photos on file
 // into one row (Yuvraj Singh returns four otherwise).
-async function fromWikidata(name: string): Promise<PlayerProfile> {
+//
+// `countryQid` (the squad's country, e.g. wd:Q408 for Australia) narrows the
+// match when a name is shared by more than one cricketer, which is not rare:
+// "Steve Smith" returns two Australians and "Cameron Green" matches an English
+// cricketer born 1968 as well as the Australian all-rounder. Without it the
+// LIMIT 1 picks arbitrarily and a player can silently end up with a stranger's
+// photo and date of birth. Nationality is only ever a preference — if no
+// citizen of that country carries the label we fall back to the unconstrained
+// query, so a player whose P27 is missing upstream still resolves.
+// `playerQid` pins the entity outright, for names citizenship can't separate:
+// two Australian internationals are labelled "Steve Smith", so the seed records
+// which one it means and this skips the label search entirely.
+async function fromWikidata(name: string, countryQid?: string, playerQid?: string): Promise<PlayerProfile> {
   const escaped = name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-  const query = `
+  const build = (selector: string) => `
     SELECT ?p (SAMPLE(?img) AS ?image) (SAMPLE(?dob) AS ?born)
            (SAMPLE(?batLabel) AS ?bat) (SAMPLE(?bowlLabel) AS ?bowl) WHERE {
-      ?p rdfs:label "${escaped}"@en ; wdt:P106 wd:${CRICKETER_QID} .
+      ${selector}
       OPTIONAL { ?p wdt:P18 ?img }
       OPTIONAL { ?p wdt:P569 ?dob }
       OPTIONAL { ?p wdt:P741 ?bt . ?bt rdfs:label ?batLabel FILTER(lang(?batLabel) = "en") }
       OPTIONAL { ?p wdt:P5126 ?bw . ?bw rdfs:label ?bowlLabel FILTER(lang(?bowlLabel) = "en") }
     } GROUP BY ?p LIMIT 1`
 
-  const data = await getJson(SPARQL, { query, format: 'json' }, 'application/sparql-results+json')
-  const b = data?.results?.bindings?.[0]
+  const run = async (q: string) => {
+    const data = await getJson(SPARQL, { query: q, format: 'json' }, 'application/sparql-results+json')
+    return data?.results?.bindings?.[0]
+  }
+
+  // Only accept Q-ids here — they reach the query unquoted, so anything else
+  // would both break the syntax and be an injection point.
+  const qid = (v?: string) => (v && /^Q\d+$/.test(v) ? v : undefined)
+  const byLabel = `?p rdfs:label "${escaped}"@en ; wdt:P106 wd:${CRICKETER_QID} .`
+  const pinned = qid(playerQid)
+  const country = qid(countryQid)
+
+  let b = pinned ? await run(build(`VALUES ?p { wd:${pinned} }`)) : undefined
+  if (!b && country) b = await run(build(`${byLabel} ?p wdt:P27 wd:${country} .`))
+  if (!b) b = await run(build(byLabel))
   if (!b) return {}
 
   const entity = firstValue(b, 'p')
@@ -84,6 +109,17 @@ async function fromWikidata(name: string): Promise<PlayerProfile> {
     battingStyle: firstValue(b, 'bat'),
     bowlingStyle: firstValue(b, 'bowl'),
   }
+}
+
+// The English Wikipedia article an entity links to, which is often a
+// disambiguated title ("Nathan McSweeney" vs "Spencer Johnson (cricketer)").
+async function articleTitle(qid: string): Promise<string | undefined> {
+  const data = await getJson('https://www.wikidata.org/w/api.php', {
+    action: 'wbgetentities', ids: qid, props: 'sitelinks',
+    sitefilter: 'enwiki', format: 'json', origin: '*',
+  })
+  const title = data?.entities?.[qid]?.sitelinks?.enwiki?.title
+  return typeof title === 'string' && title.length ? title : undefined
 }
 
 // Stage 2 — Wikipedia page image. Wikidata's P18 is missing for a meaningful
@@ -164,17 +200,24 @@ export async function downloadAvatar(imageUrl: string, playerId: string): Promis
   return `${AVATAR_PUBLIC_PREFIX}/${filename}?v=${Date.now()}`
 }
 
-export async function resolvePlayerProfile(name: string): Promise<PlayerProfile> {
+export async function resolvePlayerProfile(
+  name: string, countryQid?: string, playerQid?: string,
+): Promise<PlayerProfile> {
   let profile: PlayerProfile = {}
   try {
-    profile = await fromWikidata(name)
+    profile = await fromWikidata(name, countryQid, playerQid)
   } catch {
     // Wikidata unreachable or the query timed out — still try Wikipedia below.
   }
 
   if (!profile.imageUrl) {
     try {
-      profile.imageUrl = await imageFromWikipedia(name)
+      // Prefer the article the resolved entity actually links to. Looking the
+      // article up by bare name would undo the disambiguation done above —
+      // en.wikipedia.org/wiki/Spencer_Johnson is an author, not the cricketer,
+      // whose article sits at "Spencer Johnson (cricketer)".
+      const title = profile.wikidataId ? await articleTitle(profile.wikidataId) : undefined
+      profile.imageUrl = await imageFromWikipedia(title || name)
     } catch {
       // No image from either source; the player keeps whatever avatar they have.
     }
@@ -210,14 +253,24 @@ export async function enrichPlayers(
 
   const where: string[] = []
   const params: any[] = []
-  if (opts.playerId) { params.push(opts.playerId); where.push(`id = $${params.length}`) }
-  if (opts.teamName) { params.push(opts.teamName); where.push(`team_name = $${params.length}`) }
+  if (opts.playerId) { params.push(opts.playerId); where.push(`p.id = $${params.length}`) }
+  if (opts.teamName) { params.push(opts.teamName); where.push(`p.team_name = $${params.length}`) }
   // Without `force`, skip anyone already resolved so repeat runs stay cheap.
-  if (!opts.force && !opts.playerId) where.push('enriched_at IS NULL')
+  if (!opts.force && !opts.playerId) where.push('p.enriched_at IS NULL')
 
+  // country_wikidata disambiguates shared player names (see fromWikidata).
+  // LATERAL ... LIMIT 1, matching the admin players list: joining countries by
+  // name alone fans a player out into one row per same-named country.
   const rows = (await db.query(
-    `SELECT id, name, avatar_url FROM cricket_fantasy_players
-     ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY name ASC`,
+    `SELECT p.id, p.name, p.avatar_url, p.wikidata_id, c.wikidata_id AS country_wikidata
+     FROM cricket_fantasy_players p
+     LEFT JOIN LATERAL (
+       SELECT cc.wikidata_id FROM cricket_countries cc
+       WHERE cc.id = p.country_id OR (p.country_id IS NULL AND cc.name = p.team_name)
+       ORDER BY (cc.id = p.country_id) DESC
+       LIMIT 1
+     ) c ON TRUE
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY p.name ASC`,
     params,
   )).rows
 
@@ -225,7 +278,9 @@ export async function enrichPlayers(
     result.processed++
     let profile: PlayerProfile
     try {
-      profile = await resolvePlayerProfile(player.name)
+      profile = await resolvePlayerProfile(
+        player.name, player.country_wikidata || undefined, player.wikidata_id || undefined,
+      )
     } catch {
       result.notFound.push(player.name)
       continue
