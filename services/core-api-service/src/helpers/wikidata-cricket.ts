@@ -83,9 +83,18 @@ async function fromWikidata(name: string, countryQid?: string, playerQid?: strin
       # YEAR recorded (Haris Rauf is stored as +1995-00-00, precision 9), and
       # the truncating wdt: shortcut hands that back as 1995-01-01 - an exact
       # birthday we would then display as fact. See the precision check below.
+      #
+      # "a wikibase:BestRank" is essential, not decoration. A player can carry
+      # several birth-date statements at different ranks and precisions, and
+      # p:P569 matches every one of them: Kraigg Brathwaite has a preferred
+      # 1992-12-01 at day precision AND a normal-rank 1992-01-01 at year
+      # precision. Without this the SAMPLE below picks arbitrarily, so his real
+      # birthday gets thrown away as "too imprecise" about half the time.
+      # BestRank selects exactly what the wdt: shortcut would have used.
       OPTIONAL {
-        ?p p:P569/psv:P569 ?dobNode .
-        ?dobNode wikibase:timeValue ?dob ; wikibase:timePrecision ?dobPrec .
+        ?p p:P569 ?dobSt .
+        ?dobSt a wikibase:BestRank ;
+               psv:P569 [ wikibase:timeValue ?dob ; wikibase:timePrecision ?dobPrec ] .
       }
       OPTIONAL { ?p wdt:P741 ?bt . ?bt rdfs:label ?batLabel FILTER(lang(?batLabel) = "en") }
       OPTIONAL { ?p wdt:P5126 ?bw . ?bw rdfs:label ?bowlLabel FILTER(lang(?bowlLabel) = "en") }
