@@ -366,23 +366,34 @@ export async function enrichPlayers(
     await db.query(
       `UPDATE cricket_fantasy_players SET
          wikidata_id      = COALESCE($1, wikidata_id),
-         batting_style    = COALESCE($2, batting_style),
-         bowling_style    = COALESCE($3, bowling_style),
-         -- A forced run means "replace this with what upstream actually says",
-         -- so the date is written even when that is nothing. COALESCE alone
-         -- cannot undo a bad date: rows written before the precision check
-         -- hold a fabricated 1 January that a re-fetch returning no date would
-         -- silently preserve. Safe to overwrite because we only reach this
-         -- UPDATE for a player who was positively identified — an unresolved
-         -- player is counted in notFound and skipped entirely, so a transient
-         -- lookup failure can never blank a good date.
-         --
-         -- Deliberately NOT extended to the other columns. batting_style and
-         -- bowling_style are curated in the squad seeds precisely because
-         -- Wikidata does not populate them, so overwriting on force would wipe
-         -- every style in the database.
+         -- Existing-preferred, not new-preferred: a squad seed can curate a
+         -- style directly (every seed does), and this must survive a player's
+         -- very FIRST enrichment run. That run is not gated by force -- only
+         -- by enriched_at, which a freshly seeded row has not set yet -- so
+         -- "new value wins when present" would let the very first pass
+         -- overwrite curated data the moment Wikidata returns anything at all.
+         -- It happens to be harmless today only because Wikidata's batting/
+         -- bowling-style properties are unpopulated for cricketers (see the
+         -- India migration), so $2/$3 are in practice always null. Ordered
+         -- this way regardless of force, unlike date_of_birth below: these
+         -- two are curated precisely because Wikidata can't be trusted for
+         -- them, so no re-run should ever let it overwrite them.
+         batting_style    = COALESCE(batting_style, $2),
+         bowling_style    = COALESCE(bowling_style, $3),
+         -- date_of_birth is the one column this reasoning does NOT protect by
+         -- default, because a curated override is real and not merely
+         -- theoretical: the New Zealand seed sets Tom Latham's date_of_birth
+         -- directly, since Wikidata's own P569 claim on his (correctly
+         -- identified) entity is wrong. A forced run means "replace this with
+         -- what upstream actually says" and must be able to overwrite even to
+         -- NULL — COALESCE alone cannot undo a bad date, since a re-fetch
+         -- correctly returning nothing would otherwise preserve whatever
+         -- fabricated value was already there. Safe to null it out under force
+         -- because this UPDATE is only reached for a player who was positively
+         -- identified; an unresolved player is counted in notFound and skipped
+         -- entirely, so a transient lookup failure can never blank a good date.
          date_of_birth    = CASE WHEN $9 THEN $4::date
-                                 ELSE COALESCE($4::date, date_of_birth) END,
+                                 ELSE COALESCE(date_of_birth, $4::date) END,
          image_credit     = COALESCE($5, image_credit),
          image_source_url = COALESCE($6, image_source_url),
          avatar_url       = COALESCE($7, avatar_url),
