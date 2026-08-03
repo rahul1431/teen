@@ -8,10 +8,10 @@ import { MATKA_MULTIPLIERS, validateMatkaBet, settleMatkaSession } from '../help
 import { settleLottery, generateWinningNumber } from '../helpers/lottery'
 import { rollOutcome } from '../helpers/scratch'
 import { settleFantasyLeague, settleCricketSession } from '../helpers/cricket'
-import { aggregateScorecard, computeFantasyPoints, DEFAULT_SCORING_RULES } from '../helpers/fantasy-scoring'
 import { cricApiFetch } from '../helpers/cricapi-client'
 import { enrichPlayers } from '../helpers/wikidata-cricket'
 import { syncCurrentMatches } from '../helpers/cricket-sync'
+import { finalizeMatch } from '../helpers/cricket-finalize'
 import { initPool } from '../db/pool'
 import { registerDailyLotteryRoutes } from '../modules/lottery/daily/routes'
 import { startLotteryDailyScheduler } from '../modules/lottery/daily/scheduler'
@@ -752,37 +752,14 @@ export function bettingPlugin(db: Pool) {
       return { success: true, ...res }
     })
 
-    // Dream11-style finalize: pull the match's final scorecard one more
-    // time, compute every drafted player's points from the scoring
-    // rulebook, then hand off to the existing rank/payout logic. Payout
-    // stays a single explicit admin click — this just removes the manual
-    // "type in every player's points by hand" step.
     app.post('/internal/cricket/fantasy/finalize', { onRequest: [internal] }, async (req, reply) => {
       const body = z.object({ match_id: z.string().uuid() }).parse(req.body)
-      const matchRes = await db.query('SELECT match_api_id FROM cricket_matches WHERE id = $1', [body.match_id])
-      if (!matchRes.rows.length || !matchRes.rows[0].match_api_id) {
-        return reply.code(400).send({ error: 'Match has no linked external match — cannot fetch a scorecard to finalize from' })
+      try {
+        const res = await finalizeMatch(db, body.match_id)
+        return { success: true, ...res }
+      } catch (e: any) {
+        return reply.code(502).send({ error: e.message })
       }
-      const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
-      const rules = configRes.rows[0]?.special_rules?.scoring_rules
-        ? { ...DEFAULT_SCORING_RULES, ...configRes.rows[0].special_rules.scoring_rules }
-        : DEFAULT_SCORING_RULES
-
-      const data = await cricApiFetch(db, apiKey => `https://api.cricapi.com/v1/match_scorecard?apikey=${apiKey}&id=${matchRes.rows[0].match_api_id}`)
-      if (data.status !== 'success' || !data.data?.scorecard) {
-        return reply.code(502).send({ error: `Could not fetch final scorecard: ${data.reason || 'unknown error'}` })
-      }
-
-      const statsByPlayer = aggregateScorecard(data.data.scorecard)
-      const playerPoints: Record<string, number> = {}
-      for (const stats of statsByPlayer.values()) {
-        const pRes = await db.query('SELECT id FROM cricket_fantasy_players WHERE external_id = $1', [stats.playerId])
-        if (!pRes.rows.length) continue
-        playerPoints[pRes.rows[0].id] = computeFantasyPoints(rules, stats)
-      }
-
-      const res = await settleFantasyLeague(db, body.match_id, playerPoints)
-      return { success: true, playersScored: Object.keys(playerPoints).length, ...res }
     })
 
     // Cricket API sync routes (pass-through to external API)
