@@ -2,6 +2,8 @@
 -- the new scheduler's budget guard, and seeds the config the scheduler
 -- reads for tier pricing/cadence/budget. Merges into special_rules with
 -- `||` so it never clobbers an already-configured api_key/api_keys row.
+-- NOTE: auto_contests_enabled is seeded false pending business policy decision
+-- on prize-pool guarantees and minimum-entry protection for under-filled contests.
 
 BEGIN;
 
@@ -12,7 +14,7 @@ CREATE TABLE IF NOT EXISTS cricket_api_usage (
 
 UPDATE game_configs
 SET special_rules = special_rules || '{
-  "auto_contests_enabled": true,
+  "auto_contests_enabled": false,
   "match_sync_interval_minutes": 15,
   "api_daily_budget": 300,
   "contest_tiers": [

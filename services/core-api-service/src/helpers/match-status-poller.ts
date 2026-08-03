@@ -50,7 +50,7 @@ export class MatchStatusPoller {
       try {
         const data = await cricApiFetch(this.db, apiKey => `https://api.cricapi.com/v1/match_info?apikey=${apiKey}&id=${m.match_api_id}`)
         if (data.status === 'success' && data.data) {
-          const newStatus = data.data.matchEnded ? 'settled' : data.data.matchStarted ? 'live' : null
+          const newStatus = data.data.matchEnded ? 'closed' : data.data.matchStarted ? 'live' : null
           const scoreArr = data.data.score
           const liveScore = scoreArr?.length
             ? { runs: scoreArr.at(-1).r, wickets: scoreArr.at(-1).w, overs: scoreArr.at(-1).o, description: data.data.status }
