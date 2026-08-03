@@ -15,11 +15,13 @@ import { finalizeMatch } from '../helpers/cricket-finalize'
 import { initPool } from '../db/pool'
 import { registerDailyLotteryRoutes } from '../modules/lottery/daily/routes'
 import { startLotteryDailyScheduler } from '../modules/lottery/daily/scheduler'
+import { startCricketAutomationScheduler } from '../modules/cricket/scheduler'
 
 export function bettingPlugin(db: Pool) {
   // Initialize the shared pool for lottery/betting modules
   initPool(db)
   startLotteryDailyScheduler()
+  startCricketAutomationScheduler()
 
   return async function (app: FastifyInstance) {
     await registerDailyLotteryRoutes(app)
