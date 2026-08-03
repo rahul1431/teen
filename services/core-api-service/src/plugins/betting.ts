@@ -11,6 +11,7 @@ import { settleFantasyLeague, settleCricketSession } from '../helpers/cricket'
 import { aggregateScorecard, computeFantasyPoints, DEFAULT_SCORING_RULES } from '../helpers/fantasy-scoring'
 import { cricApiFetch } from '../helpers/cricapi-client'
 import { enrichPlayers } from '../helpers/wikidata-cricket'
+import { syncCurrentMatches } from '../helpers/cricket-sync'
 import { initPool } from '../db/pool'
 import { registerDailyLotteryRoutes } from '../modules/lottery/daily/routes'
 import { startLotteryDailyScheduler } from '../modules/lottery/daily/scheduler'
@@ -787,28 +788,8 @@ export function bettingPlugin(db: Pool) {
     // Cricket API sync routes (pass-through to external API)
     app.post('/internal/cricket/sync-api', { onRequest: [internal] }, async (req, reply) => {
       try {
-        const currentData = await cricApiFetch(db, apiKey => `https://api.cricapi.com/v1/currentMatches?apikey=${apiKey}&offset=0`)
-        if (currentData.status !== 'success') throw new Error(currentData.reason || 'Failed')
-        const flagsRes = await db.query('SELECT name, flag_url FROM cricket_countries')
-        const flagMap = new Map(flagsRes.rows.map(r => [r.name.toLowerCase(), r.flag_url]))
-        const findFlag = (n: string) => { for (const [k, v] of flagMap) if (n?.toLowerCase().includes(k) || k.includes(n?.toLowerCase())) return v; return null }
-        let inserted = 0, updated = 0
-        for (const m of (currentData.data || [])) {
-          if (!m.id) continue
-          const [team_a, team_b] = [m.teams?.[0] || 'Team A', m.teams?.[1] || 'Team B']
-          const status = m.matchEnded ? 'settled' : m.matchStarted ? 'live' : 'upcoming'
-          const live_score = m.score?.length ? { runs: m.score.at(-1).r, wickets: m.score.at(-1).w, overs: m.score.at(-1).o, description: m.status } : {}
-          const existing = await db.query('SELECT id FROM cricket_matches WHERE match_api_id = $1', [m.id])
-          if (existing.rows.length) {
-            await db.query(`UPDATE cricket_matches SET status = $1, live_score = $2, team_a_flag = $3, team_b_flag = $4 WHERE id = $5`, [status, JSON.stringify(live_score), findFlag(team_a), findFlag(team_b), existing.rows[0].id])
-            updated++
-          } else {
-            await db.query(`INSERT INTO cricket_matches (series, format, team_a, team_b, team_a_short, team_b_short, start_time, match_api_id, status, live_score, team_a_flag, team_b_flag) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-              [m.name || 'Current Match', m.matchType || 't20', team_a, team_b, m.teamInfo?.[0]?.shortname || team_a.substring(0,3).toUpperCase(), m.teamInfo?.[1]?.shortname || team_b.substring(0,3).toUpperCase(), m.dateTimeGMT ? `${m.dateTimeGMT}Z` : new Date().toISOString(), m.id, status, JSON.stringify(live_score), findFlag(team_a), findFlag(team_b)])
-            inserted++
-          }
-        }
-        return { success: true, inserted, updated }
+        const { insertedIds, updatedCount } = await syncCurrentMatches(db)
+        return { success: true, inserted: insertedIds.length, updated: updatedCount }
       } catch (e: any) { return reply.code(500).send({ error: `API Sync failed: ${e.message}` }) }
     })
 
