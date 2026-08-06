@@ -5,6 +5,7 @@ import '../../../core/network/api_client.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../shared/theme/app_theme.dart';
+import '../shared/matchmaking_waiting_dialog.dart';
 import 'history_page.dart';
 
 class TeenPattiLobbyPage extends StatefulWidget {
@@ -135,6 +136,9 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       if (!mounted || !_searching) return;
       _roomJoinedSub?.cancel();
       _roomJoinedSub = null;
+      if (Navigator.canPop(context)) {
+        Navigator.of(context).pop(); // dismiss waiting dialog
+      }
       setState(() => _searching = false);
       context.push('/games/teen-patti/play/${data['room_id']}', extra: data);
     });
@@ -192,6 +196,25 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       'stake': _selectedStake,
       'variation': widget.variation,
     });
+
+    MatchmakingWaitingDialog.show(
+      context: context,
+      gameTitle: 'Teen Patti',
+      variationLabel: _variationLabel,
+      stake: _selectedStake,
+      maxSeats: 6,
+      gradientColors: _variationGradient,
+      currentPlayer: const MatchmakingPlayer(
+        userId: 'self',
+        username: 'You',
+      ),
+      onCancel: () {
+        if (Navigator.canPop(context)) {
+          Navigator.of(context).pop();
+        }
+        _cancelSearch();
+      },
+    );
   }
 
   void _showLowBalanceDialog() {

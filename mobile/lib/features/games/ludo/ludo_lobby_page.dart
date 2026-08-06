@@ -6,6 +6,7 @@ import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../core/services/locale_service.dart';
 import '../../../shared/theme/app_theme.dart';
+import '../shared/matchmaking_waiting_dialog.dart';
 
 /// Online Ludo matchmaking. Mirrors the Teen Patti lobby: pick a stake,
 /// Quick Match over /ws, navigate to the board on room:joined.
@@ -38,6 +39,9 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
     _roomJoinedSub = _socket.on(SocketEvents.roomJoined).listen((data) {
       if (!mounted) return;
       if (data['game_type'] != null && data['game_type'] != 'ludo') return;
+      if (Navigator.canPop(context)) {
+        Navigator.of(context).pop(); // dismiss waiting dialog
+      }
       setState(() => _searching = false);
       context.push('/games/ludo/play/${data['room_id']}', extra: data);
     });
@@ -96,6 +100,24 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
       'stake': _selectedStake,
       if (_preferredSeat != null) 'preferred_seat': _preferredSeat,
     });
+
+    MatchmakingWaitingDialog.show(
+      context: context,
+      gameTitle: 'Ludo',
+      stake: _selectedStake,
+      maxSeats: 4,
+      gradientColors: AppColors.ludoGrad,
+      currentPlayer: const MatchmakingPlayer(
+        userId: 'self',
+        username: 'You',
+      ),
+      onCancel: () {
+        if (Navigator.canPop(context)) {
+          Navigator.of(context).pop();
+        }
+        _cancelSearch();
+      },
+    );
   }
 
   void _cancelSearch() {

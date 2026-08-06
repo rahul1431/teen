@@ -15,8 +15,12 @@ class UpdateService {
 
   bool _shown = false;
 
-  Future<void> checkAndPrompt(BuildContext context) async {
-    if (_shown) return;
+  void reset() {
+    _shown = false;
+  }
+
+  Future<void> checkAndPrompt(BuildContext context, {bool force = false}) async {
+    if (_shown && !force) return;
     try {
       final info = await PackageInfo.fromPlatform();
       final localCode = int.tryParse(info.buildNumber) ?? 0;
@@ -27,14 +31,14 @@ class UpdateService {
       final forceUpdate = data['force_update'] == true;
       final serverName = data['version_name']?.toString() ?? '';
       final notes = data['release_notes']?.toString();
-      final rawDownloadUrl = data['download_url']?.toString() ?? '';
+      var rawDownloadUrl = data['download_url']?.toString() ?? '';
 
       if (serverCode <= localCode) return;
 
-      // The APK lives at one fixed, unversioned URL that gets overwritten on
-      // every upload — append the version code so a stale cache anywhere
-      // between here and the origin can never serve an old binary under a
-      // URL a client believes matches this specific version.
+      if (rawDownloadUrl.startsWith('/')) {
+        rawDownloadUrl = 'https://game.myonlinejoker.com$rawDownloadUrl';
+      }
+
       final downloadUrl = rawDownloadUrl.isEmpty
           ? rawDownloadUrl
           : '$rawDownloadUrl${rawDownloadUrl.contains('?') ? '&' : '?'}v=$serverCode';
@@ -54,8 +58,8 @@ class UpdateService {
           ),
         ),
       );
-    } catch (_) {
-      // network error — silently skip, try again next launch
+    } catch (e) {
+      debugPrint('[UpdateService] checkAndPrompt failed: $e');
     }
   }
 }
