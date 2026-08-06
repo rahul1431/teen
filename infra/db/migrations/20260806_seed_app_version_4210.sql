@@ -2,7 +2,7 @@
 INSERT INTO app_versions (version_name, version_code, download_url, release_notes, force_update)
 VALUES (
   '1.3.15',
-  4210,
+  4209,
   'https://game.myonlinejoker.com/downloads/app-release.apk',
   '60-Second Matchmaking Timer & Players Joined Popup for Teen Patti and Ludo',
   true
