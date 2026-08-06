@@ -12,6 +12,11 @@ Production runs on a single VPS via PM2 (`ecosystem.config.js`), not Docker/Kube
 
 Query ruflo's persisted project memory (`mcp__claude-flow__memory_search`, namespace `teen-project`) before re-deriving architecture, deploy procedure, or recent feature history from scratch — it holds curated, verified-current notes (service topology, the VPS deploy gotchas, in-flight feature status like the cricket automation pipeline's current on/off state) that `docs/*.md` snapshots don't always reflect. **`docs/` MD files are point-in-time snapshots, not live** — confirmed stale at least once already (`docs/games/cricket/*.md` missed several already-merged commits). Verify a docs claim against actual source before trusting it as current; don't assume `docs/Bugs/*.md` entries are still open without checking. If ruflo's memory doesn't answer a question, that's a signal to add an entry once you've done the work of finding out, not just to skip it.
 
+## Direct VPS Editing & Deployment Rule
+- **Direct VPS Access**: Full SSH/SFTP access is available for the production VPS (`64.204.130.181`). Code changes, backend services, database migrations, and configs can be edited, patched, and deployed directly on `/opt/teen-prod`.
+- **Immediate Deployment**: Every code update, database migration, or service fix MUST be pushed directly to the VPS and live PM2 processes reloaded (`python vps_run_deploy_v2.py` or SSH/SFTP sync).
+
+
 ## Commands
 
 There is no single root build/test command — run these per service, from that service's directory.
