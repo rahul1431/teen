@@ -186,9 +186,9 @@ export class MatchmakingService {
   async joinQueue(gameType: string, stake: number, entry: MatchmakingEntry, variation = 'classic'): Promise<void> {
     const key = this.queueKey(gameType, stake, variation)
 
-    // Ludo bot-exit logic: if a new real player is joining Ludo matchmaking,
+    // Ludo & Teen Patti bot-exit logic: if a new real player is joining Ludo or Teen Patti matchmaking (low stakes),
     // and there are bots currently waiting in the queue, remove 1 bot.
-    if (gameType === 'ludo') {
+    if (gameType === 'ludo' || (gameType === 'teen_patti' && stake < 100)) {
       const members = await this.redis.zrange(key, 0, -1)
       const parsedMembers: MatchmakingEntry[] = members.map(m => JSON.parse(m))
       const botsInQueue = parsedMembers.filter(p => p.isBot)
@@ -197,7 +197,7 @@ export class MatchmakingService {
         const memberStringToRemove = members.find(m => JSON.parse(m).userId === botToRemove.userId)
         if (memberStringToRemove) {
           await this.redis.zrem(key, memberStringToRemove)
-          console.log(`[matchmaking] Ludo queue: Removed bot ${botToRemove.username} because a Real Player joined`)
+          console.log(`[matchmaking] ${gameType} queue: Removed bot ${botToRemove.username} because a Real Player joined`)
         }
       }
     }
@@ -227,7 +227,7 @@ export class MatchmakingService {
       config.bot_fill_table_size = config.bot_fill_table_size || TEEN_PATTI_BOT_FLOOR
     }
 
-    if (gameType === 'ludo') {
+    if (gameType === 'ludo' || gameType === 'teen_patti') {
       await this.broadcastQueueUpdate(gameType, stake, variation)
     }
 
@@ -235,11 +235,15 @@ export class MatchmakingService {
 
     if (config.bot_fill_enabled) {
       const timerKey = `${gameType}:${variation}:${stake}`
-      if (gameType === 'ludo') {
+      if (gameType === 'ludo' || (gameType === 'teen_patti' && stake < 100)) {
         if (!this.timers.has(timerKey)) {
           const intervalTimeMs = 8000 // Add a bot every 8 seconds
           const timer = setInterval(async () => {
-            await this.addBotToLudoQueue(gameType, stake, config, variation, timerKey)
+            if (gameType === 'ludo') {
+              await this.addBotToLudoQueue(gameType, stake, config, variation, timerKey)
+            } else {
+              await this.addBotToTeenPattiQueue(gameType, stake, config, variation, timerKey)
+            }
           }, intervalTimeMs)
           this.timers.set(timerKey, timer)
         }
@@ -266,7 +270,7 @@ export class MatchmakingService {
     }
     this.lastQueued.delete(userId)
 
-    if (gameType === 'ludo') {
+    if (gameType === 'ludo' || gameType === 'teen_patti') {
       const remaining = await this.redis.zrange(key, 0, -1)
       const parsed = remaining.map(m => JSON.parse(m))
       const hasReal = parsed.some(p => !p.isBot)
@@ -275,13 +279,17 @@ export class MatchmakingService {
         const timerKey = `${gameType}:${variation}:${stake}`
         const timer = this.timers.get(timerKey)
         if (timer) {
-          clearInterval(timer)
+          if (gameType === 'ludo' || (gameType === 'teen_patti' && stake < 100)) {
+            clearInterval(timer)
+          } else {
+            clearTimeout(timer)
+          }
           this.timers.delete(timerKey)
         }
         for (const m of remaining) {
           await this.redis.zrem(key, m)
         }
-        console.log(`[matchmaking] Ludo queue: Cleared all bots and interval because no Real Players are left`)
+        console.log(`[matchmaking] ${gameType} queue: Cleared all bots and interval because no Real Players are left`)
       } else {
         await this.broadcastQueueUpdate(gameType, stake, variation)
       }
@@ -319,7 +327,7 @@ export class MatchmakingService {
     // reals (+ bots for low stakes) via planTeenPattiSeats. Other games keep
     // the legacy threshold.
     const noBotThreshold = gameType === 'teen_patti'
-      ? (config.max_players || 6)
+      ? (stake < 100 ? TEEN_PATTI_BOT_FLOOR : 2)
       : config.bot_fill_enabled
         ? (config.bot_fill_table_size || config.min_players)
         : (config.min_players || 2)
@@ -690,7 +698,7 @@ export class MatchmakingService {
     const timerKey = `${gameType}:${variation}:${stake}`
     const timer = this.timers.get(timerKey)
     if (timer) {
-      if (gameType === 'ludo') {
+      if (gameType === 'ludo' || (gameType === 'teen_patti' && stake < 100)) {
         clearInterval(timer)
       } else {
         clearTimeout(timer)
@@ -2511,6 +2519,43 @@ export class MatchmakingService {
         }
         await this.redis.zadd(key, Date.now(), JSON.stringify(botEntry))
         console.log(`[matchmaking] Ludo queue: Added bot ${botEntry.username}`)
+        
+        await this.broadcastQueueUpdate(gameType, stake, variation)
+        await this.tryCreateRoom(gameType, stake, config, variation)
+      }
+    } else {
+      await this.tryCreateRoom(gameType, stake, config, variation)
+    }
+  }
+
+  private async addBotToTeenPattiQueue(gameType: string, stake: number, config: any, variation: string, timerKey: string): Promise<void> {
+    const key = this.queueKey(gameType, stake, variation)
+    const members = await this.redis.zrange(key, 0, -1)
+    const parsed: MatchmakingEntry[] = members.map(m => JSON.parse(m))
+    
+    const reals = parsed.filter(p => !p.isBot)
+    if (reals.length === 0) {
+      const timer = this.timers.get(timerKey)
+      if (timer) {
+        clearInterval(timer)
+        this.timers.delete(timerKey)
+      }
+      for (const m of members) {
+        await this.redis.zrem(key, m)
+      }
+      return
+    }
+
+    if (parsed.length < TEEN_PATTI_BOT_FLOOR) {
+      const bots = await this.getBots(gameType, 1, stake)
+      if (bots.length > 0) {
+        const botEntry: MatchmakingEntry = {
+          userId: bots[0].userId,
+          username: bots[0].username,
+          isBot: true
+        }
+        await this.redis.zadd(key, Date.now(), JSON.stringify(botEntry))
+        console.log(`[matchmaking] Teen Patti queue: Added bot ${botEntry.username}`)
         
         await this.broadcastQueueUpdate(gameType, stake, variation)
         await this.tryCreateRoom(gameType, stake, config, variation)

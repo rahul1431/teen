@@ -19,6 +19,8 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   final _socket = SocketService();
   StreamSubscription? _roomJoinedSub;
   StreamSubscription? _errorSub;
+  StreamSubscription? _matchmakingUpdateSub;
+  final _joinedPlayersNotifier = ValueNotifier<List<MatchmakingPlayer>>([]);
   double _selectedStake = 10;
   bool _searching = false;
   String? _balance;
@@ -115,6 +117,16 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(msg), backgroundColor: AppColors.red));
     });
+    _matchmakingUpdateSub = _socket.on('matchmaking:update').listen((data) {
+      if (!mounted) return;
+      if (data['players'] != null) {
+        final list = (data['players'] as List).map((p) => MatchmakingPlayer(
+          userId: p['userId'] ?? '',
+          username: p['username'] ?? '',
+        )).toList();
+        _joinedPlayersNotifier.value = list;
+      }
+    });
     // Re-join matchmaking queue after socket reconnects (preserves searching state)
     _socket.onReconnect(() {
       if (!mounted || !_searching) return;
@@ -148,6 +160,8 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   void dispose() {
     _roomJoinedSub?.cancel();
     _errorSub?.cancel();
+    _matchmakingUpdateSub?.cancel();
+    _joinedPlayersNotifier.dispose();
     super.dispose();
   }
 
@@ -190,6 +204,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
     // Reattach listener every time — it was cancelled after game 1 to prevent
     // the lobby (alive in stack) from firing again on the game page's joinRoom.
     _attachRoomJoinedListener();
+    _joinedPlayersNotifier.value = [];
     setState(() => _searching = true);
     _socket.emit(SocketEvents.joinMatchmaking, {
       'game_type': 'teen_patti',
@@ -208,6 +223,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
         userId: 'self',
         username: 'You',
       ),
+      joinedPlayersNotifier: _joinedPlayersNotifier,
       onCancel: () {
         if (Navigator.canPop(context)) {
           Navigator.of(context).pop();
@@ -265,6 +281,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       'stake': _selectedStake,
       'variation': widget.variation,
     });
+    _joinedPlayersNotifier.value = [];
     _roomJoinedSub?.cancel();
     _roomJoinedSub = null;
     setState(() => _searching = false);
