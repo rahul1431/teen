@@ -83,6 +83,7 @@ export class MatchmakingService {
   // leaveQueue() is a no-op if the user isn't actually in that queue anymore
   // (already matched into a room, or queued for something else since).
   private lastQueued = new Map<string, { gameType: string; stake: number; variation: string }>()
+  private queueStartTimes = new Map<string, number>()
 
   private timers = new Map<string, NodeJS.Timeout>()
   private botTimers = new Map<string, { timer: NodeJS.Timeout; turnIdx: number }>()
@@ -236,15 +237,86 @@ export class MatchmakingService {
     if (config.bot_fill_enabled) {
       const timerKey = `${gameType}:${variation}:${stake}`
       if (gameType === 'ludo' || (gameType === 'teen_patti' && stake < 100)) {
+        if (!this.queueStartTimes.has(timerKey)) {
+          this.queueStartTimes.set(timerKey, Date.now())
+        }
         if (!this.timers.has(timerKey)) {
-          const intervalTimeMs = 8000 // Add a bot every 8 seconds
+          const delaySeconds = config.bot_fill_delay_seconds || 60
           const timer = setInterval(async () => {
-            if (gameType === 'ludo') {
-              await this.addBotToLudoQueue(gameType, stake, config, variation, timerKey)
-            } else {
-              await this.addBotToTeenPattiQueue(gameType, stake, config, variation, timerKey)
+            const startTime = this.queueStartTimes.get(timerKey)
+            if (!startTime) {
+              clearInterval(timer)
+              this.timers.delete(timerKey)
+              return
             }
-          }, intervalTimeMs)
+
+            const elapsed = (Date.now() - startTime) / 1000
+            if (elapsed >= delaySeconds) {
+              clearInterval(timer)
+              this.timers.delete(timerKey)
+              this.queueStartTimes.delete(timerKey)
+              await this.botFillRoom(gameType, stake, config, variation)
+              return
+            }
+
+            const members = await this.redis.zrange(key, 0, -1)
+            const parsed: MatchmakingEntry[] = members.map(m => JSON.parse(m))
+            const reals = parsed.filter(p => !p.isBot)
+            const bots = parsed.filter(p => p.isBot)
+
+            if (reals.length === 0) {
+              clearInterval(timer)
+              this.timers.delete(timerKey)
+              this.queueStartTimes.delete(timerKey)
+              for (const m of members) {
+                await this.redis.zrem(key, m)
+              }
+              return
+            }
+
+            const maxPlayers = gameType === 'teen_patti' ? (config.max_players || 6) : (config.max_players || 4)
+            if (reals.length >= maxPlayers) {
+              clearInterval(timer)
+              this.timers.delete(timerKey)
+              this.queueStartTimes.delete(timerKey)
+              await this.tryCreateRoom(gameType, stake, config, variation)
+              return
+            }
+
+            const targetFloor = gameType === 'teen_patti' ? TEEN_PATTI_BOT_FLOOR : (config.bot_fill_table_size || 4)
+            if (reals.length < targetFloor) {
+              const botsNeeded = targetFloor - reals.length
+              const maxFillTime = delaySeconds - 4 // Last bot joins at 56th second
+              const targetBots = Math.floor((elapsed * botsNeeded) / maxFillTime)
+              if (bots.length < targetBots) {
+                const addCount = targetBots - bots.length
+                const selectedBots = await this.getBots(gameType, addCount, stake)
+                for (const bot of selectedBots) {
+                  const botEntry: MatchmakingEntry = {
+                    userId: bot.userId,
+                    username: bot.username,
+                    isBot: true
+                  }
+                  await this.redis.zadd(key, Date.now(), JSON.stringify(botEntry))
+                  console.log(`[matchmaking] ${gameType} queue: Added bot ${botEntry.username} dynamically at elapsed ${elapsed.toFixed(1)}s`)
+                }
+                if (selectedBots.length > 0) {
+                  await this.broadcastQueueUpdate(gameType, stake, variation)
+                }
+              }
+            } else {
+              if (bots.length > 0) {
+                for (const b of bots) {
+                  const memberString = members.find(m => JSON.parse(m).userId === b.userId)
+                  if (memberString) {
+                    await this.redis.zrem(key, memberString)
+                  }
+                }
+                console.log(`[matchmaking] ${gameType} queue: Pruned all bots because real players count ${reals.length} >= floor ${targetFloor}`)
+                await this.broadcastQueueUpdate(gameType, stake, variation)
+              }
+            }
+          }, 1000)
           this.timers.set(timerKey, timer)
         }
       } else {
@@ -286,6 +358,7 @@ export class MatchmakingService {
           }
           this.timers.delete(timerKey)
         }
+        this.queueStartTimes.delete(timerKey)
         for (const m of remaining) {
           await this.redis.zrem(key, m)
         }
@@ -293,7 +366,7 @@ export class MatchmakingService {
       } else {
         await this.broadcastQueueUpdate(gameType, stake, variation)
       }
-    }
+  }
   }
 
   // Called from the gateway's ws 'close' handler once a user's last live
@@ -327,12 +400,14 @@ export class MatchmakingService {
     // reals (+ bots for low stakes) via planTeenPattiSeats. Other games keep
     // the legacy threshold.
     const noBotThreshold = gameType === 'teen_patti'
-      ? (stake < 100 ? TEEN_PATTI_BOT_FLOOR : 2)
+      ? (stake < 100 ? (config.max_players || 6) : 2)
       : config.bot_fill_enabled
-        ? (config.bot_fill_table_size || config.min_players)
+        ? (config.max_players || 4)
         : (config.min_players || 2)
 
-    // Atomically check if enough players are ready, and if so pop them
+    // Atomically check if enough players are ready, and if so pop them.
+    // If any bot is in the queue, we reject starting instantly so it stays open
+    // until the 60-second gather window finishes (unless all slots are reals).
     const members = await this.redis.eval(
       `
       local key = KEYS[1]
@@ -343,6 +418,11 @@ export class MatchmakingService {
         return {}
       end
       for _, m in ipairs(members) do
+        if string.find(m, '"isBot":true') then
+          return {}
+        end
+      end
+      for _, m in ipairs(members) do
         redis.call('zrem', key, m)
       end
       return members
@@ -350,7 +430,7 @@ export class MatchmakingService {
       1,
       key,
       noBotThreshold,
-      config.max_players
+      config.max_players || 6
     ) as string[]
 
     if (!members || members.length < noBotThreshold) return
@@ -705,6 +785,7 @@ export class MatchmakingService {
       }
       this.timers.delete(timerKey)
     }
+    this.queueStartTimes.delete(timerKey)
 
     const allPlayers = this.orderBySeatPreference(realPlayers, bots)
     console.log(`[matchmaking] startGame room=${roomId} ${gameType}:${stake} real=${realPlayers.length} bots=${bots.length}`)
@@ -2528,40 +2609,4 @@ export class MatchmakingService {
     }
   }
 
-  private async addBotToTeenPattiQueue(gameType: string, stake: number, config: any, variation: string, timerKey: string): Promise<void> {
-    const key = this.queueKey(gameType, stake, variation)
-    const members = await this.redis.zrange(key, 0, -1)
-    const parsed: MatchmakingEntry[] = members.map(m => JSON.parse(m))
-    
-    const reals = parsed.filter(p => !p.isBot)
-    if (reals.length === 0) {
-      const timer = this.timers.get(timerKey)
-      if (timer) {
-        clearInterval(timer)
-        this.timers.delete(timerKey)
-      }
-      for (const m of members) {
-        await this.redis.zrem(key, m)
-      }
-      return
-    }
-
-    if (parsed.length < TEEN_PATTI_BOT_FLOOR) {
-      const bots = await this.getBots(gameType, 1, stake)
-      if (bots.length > 0) {
-        const botEntry: MatchmakingEntry = {
-          userId: bots[0].userId,
-          username: bots[0].username,
-          isBot: true
-        }
-        await this.redis.zadd(key, Date.now(), JSON.stringify(botEntry))
-        console.log(`[matchmaking] Teen Patti queue: Added bot ${botEntry.username}`)
-        
-        await this.broadcastQueueUpdate(gameType, stake, variation)
-        await this.tryCreateRoom(gameType, stake, config, variation)
-      }
-    } else {
-      await this.tryCreateRoom(gameType, stake, config, variation)
-    }
-  }
 }
