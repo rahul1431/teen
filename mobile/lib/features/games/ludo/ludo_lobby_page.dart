@@ -30,6 +30,8 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
   final _stakes = [50.0, 100.0, 500.0];
   StreamSubscription? _roomJoinedSub;
   StreamSubscription? _errorSub;
+  StreamSubscription? _matchmakingUpdateSub;
+  final _joinedPlayersNotifier = ValueNotifier<List<MatchmakingPlayer>>([]);
 
   @override
   void initState() {
@@ -52,6 +54,16 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
           content: Text(data['message'] ?? 'Error'),
           backgroundColor: AppColors.red));
     });
+    _matchmakingUpdateSub = _socket.on('matchmaking:update').listen((data) {
+      if (!mounted) return;
+      if (data['players'] != null) {
+        final list = (data['players'] as List).map((p) => MatchmakingPlayer(
+          userId: p['userId'] ?? '',
+          username: p['username'] ?? '',
+        )).toList();
+        _joinedPlayersNotifier.value = list;
+      }
+    });
     _socket.onReconnect(() {
       if (!mounted || !_searching) return;
       _socket.emit(SocketEvents.joinMatchmaking, {
@@ -66,6 +78,8 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
   void dispose() {
     _roomJoinedSub?.cancel();
     _errorSub?.cancel();
+    _matchmakingUpdateSub?.cancel();
+    _joinedPlayersNotifier.dispose();
     super.dispose();
   }
 
@@ -94,6 +108,7 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
       _showLowBalanceDialog();
       return;
     }
+    _joinedPlayersNotifier.value = [];
     setState(() => _searching = true);
     _socket.emit(SocketEvents.joinMatchmaking, {
       'game_type': 'ludo',
@@ -111,6 +126,7 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
         userId: 'self',
         username: 'You',
       ),
+      joinedPlayersNotifier: _joinedPlayersNotifier,
       onCancel: () {
         if (Navigator.canPop(context)) {
           Navigator.of(context).pop();
@@ -123,6 +139,7 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
   void _cancelSearch() {
     _socket.emit(SocketEvents.leaveMatchmaking,
         {'game_type': 'ludo', 'stake': _selectedStake});
+    _joinedPlayersNotifier.value = [];
     setState(() => _searching = false);
   }
 

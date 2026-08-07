@@ -22,6 +22,7 @@ class MatchmakingWaitingDialog extends StatefulWidget {
   final List<Color>? gradientColors;
   final MatchmakingPlayer currentPlayer;
   final List<MatchmakingPlayer> joinedPlayers;
+  final ValueNotifier<List<MatchmakingPlayer>>? joinedPlayersNotifier;
   final VoidCallback onCancel;
   final VoidCallback? onTimeout;
 
@@ -34,6 +35,7 @@ class MatchmakingWaitingDialog extends StatefulWidget {
     this.gradientColors,
     required this.currentPlayer,
     this.joinedPlayers = const [],
+    this.joinedPlayersNotifier,
     required this.onCancel,
     this.onTimeout,
   });
@@ -47,6 +49,7 @@ class MatchmakingWaitingDialog extends StatefulWidget {
     List<Color>? gradientColors,
     required MatchmakingPlayer currentPlayer,
     List<MatchmakingPlayer> joinedPlayers = const [],
+    ValueNotifier<List<MatchmakingPlayer>>? joinedPlayersNotifier,
     required VoidCallback onCancel,
     VoidCallback? onTimeout,
   }) {
@@ -63,6 +66,7 @@ class MatchmakingWaitingDialog extends StatefulWidget {
         gradientColors: gradientColors,
         currentPlayer: currentPlayer,
         joinedPlayers: joinedPlayers,
+        joinedPlayersNotifier: joinedPlayersNotifier,
         onCancel: onCancel,
         onTimeout: onTimeout,
       ),
@@ -108,10 +112,23 @@ class _MatchmakingWaitingDialogState extends State<MatchmakingWaitingDialog>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.joinedPlayersNotifier != null) {
+      return ValueListenableBuilder<List<MatchmakingPlayer>>(
+        valueListenable: widget.joinedPlayersNotifier!,
+        builder: (context, currentJoined, child) {
+          return _buildDialogContent(context, currentJoined);
+        },
+      );
+    } else {
+      return _buildDialogContent(context, widget.joinedPlayers);
+    }
+  }
+
+  Widget _buildDialogContent(BuildContext context, List<MatchmakingPlayer> currentJoined) {
     final themeGradient = widget.gradientColors ?? AppColors.teenPattiGrad;
     final allPlayers = <MatchmakingPlayer>[
       widget.currentPlayer,
-      ...widget.joinedPlayers.where((p) => p.userId != widget.currentPlayer.userId),
+      ...currentJoined.where((p) => p.userId != widget.currentPlayer.userId),
     ];
 
     return Container(

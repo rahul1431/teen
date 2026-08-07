@@ -39,6 +39,7 @@ export interface MatchmakingEntry {
   // stint, so high-stake (humans-only) tables with no partner don't re-fire
   // the same error toast every bot_fill_delay_seconds forever.
   waitNotified?: boolean
+  isBot?: boolean
 }
 
 // Teen Patti seat floor: low-stake tables top up with bots to this many seats.
@@ -184,6 +185,23 @@ export class MatchmakingService {
 
   async joinQueue(gameType: string, stake: number, entry: MatchmakingEntry, variation = 'classic'): Promise<void> {
     const key = this.queueKey(gameType, stake, variation)
+
+    // Ludo bot-exit logic: if a new real player is joining Ludo matchmaking,
+    // and there are bots currently waiting in the queue, remove 1 bot.
+    if (gameType === 'ludo') {
+      const members = await this.redis.zrange(key, 0, -1)
+      const parsedMembers: MatchmakingEntry[] = members.map(m => JSON.parse(m))
+      const botsInQueue = parsedMembers.filter(p => p.isBot)
+      if (botsInQueue.length > 0) {
+        const botToRemove = botsInQueue[0]
+        const memberStringToRemove = members.find(m => JSON.parse(m).userId === botToRemove.userId)
+        if (memberStringToRemove) {
+          await this.redis.zrem(key, memberStringToRemove)
+          console.log(`[matchmaking] Ludo queue: Removed bot ${botToRemove.username} because a Real Player joined`)
+        }
+      }
+    }
+
     const member = JSON.stringify(entry)
     await this.redis.zadd(key, Date.now(), member)
     this.lastQueued.set(entry.userId, { gameType, stake, variation })
@@ -209,16 +227,30 @@ export class MatchmakingService {
       config.bot_fill_table_size = config.bot_fill_table_size || TEEN_PATTI_BOT_FLOOR
     }
 
+    if (gameType === 'ludo') {
+      await this.broadcastQueueUpdate(gameType, stake, variation)
+    }
+
     await this.tryCreateRoom(gameType, stake, config, variation)
 
     if (config.bot_fill_enabled) {
       const timerKey = `${gameType}:${variation}:${stake}`
-      if (!this.timers.has(timerKey)) {
-        const timer = setTimeout(async () => {
-          this.timers.delete(timerKey)
-          await this.botFillRoom(gameType, stake, config, variation)
-        }, config.bot_fill_delay_seconds * 1000)
-        this.timers.set(timerKey, timer)
+      if (gameType === 'ludo') {
+        if (!this.timers.has(timerKey)) {
+          const intervalTimeMs = 8000 // Add a bot every 8 seconds
+          const timer = setInterval(async () => {
+            await this.addBotToLudoQueue(gameType, stake, config, variation, timerKey)
+          }, intervalTimeMs)
+          this.timers.set(timerKey, timer)
+        }
+      } else {
+        if (!this.timers.has(timerKey)) {
+          const timer = setTimeout(async () => {
+            this.timers.delete(timerKey)
+            await this.botFillRoom(gameType, stake, config, variation)
+          }, config.bot_fill_delay_seconds * 1000)
+          this.timers.set(timerKey, timer)
+        }
       }
     }
   }
@@ -233,6 +265,27 @@ export class MatchmakingService {
       }
     }
     this.lastQueued.delete(userId)
+
+    if (gameType === 'ludo') {
+      const remaining = await this.redis.zrange(key, 0, -1)
+      const parsed = remaining.map(m => JSON.parse(m))
+      const hasReal = parsed.some(p => !p.isBot)
+      if (!hasReal) {
+        // No real players left, clear interval/timer and clean up bots
+        const timerKey = `${gameType}:${variation}:${stake}`
+        const timer = this.timers.get(timerKey)
+        if (timer) {
+          clearInterval(timer)
+          this.timers.delete(timerKey)
+        }
+        for (const m of remaining) {
+          await this.redis.zrem(key, m)
+        }
+        console.log(`[matchmaking] Ludo queue: Cleared all bots and interval because no Real Players are left`)
+      } else {
+        await this.broadcastQueueUpdate(gameType, stake, variation)
+      }
+    }
   }
 
   // Called from the gateway's ws 'close' handler once a user's last live
@@ -295,8 +348,10 @@ export class MatchmakingService {
     if (!members || members.length < noBotThreshold) return
 
     console.log(`[matchmaking] tryCreateRoom: ${members.length} players ready for ${gameType}:${variation}:${stake} — starting game`)
-    const players: MatchmakingEntry[] = members.map(m => JSON.parse(m))
-    await this.startGame(gameType, stake, players, [], variation)
+    const poppedPlayers: MatchmakingEntry[] = members.map(m => JSON.parse(m))
+    const realPlayers = poppedPlayers.filter(p => !p.isBot)
+    const bots = poppedPlayers.filter(p => p.isBot)
+    await this.startGame(gameType, stake, realPlayers, bots, variation)
   }
 
   private async botFillRoom(gameType: string, stake: number, config: any, variation = 'classic'): Promise<void> {
@@ -631,6 +686,18 @@ export class MatchmakingService {
   private async startGame(gameType: string, stake: number, realPlayers: MatchmakingEntry[], bots: MatchmakingEntry[], variation = 'classic', privateCode?: string): Promise<string | null> {
     const roomId = uuid()
     void GameWatchdog.touch(this.redis, roomId) // liveness for the idle-game reaper
+
+    const timerKey = `${gameType}:${variation}:${stake}`
+    const timer = this.timers.get(timerKey)
+    if (timer) {
+      if (gameType === 'ludo') {
+        clearInterval(timer)
+      } else {
+        clearTimeout(timer)
+      }
+      this.timers.delete(timerKey)
+    }
+
     const allPlayers = this.orderBySeatPreference(realPlayers, bots)
     console.log(`[matchmaking] startGame room=${roomId} ${gameType}:${stake} real=${realPlayers.length} bots=${bots.length}`)
 
@@ -2392,5 +2459,64 @@ export class MatchmakingService {
 
     // Friends tables: re-open the private lobby / auto-start the next hand.
     this.onGameEnd?.(roomId)
+  }
+
+  private async broadcastQueueUpdate(gameType: string, stake: number, variation = 'classic'): Promise<void> {
+    const key = this.queueKey(gameType, stake, variation)
+    const members = await this.redis.zrange(key, 0, -1)
+    const players: MatchmakingEntry[] = members.map(m => JSON.parse(m))
+    
+    // Broadcast to each real player in the queue
+    for (const p of players) {
+      if (!p.isBot) {
+        this.hub.sendToUser(p.userId, 'matchmaking:update', {
+          game_type: gameType,
+          stake,
+          variation,
+          players: players.map(pl => ({
+            userId: pl.userId,
+            username: pl.username,
+            isBot: pl.isBot || false,
+          }))
+        })
+      }
+    }
+  }
+
+  private async addBotToLudoQueue(gameType: string, stake: number, config: any, variation: string, timerKey: string): Promise<void> {
+    const key = this.queueKey(gameType, stake, variation)
+    const members = await this.redis.zrange(key, 0, -1)
+    const parsed: MatchmakingEntry[] = members.map(m => JSON.parse(m))
+    
+    const reals = parsed.filter(p => !p.isBot)
+    if (reals.length === 0) {
+      const timer = this.timers.get(timerKey)
+      if (timer) {
+        clearInterval(timer)
+        this.timers.delete(timerKey)
+      }
+      for (const m of members) {
+        await this.redis.zrem(key, m)
+      }
+      return
+    }
+
+    if (parsed.length < 4) {
+      const bots = await this.getBots(gameType, 1, stake)
+      if (bots.length > 0) {
+        const botEntry: MatchmakingEntry = {
+          userId: bots[0].userId,
+          username: bots[0].username,
+          isBot: true
+        }
+        await this.redis.zadd(key, Date.now(), JSON.stringify(botEntry))
+        console.log(`[matchmaking] Ludo queue: Added bot ${botEntry.username}`)
+        
+        await this.broadcastQueueUpdate(gameType, stake, variation)
+        await this.tryCreateRoom(gameType, stake, config, variation)
+      }
+    } else {
+      await this.tryCreateRoom(gameType, stake, config, variation)
+    }
   }
 }
