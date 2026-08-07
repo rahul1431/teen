@@ -463,8 +463,10 @@ export class MatchmakingService {
 
     if (!members || !members.length) return
 
-    const realPlayers: MatchmakingEntry[] = members.map(m => JSON.parse(m))
-    console.log(`[matchmaking] botFillRoom: ${realPlayers.length} real players for ${gameType}:${stake} — filling with bots`)
+    const poppedPlayers: MatchmakingEntry[] = members.map(m => JSON.parse(m))
+    const realPlayers = poppedPlayers.filter(p => !p.isBot)
+    const botsInQueue = poppedPlayers.filter(p => p.isBot)
+    console.log(`[matchmaking] botFillRoom: ${realPlayers.length} real players and ${botsInQueue.length} bots in queue for ${gameType}:${stake} — filling with bots`)
 
     // Teen Patti: seat composition follows the explicit per-tier spec via
     // planTeenPattiSeats (low stakes bot-fill to 4-seat floor, up to 6 reals;
@@ -488,26 +490,32 @@ export class MatchmakingService {
         this.timers.set(`${gameType}:${variation}:${stake}`, timer)
       }
 
-      // More than a full table queued at once → seat the first 6, re-queue rest.
-      const seated = realPlayers.slice(0, maxPlayers)
-      const overflow = realPlayers.slice(maxPlayers)
-
-      const plan = planTeenPattiSeats(seated.length, stake, maxPlayers)
+      const plan = planTeenPattiSeats(realPlayers.length, stake, maxPlayers)
       if (!plan.start) {
         // Too few players (lone high-stakes player) — keep everyone waiting.
-        await requeue([...seated, ...overflow], plan.requeue)
+        await requeue(realPlayers, plan.requeue)
         return
       }
 
-      const bots = plan.bots > 0 ? await this.getBots(gameType, plan.bots, stake) : []
+      const seatedReals = realPlayers.slice(0, plan.reals)
+      const overflowReals = realPlayers.slice(plan.reals)
+
+      // Reuse the bots already in the queue, fetch extra if needed
+      let bots: MatchmakingEntry[] = botsInQueue.slice(0, plan.bots)
+      if (bots.length < plan.bots) {
+        const extraNeeded = plan.bots - bots.length
+        const extraBots = await this.getBots(gameType, extraNeeded, stake)
+        bots = [...bots, ...extraBots]
+      }
+
       // Bots may be scarce; still start if the table is playable (≥2 total),
       // otherwise wait for more (a lone real with no bots available).
-      if (seated.length + bots.length < 2) {
-        await requeue([...seated, ...overflow], true)
+      if (seatedReals.length + bots.length < 2) {
+        await requeue([...seatedReals, ...overflowReals], true)
         return
       }
-      if (overflow.length) await requeue(overflow, false)
-      await this.startGame(gameType, stake, seated, bots, variation)
+      if (overflowReals.length) await requeue(overflowReals, false)
+      await this.startGame(gameType, stake, seatedReals, bots, variation)
       return
     }
 
@@ -524,14 +532,21 @@ export class MatchmakingService {
       const minBotsNeeded = Math.max(0, (config.min_players || 2) - realPlayers.length)
       botsNeeded = Math.min(config.max_players - realPlayers.length, Math.max(maxBots, minBotsNeeded))
     }
-    let bots: MatchmakingEntry[]
-    if (gameType === 'ludo' && botsNeeded === 3) {
-      const botTrainingCfg = await this.botTrainingConfig.getConfig('ludo')
-      bots = botTrainingCfg.enabled && botTrainingCfg.strategy === 'tiered_hard_wins'
-        ? (await this.getTierDiverseBots(gameType, stake)) ?? (await this.getBots(gameType, botsNeeded, stake))
-        : await this.getBots(gameType, botsNeeded, stake)
-    } else {
-      bots = await this.getBots(gameType, botsNeeded, stake)
+
+    // Reuse the bots already in the queue, fetch extra if needed
+    let bots: MatchmakingEntry[] = botsInQueue.slice(0, botsNeeded)
+    if (bots.length < botsNeeded) {
+      const extraNeeded = botsNeeded - bots.length
+      let extraBots: MatchmakingEntry[] = []
+      if (gameType === 'ludo' && extraNeeded === 3) {
+        const botTrainingCfg = await this.botTrainingConfig.getConfig('ludo')
+        extraBots = botTrainingCfg.enabled && botTrainingCfg.strategy === 'tiered_hard_wins'
+          ? (await this.getTierDiverseBots(gameType, stake)) ?? (await this.getBots(gameType, extraNeeded, stake))
+          : await this.getBots(gameType, extraNeeded, stake)
+      } else {
+        extraBots = await this.getBots(gameType, extraNeeded, stake)
+      }
+      bots = [...bots, ...extraBots]
     }
 
     // If no bots in DB and real players alone don't meet min_players, re-queue them
@@ -549,7 +564,6 @@ export class MatchmakingService {
       this.timers.set(`${gameType}:${variation}:${stake}`, timer)
       return
     }
-
     await this.startGame(gameType, stake, realPlayers, bots, variation)
   }
 
