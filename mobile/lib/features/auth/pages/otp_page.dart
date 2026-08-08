@@ -153,10 +153,7 @@ class _OtpPageState extends State<OtpPage> {
                               color: AppColors.textSecondary, fontSize: 13))
                     else
                       GestureDetector(
-                        onTap: () {
-                          setState(() => _otpSent = false);
-                          _sendOtp();
-                        },
+                        onTap: _loading ? null : _sendOtp,
                         child: Text(locale.t('resend_otp'),
                             style: const TextStyle(
                                 color: AppColors.gold,

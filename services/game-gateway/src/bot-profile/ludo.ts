@@ -23,9 +23,9 @@ export interface LudoBotProfile {
 // guessed rate. Matches the Ludo seed rows in
 // infra/db/migrations/20260801_per_game_bot_profiles.sql.
 export const FALLBACK: Record<string, LudoBotProfile> = {
-  easy:   { capture_probability: null, safe_play_probability: null, avg_decision_delay_ms: 2800 },
-  medium: { capture_probability: null, safe_play_probability: null, avg_decision_delay_ms: 2000 },
-  hard:   { capture_probability: null, safe_play_probability: null, avg_decision_delay_ms: 1400 },
+  easy:   { capture_probability: null, safe_play_probability: null, avg_decision_delay_ms: 3000 },
+  medium: { capture_probability: null, safe_play_probability: null, avg_decision_delay_ms: 3500 },
+  hard:   { capture_probability: null, safe_play_probability: null, avg_decision_delay_ms: 3700 },
 }
 
 const CACHE_TTL = 3600

@@ -6,7 +6,6 @@ import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../core/services/locale_service.dart';
 import '../../../shared/theme/app_theme.dart';
-import '../shared/matchmaking_waiting_dialog.dart';
 
 /// Online Ludo matchmaking. Mirrors the Teen Patti lobby: pick a stake,
 /// Quick Match over /ws, navigate to the board on room:joined.
@@ -30,20 +29,32 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
   final _stakes = [50.0, 100.0, 500.0];
   StreamSubscription? _roomJoinedSub;
   StreamSubscription? _errorSub;
-  StreamSubscription? _matchmakingUpdateSub;
-  final _joinedPlayersNotifier = ValueNotifier<List<MatchmakingPlayer>>([]);
+  StreamSubscription? _statusSub;
+  int _secondsRemaining = 60;
+  List<Map<String, dynamic>> _queuedPlayers = [];
 
   @override
   void initState() {
     super.initState();
     _socket.connect();
     _loadBalance();
+    _statusSub = _socket.on('matchmaking:status').listen((data) {
+      if (!mounted) return;
+      if (data is Map) {
+        setState(() {
+          if (data['seconds_remaining'] != null) {
+            _secondsRemaining = (data['seconds_remaining'] as num).toInt();
+          }
+          if (data['players'] != null && data['players'] is List) {
+            _queuedPlayers = List<Map<String, dynamic>>.from(
+                (data['players'] as List).map((p) => Map<String, dynamic>.from(p)));
+          }
+        });
+      }
+    });
     _roomJoinedSub = _socket.on(SocketEvents.roomJoined).listen((data) {
       if (!mounted) return;
       if (data['game_type'] != null && data['game_type'] != 'ludo') return;
-      if (Navigator.canPop(context)) {
-        Navigator.of(context).pop(); // dismiss waiting dialog
-      }
       setState(() => _searching = false);
       context.push('/games/ludo/play/${data['room_id']}', extra: data);
     });
@@ -53,16 +64,6 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(data['message'] ?? 'Error'),
           backgroundColor: AppColors.red));
-    });
-    _matchmakingUpdateSub = _socket.on('matchmaking:update').listen((data) {
-      if (!mounted) return;
-      if (data['players'] != null) {
-        final list = (data['players'] as List).map((p) => MatchmakingPlayer(
-          userId: p['userId'] ?? '',
-          username: p['username'] ?? '',
-        )).toList();
-        _joinedPlayersNotifier.value = list;
-      }
     });
     _socket.onReconnect(() {
       if (!mounted || !_searching) return;
@@ -78,8 +79,7 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
   void dispose() {
     _roomJoinedSub?.cancel();
     _errorSub?.cancel();
-    _matchmakingUpdateSub?.cancel();
-    _joinedPlayersNotifier.dispose();
+    _statusSub?.cancel();
     super.dispose();
   }
 
@@ -108,38 +108,21 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
       _showLowBalanceDialog();
       return;
     }
-    _joinedPlayersNotifier.value = [];
-    setState(() => _searching = true);
+    setState(() {
+      _searching = true;
+      _secondsRemaining = 60;
+      _queuedPlayers = [{'username': 'You', 'isBot': false}];
+    });
     _socket.emit(SocketEvents.joinMatchmaking, {
       'game_type': 'ludo',
       'stake': _selectedStake,
       if (_preferredSeat != null) 'preferred_seat': _preferredSeat,
     });
-
-    MatchmakingWaitingDialog.show(
-      context: context,
-      gameTitle: 'Ludo',
-      stake: _selectedStake,
-      maxSeats: 4,
-      gradientColors: AppColors.ludoGrad,
-      currentPlayer: const MatchmakingPlayer(
-        userId: 'self',
-        username: 'You',
-      ),
-      joinedPlayersNotifier: _joinedPlayersNotifier,
-      onCancel: () {
-        if (Navigator.canPop(context)) {
-          Navigator.of(context).pop();
-        }
-        _cancelSearch();
-      },
-    );
   }
 
   void _cancelSearch() {
     _socket.emit(SocketEvents.leaveMatchmaking,
         {'game_type': 'ludo', 'stake': _selectedStake});
-    _joinedPlayersNotifier.value = [];
     setState(() => _searching = false);
   }
 
@@ -428,14 +411,62 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
               ),
               child: Column(
                 children: [
-                  const SizedBox(
-                    width: 30, height: 30,
-                    child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 3),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(
+                        width: 22, height: 22,
+                        child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 2.5),
+                      ),
+                      const SizedBox(width: 10),
+                      Text('Finding players… (${_secondsRemaining}s)',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                    ],
                   ),
-                  const SizedBox(height: 14),
-                  const Text('Finding players…',
-                      style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
                   const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: List.generate(4, (index) {
+                      final hasPlayer = index < _queuedPlayers.length;
+                      final player = hasPlayer ? _queuedPlayers[index] : null;
+                      final isBot = player?['isBot'] == true;
+                      final name = player?['username'] ?? 'Waiting…';
+
+                      return Container(
+                        width: 72,
+                        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                        decoration: BoxDecoration(
+                          color: hasPlayer ? AppColors.gold.withValues(alpha: 0.15) : Colors.black25,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: hasPlayer ? AppColors.gold : Colors.white12,
+                            width: hasPlayer ? 1.5 : 1.0,
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(
+                              hasPlayer ? (isBot ? Icons.smart_toy_rounded : Icons.person_rounded) : Icons.hourglass_empty_rounded,
+                              size: 22,
+                              color: hasPlayer ? AppColors.gold : Colors.white30,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: hasPlayer ? Colors.white : Colors.white38,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 18),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton(

@@ -63,16 +63,10 @@ export function planTeenPattiSeats(
   stake: number,
   maxPlayers = 6,
 ): TeenPattiSeatPlan {
-  const allowBots = stake < 100
   const reals = Math.min(Math.max(0, realCount), maxPlayers)
-  if (allowBots) {
-    if (reals < 1) return { start: false, reals: 0, bots: 0, requeue: false }
-    const bots = Math.max(0, TEEN_PATTI_BOT_FLOOR - reals)
-    return { start: true, reals, bots, requeue: false }
-  }
-  // High stakes — humans only.
-  if (reals >= 2) return { start: true, reals, bots: 0, requeue: false }
-  return { start: false, reals, bots: 0, requeue: true }
+  if (reals < 1) return { start: false, reals: 0, bots: 0, requeue: false }
+  const bots = Math.max(0, TEEN_PATTI_BOT_FLOOR - reals)
+  return { start: true, reals, bots, requeue: false }
 }
 
 export class MatchmakingService {
@@ -83,10 +77,103 @@ export class MatchmakingService {
   // leaveQueue() is a no-op if the user isn't actually in that queue anymore
   // (already matched into a room, or queued for something else since).
   private lastQueued = new Map<string, { gameType: string; stake: number; variation: string }>()
-  private queueStartTimes = new Map<string, number>()
 
   private timers = new Map<string, NodeJS.Timeout>()
+  private multiTimers = new Map<string, NodeJS.Timeout[]>()
   private botTimers = new Map<string, { timer: NodeJS.Timeout; turnIdx: number }>()
+
+  private clearBotFillTimers(timerKey: string): void {
+    const single = this.timers.get(timerKey)
+    if (single) {
+      clearTimeout(single)
+      this.timers.delete(timerKey)
+    }
+    const multi = this.multiTimers.get(timerKey)
+    if (multi) {
+      for (const t of multi) clearTimeout(t)
+      this.multiTimers.delete(timerKey)
+    }
+  }
+
+  private schedule60sBotFill(gameType: string, stake: number, config: any, variation = 'classic'): void {
+    const timerKey = `${gameType}:${variation}:${stake}`
+    if (this.timers.has(timerKey) || this.multiTimers.has(timerKey)) return
+
+    const queueKey = this.queueKey(gameType, stake, variation)
+    const targetSize = config.bot_fill_table_size || (gameType === 'ludo' ? 4 : (gameType === 'teen_patti' ? 4 : config.min_players || 2))
+    const timeouts: NodeJS.Timeout[] = []
+
+    const addBotIfNeeded = async (secondsRemaining: number, isLastBeforeStart = false) => {
+      try {
+        const members = await this.redis.zrange(queueKey, 0, -1)
+        if (!members || members.length === 0) return
+
+        const entries: MatchmakingEntry[] = members.map(m => JSON.parse(m))
+        const realPlayers = entries.filter(e => !e.isBot)
+        if (realPlayers.length === 0) {
+          this.clearBotFillTimers(timerKey)
+          await this.redis.del(queueKey)
+          return
+        }
+
+        const currentTotal = entries.length
+        if (currentTotal < targetSize) {
+          const existingBotIds = entries.filter(e => e.isBot).map(e => e.userId)
+          const botCandidates = await this.getBots(gameType, 10, stake)
+          const available = botCandidates.filter(b => !existingBotIds.includes(b.userId))
+
+          if (available.length > 0) {
+            const botEntry: MatchmakingEntry = { ...available[0], isBot: true }
+            await this.redis.zadd(queueKey, Date.now(), JSON.stringify(botEntry))
+            console.log(`[matchmaking] Incremental bot fill: Bot ${botEntry.username} joined ${gameType}:${stake} (${secondsRemaining}s remaining)`)
+
+            const updatedMembers = await this.redis.zrange(queueKey, 0, -1)
+            const updatedEntries: MatchmakingEntry[] = updatedMembers.map(m => JSON.parse(m))
+
+            for (const rp of realPlayers) {
+              this.hub.sendToUser(rp.userId, 'matchmaking:status', {
+                game_type: gameType,
+                stake,
+                status: isLastBeforeStart || updatedEntries.length >= targetSize ? 'last_bot_joined' : 'bot_joined',
+                bot_username: botEntry.username,
+                seconds_remaining: secondsRemaining,
+                total_players: updatedEntries.length,
+                players: updatedEntries.map(e => ({ userId: e.userId, username: e.username, isBot: !!e.isBot }))
+              })
+            }
+
+            if (updatedEntries.length >= targetSize) {
+              console.log(`[matchmaking] Queue reached target size (${targetSize}), starting game immediately!`)
+              this.clearBotFillTimers(timerKey)
+              await this.botFillRoom(gameType, stake, config, variation)
+              return
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`[matchmaking] Error in incremental bot fill for ${timerKey}:`, err)
+      }
+    }
+
+    // Fast incremental bot fill: bots join at t = 2s, 5s, 8s, 12s so waiting lobby feels fast and alive
+    const ticks = [2, 5, 8, 12, 16, 20]
+    for (const elapsed of ticks) {
+      const remaining = Math.max(1, 20 - elapsed)
+      const t = setTimeout(() => {
+        addBotIfNeeded(remaining, false)
+      }, elapsed * 1000)
+      timeouts.push(t)
+    }
+
+    // At 22s: last safety check & bot fill start
+    const t60 = setTimeout(async () => {
+      this.clearBotFillTimers(timerKey)
+      await this.botFillRoom(gameType, stake, config, variation)
+    }, 22 * 1000)
+    timeouts.push(t60)
+
+    this.multiTimers.set(timerKey, timeouts)
+  }
   private ludoAfkTimers = new Map<string, NodeJS.Timeout>()
   // Fallback used when game_configs.special_rules.turn_timeout_seconds
   // (admin-editable, seeded in 008_enable_ludo.sql) is missing or invalid —
@@ -186,23 +273,6 @@ export class MatchmakingService {
 
   async joinQueue(gameType: string, stake: number, entry: MatchmakingEntry, variation = 'classic'): Promise<void> {
     const key = this.queueKey(gameType, stake, variation)
-
-    // Ludo & Teen Patti bot-exit logic: if a new real player is joining Ludo or Teen Patti matchmaking (low stakes),
-    // and there are bots currently waiting in the queue, remove 1 bot.
-    if (gameType === 'ludo' || (gameType === 'teen_patti' && stake < 100)) {
-      const members = await this.redis.zrange(key, 0, -1)
-      const parsedMembers: MatchmakingEntry[] = members.map(m => JSON.parse(m))
-      const botsInQueue = parsedMembers.filter(p => p.isBot)
-      if (botsInQueue.length > 0) {
-        const botToRemove = botsInQueue[0]
-        const memberStringToRemove = members.find(m => JSON.parse(m).userId === botToRemove.userId)
-        if (memberStringToRemove) {
-          await this.redis.zrem(key, memberStringToRemove)
-          console.log(`[matchmaking] ${gameType} queue: Removed bot ${botToRemove.username} because a Real Player joined`)
-        }
-      }
-    }
-
     const member = JSON.stringify(entry)
     await this.redis.zadd(key, Date.now(), member)
     this.lastQueued.set(entry.userId, { gameType, stake, variation })
@@ -211,122 +281,35 @@ export class MatchmakingService {
       'SELECT min_players, max_players, bot_fill_enabled, bot_fill_delay_seconds, max_bot_ratio, bot_fill_table_size FROM game_configs WHERE game_type = $1',
       [gameType]
     )
-    const config = configRes.rows[0] || { min_players: 2, max_players: 6, bot_fill_enabled: true, bot_fill_delay_seconds: 5, max_bot_ratio: 0.6, bot_fill_table_size: null }
+    const config = configRes.rows[0] || { min_players: 2, max_players: 6, bot_fill_enabled: true, bot_fill_delay_seconds: 60, max_bot_ratio: 0.6, bot_fill_table_size: null }
 
-    // Teen Patti table composition is decided by planTeenPattiSeats() when the
-    // gather window closes, NOT by an instant start at the minimum. Both stake
-    // tiers therefore need the gather timer armed:
-    //   • Low stakes  (< ₹100): fill with bots up to a 4-seat floor, but let up
-    //     to max_players real players accumulate first → 1RP+3B … 4RP/5RP/6RP.
-    //   • High stakes (≥ ₹100): real players only, never bots (2RP … 6RP); a
-    //     lone player keeps waiting for a second human.
-    // The window itself is `bot_fill_delay_seconds` (10s in prod). Keeping
-    // bot_fill_enabled=true for every teen_patti stake ensures the timer arms;
-    // the no-bots rule for high stakes is enforced inside planTeenPattiSeats.
-    if (gameType === 'teen_patti') {
+    if (gameType === 'teen_patti' || gameType === 'ludo' || gameType === 'rummy') {
       config.bot_fill_enabled = true
-      config.bot_fill_table_size = config.bot_fill_table_size || TEEN_PATTI_BOT_FLOOR
-    }
-
-    if (gameType === 'ludo' || gameType === 'teen_patti') {
-      await this.broadcastQueueUpdate(gameType, stake, variation)
+      config.bot_fill_table_size = config.bot_fill_table_size || (gameType === 'ludo' ? 4 : TEEN_PATTI_BOT_FLOOR)
     }
 
     await this.tryCreateRoom(gameType, stake, config, variation)
 
+    const currentMembers = await this.redis.zrange(key, 0, -1)
+    if (currentMembers && currentMembers.length > 0) {
+      const currentEntries: MatchmakingEntry[] = currentMembers.map(m => JSON.parse(m))
+      const realPlayers = currentEntries.filter(e => !e.isBot)
+      for (const rp of realPlayers) {
+        this.hub.sendToUser(rp.userId, 'matchmaking:status', {
+          game_type: gameType,
+          stake,
+          status: 'searching',
+          seconds_remaining: 60,
+          total_players: currentEntries.length,
+          players: currentEntries.map(e => ({ userId: e.userId, username: e.username, isBot: !!e.isBot }))
+        })
+      }
+    }
+
     if (config.bot_fill_enabled) {
       const timerKey = `${gameType}:${variation}:${stake}`
-      if (gameType === 'ludo' || (gameType === 'teen_patti' && stake < 100)) {
-        if (!this.queueStartTimes.has(timerKey)) {
-          this.queueStartTimes.set(timerKey, Date.now())
-        }
-        if (!this.timers.has(timerKey)) {
-          const delaySeconds = config.bot_fill_delay_seconds || 60
-          const timer = setInterval(async () => {
-            const startTime = this.queueStartTimes.get(timerKey)
-            if (!startTime) {
-              clearInterval(timer)
-              this.timers.delete(timerKey)
-              return
-            }
-
-            const elapsed = (Date.now() - startTime) / 1000
-            if (elapsed >= delaySeconds) {
-              clearInterval(timer)
-              this.timers.delete(timerKey)
-              this.queueStartTimes.delete(timerKey)
-              await this.botFillRoom(gameType, stake, config, variation)
-              return
-            }
-
-            const members = await this.redis.zrange(key, 0, -1)
-            const parsed: MatchmakingEntry[] = members.map(m => JSON.parse(m))
-            const reals = parsed.filter(p => !p.isBot)
-            const bots = parsed.filter(p => p.isBot)
-
-            if (reals.length === 0) {
-              clearInterval(timer)
-              this.timers.delete(timerKey)
-              this.queueStartTimes.delete(timerKey)
-              for (const m of members) {
-                await this.redis.zrem(key, m)
-              }
-              return
-            }
-
-            const maxPlayers = gameType === 'teen_patti' ? (config.max_players || 6) : (config.max_players || 4)
-            if (reals.length >= maxPlayers) {
-              clearInterval(timer)
-              this.timers.delete(timerKey)
-              this.queueStartTimes.delete(timerKey)
-              await this.tryCreateRoom(gameType, stake, config, variation)
-              return
-            }
-
-            const targetFloor = gameType === 'teen_patti' ? TEEN_PATTI_BOT_FLOOR : (config.bot_fill_table_size || 4)
-            if (reals.length < targetFloor) {
-              const botsNeeded = targetFloor - reals.length
-              const maxFillTime = delaySeconds - 4 // Last bot joins at 56th second
-              const targetBots = Math.floor((elapsed * botsNeeded) / maxFillTime)
-              if (bots.length < targetBots) {
-                const addCount = targetBots - bots.length
-                const selectedBots = await this.getBots(gameType, addCount, stake)
-                for (const bot of selectedBots) {
-                  const botEntry: MatchmakingEntry = {
-                    userId: bot.userId,
-                    username: bot.username,
-                    isBot: true
-                  }
-                  await this.redis.zadd(key, Date.now(), JSON.stringify(botEntry))
-                  console.log(`[matchmaking] ${gameType} queue: Added bot ${botEntry.username} dynamically at elapsed ${elapsed.toFixed(1)}s`)
-                }
-                if (selectedBots.length > 0) {
-                  await this.broadcastQueueUpdate(gameType, stake, variation)
-                }
-              }
-            } else {
-              if (bots.length > 0) {
-                for (const b of bots) {
-                  const memberString = members.find(m => JSON.parse(m).userId === b.userId)
-                  if (memberString) {
-                    await this.redis.zrem(key, memberString)
-                  }
-                }
-                console.log(`[matchmaking] ${gameType} queue: Pruned all bots because real players count ${reals.length} >= floor ${targetFloor}`)
-                await this.broadcastQueueUpdate(gameType, stake, variation)
-              }
-            }
-          }, 1000)
-          this.timers.set(timerKey, timer)
-        }
-      } else {
-        if (!this.timers.has(timerKey)) {
-          const timer = setTimeout(async () => {
-            this.timers.delete(timerKey)
-            await this.botFillRoom(gameType, stake, config, variation)
-          }, config.bot_fill_delay_seconds * 1000)
-          this.timers.set(timerKey, timer)
-        }
+      if (!this.timers.has(timerKey) && !this.multiTimers.has(timerKey)) {
+        this.schedule60sBotFill(gameType, stake, config, variation)
       }
     }
   }
@@ -342,31 +325,13 @@ export class MatchmakingService {
     }
     this.lastQueued.delete(userId)
 
-    if (gameType === 'ludo' || gameType === 'teen_patti') {
-      const remaining = await this.redis.zrange(key, 0, -1)
-      const parsed = remaining.map(m => JSON.parse(m))
-      const hasReal = parsed.some(p => !p.isBot)
-      if (!hasReal) {
-        // No real players left, clear interval/timer and clean up bots
-        const timerKey = `${gameType}:${variation}:${stake}`
-        const timer = this.timers.get(timerKey)
-        if (timer) {
-          if (gameType === 'ludo' || (gameType === 'teen_patti' && stake < 100)) {
-            clearInterval(timer)
-          } else {
-            clearTimeout(timer)
-          }
-          this.timers.delete(timerKey)
-        }
-        this.queueStartTimes.delete(timerKey)
-        for (const m of remaining) {
-          await this.redis.zrem(key, m)
-        }
-        console.log(`[matchmaking] ${gameType} queue: Cleared all bots and interval because no Real Players are left`)
-      } else {
-        await this.broadcastQueueUpdate(gameType, stake, variation)
-      }
-  }
+    const remainingMembers = await this.redis.zrange(key, 0, -1)
+    const realRemaining = (remainingMembers || []).map(m => JSON.parse(m)).filter((e: any) => !e.isBot)
+    if (realRemaining.length === 0) {
+      const timerKey = `${gameType}:${variation}:${stake}`
+      this.clearBotFillTimers(timerKey)
+      await this.redis.del(key)
+    }
   }
 
   // Called from the gateway's ws 'close' handler once a user's last live
@@ -384,30 +349,13 @@ export class MatchmakingService {
   private async tryCreateRoom(gameType: string, stake: number, config: any, variation = 'classic'): Promise<void> {
     const key = this.queueKey(gameType, stake, variation)
 
-    // Games with a fixed bot-fill table size (e.g. Teen Patti's 4) shouldn't
-    // instant-start on the bare min_players threshold — that's how you end up
-    // with e.g. two real players locked into a 2-real/0-bot table the moment
-    // they both happen to be queued, instead of waiting to see if enough real
-    // players show up to skip bots entirely. Only start immediately once
-    // there are enough real players that no bots are needed at all; anything
-    // short of that waits for the bot-fill timer in joinQueue.
-    // With bot-fill disabled there is no timer to top the table up, so waiting
-    // for bot_fill_table_size would strand 2-3 real players in the queue —
-    // fall back to min_players and start as soon as enough real players exist.
-    // Teen Patti gathers real players for the whole window (see joinQueue), so
-    // it only instant-starts when a FULL human table is ready — anything short
-    // of max_players waits for the timer, which then seats the accumulated
-    // reals (+ bots for low stakes) via planTeenPattiSeats. Other games keep
-    // the legacy threshold.
     const noBotThreshold = gameType === 'teen_patti'
-      ? (stake < 100 ? (config.max_players || 6) : 2)
+      ? (config.max_players || 6)
       : config.bot_fill_enabled
-        ? (config.max_players || 4)
+        ? (config.bot_fill_table_size || config.min_players)
         : (config.min_players || 2)
 
-    // Atomically check if enough players are ready, and if so pop them.
-    // If any bot is in the queue, we reject starting instantly so it stays open
-    // until the 60-second gather window finishes (unless all slots are reals).
+    // Atomically check if enough players are ready, and if so pop them
     const members = await this.redis.eval(
       `
       local key = KEYS[1]
@@ -418,11 +366,6 @@ export class MatchmakingService {
         return {}
       end
       for _, m in ipairs(members) do
-        if string.find(m, '"isBot":true') then
-          return {}
-        end
-      end
-      for _, m in ipairs(members) do
         redis.call('zrem', key, m)
       end
       return members
@@ -430,21 +373,22 @@ export class MatchmakingService {
       1,
       key,
       noBotThreshold,
-      config.max_players || 6
+      config.max_players
     ) as string[]
 
     if (!members || members.length < noBotThreshold) return
 
     console.log(`[matchmaking] tryCreateRoom: ${members.length} players ready for ${gameType}:${variation}:${stake} — starting game`)
-    const poppedPlayers: MatchmakingEntry[] = members.map(m => JSON.parse(m))
-    const realPlayers = poppedPlayers.filter(p => !p.isBot)
-    const bots = poppedPlayers.filter(p => p.isBot)
-    await this.startGame(gameType, stake, realPlayers, bots, variation)
+    this.clearBotFillTimers(`${gameType}:${variation}:${stake}`)
+    const players: MatchmakingEntry[] = members.map(m => JSON.parse(m))
+    await this.startGame(gameType, stake, players, [], variation)
   }
 
   private async botFillRoom(gameType: string, stake: number, config: any, variation = 'classic'): Promise<void> {
     const key = this.queueKey(gameType, stake, variation)
-    
+    const timerKey = `${gameType}:${variation}:${stake}`
+    this.clearBotFillTimers(timerKey)
+
     // Atomically pop all waiting players from the queue
     const members = await this.redis.eval(
       `
@@ -463,15 +407,14 @@ export class MatchmakingService {
 
     if (!members || !members.length) return
 
-    const poppedPlayers: MatchmakingEntry[] = members.map(m => JSON.parse(m))
-    const realPlayers = poppedPlayers.filter(p => !p.isBot)
-    const botsInQueue = poppedPlayers.filter(p => p.isBot)
-    console.log(`[matchmaking] botFillRoom: ${realPlayers.length} real players and ${botsInQueue.length} bots in queue for ${gameType}:${stake} — filling with bots`)
+    const allEntries: MatchmakingEntry[] = members.map(m => JSON.parse(m))
+    const realPlayers = allEntries.filter(e => !e.isBot)
+    const prefilledBots = allEntries.filter(e => e.isBot)
 
-    // Teen Patti: seat composition follows the explicit per-tier spec via
-    // planTeenPattiSeats (low stakes bot-fill to 4-seat floor, up to 6 reals;
-    // high stakes humans-only, ≥2 to start). This replaces the generic bot math
-    // below for teen_patti only.
+    if (!realPlayers.length) return
+
+    console.log(`[matchmaking] botFillRoom: ${realPlayers.length} real players + ${prefilledBots.length} prefilled bots for ${gameType}:${stake}`)
+
     if (gameType === 'teen_patti') {
       const maxPlayers = config.max_players || 6
       const requeue = async (players: MatchmakingEntry[], notify: boolean) => {
@@ -483,87 +426,61 @@ export class MatchmakingService {
             this.hub.sendToUser(p.userId, 'error', { message: 'Still searching for an opponent at this stake…' })
           }
         }
-        const timer = setTimeout(async () => {
-          this.timers.delete(`${gameType}:${variation}:${stake}`)
-          await this.botFillRoom(gameType, stake, config, variation)
-        }, (config.bot_fill_delay_seconds || 10) * 1000)
-        this.timers.set(`${gameType}:${variation}:${stake}`, timer)
+        this.schedule60sBotFill(gameType, stake, config, variation)
       }
 
-      const plan = planTeenPattiSeats(realPlayers.length, stake, maxPlayers)
+      const seated = realPlayers.slice(0, maxPlayers)
+      const overflow = realPlayers.slice(maxPlayers)
+
+      const plan = planTeenPattiSeats(seated.length, stake, maxPlayers)
       if (!plan.start) {
-        // Too few players (lone high-stakes player) — keep everyone waiting.
-        await requeue(realPlayers, plan.requeue)
+        await requeue([...seated, ...overflow], plan.requeue)
         return
       }
 
-      const seatedReals = realPlayers.slice(0, plan.reals)
-      const overflowReals = realPlayers.slice(plan.reals)
-
-      // Reuse the bots already in the queue, fetch extra if needed
-      let bots: MatchmakingEntry[] = botsInQueue.slice(0, plan.bots)
+      let bots: MatchmakingEntry[] = prefilledBots.slice(0, plan.bots)
       if (bots.length < plan.bots) {
         const extraNeeded = plan.bots - bots.length
-        const extraBots = await this.getBots(gameType, extraNeeded, stake)
-        bots = [...bots, ...extraBots]
+        const newBots = await this.getBots(gameType, extraNeeded, stake)
+        bots = [...bots, ...newBots]
       }
 
-      // Bots may be scarce; still start if the table is playable (≥2 total),
-      // otherwise wait for more (a lone real with no bots available).
-      if (seatedReals.length + bots.length < 2) {
-        await requeue([...seatedReals, ...overflowReals], true)
+      if (seated.length + bots.length < 2) {
+        await requeue([...seated, ...overflow], true)
         return
       }
-      if (overflowReals.length) await requeue(overflowReals, false)
-      await this.startGame(gameType, stake, seatedReals, bots, variation)
+      if (overflow.length) await requeue(overflow, false)
+      await this.startGame(gameType, stake, seated, bots, variation)
       return
     }
 
-    let botsNeeded: number
-    if (config.bot_fill_table_size) {
-      // Fixed target size (e.g. Teen Patti's 4): top up to exactly that many
-      // seats with bots. If enough real players already showed up to hit or
-      // exceed the target (a race with tryCreateRoom), no bots are needed —
-      // just seat the real players, capped at max_players.
-      botsNeeded = Math.max(0, Math.min(config.max_players, config.bot_fill_table_size) - realPlayers.length)
-    } else {
-      const maxBots = Math.floor(config.max_players * config.max_bot_ratio)
-      // Ensure at least min_players total (fill gap with bots)
-      const minBotsNeeded = Math.max(0, (config.min_players || 2) - realPlayers.length)
-      botsNeeded = Math.min(config.max_players - realPlayers.length, Math.max(maxBots, minBotsNeeded))
-    }
+    let targetSize = config.bot_fill_table_size || (gameType === 'ludo' ? 4 : (config.min_players || 2))
+    let botsNeeded = Math.max(0, Math.min(config.max_players, targetSize) - realPlayers.length - prefilledBots.length)
 
-    // Reuse the bots already in the queue, fetch extra if needed
-    let bots: MatchmakingEntry[] = botsInQueue.slice(0, botsNeeded)
-    if (bots.length < botsNeeded) {
-      const extraNeeded = botsNeeded - bots.length
-      let extraBots: MatchmakingEntry[] = []
-      if (gameType === 'ludo' && extraNeeded === 3) {
+    let additionalBots: MatchmakingEntry[] = []
+    if (botsNeeded > 0) {
+      if (gameType === 'ludo' && (prefilledBots.length + botsNeeded) === 3) {
         const botTrainingCfg = await this.botTrainingConfig.getConfig('ludo')
-        extraBots = botTrainingCfg.enabled && botTrainingCfg.strategy === 'tiered_hard_wins'
-          ? (await this.getTierDiverseBots(gameType, stake)) ?? (await this.getBots(gameType, extraNeeded, stake))
-          : await this.getBots(gameType, extraNeeded, stake)
+        additionalBots = botTrainingCfg.enabled && botTrainingCfg.strategy === 'tiered_hard_wins'
+          ? (await this.getTierDiverseBots(gameType, stake)) ?? (await this.getBots(gameType, botsNeeded, stake))
+          : await this.getBots(gameType, botsNeeded, stake)
       } else {
-        extraBots = await this.getBots(gameType, extraNeeded, stake)
+        additionalBots = await this.getBots(gameType, botsNeeded, stake)
       }
-      bots = [...bots, ...extraBots]
     }
 
-    // If no bots in DB and real players alone don't meet min_players, re-queue them
+    let bots = [...prefilledBots, ...additionalBots]
+
     if (realPlayers.length + bots.length < (config.min_players || 2)) {
       console.warn(`[matchmaking] botFillRoom: only ${realPlayers.length} real + ${bots.length} bots — re-queuing (min=${config.min_players})`)
       for (const p of realPlayers) {
         await this.redis.zadd(key, Date.now(), JSON.stringify(p))
         this.hub.sendToUser(p.userId, 'error', { message: 'No opponents available yet. Still searching…' })
       }
-      // Retry bot fill after another delay
-      const timer = setTimeout(async () => {
-        this.timers.delete(`${gameType}:${variation}:${stake}`)
-        await this.botFillRoom(gameType, stake, config, variation)
-      }, (config.bot_fill_delay_seconds || 10) * 1000)
-      this.timers.set(`${gameType}:${variation}:${stake}`, timer)
+      this.schedule60sBotFill(gameType, stake, config, variation)
       return
     }
+
     await this.startGame(gameType, stake, realPlayers, bots, variation)
   }
 
@@ -588,7 +505,8 @@ export class MatchmakingService {
         [minRequired]
       )
       for (const bot of lowBots.rows) {
-        const topUpAmount = 10000 - parseFloat(bot.real_balance)
+        const targetBalance = Math.max(100000, minRequired * 10)
+        const topUpAmount = targetBalance - parseFloat(bot.real_balance)
         if (topUpAmount <= 0) continue
 
         const client = await this.db.connect()
@@ -597,15 +515,15 @@ export class MatchmakingService {
           const ikey = `autorefill:${bot.id}:${Date.now()}`
           await client.query(
             `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, idempotency_key, status, description)
-             VALUES ($1, 'manual_credit', 'real', $2, $3, 10000, $4, 'completed', 'Auto-refill due to low balance')`,
-            [bot.id, topUpAmount, bot.real_balance, ikey]
+             VALUES ($1, 'manual_credit', 'real', $2, $3, $4, $5, 'completed', 'Auto-refill due to low balance')`,
+            [bot.id, topUpAmount, bot.real_balance, targetBalance, ikey]
           )
           await client.query(
-            `UPDATE wallets SET real_balance = 10000, updated_at = NOW() WHERE user_id = $1`,
-            [bot.id]
+            `UPDATE wallets SET real_balance = $1, updated_at = NOW() WHERE user_id = $2`,
+            [targetBalance, bot.id]
           )
           await client.query('COMMIT')
-          console.log(`[matchmaking] Auto-refilled bot ${bot.username} with ₹${topUpAmount}`)
+          console.log(`[matchmaking] Auto-refilled bot ${bot.username} with ₹${topUpAmount} (new balance ₹${targetBalance})`)
         } catch (err) {
           await client.query('ROLLBACK')
           console.error(`[matchmaking] Failed to auto-refill bot ${bot.username}:`, err)
@@ -625,35 +543,53 @@ export class MatchmakingService {
       `SELECT u.id, u.username
        FROM users u
        JOIN wallets w ON w.user_id = u.id
-       WHERE u.is_bot = true AND u.status = 'active' AND u.preferred_game_type = $1 AND w.real_balance >= $2
-       ORDER BY RANDOM() LIMIT $3`,
+       WHERE u.is_bot = true AND u.status = 'active'
+         AND (u.preferred_game_type = $1 OR u.preferred_game_type IS NULL OR u.preferred_game_type = 'all')
+         AND w.real_balance >= $2
+       ORDER BY CASE WHEN u.preferred_game_type = $1 THEN 0 ELSE 1 END, RANDOM() LIMIT $3`,
       [gameType, stake, count]
     )
     return botRes.rows.map(b => ({ userId: b.id, username: b.username }))
   }
 
   // Ludo-only, tiered_hard_wins strategy: fetches one bot per difficulty
-  // tier (easy, medium, hard). Returns null if any tier has no free bot —
-  // the caller (botFillRoom) falls back to the plain getBots selection.
+  // tier (easy, medium, hard). Gracefully tops up from available bots if a tier is missing.
   private async getTierDiverseBots(gameType: string, stake: number): Promise<MatchmakingEntry[] | null> {
     await this.autoRefillBots(stake)
 
     const tiers: Array<'easy' | 'medium' | 'hard'> = ['easy', 'medium', 'hard']
     const picked: MatchmakingEntry[] = []
+    const usedIds = new Set<string>()
+
     for (const tier of tiers) {
-      const res = await this.db.query(
-        `SELECT u.id, u.username
+      const sql = `SELECT u.id, u.username
        FROM users u
        JOIN wallets w ON w.user_id = u.id
        WHERE u.is_bot = true AND u.status = 'active' AND u.bot_difficulty = $1
          AND u.preferred_game_type = $2 AND w.real_balance >= $3
-       ORDER BY RANDOM() LIMIT 1`,
-        [tier, gameType, stake]
-      )
-      if (res.rows.length === 0) return null
-      picked.push({ userId: res.rows[0].id, username: res.rows[0].username })
+       ORDER BY RANDOM() LIMIT 1`
+      const params = [tier, gameType, stake]
+
+      const res = await this.db.query(sql, params)
+      const unused = res.rows.filter((b: any) => !usedIds.has(b.id))
+      if (unused.length > 0) {
+        const b = unused[0]
+        usedIds.add(b.id)
+        picked.push({ userId: b.id, username: b.username })
+      }
     }
-    return picked
+
+    if (picked.length < 3) {
+      const fallback = await this.getBots(gameType, 3, stake)
+      for (const fb of fallback) {
+        if (!usedIds.has(fb.userId) && picked.length < 3) {
+          usedIds.add(fb.userId)
+          picked.push(fb)
+        }
+      }
+    }
+
+    return picked.length === 3 ? picked : null
   }
 
   // Resolves each bot's effective difficulty: its own users.bot_difficulty
@@ -788,19 +724,6 @@ export class MatchmakingService {
   private async startGame(gameType: string, stake: number, realPlayers: MatchmakingEntry[], bots: MatchmakingEntry[], variation = 'classic', privateCode?: string): Promise<string | null> {
     const roomId = uuid()
     void GameWatchdog.touch(this.redis, roomId) // liveness for the idle-game reaper
-
-    const timerKey = `${gameType}:${variation}:${stake}`
-    const timer = this.timers.get(timerKey)
-    if (timer) {
-      if (gameType === 'ludo' || (gameType === 'teen_patti' && stake < 100)) {
-        clearInterval(timer)
-      } else {
-        clearTimeout(timer)
-      }
-      this.timers.delete(timerKey)
-    }
-    this.queueStartTimes.delete(timerKey)
-
     const allPlayers = this.orderBySeatPreference(realPlayers, bots)
     console.log(`[matchmaking] startGame room=${roomId} ${gameType}:${stake} real=${realPlayers.length} bots=${bots.length}`)
 
@@ -961,8 +884,8 @@ export class MatchmakingService {
       diceBias: number
     } | null = null
 
-    if (config.enabled && botCount === 3) {
-      // This is a 3-bot + 1-RP game; apply coordination
+    if (config.enabled && (botCount === 3 || (gameType === 'ludo' && botCount === 2))) {
+      // Coordinated bot mode (3-bot + 1-RP, or Ludo 2-bot + 2-RP)
       const botPlayers = gatewayPlayers.filter(p => p.isBot)
 
       try {
@@ -2563,64 +2486,4 @@ export class MatchmakingService {
     // Friends tables: re-open the private lobby / auto-start the next hand.
     this.onGameEnd?.(roomId)
   }
-
-  private async broadcastQueueUpdate(gameType: string, stake: number, variation = 'classic'): Promise<void> {
-    const key = this.queueKey(gameType, stake, variation)
-    const members = await this.redis.zrange(key, 0, -1)
-    const players: MatchmakingEntry[] = members.map(m => JSON.parse(m))
-    
-    // Broadcast to each real player in the queue
-    for (const p of players) {
-      if (!p.isBot) {
-        this.hub.sendToUser(p.userId, 'matchmaking:update', {
-          game_type: gameType,
-          stake,
-          variation,
-          players: players.map(pl => ({
-            userId: pl.userId,
-            username: pl.username,
-            isBot: pl.isBot || false,
-          }))
-        })
-      }
-    }
-  }
-
-  private async addBotToLudoQueue(gameType: string, stake: number, config: any, variation: string, timerKey: string): Promise<void> {
-    const key = this.queueKey(gameType, stake, variation)
-    const members = await this.redis.zrange(key, 0, -1)
-    const parsed: MatchmakingEntry[] = members.map(m => JSON.parse(m))
-    
-    const reals = parsed.filter(p => !p.isBot)
-    if (reals.length === 0) {
-      const timer = this.timers.get(timerKey)
-      if (timer) {
-        clearInterval(timer)
-        this.timers.delete(timerKey)
-      }
-      for (const m of members) {
-        await this.redis.zrem(key, m)
-      }
-      return
-    }
-
-    if (parsed.length < 4) {
-      const bots = await this.getBots(gameType, 1, stake)
-      if (bots.length > 0) {
-        const botEntry: MatchmakingEntry = {
-          userId: bots[0].userId,
-          username: bots[0].username,
-          isBot: true
-        }
-        await this.redis.zadd(key, Date.now(), JSON.stringify(botEntry))
-        console.log(`[matchmaking] Ludo queue: Added bot ${botEntry.username}`)
-        
-        await this.broadcastQueueUpdate(gameType, stake, variation)
-        await this.tryCreateRoom(gameType, stake, config, variation)
-      }
-    } else {
-      await this.tryCreateRoom(gameType, stake, config, variation)
-    }
-  }
-
 }

@@ -15,12 +15,8 @@ class UpdateService {
 
   bool _shown = false;
 
-  void reset() {
-    _shown = false;
-  }
-
-  Future<void> checkAndPrompt(BuildContext context, {bool force = false}) async {
-    if (_shown && !force) return;
+  Future<bool> checkAndPrompt(BuildContext context) async {
+    if (_shown) return false;
     try {
       final info = await PackageInfo.fromPlatform();
       final localCode = int.tryParse(info.buildNumber) ?? 0;
@@ -31,18 +27,18 @@ class UpdateService {
       final forceUpdate = data['force_update'] == true;
       final serverName = data['version_name']?.toString() ?? '';
       final notes = data['release_notes']?.toString();
-      var rawDownloadUrl = data['download_url']?.toString() ?? '';
+      final rawDownloadUrl = data['download_url']?.toString() ?? '';
 
-      if (serverCode <= localCode) return;
+      if (serverCode <= localCode) return false;
 
-      if (rawDownloadUrl.startsWith('/')) {
-        rawDownloadUrl = 'https://game.myonlinejoker.com$rawDownloadUrl';
-      }
-
+      // The APK lives at one fixed, unversioned URL that gets overwritten on
+      // every upload — append the version code so a stale cache anywhere
+      // between here and the origin can never serve an old binary under a
+      // URL a client believes matches this specific version.
       final downloadUrl = rawDownloadUrl.isEmpty
           ? rawDownloadUrl
           : '$rawDownloadUrl${rawDownloadUrl.contains('?') ? '&' : '?'}v=$serverCode';
-      if (!context.mounted) return;
+      if (!context.mounted) return false;
 
       _shown = true;
       showDialog(
@@ -58,8 +54,9 @@ class UpdateService {
           ),
         ),
       );
-    } catch (e) {
-      debugPrint('[UpdateService] checkAndPrompt failed: $e');
+      return forceUpdate;
+    } catch (_) {
+      return false;
     }
   }
 }

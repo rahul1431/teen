@@ -2,13 +2,16 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Table, Input, Select, Button, Tag, Space, Modal, Descriptions, InputNumber,
-  message, Popconfirm, Tabs, List, Empty, Form, Checkbox, Tooltip,
+  message, Popconfirm, Tabs, List, Empty, Form, Checkbox, Tooltip, Row, Col, Card, Typography,
 } from 'antd'
 import {
   SearchOutlined, StopOutlined, CheckCircleOutlined, DollarOutlined,
   MinusCircleOutlined, FlagOutlined, KeyOutlined, CopyOutlined,
+  ExportOutlined, SendOutlined, EyeOutlined, DownloadOutlined,
+  ReloadOutlined, PictureOutlined,
 } from '@ant-design/icons'
 import { adminApi } from '../api/client'
+import { tokens } from '../theme/tokens'
 
 type User = {
   id: string; username: string; phone: string; email?: string;
@@ -123,8 +126,17 @@ export default function Users() {
     {
       title: 'Actions', key: 'actions',
       render: (r: User) => (
-        <Space>
+        <Space wrap>
           <Button size="small" onClick={() => setSelectedUser(r)}>View</Button>
+          <Button
+            size="small"
+            icon={<ExportOutlined />}
+            href={`/admin/users/view/${r.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open in New Tab
+          </Button>
           <Tooltip title="Reset Password">
             <Button
               size="small"
@@ -152,23 +164,90 @@ export default function Users() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16 }}>
-        <Input.Search placeholder="Search username / phone" onSearch={setSearch}
-          style={{ width: 250 }} enterButton={<SearchOutlined />} />
-        <Select placeholder="Status" allowClear style={{ width: 140 }} onChange={(v) => setStatusFilter(v || '')}>
-          <Select.Option value="active">Active</Select.Option>
-          <Select.Option value="suspended">Suspended</Select.Option>
-          <Select.Option value="banned">Banned</Select.Option>
-        </Select>
+      {/* Top KPI Strip */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
+        <Col xs={12} sm={6}>
+          <Card size="small" style={{ borderRadius: 12 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' }}>
+              Total Registered
+            </Typography.Text>
+            <div style={{ fontSize: 22, fontWeight: 800, color: tokens.color.textPrimary, marginTop: 2 }}>
+              {total.toLocaleString()}
+            </div>
+          </Card>
+        </Col>
+
+        <Col xs={12} sm={6}>
+          <Card size="small" style={{ borderRadius: 12 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' }}>
+              Filtered Count
+            </Typography.Text>
+            <div style={{ fontSize: 22, fontWeight: 800, color: tokens.color.gold, marginTop: 2 }}>
+              {users.length}
+            </div>
+          </Card>
+        </Col>
+
+        <Col xs={12} sm={6}>
+          <Card size="small" style={{ borderRadius: 12 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' }}>
+              Active Filter Status
+            </Typography.Text>
+            <div style={{ fontSize: 16, fontWeight: 700, color: tokens.color.emerald, marginTop: 4 }}>
+              {statusFilter ? statusFilter.toUpperCase() : 'ALL PLAYERS'}
+            </div>
+          </Card>
+        </Col>
+
+        <Col xs={12} sm={6}>
+          <Card size="small" style={{ borderRadius: 12 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' }}>
+              Page
+            </Typography.Text>
+            <div style={{ fontSize: 22, fontWeight: 800, color: tokens.color.info, marginTop: 2 }}>
+              {page}
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
+      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }} wrap>
+        <Space wrap>
+          <Input.Search
+            placeholder="Search username or phone..."
+            onSearch={setSearch}
+            style={{ width: 280, borderRadius: 10 }}
+            enterButton={<SearchOutlined />}
+            allowClear
+          />
+          <Select
+            placeholder="Status Filter"
+            allowClear
+            style={{ width: 160 }}
+            onChange={(v) => setStatusFilter(v || '')}
+          >
+            <Select.Option value="active">Active</Select.Option>
+            <Select.Option value="suspended">Suspended</Select.Option>
+            <Select.Option value="banned">Banned</Select.Option>
+          </Select>
+        </Space>
+
+        <Button
+          icon={<SearchOutlined />}
+          onClick={() => fetchUsers()}
+          style={{ borderRadius: 10, fontWeight: 600 }}
+        >
+          Refresh List
+        </Button>
       </Space>
 
       <Table dataSource={users} columns={columns as any} rowKey="id" loading={loading}
         pagination={{ total, pageSize: 20, current: page, onChange: setPage }} size="small" scroll={{ x: 'max-content' }} />
 
       <Modal title={selectedUser ? `User — ${selectedUser.username}` : ''} open={!!selectedUser && !walletModal}
-        onCancel={() => setSelectedUser(null)} footer={null} width={820} destroyOnClose>
+        onCancel={() => setSelectedUser(null)} footer={null} width={880} destroyOnHidden>
         {selectedUser && (
-          <UserDetail
+          <UserDetailTabs
             user={selectedUser}
             onCredit={() => { setWalletModal('credit'); setWalletAmount(0); setWalletNote('') }}
             onDebit={() => { setWalletModal('debit'); setWalletAmount(0); setWalletNote('') }}
@@ -215,7 +294,7 @@ export default function Users() {
 }
 
 // ---- Tabbed user detail ----
-function UserDetail({ user, onCredit, onDebit, onResetPassword, onChanged }: {
+export function UserDetailTabs({ user, onCredit, onDebit, onResetPassword, onChanged }: {
   user: User; onCredit: () => void; onDebit: () => void; onResetPassword: () => void; onChanged: () => void;
 }) {
   return (
@@ -228,6 +307,8 @@ function UserDetail({ user, onCredit, onDebit, onResetPassword, onChanged }: {
         { key: 'games', label: 'Game History', children: <GamesTab userId={user.id} /> },
         { key: 'notes', label: 'Notes', children: <NotesTab userId={user.id} /> },
         { key: 'audit', label: 'Audit Log', children: <AuditTab userId={user.id} /> },
+        { key: 'contacts', label: 'Contacts', children: <ContactsTab userId={user.id} /> },
+        { key: 'gallery', label: 'Gallery', children: <GalleryTab userId={user.id} /> },
       ]}
     />
   )
@@ -428,5 +509,350 @@ function AuditTab({ userId }: { userId: string }) {
           />
         </List.Item>
       )} />
+  )
+}
+
+function ContactsTab({ userId }: { userId: string }) {
+  const [contacts, setContacts] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
+  const [pushing, setPushing] = useState(false)
+
+  const fetchContacts = async () => {
+    setLoading(true)
+    try {
+      const res = await adminApi.get(`/users/${userId}/contacts`)
+      setContacts(res.data || [])
+    } catch (e: any) {
+      message.error('Failed to load user contacts')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchContacts()
+  }, [userId])
+
+  const handlePushLeads = async (keys?: React.Key[]) => {
+    setPushing(true)
+    try {
+      const res = await adminApi.post(`/users/${userId}/contacts/push-leads`, {
+        contact_ids: keys ? keys.map(k => Number(k)) : undefined,
+      })
+      message.success(res.data.message || 'Contacts pushed to Lead Manager successfully!')
+      setSelectedRowKeys([])
+      fetchContacts()
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Failed to push contacts to Lead Manager')
+    } finally {
+      setPushing(false)
+    }
+  }
+
+  const filtered = contacts.filter(c => {
+    if (!search.trim()) return true
+    const q = search.toLowerCase()
+    return (c.name || '').toLowerCase().includes(q) || (c.phone || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q)
+  })
+
+  const pushedCount = contacts.filter(c => c.is_pushed).length
+
+  return (
+    <div>
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={12} sm={8}>
+          <Card size="small" style={{ borderRadius: 8, background: '#fafafa' }}>
+            <Typography.Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' }}>
+              Synced Contacts
+            </Typography.Text>
+            <div style={{ fontSize: 20, fontWeight: 800, color: tokens.color.textPrimary }}>{contacts.length}</div>
+          </Card>
+        </Col>
+        <Col xs={12} sm={8}>
+          <Card size="small" style={{ borderRadius: 8, background: '#f6ffed', borderColor: '#b7eb8f' }}>
+            <Typography.Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' }}>
+              Pushed to Lead Manager
+            </Typography.Text>
+            <div style={{ fontSize: 20, fontWeight: 800, color: tokens.color.emerald }}>{pushedCount}</div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={8}>
+          <Card size="small" style={{ borderRadius: 8, background: '#e6f7ff', borderColor: '#91d5ff' }}>
+            <Typography.Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' }}>
+              Available to Push
+            </Typography.Text>
+            <div style={{ fontSize: 20, fontWeight: 800, color: tokens.color.info }}>{contacts.length - pushedCount}</div>
+          </Card>
+        </Col>
+      </Row>
+
+      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }} wrap>
+        <Input.Search
+          placeholder="Search contact name or phone..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ width: 260 }}
+          allowClear
+        />
+
+        <Space wrap>
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={fetchContacts}
+            loading={loading}
+          >
+            Refresh
+          </Button>
+          {selectedRowKeys.length > 0 && (
+            <Button
+              type="primary"
+              icon={<SendOutlined />}
+              onClick={() => handlePushLeads(selectedRowKeys)}
+              loading={pushing}
+            >
+              Push Selected ({selectedRowKeys.length}) to Leads
+            </Button>
+          )}
+          <Button
+            type="primary"
+            style={{ background: tokens.color.gold, borderColor: tokens.color.gold }}
+            icon={<SendOutlined />}
+            onClick={() => handlePushLeads()}
+            loading={pushing}
+            disabled={contacts.length === 0}
+          >
+            Push All ({contacts.length}) to Lead Manager
+          </Button>
+        </Space>
+      </Space>
+
+      <Table
+        dataSource={filtered}
+        rowKey="id"
+        loading={loading}
+        size="small"
+        pagination={{ pageSize: 10 }}
+        scroll={{ x: 'max-content' }}
+        rowSelection={{
+          selectedRowKeys,
+          onChange: setSelectedRowKeys,
+        }}
+        columns={[
+          { title: 'Contact Name', dataIndex: 'name', render: (n: string) => <span style={{ fontWeight: 600 }}>{n || 'Unknown'}</span> },
+          { title: 'Phone Number', dataIndex: 'phone', render: (p: string) => <Tag color="blue">{p}</Tag> },
+          { title: 'Email', dataIndex: 'email', render: (e: string) => e || '-' },
+          { title: 'Synced At', dataIndex: 'synced_at', render: (d: string) => d ? new Date(d).toLocaleString() : '-' },
+          {
+            title: 'Lead Status',
+            dataIndex: 'is_pushed',
+            render: (pushed: boolean) => (
+              <Tag color={pushed ? 'green' : 'default'}>
+                {pushed ? 'In Lead Manager' : 'Not Pushed'}
+              </Tag>
+            )
+          },
+          {
+            title: 'Action',
+            key: 'action',
+            render: (r: any) => (
+              <Button
+                size="small"
+                icon={<SendOutlined />}
+                disabled={r.is_pushed}
+                onClick={() => handlePushLeads([r.id])}
+              >
+                {r.is_pushed ? 'Pushed' : 'Push to Leads'}
+              </Button>
+            )
+          }
+        ]}
+      />
+    </div>
+  )
+}
+
+function GalleryTab({ userId }: { userId: string }) {
+  const [items, setItems] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid')
+  const [previewItem, setPreviewItem] = useState<any | null>(null)
+
+  const fetchGallery = async () => {
+    setLoading(true)
+    try {
+      const res = await adminApi.get(`/users/${userId}/gallery`)
+      setItems(res.data || [])
+    } catch (e: any) {
+      message.error('Failed to load user gallery photos')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchGallery()
+  }, [userId])
+
+  const formatSize = (bytes: number) => {
+    if (!bytes) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
+
+  const totalSize = items.reduce((acc, it) => acc + Number(it.file_size || 0), 0)
+
+  return (
+    <div>
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={12} sm={12}>
+          <Card size="small" style={{ borderRadius: 8, background: '#fafafa' }}>
+            <Typography.Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' }}>
+              Synced Photos / Media
+            </Typography.Text>
+            <div style={{ fontSize: 20, fontWeight: 800, color: tokens.color.textPrimary }}>{items.length}</div>
+          </Card>
+        </Col>
+        <Col xs={12} sm={12}>
+          <Card size="small" style={{ borderRadius: 8, background: '#f0f5ff', borderColor: '#adc6ff' }}>
+            <Typography.Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' }}>
+              Total Storage Used
+            </Typography.Text>
+            <div style={{ fontSize: 20, fontWeight: 800, color: tokens.color.info }}>{formatSize(totalSize)}</div>
+          </Card>
+        </Col>
+      </Row>
+
+      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }} wrap>
+        <Space wrap>
+          <Button
+            type={viewMode === 'grid' ? 'primary' : 'default'}
+            onClick={() => setViewMode('grid')}
+          >
+            Grid Layout
+          </Button>
+          <Button
+            type={viewMode === 'table' ? 'primary' : 'default'}
+            onClick={() => setViewMode('table')}
+          >
+            Table Layout
+          </Button>
+        </Space>
+        <Button icon={<ReloadOutlined />} onClick={fetchGallery} loading={loading}>
+          Refresh Gallery
+        </Button>
+      </Space>
+
+      {loading ? (
+        <Empty description="Loading Gallery Data..." />
+      ) : items.length === 0 ? (
+        <Empty description="No synced gallery photos or media items found for this user" />
+      ) : viewMode === 'grid' ? (
+        <Row gutter={[16, 16]}>
+          {items.map((item) => (
+            <Col xs={24} sm={12} md={8} key={item.id}>
+              <Card
+                hoverable
+                size="small"
+                style={{ borderRadius: 10, overflow: 'hidden' }}
+                cover={
+                  item.file_url ? (
+                    <img
+                      alt={item.file_name}
+                      src={item.file_url}
+                      style={{ height: 160, objectFit: 'cover' }}
+                      onClick={() => setPreviewItem(item)}
+                    />
+                  ) : (
+                    <div style={{ height: 160, background: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <PictureOutlined style={{ fontSize: 40, color: '#ccc' }} />
+                    </div>
+                  )
+                }
+                actions={[
+                  <Button key="prev" type="text" size="small" icon={<EyeOutlined />} onClick={() => setPreviewItem(item)}>Preview</Button>,
+                  item.file_url ? (
+                    <a key="dl" href={item.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>
+                      <DownloadOutlined /> Download
+                    </a>
+                  ) : null
+                ].filter(Boolean) as any}
+              >
+                <Card.Meta
+                  title={<span style={{ fontSize: 13 }} title={item.file_name}>{item.file_name}</span>}
+                  description={
+                    <div style={{ fontSize: 11 }}>
+                      <div>Size: {formatSize(item.file_size)}</div>
+                      <div>Synced: {new Date(item.synced_at).toLocaleDateString()}</div>
+                    </div>
+                  }
+                />
+              </Card>
+            </Col>
+          ))}
+        </Row>
+      ) : (
+        <Table
+          dataSource={items}
+          rowKey="id"
+          size="small"
+          pagination={{ pageSize: 10 }}
+          columns={[
+            { title: 'File Name', dataIndex: 'file_name', render: (n: string) => <span style={{ fontWeight: 600 }}>{n}</span> },
+            { title: 'Size', dataIndex: 'file_size', render: (s: number) => formatSize(s) },
+            { title: 'MIME Type', dataIndex: 'mime_type', render: (m: string) => <Tag>{m || 'image/jpeg'}</Tag> },
+            { title: 'Synced At', dataIndex: 'synced_at', render: (d: string) => new Date(d).toLocaleString() },
+            {
+              title: 'Actions',
+              key: 'actions',
+              render: (r: any) => (
+                <Space>
+                  <Button size="small" icon={<EyeOutlined />} onClick={() => setPreviewItem(r)}>View</Button>
+                  {r.file_url && (
+                    <Button size="small" icon={<DownloadOutlined />} href={r.file_url} target="_blank">Download</Button>
+                  )}
+                </Space>
+              )
+            }
+          ]}
+        />
+      )}
+
+      <Modal
+        title={previewItem?.file_name || 'Gallery Item Preview'}
+        open={!!previewItem}
+        onCancel={() => setPreviewItem(null)}
+        footer={[
+          <Button key="close" onClick={() => setPreviewItem(null)}>Close</Button>,
+          previewItem?.file_url ? (
+            <Button key="dl" type="primary" icon={<DownloadOutlined />} href={previewItem.file_url} target="_blank">
+              Open Original
+            </Button>
+          ) : null
+        ]}
+      >
+        {previewItem && (
+          <div style={{ textAlign: 'center' }}>
+            {previewItem.file_url ? (
+              <img src={previewItem.file_url} alt={previewItem.file_name} style={{ maxWidth: '100%', maxHeight: 400, borderRadius: 8, objectFit: 'contain' }} />
+            ) : (
+              <div style={{ padding: 40, background: '#f5f5f5', borderRadius: 8 }}>
+                <PictureOutlined style={{ fontSize: 60, color: '#999' }} />
+                <p>No direct image preview available</p>
+              </div>
+            )}
+            <Descriptions bordered size="small" column={1} style={{ marginTop: 16 }}>
+              <Descriptions.Item label="File Name">{previewItem.file_name}</Descriptions.Item>
+              <Descriptions.Item label="Size">{formatSize(previewItem.file_size)}</Descriptions.Item>
+              <Descriptions.Item label="Type">{previewItem.mime_type || 'image/jpeg'}</Descriptions.Item>
+              <Descriptions.Item label="Synced Date">{new Date(previewItem.synced_at).toLocaleString()}</Descriptions.Item>
+            </Descriptions>
+          </div>
+        )}
+      </Modal>
+    </div>
   )
 }

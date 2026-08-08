@@ -199,9 +199,11 @@ Uses the same `/api/admin/app/upload` endpoint internally.
 | Download fails partway through | Network timeout or server send_timeout too short | Nginx send_timeout is 9000s, should be fine for 154MB on mobile |
 | APK is stale (old code, old build time) | Upstream cache served a 10-year-cacheable copy before nginx fix | Wait for cache to expire or purge manually, then rebuild |
 | "Forbidden" on upload | JWT expired or missing superadmin role | Regenerate JWT, check `role: 'superadmin'` in payload |
+| Repeated update popup even after installing APK | Uploaded APK file was compiled with a lower `versionCode` in `pubspec.yaml` than the `version_code` registered in `app_versions` table | Always bump `version: x.y.z+CODE` in `pubspec.yaml` *before* compiling release APK, so installed app's `PackageInfo.buildNumber` equals or exceeds server `version_code`. |
 
 ## Related Incidents
 
 - **2026-07-18:** Three APKs (1.2.1/1.2.2/1.2.3) built locally without MONITOR_SECRET_KEY, silently failed telemetry ingestion
 - **2026-07-21:** nginx `/downloads/` route silently shadowed by HestiaCP regex block with 10-year cache; fixed via `location ^~` and reconciled live config with git
 - **2026-07-21:** Device found stuck on stray versionCode 2016 (one-off local build), permanently blocked from updates; fixed by jumping to versionCode 2100
+- **2026-08-08:** Repeated update popup loop after APK install — caused when Admin Panel version_code (e.g. 4212) exceeds the versionCode embedded inside the compiled APK binary (e.g. 4211). Resolved by ensuring `pubspec.yaml` buildNumber matches or exceeds the DB `version_code` before generating release APKs.

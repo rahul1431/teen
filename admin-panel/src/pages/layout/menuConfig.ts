@@ -64,6 +64,7 @@ export function buildMenuItems(): MenuProps['items'] {
       icon: createElement(GlobalOutlined),
       label: 'Marketing & CMS',
       children: [
+        { key: '/admin/leads', icon: createElement(TeamOutlined), label: link('/admin/leads', 'Lead Manager') },
         { key: '/admin/marketing', icon: createElement(SoundOutlined), label: link('/admin/marketing', 'SEO & Campaigns') },
         { key: '/admin/promo-codes', icon: createElement(TagOutlined), label: link('/admin/promo-codes', 'Promo Codes') },
         { key: '/admin/banners', icon: createElement(PictureOutlined), label: link('/admin/banners', 'Home Banners') },

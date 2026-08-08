@@ -39,11 +39,13 @@ export function chooseBotTokenCoordinated(
   }
 
   const myTokens = state.players[botIdx].tokens
-  const rpIdx = state.players.findIndex((p) => !p.is_bot)
+  const realPlayerIndices = state.players
+    .map((p, i) => (!p.is_bot ? i : -1))
+    .filter((i) => i !== -1)
 
   // Priority 1: Block RP by landing on a main-track cell one of its tokens occupies
-  if (rpIdx !== -1 && metadata.aggressiveness > 0.3) {
-    const blockingToken = findTokenThatCanBlock(state, botIdx, rpIdx, dice)
+  if (realPlayerIndices.length > 0 && metadata.aggressiveness > 0.3) {
+    const blockingToken = findTokenThatCanBlock(state, botIdx, realPlayerIndices, dice)
     if (blockingToken !== -1) {
       return blockingToken
     }
@@ -111,13 +113,18 @@ const THROTTLE_LEAD = 20
  * Positions are per-player relative progress; comparisons must go through
  * absoluteCell() since each seat's progress is relative to its own start.
  */
-function findTokenThatCanBlock(state: LudoState, botIdx: number, rpIdx: number, dice: number): number {
+function findTokenThatCanBlock(state: LudoState, botIdx: number, rpIndices: number[] | number, dice: number): number {
   const myTokens = state.players[botIdx].tokens
-  const rpCells = new Set(
-    state.players[rpIdx].tokens
-      .filter((t) => t >= 0 && t <= 50)
-      .map((t) => absoluteCell(rpIdx, t))
-  )
+  const indices = Array.isArray(rpIndices) ? rpIndices : [rpIndices]
+  const rpCells = new Set<number>()
+  for (const rpIdx of indices) {
+    if (rpIdx < 0 || rpIdx >= state.players.length) continue
+    for (const t of state.players[rpIdx].tokens) {
+      if (t >= 0 && t <= 50) {
+        rpCells.add(absoluteCell(rpIdx, t))
+      }
+    }
+  }
   if (rpCells.size === 0) return -1
 
   for (let i = 0; i < myTokens.length; i++) {
@@ -242,7 +249,9 @@ export function chooseWinnerBotToken(
 }
 
 function chooseWinnerBotTokenSkilled(state: LudoState, botIdx: number, dice: number, movable: number[]): number {
-  const rpIdx = state.players.findIndex((p) => !p.is_bot)
+  const rpIndices = state.players
+    .map((p, i) => (!p.is_bot ? i : -1))
+    .filter((i) => i !== -1)
   const player = state.players[botIdx]
 
   const capturingMove = findCapturingMove(state, botIdx, dice, movable)
@@ -253,9 +262,9 @@ function chooseWinnerBotTokenSkilled(state: LudoState, botIdx: number, dice: num
   }
 
   const nonExposed = movable.filter((t) => {
-    if (rpIdx === -1) return true
+    if (rpIndices.length === 0) return true
     const sim = simulateMove(state, botIdx, t, dice)
-    return !isExposedTo(state, sim.landedCell, rpIdx)
+    return !rpIndices.some((rpIdx) => isExposedTo(state, sim.landedCell, rpIdx))
   })
   const pool = nonExposed.length > 0 ? nonExposed : movable
 
@@ -273,7 +282,9 @@ function chooseWinnerBotTokenExpert(
   movable: number[],
   boldness: number
 ): number {
-  const rpIdx = state.players.findIndex((p) => !p.is_bot)
+  const rpIndices = state.players
+    .map((p, i) => (!p.is_bot ? i : -1))
+    .filter((i) => i !== -1)
   const progressWeight = 0.3 + 0.7 * boldness
   const safetyPenaltyWeight = 0.3 + 0.7 * (1 - boldness)
   const CAPTURE_BONUS = 50
@@ -286,7 +297,7 @@ function chooseWinnerBotTokenExpert(
     let score = sim.newProgress * progressWeight
     if (sim.reachesHome) score += HOME_BONUS
     if (sim.capturesOpponent) score += CAPTURE_BONUS
-    if (rpIdx !== -1 && isExposedTo(state, sim.landedCell, rpIdx)) {
+    if (rpIndices.some((rpIdx) => isExposedTo(state, sim.landedCell, rpIdx))) {
       // Getting captured here sends this token's whole newProgress back to
       // base, not a flat amount — a flat penalty is trivial next to an
       // advanced token's progress and fails to discourage exposing it. Scale

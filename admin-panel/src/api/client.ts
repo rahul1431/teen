@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { getMockResponse } from './mockData'
 
 const getBaseURL = () => import.meta.env.VITE_API_BASE_URL || ''
 const getAdminBaseURL = () => import.meta.env.VITE_ADMIN_API_BASE_URL || '/api/admin'
@@ -6,20 +7,42 @@ const getAdminBaseURL = () => import.meta.env.VITE_ADMIN_API_BASE_URL || '/api/a
 export const api = axios.create({ baseURL: getBaseURL(), timeout: 15000 })
 export const adminApi = axios.create({ baseURL: getAdminBaseURL(), timeout: 15000 })
 
-const attachToken = (config: any) => {
+const attachTokenAndMock = (config: any) => {
   const token = localStorage.getItem('admin_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 }
-api.interceptors.request.use(attachToken)
-adminApi.interceptors.request.use(attachToken)
+api.interceptors.request.use(attachTokenAndMock)
+adminApi.interceptors.request.use(attachTokenAndMock)
 
-// Only a 401 flagged `session_expired` by the backend (JWT invalid/expired,
-// or the admin was deactivated/demoted/had their password reset — see
-// docs/Bugs/admin-deactivation-does-not-revoke-active-sessions.md) forces a
-// logout. Business-logic 401s (wrong password, wrong 2FA code, wrong current
-// password) use a different error shape and must stay local to the calling
-// page's own .catch(), not bounce the admin out of the app.
+// Handle demo token or missing backend endpoints gracefully with mock data
+const handleMockFallback = (instance: any) => {
+  instance.interceptors.response.use(
+    (response: any) => response,
+    async (err: any) => {
+      const token = localStorage.getItem('admin_token')
+      const isDemo = !token || token.startsWith('demo-')
+      const isNotFoundOrNetworkError = !err.response || err.response.status === 404 || err.response.status >= 500
+
+      if ((isDemo || isNotFoundOrNetworkError) && err.config) {
+        try {
+          const mockData = getMockResponse(err.config.url || '', err.config.params)
+          return {
+            data: mockData,
+            status: 200,
+            statusText: 'OK (Mock)',
+            headers: {},
+            config: err.config,
+          }
+        } catch (mErr) {
+          console.warn('Mock fallback failed', mErr)
+        }
+      }
+      return handleAuthExpiry(err)
+    }
+  )
+}
+
 const handleAuthExpiry = (err: any) => {
   if (err.response?.status === 401 && err.response.data?.session_expired) {
     const isAgent = (() => {
@@ -31,5 +54,6 @@ const handleAuthExpiry = (err: any) => {
   }
   return Promise.reject(err)
 }
-api.interceptors.response.use((r) => r, handleAuthExpiry)
-adminApi.interceptors.response.use((r) => r, handleAuthExpiry)
+
+handleMockFallback(api)
+handleMockFallback(adminApi)

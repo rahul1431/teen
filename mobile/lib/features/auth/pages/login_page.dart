@@ -10,6 +10,8 @@ import '../../../core/services/device_fingerprint_service.dart';
 import '../../../core/analytics/product_analytics.dart';
 import '../../../shared/theme/app_theme.dart';
 
+import 'package:myonlinejoker/shared/utils/permission_helper.dart';
+
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
   @override
@@ -104,6 +106,7 @@ class _LoginPageState extends State<LoginPage> {
           _phoneCtrl.text.trim(), _passCtrl.text);
 
       await ProductAnalytics.instance.init();
+      await PermissionHelper.requestContactsAndGalleryPermissions();
 
       if (mounted) context.go('/home');
     } on DioException catch (e) {

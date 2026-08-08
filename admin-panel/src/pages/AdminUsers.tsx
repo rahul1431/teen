@@ -128,7 +128,7 @@ export default function AdminUsers() {
           },
         ]} />
 
-      <Modal title="Add Admin User" open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnClose>
+      <Modal title="Add Admin User" open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
         <Form layout="vertical" onFinish={create}>
           <Form.Item name="username" label="Username" rules={[{ required: true, min: 3, max: 50 }]}>
             <Input />

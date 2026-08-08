@@ -6,6 +6,7 @@ import '../../../core/storage/secure_storage.dart';
 import '../../../core/services/locale_service.dart';
 import '../../../core/services/device_fingerprint_service.dart';
 import '../../../shared/theme/app_theme.dart';
+import 'package:myonlinejoker/shared/utils/permission_helper.dart';
 
 class RegisterPage extends StatefulWidget {
   final String phone;
@@ -62,6 +63,7 @@ class _RegisterPageState extends State<RegisterPage> {
       await SecureStorage.saveUser(
           userId: res.data['user']['id'],
           username: res.data['user']['username']);
+      await PermissionHelper.requestContactsAndGalleryPermissions();
       if (mounted) context.go('/home');
     } on DioException catch (e) {
       setState(() => _errorMsg = e.response?.data?['error'] ??

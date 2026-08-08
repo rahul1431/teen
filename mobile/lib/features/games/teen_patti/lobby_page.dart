@@ -5,7 +5,6 @@ import '../../../core/network/api_client.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../shared/theme/app_theme.dart';
-import '../shared/matchmaking_waiting_dialog.dart';
 import 'history_page.dart';
 
 class TeenPattiLobbyPage extends StatefulWidget {
@@ -19,8 +18,9 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   final _socket = SocketService();
   StreamSubscription? _roomJoinedSub;
   StreamSubscription? _errorSub;
-  StreamSubscription? _matchmakingUpdateSub;
-  final _joinedPlayersNotifier = ValueNotifier<List<MatchmakingPlayer>>([]);
+  StreamSubscription? _statusSub;
+  int _secondsRemaining = 60;
+  List<Map<String, dynamic>> _queuedPlayers = [];
   double _selectedStake = 10;
   bool _searching = false;
   String? _balance;
@@ -109,6 +109,20 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
     _loadBalance();
     _loadFeePercent();
     _attachRoomJoinedListener();
+    _statusSub = _socket.on('matchmaking:status').listen((data) {
+      if (!mounted) return;
+      if (data is Map) {
+        setState(() {
+          if (data['seconds_remaining'] != null) {
+            _secondsRemaining = (data['seconds_remaining'] as num).toInt();
+          }
+          if (data['players'] != null && data['players'] is List) {
+            _queuedPlayers = List<Map<String, dynamic>>.from(
+                (data['players'] as List).map((p) => Map<String, dynamic>.from(p)));
+          }
+        });
+      }
+    });
     _errorSub = _socket.on(SocketEvents.errorEvent).listen((data) {
       if (!mounted) return;
       setState(() => _searching = false);
@@ -116,16 +130,6 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
           'Connection error. Please retry.';
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(msg), backgroundColor: AppColors.red));
-    });
-    _matchmakingUpdateSub = _socket.on('matchmaking:update').listen((data) {
-      if (!mounted) return;
-      if (data['players'] != null) {
-        final list = (data['players'] as List).map((p) => MatchmakingPlayer(
-          userId: p['userId'] ?? '',
-          username: p['username'] ?? '',
-        )).toList();
-        _joinedPlayersNotifier.value = list;
-      }
     });
     // Re-join matchmaking queue after socket reconnects (preserves searching state)
     _socket.onReconnect(() {
@@ -148,9 +152,6 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       if (!mounted || !_searching) return;
       _roomJoinedSub?.cancel();
       _roomJoinedSub = null;
-      if (Navigator.canPop(context)) {
-        Navigator.of(context).pop(); // dismiss waiting dialog
-      }
       setState(() => _searching = false);
       context.push('/games/teen-patti/play/${data['room_id']}', extra: data);
     });
@@ -160,8 +161,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   void dispose() {
     _roomJoinedSub?.cancel();
     _errorSub?.cancel();
-    _matchmakingUpdateSub?.cancel();
-    _joinedPlayersNotifier.dispose();
+    _statusSub?.cancel();
     super.dispose();
   }
 
@@ -204,33 +204,16 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
     // Reattach listener every time — it was cancelled after game 1 to prevent
     // the lobby (alive in stack) from firing again on the game page's joinRoom.
     _attachRoomJoinedListener();
-    _joinedPlayersNotifier.value = [];
-    setState(() => _searching = true);
+    setState(() {
+      _searching = true;
+      _secondsRemaining = 60;
+      _queuedPlayers = [{'username': 'You', 'isBot': false}];
+    });
     _socket.emit(SocketEvents.joinMatchmaking, {
       'game_type': 'teen_patti',
       'stake': _selectedStake,
       'variation': widget.variation,
     });
-
-    MatchmakingWaitingDialog.show(
-      context: context,
-      gameTitle: 'Teen Patti',
-      variationLabel: _variationLabel,
-      stake: _selectedStake,
-      maxSeats: 6,
-      gradientColors: _variationGradient,
-      currentPlayer: const MatchmakingPlayer(
-        userId: 'self',
-        username: 'You',
-      ),
-      joinedPlayersNotifier: _joinedPlayersNotifier,
-      onCancel: () {
-        if (Navigator.canPop(context)) {
-          Navigator.of(context).pop();
-        }
-        _cancelSearch();
-      },
-    );
   }
 
   void _showLowBalanceDialog() {
@@ -281,7 +264,6 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       'stake': _selectedStake,
       'variation': widget.variation,
     });
-    _joinedPlayersNotifier.value = [];
     _roomJoinedSub?.cancel();
     _roomJoinedSub = null;
     setState(() => _searching = false);
@@ -559,14 +541,62 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
               ),
               child: Column(
                 children: [
-                  const SizedBox(
-                    width: 30, height: 30,
-                    child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 3),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(
+                        width: 22, height: 22,
+                        child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 2.5),
+                      ),
+                      const SizedBox(width: 10),
+                      Text('Finding players for $_variationLabel… (${_secondsRemaining}s)',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                    ],
                   ),
-                  const SizedBox(height: 14),
-                  Text('Finding players for $_variationLabel…',
-                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
                   const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: List.generate(4, (index) {
+                      final hasPlayer = index < _queuedPlayers.length;
+                      final player = hasPlayer ? _queuedPlayers[index] : null;
+                      final isBot = player?['isBot'] == true;
+                      final name = player?['username'] ?? 'Waiting…';
+
+                      return Container(
+                        width: 72,
+                        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                        decoration: BoxDecoration(
+                          color: hasPlayer ? AppColors.gold.withValues(alpha: 0.15) : Colors.black25,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: hasPlayer ? AppColors.gold : Colors.white12,
+                            width: hasPlayer ? 1.5 : 1.0,
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(
+                              hasPlayer ? (isBot ? Icons.smart_toy_rounded : Icons.person_rounded) : Icons.hourglass_empty_rounded,
+                              size: 22,
+                              color: hasPlayer ? AppColors.gold : Colors.white30,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: hasPlayer ? Colors.white : Colors.white38,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 18),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton(

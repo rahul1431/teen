@@ -1,65 +1,139 @@
-/* Global responsiveness for the admin panel.
-   Keeps pages usable on phones without touching every page individually. */
+/* Global responsiveness & design system enhancements for MyOnlineJoker Admin Panel */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  /* Never let a rogue wide element scroll the whole page sideways. */
   overflow-x: hidden;
-  /* Subtle warm/cool glow in the content area so the glass header has
-     something to blur, instead of a flat off-white field. */
   background:
-    radial-gradient(1200px 600px at 8% -10%, rgba(228, 197, 88, 0.10), transparent 60%),
-    radial-gradient(1000px 520px at 100% 0%, rgba(37, 99, 235, 0.05), transparent 55%),
-    #F7F5F1;
+    radial-gradient(1200px 600px at 10% -10%, rgba(212, 175, 55, 0.08), transparent 60%),
+    radial-gradient(1000px 520px at 90% 0%, rgba(99, 102, 241, 0.05), transparent 55%),
+    #F4F6FB;
   background-attachment: fixed;
+  color: #0F172A;
+  -webkit-font-smoothing: antialiased;
 }
 
 html, body, #root {
   max-width: 100%;
 }
 
-/* Header floats over the content-area gradient with a frosted-glass look. */
-.admin-glass-header {
-  background: rgba(255, 255, 255, 0.72) !important;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(20, 17, 13, 0.06);
+/* Custom Sleek Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.03);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(212, 175, 55, 0.7);
 }
 
-/* Real elevation instead of a flat 1px border — cards lift slightly on hover. */
-.ant-card {
-  border-color: rgba(20, 17, 13, 0.06) !important;
-  transition: box-shadow 200ms ease, transform 200ms ease;
+/* Glassmorphic Header */
+.admin-glass-header {
+  background: rgba(255, 255, 255, 0.85) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+  transition: all 0.2s ease-in-out;
 }
+
+/* Card Elevation & Lift Effect */
+.ant-card {
+  border: 1px solid rgba(226, 232, 240, 0.8) !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.03);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ant-card-hoverable:hover,
 .ant-card:hover {
-  box-shadow: 0 4px 8px rgba(20, 17, 13, 0.06), 0 16px 40px rgba(20, 17, 13, 0.10);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06), 0 18px 36px rgba(15, 23, 42, 0.08) !important;
   transform: translateY(-2px);
 }
 
-/* Gold glow around the active sidebar item, not just a flat fill. */
+/* Gold glow for active sidebar item */
 .ant-menu-dark.ant-menu-inline .ant-menu-item-selected {
-  box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.35), 0 4px 16px rgba(212, 175, 55, 0.25);
+  background: linear-gradient(90deg, rgba(212, 175, 55, 0.22) 0%, rgba(212, 175, 55, 0.06) 100%) !important;
+  color: #D4AF37 !important;
+  box-shadow: inset 3px 0 0 0 #D4AF37;
+  font-weight: 600;
+}
+
+.ant-menu-dark .ant-menu-item-selected a {
+  color: #D4AF37 !important;
+}
+
+.ant-menu-dark .ant-menu-submenu-title:hover,
+.ant-menu-dark .ant-menu-item:hover {
+  color: #E5C158 !important;
+}
+
+/* Live Pulse Animation */
+@keyframes pulse-green {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
+  70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+.status-pulse-green {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #10B981;
+  animation: pulse-green 2s infinite;
+}
+
+/* Keyboard Shortcut Badge */
+.kbd-badge {
+  background: #F1F5F9;
+  border: 1px solid #CBD5E1;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-family: monospace;
+  color: #475569;
+}
+
+/* Enhanced Table Styling */
+.ant-table {
+  background: #FFFFFF;
+  border-radius: 12px;
+}
+
+.ant-table-thead > tr > th {
+  background: #F8FAFC !important;
+  color: #475569 !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid #E2E8F0 !important;
+}
+
+.ant-table-tbody > tr:hover > td {
+  background-color: rgba(212, 175, 55, 0.04) !important;
 }
 
 /* Phones (below Ant's `md`). */
 @media (max-width: 767px) {
-  /* Wide data tables scroll inside their own box instead of breaking layout. */
   .ant-table-wrapper {
     overflow-x: auto;
   }
   .ant-table-wrapper table {
     min-width: 520px;
   }
-
-  /* Tighten default paddings so content fits a phone screen. */
   .ant-card-body {
     padding: 14px !important;
   }
   .ant-layout-content {
     margin: 12px !important;
   }
-
-  /* Keep dialogs within the viewport. */
   .ant-modal {
     max-width: calc(100vw - 16px) !important;
     margin: 8px auto !important;
@@ -67,8 +141,7 @@ html, body, #root {
   .ant-drawer-content-wrapper {
     max-width: 92vw;
   }
-
-  /* Slightly smaller page headings on small screens. */
   h1 { font-size: 22px !important; }
   h2 { font-size: 20px !important; }
 }
+

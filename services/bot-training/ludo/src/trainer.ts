@@ -260,7 +260,7 @@ export class LudoTrainer {
 
       await this.upsertProfile({
         difficulty,
-        win_rate_target: round(avgWinRate, 1),
+        win_rate_target: learned.captureRate != null ? round(avgWinRate, 1) : targetWinRateForDifficulty(difficulty),
         capture_probability: learned.captureRate,
         safe_play_probability: learned.safePlayRate,
         avg_decision_delay_ms: delayForDifficulty(difficulty),
@@ -332,7 +332,11 @@ export class LudoTrainer {
 }
 
 export function delayForDifficulty(difficulty: Difficulty): number {
-  return difficulty === 'easy' ? 2800 : difficulty === 'medium' ? 2000 : 1400
+  return difficulty === 'easy' ? 3000 : difficulty === 'medium' ? 3500 : 3700
+}
+
+export function targetWinRateForDifficulty(difficulty: Difficulty): number {
+  return difficulty === 'easy' ? 25.0 : difficulty === 'medium' ? 50.0 : 80.0
 }
 
 const round = (v: number, dp: number) => Math.round(v * 10 ** dp) / 10 ** dp

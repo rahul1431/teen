@@ -18,6 +18,10 @@ import {
   ActionResult,
   BotDifficulty,
   WinnerSkill,
+  HOME_PROGRESS,
+  absoluteCell,
+  SAFE_CELLS,
+  MAIN_TRACK,
 } from './rules'
 import { chooseBotTokenCoordinated } from './coordination'
 
@@ -27,6 +31,48 @@ const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 10 })
 
 const KEY = (roomId: string) => `ludo:game:${roomId}`
 const TTL = 2 * 60 * 60 // 2h
+
+function getOptimalDiceForWinnerBot(state: LudoState, winnerIdx: number): number {
+  const winner = state.players[winnerIdx]
+  const realPlayerIndices = state.players.map((p, i) => (!p.is_bot ? i : -1)).filter((i) => i !== -1)
+
+  // 1. Check if any token can enter HOME_PROGRESS (finish) with a roll of 1..6
+  for (let t = 0; t < winner.tokens.length; t++) {
+    const prog = winner.tokens[t]
+    if (prog > 0 && prog < HOME_PROGRESS) {
+      const dist = HOME_PROGRESS - prog
+      if (dist >= 1 && dist <= 6) {
+        return dist
+      }
+    }
+  }
+
+  // 2. Check if any token can capture a real player token
+  for (let t = 0; t < winner.tokens.length; t++) {
+    const prog = winner.tokens[t]
+    if (prog >= 0 && prog <= 50) {
+      const currentCell = absoluteCell(winnerIdx, prog)
+      for (const rpIdx of realPlayerIndices) {
+        for (const rpToken of state.players[rpIdx].tokens) {
+          if (rpToken >= 0 && rpToken <= 50) {
+            const rpCell = absoluteCell(rpIdx, rpToken)
+            if (!SAFE_CELLS.has(rpCell)) {
+              const neededRoll = (rpCell - currentCell + MAIN_TRACK) % MAIN_TRACK
+              if (neededRoll >= 1 && neededRoll <= 6) {
+                if (prog + neededRoll <= 50) {
+                  return neededRoll
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Fallback to biased die roll
+  return rollDieBiased(state.coordination?.diceBias ?? 1.0)
+}
 
 async function loadState(roomId: string): Promise<LudoState | null> {
   const raw = await redis.get(KEY(roomId))
@@ -145,7 +191,23 @@ async function start() {
 
         if (body.action === 'roll_dice') {
           if (state.awaiting !== 'roll') return reply.code(409).send({ error: 'Roll not expected' })
-          const dice = rollDie()
+          let dice = rollDie()
+          // In coordinated mode (1RP+3Bots or 2RP+2Bots), ensure real players cannot roll a winning die for their 4th token
+          if (state.coordination && !state.players[idx].is_bot) {
+            const player = state.players[idx]
+            if (player.finished === 3) {
+              const remainingIdx = player.tokens.findIndex((t) => t !== -1 && t < HOME_PROGRESS)
+              if (remainingIdx !== -1) {
+                const prog = player.tokens[remainingIdx]
+                if (prog + dice === HOME_PROGRESS) {
+                  const safeDice = [1, 2, 3, 4, 5, 6].filter((d) => prog + d !== HOME_PROGRESS)
+                  if (safeDice.length > 0) {
+                    dice = safeDice[crypto.randomInt(0, safeDice.length)]
+                  }
+                }
+              }
+            }
+          }
           rolledDice = dice
           applyRoll(state, dice)
         } else if (body.action === 'move_token') {
@@ -208,7 +270,7 @@ async function start() {
         }
 
         const isWinnerBot = state.coordination && idx === state.coordination.winnerBotIdx
-        const dice = isWinnerBot ? rollDieBiased(state.coordination!.diceBias ?? 0) : rollDie()
+        const dice = isWinnerBot ? getOptimalDiceForWinnerBot(state, idx) : rollDie()
         applyRoll(state, dice)
         let result: ActionResult | null = null
         let movedToken = -1

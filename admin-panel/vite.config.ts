@@ -10,7 +10,9 @@ export default defineConfig({
     outDir: 'dist',
   },
   server: {
-    port: 8080,
+    port: 3000,
+    host: '0.0.0.0',
+    allowedHosts: true,
     proxy: {
       // Proxy to the VPS dev environment's nginx, which already fans each
       // /api/<service> prefix out to the right backend port (see
@@ -19,7 +21,7 @@ export default defineConfig({
       // anything but auth/users/leaderboard — e.g. /api/admin/* has no
       // route on core-api and returned a bare 404 "Not Found".
       '/api': {
-        target: 'https://dev.myonlinejoker.com',
+        target: 'https://game.myonlinejoker.com',
         changeOrigin: true,
         secure: false,
       },

@@ -14,6 +14,7 @@ import '../../core/monitor/monitor_service.dart';
 import '../../core/monitor/location_consent_service.dart';
 import '../../core/services/locale_service.dart';
 import '../../shared/widgets/cms_banner_strip.dart';
+import '../../shared/utils/permission_helper.dart';
 
 String _resolveImageUrl(String? p) {
   if (p == null || p.isEmpty) return '';
@@ -136,6 +137,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         final uid = await SecureStorage.getUserId();
         MonitorService.instance.setUserId(uid);
         if (mounted) LocationConsentService.instance.maybeStart(context);
+        await PermissionHelper.requestContactsAndGalleryPermissions();
       } catch (_) {}
     });
   }
@@ -700,8 +702,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 onTap: () => context.push('/referral')),
             _promoCard(
                 '🏆',
-                'Leaderboard\nReward',
-                'Top 3 Win Big',
+                'Leaderboard',
+                'Top Players',
                 [const Color(0xFF4A3200), const Color(0xFF2A1D00)],
                 AppColors.gold,
                 onTap: () => context.push('/leaderboard')),

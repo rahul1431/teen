@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/storage/secure_storage.dart';
+import '../../../core/update/update_service.dart';
 import '../../../shared/theme/app_theme.dart';
 
 class SplashPage extends StatefulWidget {
@@ -18,8 +19,11 @@ class _SplashPageState extends State<SplashPage> {
   }
 
   Future<void> _navigate() async {
-    await Future.delayed(const Duration(milliseconds: 2200));
+    await Future.delayed(const Duration(milliseconds: 1800));
     if (!mounted) return;
+    final isBlockingForce = await UpdateService.instance.checkAndPrompt(context);
+    if (isBlockingForce) return; // Force update dialog is showing over splash
+
     final token = await SecureStorage.getAccessToken();
     if (mounted) context.go(token != null ? '/home' : '/auth/login');
   }

@@ -2,7 +2,7 @@
 # Run from /opt/teen after git pull
 set -e
 
-BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+BASE=/opt/teen
 # Nested paths (bot-training/*) are relative to services/ like the rest — the
 # loop below joins on "$BASE/services/$svc", so a subdirectory works unchanged.
 SERVICES=(core-api-service auth-service user-service wallet-service game-gateway betting-service leaderboard-service notification-service admin-service monitoring-service risk-service churn-service bot-learning-service app-monitor-service bot-training/teen-patti bot-training/ludo)

@@ -1,0 +1,8 @@
+{
+  "name": "MyOnlineJoker Admin",
+  "description": "Admin control panel and management dashboard for MyOnlineJoker gaming platform.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

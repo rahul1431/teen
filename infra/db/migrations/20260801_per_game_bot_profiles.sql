@@ -84,11 +84,11 @@ ON CONFLICT (difficulty) DO NOTHING;
 -- Ludo seeds leave capture/safe-play NULL on purpose: untrained must mean
 -- "use the deterministic rule", not "take captures 50% of the time".
 INSERT INTO ludo_bot_profiles
-  (difficulty, avg_decision_delay_ms, sample_size)
+  (difficulty, win_rate_target, avg_decision_delay_ms, sample_size)
 VALUES
-  ('easy',   2800, 0),
-  ('medium', 2000, 0),
-  ('hard',   1400, 0)
+  ('easy',   25.00, 3000, 0),
+  ('medium', 50.00, 3500, 0),
+  ('hard',   80.00, 3700, 0)
 ON CONFLICT (difficulty) DO NOTHING;
 
 -- Per-game training config. bot_learning_config was a single global key/value

@@ -218,7 +218,7 @@ export default function Tasks() {
         ]}
       />
 
-      <Modal title="New Task" open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnClose>
+      <Modal title="New Task" open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
         <Form layout="vertical" onFinish={createTask}>
           <Form.Item name="title" label="Title" rules={[{ required: true, max: 200 }]}>
             <Input />

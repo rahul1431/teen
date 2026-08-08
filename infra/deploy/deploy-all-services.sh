@@ -62,7 +62,7 @@ if [ -d "$REPO/services/churn-ml-service" ]; then
 fi
 
 echo "==> Building admin panel and deploying to webroot"
-(cd "$REPO/admin-panel" && npm install --production=false --no-audit --no-fund && npm run build)
+(cd "$REPO/admin-panel" && npm install --production=false --no-audit --no-fund && ADMIN_BASE=/admin/ npm run build)
 cp -rf "$REPO/admin-panel/dist/." "$WEBROOT"
 
 echo "==> Applying pending DB migrations"

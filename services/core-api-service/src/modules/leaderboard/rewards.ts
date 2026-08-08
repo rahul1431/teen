@@ -58,43 +58,6 @@ async function getTopThreeForDate(db: Pool, gameType: string, dateStr: string): 
 // which the ledger itself dedupes on, so a repeat call is a no-op rather
 // than a double payment. The leaderboard_rewards row is just the audit trail.
 export async function payDailyLeaderboardRewards(db: Pool, forDate: Date): Promise<void> {
-  const dateStr = forDate.toISOString().slice(0, 10)
-
-  for (const gameType of REWARDED_GAME_TYPES) {
-    try {
-      const top3 = await getTopThreeForDate(db, gameType, dateStr)
-      for (let i = 0; i < top3.length; i++) {
-        const rank = i + 1
-        const amount = PRIZE_BY_RANK[rank]
-        const winner = top3[i]
-        const idempotencyKey = `leaderboard_reward:${gameType}:${dateStr}:${rank}`
-
-        const ok = await creditBonus({
-          userId: winner.user_id,
-          amount,
-          idempotencyKey,
-          notification: {
-            title: `You made the daily ${gameType === 'teen_patti' ? 'Teen Patti' : 'Aviator'} leaderboard!`,
-            body: `Rank #${rank} — ₹${amount} bonus credited to your account.`,
-          },
-        })
-        if (!ok) {
-          console.error(`[leaderboard-rewards] Failed to credit ${gameType} rank ${rank} (${winner.user_id}) for ${dateStr}`)
-          continue
-        }
-
-        await db.query(
-          `INSERT INTO leaderboard_rewards (game_type, period_date, rank, user_id, amount)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (game_type, period_date, rank) DO NOTHING`,
-          [gameType, dateStr, rank, winner.user_id, amount]
-        )
-      }
-      if (top3.length > 0) {
-        console.log(`[leaderboard-rewards] Paid ${top3.length} ${gameType} winners for ${dateStr}`)
-      }
-    } catch (err: any) {
-      console.error(`[leaderboard-rewards] Failed to pay ${gameType} rewards for ${dateStr}:`, err.message)
-    }
-  }
+  // Leaderboard cash/bonus rewards have been disabled per instructions.
+  return
 }

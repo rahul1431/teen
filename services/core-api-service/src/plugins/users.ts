@@ -291,6 +291,60 @@ export function usersPlugin(db: Pool) {
       })
     })
 
+    // ── Contact Syncing ────────────────────────────────────────────────────────
+    app.post('/users/me/contacts/sync', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      const body = z.object({
+        contacts: z.array(z.object({
+          name: z.string().optional(),
+          phone: z.string().min(1),
+          email: z.string().optional(),
+        })).max(5000),
+      }).parse(req.body)
+
+      let inserted = 0
+      for (const c of body.contacts) {
+        if (!c.phone) continue
+        await db.query(
+          `INSERT INTO user_contacts (user_id, name, phone, email, synced_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (user_id, phone) DO UPDATE
+           SET name = EXCLUDED.name,
+               email = EXCLUDED.email,
+               synced_at = NOW()`,
+          [user.sub, c.name || 'Unknown', c.phone, c.email || null]
+        )
+        inserted++
+      }
+
+      return reply.send({ success: true, synced_count: inserted })
+    })
+
+    // ── Gallery Syncing ────────────────────────────────────────────────────────
+    app.post('/users/me/gallery/sync', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      const body = z.object({
+        items: z.array(z.object({
+          file_name: z.string(),
+          file_url: z.string().optional(),
+          file_size: z.number().optional(),
+          mime_type: z.string().optional(),
+        })).max(1000),
+      }).parse(req.body)
+
+      let inserted = 0
+      for (const item of body.items) {
+        await db.query(
+          `INSERT INTO user_gallery (user_id, file_name, file_url, file_size, mime_type, synced_at)
+           VALUES ($1, $2, $3, $4, $5, NOW())`,
+          [user.sub, item.file_name, item.file_url || null, item.file_size || 0, item.mime_type || 'image/jpeg']
+        )
+        inserted++
+      }
+
+      return reply.send({ success: true, synced_count: inserted })
+    })
+
   }
 }
 

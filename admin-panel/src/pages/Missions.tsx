@@ -129,7 +129,7 @@ function MissionConfigTab() {
     >
       <Table dataSource={missions} columns={columns} rowKey="id" loading={loading} pagination={false} scroll={{ x: 'max-content' }} size="small" />
 
-      <Modal title={editing ? 'Edit Mission' : 'New Mission'} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={save} okText="Save" destroyOnClose>
+      <Modal title={editing ? 'Edit Mission' : 'New Mission'} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={save} okText="Save" destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="title" label="Title" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="description" label="Description"><Input.TextArea rows={2} /></Form.Item>

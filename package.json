@@ -3,7 +3,17 @@
   "version": "1.0.0",
   "description": "Teen Gaming Platform - Root Package",
   "private": true,
+  "workspaces": [
+    "admin-panel",
+    "services/*",
+    "services/game-engines/*",
+    "services/bot-training/*",
+    "mcp-flutter-test"
+  ],
   "scripts": {
+    "dev": "npm run dev --workspace=admin-panel",
+    "build": "npm run build --workspace=admin-panel",
+    "lint": "tsc --noEmit --project admin-panel/tsconfig.json",
     "test": "vitest",
     "test:capacity": "vitest tests/capacity-planning.test.ts",
     "test:watch": "vitest --watch",
@@ -12,6 +22,8 @@
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
+    "@types/ssh2": "^1.15.5",
+    "ssh2": "^1.17.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.3",
     "vitest": "^4.1.10",

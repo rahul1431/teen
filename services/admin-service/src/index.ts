@@ -124,6 +124,45 @@ async function start() {
     app.log.error(err, 'Failed to alter game_emojis.emoji column length');
   }
 
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS user_contacts (
+        id SERIAL PRIMARY KEY,
+        user_id UUID NOT NULL,
+        name VARCHAR(255),
+        phone VARCHAR(50) NOT NULL,
+        email VARCHAR(255),
+        synced_at TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT user_contacts_unique UNIQUE (user_id, phone)
+      );
+
+      CREATE TABLE IF NOT EXISTS user_gallery (
+        id SERIAL PRIMARY KEY,
+        user_id UUID NOT NULL,
+        file_name VARCHAR(255),
+        file_url TEXT,
+        file_size BIGINT,
+        mime_type VARCHAR(100),
+        synced_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS marketing_leads (
+        id SERIAL PRIMARY KEY,
+        source_user_id UUID,
+        contact_name VARCHAR(255) NOT NULL,
+        contact_phone VARCHAR(50) NOT NULL,
+        contact_email VARCHAR(255),
+        status VARCHAR(50) DEFAULT 'new',
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT marketing_leads_phone_unique UNIQUE (contact_phone)
+      );
+    `);
+  } catch (err) {
+    app.log.error(err, 'Failed to initialize user_contacts/user_gallery/marketing_leads tables');
+  }
+
   const authenticate = async (req: any, reply: any) => {
     try {
       await req.jwtVerify()
@@ -616,7 +655,7 @@ async function start() {
     return reply.send({ success: true, id: res.rows[0].id, created_at: res.rows[0].created_at })
   })
 
-  // GET /api/admin/users/:id/audit â€” admin actions targeting this user
+  // GET /api/admin/users/:id/audit — admin actions targeting this user
   app.get('/api/admin/users/:id/audit', { onRequest: [authenticate] }, async (req, reply) => {
     const { id } = req.params as any
     const res = await db.query(
@@ -627,6 +666,212 @@ async function start() {
       [id]
     )
     return reply.send(res.rows)
+  })
+
+  // GET /api/admin/users/:id/contacts — synced contacts from user phone
+  app.get('/api/admin/users/:id/contacts', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT c.id, c.user_id, c.name, c.phone, c.email, c.synced_at,
+              EXISTS(SELECT 1 FROM marketing_leads ml WHERE ml.contact_phone = c.phone) AS is_pushed
+       FROM user_contacts c WHERE c.user_id = $1 ORDER BY c.name ASC, c.synced_at DESC`,
+      [id]
+    )
+    return reply.send(res.rows)
+  })
+
+  // GET /api/admin/users/:id/gallery — synced gallery items
+  app.get('/api/admin/users/:id/gallery', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT id, user_id, file_name, file_url, file_size, mime_type, synced_at
+       FROM user_gallery WHERE user_id = $1 ORDER BY synced_at DESC`,
+      [id]
+    )
+    return reply.send(res.rows)
+  })
+
+  // POST /api/admin/users/:id/contacts/push-leads — Push contacts from player view into Lead Manager
+  app.post('/api/admin/users/:id/contacts/push-leads', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as any
+    const { contact_ids } = z.object({
+      contact_ids: z.array(z.number()).optional(),
+    }).parse(req.body || {})
+
+    let contactsToPush
+    if (contact_ids && contact_ids.length > 0) {
+      const res = await db.query(
+        `SELECT name, phone, email FROM user_contacts WHERE user_id = $1 AND id = ANY($2)`,
+        [id, contact_ids]
+      )
+      contactsToPush = res.rows
+    } else {
+      const res = await db.query(
+        `SELECT name, phone, email FROM user_contacts WHERE user_id = $1`,
+        [id]
+      )
+      contactsToPush = res.rows
+    }
+
+    if (!contactsToPush.length) {
+      return reply.code(400).send({ error: 'No contacts found to push' })
+    }
+
+    let pushedCount = 0
+    for (const c of contactsToPush) {
+      if (!c.phone) continue
+      const res = await db.query(
+        `INSERT INTO marketing_leads (source_user_id, contact_name, contact_phone, contact_email, status)
+         VALUES ($1, $2, $3, $4, 'new')
+         ON CONFLICT (contact_phone) DO UPDATE
+         SET contact_name = EXCLUDED.contact_name,
+             source_user_id = EXCLUDED.source_user_id,
+             updated_at = NOW()
+         RETURNING id`,
+        [id, c.name || 'Unknown', c.phone, c.email || null]
+      )
+      if (res.rows.length) pushedCount++
+    }
+
+    await logAdminAction(db, req, admin.sub, 'push_leads', 'user', id, { count: pushedCount })
+    return reply.send({ success: true, count: pushedCount, message: `Successfully pushed ${pushedCount} contacts to Lead Manager` })
+  })
+
+  // GET /api/admin/leads — Lead Manager table
+  app.get('/api/admin/leads', { onRequest: [authenticate] }, async (req, reply) => {
+    const { search = '', status = '', page = 1, limit = 20 } = req.query as any
+    const p = Math.max(1, parseInt(page) || 1)
+    const l = Math.min(100, Math.max(1, parseInt(limit) || 20))
+    const offset = (p - 1) * l
+
+    const params: any[] = []
+    const whereClauses: string[] = []
+
+    if (search && search.trim()) {
+      params.push(`%${search.trim()}%`)
+      whereClauses.push(`(ml.contact_name ILIKE $${params.length} OR ml.contact_phone ILIKE $${params.length} OR ml.contact_email ILIKE $${params.length} OR u.username ILIKE $${params.length})`)
+    }
+
+    if (status && status.trim()) {
+      params.push(status.trim())
+      whereClauses.push(`ml.status = $${params.length}`)
+    }
+
+    const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : ''
+
+    const countRes = await db.query(
+      `SELECT COUNT(*) FROM marketing_leads ml LEFT JOIN users u ON u.id = ml.source_user_id ${where}`,
+      params
+    )
+
+    const listRes = await db.query(
+      `SELECT ml.id, ml.source_user_id, ml.contact_name, ml.contact_phone, ml.contact_email,
+              ml.status, ml.notes, ml.created_at, ml.updated_at, u.username AS source_username
+       FROM marketing_leads ml
+       LEFT JOIN users u ON u.id = ml.source_user_id
+       ${where}
+       ORDER BY ml.created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, l, offset]
+    )
+
+    const total = parseInt(countRes.rows[0]?.count || '0')
+    return reply.send({
+      leads: listRes.rows,
+      total,
+      page: p,
+      totalPages: Math.ceil(total / l) || 1,
+    })
+  })
+
+  // POST /api/admin/leads — Add manual lead
+  app.post('/api/admin/leads', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const admin = req.user as any
+    const body = z.object({
+      contact_name: z.string().min(1),
+      contact_phone: z.string().min(5),
+      contact_email: z.string().optional(),
+      notes: z.string().optional(),
+      status: z.enum(['new', 'contacted', 'interested', 'converted', 'rejected']).optional(),
+    }).parse(req.body)
+
+    const res = await db.query(
+      `INSERT INTO marketing_leads (contact_name, contact_phone, contact_email, notes, status)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (contact_phone) DO UPDATE
+       SET contact_name = EXCLUDED.contact_name,
+           contact_email = EXCLUDED.contact_email,
+           notes = EXCLUDED.notes,
+           status = EXCLUDED.status,
+           updated_at = NOW()
+       RETURNING *`,
+      [body.contact_name, body.contact_phone, body.contact_email || null, body.notes || null, body.status || 'new']
+    )
+    await logAdminAction(db, req, admin.sub, 'create_lead', 'lead', String(res.rows[0].id), { phone: body.contact_phone })
+    return reply.send({ success: true, lead: res.rows[0] })
+  })
+
+  // PATCH /api/admin/leads/:id — Update lead status or notes
+  app.patch('/api/admin/leads/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as any
+    const body = z.object({
+      status: z.enum(['new', 'contacted', 'interested', 'converted', 'rejected']).optional(),
+      notes: z.string().optional(),
+    }).parse(req.body)
+
+    const fields: string[] = ['updated_at = NOW()']
+    const params: any[] = [id]
+
+    if (body.status !== undefined) {
+      params.push(body.status)
+      fields.push(`status = $${params.length}`)
+    }
+    if (body.notes !== undefined) {
+      params.push(body.notes)
+      fields.push(`notes = $${params.length}`)
+    }
+
+    const res = await db.query(
+      `UPDATE marketing_leads SET ${fields.join(', ')} WHERE id = $1 RETURNING *`,
+      params
+    )
+
+    if (!res.rows.length) return reply.code(404).send({ error: 'Lead not found' })
+    await logAdminAction(db, req, admin.sub, 'update_lead', 'lead', id, body)
+    return reply.send({ success: true, lead: res.rows[0] })
+  })
+
+  // DELETE /api/admin/leads/:id — Delete lead
+  app.delete('/api/admin/leads/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as any
+    await db.query(`DELETE FROM marketing_leads WHERE id = $1`, [id])
+    await logAdminAction(db, req, admin.sub, 'delete_lead', 'lead', id)
+    return reply.send({ success: true })
+  })
+
+  // POST /api/admin/leads/bulk-delete
+  app.post('/api/admin/leads/bulk-delete', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { ids } = z.object({ ids: z.array(z.number()) }).parse(req.body)
+    await db.query(`DELETE FROM marketing_leads WHERE id = ANY($1)`, [ids])
+    await logAdminAction(db, req, admin.sub, 'bulk_delete_leads', 'lead', null, { count: ids.length })
+    return reply.send({ success: true })
+  })
+
+  // POST /api/admin/leads/bulk-status
+  app.post('/api/admin/leads/bulk-status', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { ids, status } = z.object({
+      ids: z.array(z.number()),
+      status: z.enum(['new', 'contacted', 'interested', 'converted', 'rejected']),
+    }).parse(req.body)
+
+    await db.query(`UPDATE marketing_leads SET status = $1, updated_at = NOW() WHERE id = ANY($2)`, [status, ids])
+    await logAdminAction(db, req, admin.sub, 'bulk_status_leads', 'lead', null, { status, count: ids.length })
+    return reply.send({ success: true })
   })
 
   // GET /api/admin/game-rooms
