@@ -1,5 +1,4 @@
 import axios from 'axios'
-import { getMockResponse } from './mockData'
 
 const getBaseURL = () => import.meta.env.VITE_API_BASE_URL || ''
 const getAdminBaseURL = () => import.meta.env.VITE_ADMIN_API_BASE_URL || '/api/admin'
@@ -7,53 +6,38 @@ const getAdminBaseURL = () => import.meta.env.VITE_ADMIN_API_BASE_URL || '/api/a
 export const api = axios.create({ baseURL: getBaseURL(), timeout: 15000 })
 export const adminApi = axios.create({ baseURL: getAdminBaseURL(), timeout: 15000 })
 
-const attachTokenAndMock = (config: any) => {
+// Attach JWT from localStorage to every request
+const attachToken = (config: any) => {
   const token = localStorage.getItem('admin_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 }
-api.interceptors.request.use(attachTokenAndMock)
-adminApi.interceptors.request.use(attachTokenAndMock)
+api.interceptors.request.use(attachToken)
+adminApi.interceptors.request.use(attachToken)
 
-// Handle demo token or missing backend endpoints gracefully with mock data
-const handleMockFallback = (instance: any) => {
+// Handle response errors: log details and redirect on session expiry
+const handleErrors = (instance: any) => {
   instance.interceptors.response.use(
     (response: any) => response,
-    async (err: any) => {
-      const token = localStorage.getItem('admin_token')
-      const isDemo = !token || token.startsWith('demo-')
-      const isNotFoundOrNetworkError = !err.response || err.response.status === 404 || err.response.status >= 500
+    (err: any) => {
+      const status = err.response?.status
+      const url = err.config?.url
+      const data = err.response?.data
+      console.error(`[AdminAPI] ${status} ${url}`, data || err.message)
 
-      if ((isDemo || isNotFoundOrNetworkError) && err.config) {
-        try {
-          const mockData = getMockResponse(err.config.url || '', err.config.params)
-          return {
-            data: mockData,
-            status: 200,
-            statusText: 'OK (Mock)',
-            headers: {},
-            config: err.config,
-          }
-        } catch (mErr) {
-          console.warn('Mock fallback failed', mErr)
-        }
+      // Redirect to login on session expiry
+      if (status === 401 && data?.session_expired) {
+        const isAgent = (() => {
+          try { return JSON.parse(localStorage.getItem('admin_user') || 'null')?.role === 'agent' } catch { return false }
+        })()
+        localStorage.removeItem('admin_token')
+        localStorage.removeItem('admin_user')
+        window.location.href = isAgent ? '/admin/agent/login' : '/admin/login'
       }
-      return handleAuthExpiry(err)
+      return Promise.reject(err)
     }
   )
 }
+handleErrors(api)
+handleErrors(adminApi)
 
-const handleAuthExpiry = (err: any) => {
-  if (err.response?.status === 401 && err.response.data?.session_expired) {
-    const isAgent = (() => {
-      try { return JSON.parse(localStorage.getItem('admin_user') || 'null')?.role === 'agent' } catch { return false }
-    })()
-    localStorage.removeItem('admin_token')
-    localStorage.removeItem('admin_user')
-    window.location.href = isAgent ? '/admin/agent/login' : '/admin/login'
-  }
-  return Promise.reject(err)
-}
-
-handleMockFallback(api)
-handleMockFallback(adminApi)
