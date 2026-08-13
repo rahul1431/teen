@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Run on VPS as root/sudo to apply all performance optimizations.
-# Usage: sudo bash /opt/teen/infra/config/vps-apply-optimizations.sh
+# Usage: sudo bash /opt/teen-prod/infra/config/vps-apply-optimizations.sh
 
 set -e
-BASE=/opt/teen
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 echo "=== [1/5] OS sysctl tuning ==="
 cp $BASE/infra/config/sysctl.conf /etc/sysctl.d/99-teen.conf

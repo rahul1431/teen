@@ -15,7 +15,7 @@ import Redis from 'ioredis'
 import { WalletService } from './wallet.service'
 
 // Where uploaded deposit screenshots are stored (served by nginx at /uploads/).
-const UPLOAD_DIR = process.env.UPLOAD_DIR || '/opt/teen/uploads/deposits'
+const UPLOAD_DIR = process.env.UPLOAD_DIR || '/opt/teen-prod/uploads/deposits'
 
 // Platform-wide deposit/withdrawal amount limits — configurable via .env
 // (see services/wallet-service/.env.example) rather than hardcoded.

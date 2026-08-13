@@ -102,7 +102,7 @@ export class AlertEngine {
     // and crash-loops on a port conflict — dotenv won't override vars that
     // are already set.
     const cmd = mode === 'start'
-      ? `cd /opt/teen && pm2 start ecosystem.config.js --only ${name} && pm2 save`
+      ? `cd /opt/teen-prod && pm2 start ecosystem.config.js --only ${name} && pm2 save`
       : `pm2 restart ${name}`
     const cleanEnv = { PATH: process.env.PATH!, HOME: process.env.HOME || '/root', PM2_HOME: process.env.PM2_HOME || '/root/.pm2' }
     let ok = false

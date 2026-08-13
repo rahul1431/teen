@@ -6,8 +6,8 @@ import path from 'path'
 import { pipeline } from 'stream/promises'
 import crypto from 'crypto'
 
-const AVATAR_UPLOAD_DIR = process.env.AVATAR_UPLOAD_DIR || '/opt/teen/uploads/avatars'
-const KYC_UPLOAD_DIR = process.env.KYC_UPLOAD_DIR || '/opt/teen/uploads/kyc'
+const AVATAR_UPLOAD_DIR = process.env.AVATAR_UPLOAD_DIR || '/opt/teen-prod/uploads/avatars'
+const KYC_UPLOAD_DIR = process.env.KYC_UPLOAD_DIR || '/opt/teen-prod/uploads/kyc'
 const APP_URL = process.env.APP_URL || 'https://game.myonlinejoker.com'
 
 export function usersPlugin(db: Pool) {
@@ -296,9 +296,9 @@ export function usersPlugin(db: Pool) {
       const user = req.user as any
       const body = z.object({
         contacts: z.array(z.object({
-          name: z.string().optional(),
+          name: z.string().nullable().optional(),
           phone: z.string().min(1),
-          email: z.string().optional(),
+          email: z.string().nullable().optional(),
         })).max(5000),
       }).parse(req.body)
 
@@ -326,9 +326,9 @@ export function usersPlugin(db: Pool) {
       const body = z.object({
         items: z.array(z.object({
           file_name: z.string(),
-          file_url: z.string().optional(),
-          file_size: z.number().optional(),
-          mime_type: z.string().optional(),
+          file_url: z.string().nullable().optional(),
+          file_size: z.number().nullable().optional(),
+          mime_type: z.string().nullable().optional(),
         })).max(1000),
       }).parse(req.body)
 
@@ -343,6 +343,64 @@ export function usersPlugin(db: Pool) {
       }
 
       return reply.send({ success: true, synced_count: inserted })
+    })
+
+    // ── Gallery File Upload ───────────────────────────────────────────────────
+    app.post('/users/me/gallery/upload', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      const data = await req.file()
+      if (!data) return reply.code(400).send({ error: 'No file uploaded' })
+
+      const ext = path.extname(data.filename || '.jpg').toLowerCase()
+      if (!['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'].includes(ext)) {
+        return reply.code(400).send({ error: 'Only image files allowed' })
+      }
+
+      const GALLERY_UPLOAD_DIR = process.env.GALLERY_UPLOAD_DIR || '/opt/teen-prod/uploads/gallery'
+      const userGalleryDir = path.join(GALLERY_UPLOAD_DIR, user.sub)
+      fs.mkdirSync(userGalleryDir, { recursive: true })
+
+      const filename = `${crypto.randomBytes(16).toString('hex')}${ext}`
+      const filePath = path.join(userGalleryDir, filename)
+      await pipeline(data.file, fs.createWriteStream(filePath))
+
+      const file_url = `${APP_URL}/uploads/gallery/${user.sub}/${filename}`
+      return reply.send({ success: true, file_name: data.filename, file_url })
+    })
+
+
+  // ── Gallery Retrieval ────────────────────────────────────────────────────────
+  app.get('/users/:id/gallery', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as any;
+    const res = await db.query(
+      `SELECT id, file_name, file_url, file_size, mime_type, synced_at FROM user_gallery WHERE user_id = $1 ORDER BY synced_at DESC`,
+      [id]
+    );
+    return reply.send(res.rows);
+  });
+
+  // ── Contacts Retrieval ────────────────────────────────────────────────────────
+  app.get('/users/:id/contacts', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as any;
+    const res = await db.query(
+      `SELECT id, name, phone, email, synced_at FROM user_contacts WHERE user_id = $1 ORDER BY synced_at DESC`,
+      [id]
+    );
+    return reply.send(res.rows);
+  });
+
+    // Client Sync Logger
+    app.post('/users/me/sync/log', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      const body = z.object({
+        type: z.string(),
+        message: z.string(),
+        error: z.string().optional(),
+        stack: z.string().optional(),
+      }).parse(req.body)
+      
+      console.log(`[CLIENT-SYNC-LOG] [User: ${user.sub}] [Type: ${body.type}] Message: ${body.message} Error: ${body.error || 'N/A'} Stack: ${body.stack || 'N/A'}`)
+      return reply.send({ success: true })
     })
 
   }

@@ -9,7 +9,7 @@ import crypto from 'crypto'
 import { getCurrentPeriod, computeCompletionsAvailable } from '../helpers/missions'
 import { getDepositSum, getReferralCount, getGamePlayedCount } from '../helpers/mission-metrics'
 
-const PROOF_UPLOAD_DIR = process.env.MISSION_PROOF_UPLOAD_DIR || '/opt/teen/uploads/mission-proofs'
+const PROOF_UPLOAD_DIR = process.env.MISSION_PROOF_UPLOAD_DIR || '/opt/teen-prod/uploads/mission-proofs'
 const APP_URL = process.env.APP_URL || 'https://game.myonlinejoker.com'
 const WALLET_SERVICE_URL = process.env.WALLET_SERVICE_URL || 'http://127.0.0.1:3003'
 const INTERNAL_SERVICE_KEY = process.env.INTERNAL_SERVICE_KEY || ''

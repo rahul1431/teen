@@ -1,6 +1,6 @@
 // Uptime monitoring bot: periodically tests service connectivity and writes status to JSON file
 // Tests: PostgreSQL, Redis, WebSocket handshakes, system TCP ports
-// Runs every 30 seconds, writes to /opt/teen/uptime-status.json
+// Runs every 30 seconds, writes to /opt/teen-prod/uptime-status.json
 
 import 'dotenv/config'
 import { Pool } from 'pg'
@@ -33,7 +33,7 @@ const logger = {
   error: (msg: string, err?: any) => console.error(`[uptime-bot] ${msg}`, err?.message || ''),
 }
 
-const OUTPUT_FILE = process.env.UPTIME_STATUS_FILE || '/opt/teen/uptime-status.json'
+const OUTPUT_FILE = process.env.UPTIME_STATUS_FILE || '/opt/teen-prod/uptime-status.json'
 const CHECK_INTERVAL_MS = parseInt(process.env.CHECK_INTERVAL_MS || '30000', 10)
 
 // Test PostgreSQL connection latency

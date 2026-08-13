@@ -24,7 +24,7 @@ const CRICKETER_QID = 'Q12299841'
 // nginx serves /uploads/ from /opt/teen/uploads/ (see infra/nginx/*.conf), and
 // admin-service already writes manually-uploaded avatars to this same folder —
 // downloaded photos land beside them so both are served identically.
-const AVATAR_DIR = process.env.CRICKET_AVATAR_UPLOAD_DIR || '/opt/teen/uploads/cricket-avatars'
+const AVATAR_DIR = process.env.CRICKET_AVATAR_UPLOAD_DIR || '/opt/teen-prod/uploads/cricket-avatars'
 const AVATAR_PUBLIC_PREFIX = '/uploads/cricket-avatars'
 // Avatars render at 44px in the app and ~32px in the admin table; 400px covers
 // both at 3x density with room for a larger profile view later.

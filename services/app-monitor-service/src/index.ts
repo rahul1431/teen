@@ -143,7 +143,7 @@ app.get('/api/monitor/stats', async (_req, reply) => {
 
 app.get('/api/monitor/uptime', async (_req, reply) => {
   try {
-    const filePath = '/opt/teen/uptime-status.json'
+    const filePath = '/opt/teen-prod/uptime-status.json'
     if (!require('fs').existsSync(filePath)) {
       return reply.send({ success: true, data: null })
     }

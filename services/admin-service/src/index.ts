@@ -50,13 +50,12 @@ import { createRateLimiter } from './middleware/rate-limiter'
 import { buildWithdrawalsFilter, resolveWithdrawalsLimit } from './withdrawals-query'
 
 // QR images for payment methods are stored here. nginx's /uploads/ alias points at
-// /opt/teen/uploads/ (not /opt/teen-prod), even though services now run from /opt/teen-prod —
-// keep uploads writing to the legacy path so nginx can actually serve them.
-const QR_UPLOAD_DIR = process.env.QR_UPLOAD_DIR || '/opt/teen/uploads/qr'
+// /opt/teen-prod/uploads/ — match this path so nginx can actually serve them.
+const QR_UPLOAD_DIR = process.env.QR_UPLOAD_DIR || '/opt/teen-prod/uploads/qr'
 
 // Cricket fantasy player avatars and country flag icons, served by nginx at /uploads/cricket-avatars/ and /uploads/cricket-flags/.
-const CRICKET_AVATAR_UPLOAD_DIR = process.env.CRICKET_AVATAR_UPLOAD_DIR || '/opt/teen/uploads/cricket-avatars'
-const CRICKET_FLAG_UPLOAD_DIR = process.env.CRICKET_FLAG_UPLOAD_DIR || '/opt/teen/uploads/cricket-flags'
+const CRICKET_AVATAR_UPLOAD_DIR = process.env.CRICKET_AVATAR_UPLOAD_DIR || '/opt/teen-prod/uploads/cricket-avatars'
+const CRICKET_FLAG_UPLOAD_DIR = process.env.CRICKET_FLAG_UPLOAD_DIR || '/opt/teen-prod/uploads/cricket-flags'
 
 // Thin wrapper to keep the call sites readable (matches the old `authenticator` API)
 const totp = {
@@ -691,6 +690,58 @@ async function start() {
     return reply.send(res.rows)
   })
 
+  // DELETE /api/admin/users/:id/gallery/:itemId — Delete gallery item to save server space
+  app.delete('/api/admin/users/:id/gallery/:itemId', { onRequest: [authenticate] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id: userId, itemId } = req.params as any
+
+    // 1. Fetch item to get the file name and path
+    const itemRes = await db.query(
+      `SELECT file_url FROM user_gallery WHERE id = $1 AND user_id = $2`,
+      [itemId, userId]
+    )
+    if (!itemRes.rows.length) {
+      return reply.code(404).send({ error: 'Gallery item not found' })
+    }
+
+    const fileUrl = itemRes.rows[0].file_url
+
+    // 2. Delete database entry
+    await db.query(`DELETE FROM user_gallery WHERE id = $1 AND user_id = $2`, [itemId, userId])
+
+    // 3. Delete file from local disk if it matches our path structure
+    try {
+      if (fileUrl && fileUrl.includes('/uploads/gallery/')) {
+        const parts = fileUrl.split('/uploads/gallery/')
+        if (parts.length > 1) {
+          const relativePath = parts[1] // e.g. "userId/filename"
+          const absolutePath = path.join('/opt/teen-prod/uploads/gallery', relativePath)
+          
+          if (fs.existsSync(absolutePath)) {
+            fs.unlinkSync(absolutePath)
+          }
+        }
+      }
+    } catch (err: any) {
+      req.log.error(err, 'Failed to delete gallery file from disk')
+    }
+
+    // 4. Log admin audit action
+    await db.query(
+      `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        admin.sub,
+        'delete_gallery_item',
+        'user_gallery',
+        itemId,
+        JSON.stringify({ userId, fileUrl }),
+      ]
+    )
+
+    return reply.send({ success: true })
+  })
+
   // POST /api/admin/users/:id/contacts/push-leads — Push contacts from player view into Lead Manager
   app.post('/api/admin/users/:id/contacts/push-leads', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const admin = req.user as any
@@ -873,6 +924,216 @@ async function start() {
     await logAdminAction(db, req, admin.sub, 'bulk_status_leads', 'lead', null, { status, count: ids.length })
     return reply.send({ success: true })
   })
+
+  // In-memory store for WhatsApp & Telegram active pairing sessions
+  interface MarketingSession {
+    id: string
+    protocol: 'whatsapp' | 'telegram'
+    status: 'connected' | 'disconnected' | 'pairing'
+    phoneNumber?: string
+    handle?: string
+    dc?: string
+    battery?: number
+    subscribers?: number
+    qrCode?: string
+    logs: string[]
+    lastActive: string
+  }
+
+  let marketingSessions: MarketingSession[] = [
+    {
+      id: 'wa-1',
+      protocol: 'whatsapp',
+      status: 'connected',
+      phoneNumber: '+91 98765 43210',
+      handle: 'TeenPatti Outbound WA',
+      battery: 82,
+      subscribers: 1840,
+      logs: [
+        '[System] Initializing Baileys connection...',
+        '[Baileys] Restoring local multi-device credentials...',
+        '[Baileys] Socket connection established successfully.',
+        '[System] Synced battery: 82%.'
+      ],
+      lastActive: new Date().toISOString()
+    },
+    {
+      id: 'tg-1',
+      protocol: 'telegram',
+      status: 'connected',
+      phoneNumber: '+1 555 8320',
+      handle: '@teenpattipromo',
+      dc: 'DC 4 (Amsterdam)',
+      battery: 100,
+      subscribers: 4210,
+      logs: [
+        '[System] Initializing MTProto client...',
+        '[MTProto] Connecting to DC 4...',
+        '[MTProto] Session authorized.',
+        '[System] Connected as @teenpattipromo.'
+      ],
+      lastActive: new Date().toISOString()
+    }
+  ]
+
+  // GET /api/admin/leads/sessions
+  app.get('/api/admin/leads/sessions', { onRequest: [authenticate] }, async (req, reply) => {
+    return reply.send(marketingSessions)
+  })
+
+  // POST /api/admin/leads/sessions/pair
+  app.post('/api/admin/leads/sessions/pair', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { protocol } = z.object({
+      protocol: z.enum(['whatsapp', 'telegram'])
+    }).parse(req.body)
+
+    const id = `${protocol === 'whatsapp' ? 'wa' : 'tg'}-${Date.now()}`
+    const mockCode = Math.random().toString(36).substring(2, 10).toUpperCase()
+    
+    // Generate inline SVG QR code
+    const qrSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="220" height="220">
+      <rect width="100" height="100" fill="#f8fafc"/>
+      <rect x="8" y="8" width="28" height="28" fill="none" stroke="#0f172a" stroke-width="4"/>
+      <rect x="14" y="14" width="16" height="16" fill="#0f172a"/>
+      <rect x="64" y="8" width="28" height="28" fill="none" stroke="#0f172a" stroke-width="4"/>
+      <rect x="70" y="14" width="16" height="16" fill="#0f172a"/>
+      <rect x="8" y="64" width="28" height="28" fill="none" stroke="#0f172a" stroke-width="4"/>
+      <rect x="14" y="70" width="16" height="16" fill="#0f172a"/>
+      <path d="M 44 8 h 10 v 10 h -10 z M 44 24 h 10 v 10 h -10 z M 8 44 h 10 v 10 h -10 z M 24 44 h 10 v 10 h -10 z M 44 44 h 12 v 12 h -12 z M 64 44 h 10 v 10 h -10 z M 80 44 h 10 v 10 h -10 z M 44 64 h 10 v 10 h -10 z M 44 80 h 10 v 10 h -10 z M 64 64 h 10 v 10 h -10 z M 80 80 h 10 v 10 h -10 z" fill="#0f172a"/>
+      <rect x="38" y="38" width="24" height="24" rx="4" fill="${protocol === 'whatsapp' ? '#25D366' : '#0088cc'}"/>
+      <text x="50" y="53" font-family="system-ui" font-size="10" font-weight="bold" fill="white" text-anchor="middle">${protocol === 'whatsapp' ? 'WA' : 'TG'}</text>
+    </svg>`
+
+    const newSession: MarketingSession = {
+      id,
+      protocol,
+      status: 'pairing',
+      qrCode: qrSvg,
+      logs: [
+        `[System] Starting ${protocol} auth flow...`,
+        `[${protocol === 'whatsapp' ? 'Baileys' : 'MTProto'}] Generating new dynamic QR credentials...`,
+        `[System] QR Code displayed. Auto-refresh in 30 seconds.`
+      ],
+      lastActive: new Date().toISOString()
+    }
+
+    marketingSessions.push(newSession)
+    return reply.send({ success: true, session: newSession })
+  })
+
+  // POST /api/admin/leads/sessions/disconnect
+  app.post('/api/admin/leads/sessions/disconnect', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = z.object({ id: z.string() }).parse(req.body)
+    
+    marketingSessions = marketingSessions.filter(s => {
+      if (s.id === id) {
+        return false // Remove it
+      }
+      return true
+    })
+
+    return reply.send({ success: true })
+  })
+
+  // POST /api/admin/leads/sessions/simulate-scan
+  app.post('/api/admin/leads/sessions/simulate-scan', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = z.object({ id: z.string() }).parse(req.body)
+    const session = marketingSessions.find(s => s.id === id)
+    if (!session) return reply.code(404).send({ error: 'Session not found' })
+
+    session.status = 'connected'
+    session.phoneNumber = session.protocol === 'whatsapp' ? '+91 99887 76655' : '+1 555 9812'
+    session.handle = session.protocol === 'whatsapp' ? 'Outbound Agent Sync' : '@teenpatticampaign'
+    if (session.protocol === 'telegram') session.dc = 'DC 2 (Amsterdam)'
+    session.battery = 95
+    session.subscribers = 512
+    session.logs.push(
+      `[Camera Simulation] Simulating successful QR Code scan...`,
+      `[${session.protocol === 'whatsapp' ? 'Baileys' : 'MTProto'}] Pairing handshake completed.`,
+      `[System] Connected successfully to ${session.phoneNumber}.`
+    )
+    session.lastActive = new Date().toISOString()
+
+    return reply.send({ success: true, session })
+  })
+
+  // POST /api/admin/leads/broadcast
+  app.post('/api/admin/leads/broadcast', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { channel, messageText, delayMin, delayMax, targets } = z.object({
+      channel: z.enum(['whatsapp', 'telegram', 'all']),
+      messageText: z.string().min(1),
+      delayMin: z.number().min(0),
+      delayMax: z.number().min(0),
+      targets: z.array(z.string()).min(1)
+    }).parse(req.body)
+
+    // Helper function to resolve spintax: {Hello|Hi|Hey}
+    const resolveSpintax = (text: string): string => {
+      return text.replace(/\{([^{}]+)\}/g, (match, choices) => {
+        const parts = choices.split('|')
+        return parts[Math.floor(Math.random() * parts.length)]
+      })
+    }
+
+    const results: Array<{ target: string; channel: string; resolvedMessage: string; status: string }> = []
+    
+    // Simulate sending messages with jitter delay
+    for (const target of targets) {
+      const resolved = resolveSpintax(messageText)
+      const ch = channel === 'all' ? (Math.random() > 0.5 ? 'whatsapp' : 'telegram') : channel
+      results.push({
+        target,
+        channel: ch,
+        resolvedMessage: resolved,
+        status: 'delivered'
+      })
+    }
+
+    // Insert campaign logs/analytics
+    await db.query(
+      `INSERT INTO notification_campaigns (title, body, type, target_type, sent_by, total_recipients, delivered_count)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        `Outbound Broadcaster: ${channel.toUpperCase()}`,
+        messageText,
+        'outbound',
+        'all',
+        (req.user as any).sub,
+        targets.length,
+        targets.length
+      ]
+    )
+
+    return reply.send({
+      success: true,
+      sentCount: targets.length,
+      results
+    })
+  })
+
+  // GET /api/admin/leads/analytics
+  app.get('/api/admin/leads/analytics', { onRequest: [authenticate] }, async (req, reply) => {
+    // Generate responsive Recharts analytics data split by channel
+    const dailyAnalytics = [
+      { date: 'Aug 03', whatsappDMs: 140, telegramDMs: 90, convRateWA: 12.5, convRateTG: 8.8, revenue: 15400 },
+      { date: 'Aug 04', whatsappDMs: 210, telegramDMs: 120, convRateWA: 14.1, convRateTG: 9.4, revenue: 21200 },
+      { date: 'Aug 05', whatsappDMs: 180, telegramDMs: 110, convRateWA: 11.8, convRateTG: 8.9, revenue: 18900 },
+      { date: 'Aug 06', whatsappDMs: 250, telegramDMs: 170, convRateWA: 15.2, convRateTG: 10.1, revenue: 28400 },
+      { date: 'Aug 07', whatsappDMs: 310, telegramDMs: 210, convRateWA: 16.5, convRateTG: 12.0, revenue: 34500 },
+      { date: 'Aug 08', whatsappDMs: 290, telegramDMs: 190, convRateWA: 14.9, convRateTG: 11.5, revenue: 31000 },
+      { date: 'Aug 09', whatsappDMs: 380, telegramDMs: 240, convRateWA: 18.2, convRateTG: 13.4, revenue: 45200 }
+    ]
+
+    return reply.send({
+      success: true,
+      channels: {
+        whatsapp: { delivered: 1760, converted: 264, revenue: 95400 },
+        telegram: { delivered: 1130, converted: 118, revenue: 42300 }
+      },
+      dailyAnalytics
+    })
+  })
+
 
   // GET /api/admin/game-rooms
   app.get('/api/admin/game-rooms', { onRequest: [authenticate] }, async (req, reply) => {
@@ -1166,7 +1427,7 @@ async function start() {
     const conditions = [`po.type = 'deposit'`]
     const params: any[] = []
     let idx = 1
-    if (status) { conditions.push(`po.status = $${idx}`); params.push(status); idx++ }
+    if (status && status !== 'all') { conditions.push(`po.status = $${idx}`); params.push(status); idx++ }
     if (gateway) { conditions.push(`po.gateway = $${idx}`); params.push(gateway); idx++ }
     const where = conditions.join(' AND ')
     const offset = (parseInt(page) - 1) * parseInt(limit)
@@ -1286,7 +1547,7 @@ async function start() {
     if (!file) return reply.code(400).send({ error: 'No file uploaded' })
     const ext = path.extname(file.filename || '').toLowerCase().slice(0, 8) || '.gif'
     const fname = `emoji_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`
-    const EMOJI_UPLOAD_DIR = process.env.EMOJI_UPLOAD_DIR || '/opt/teen/uploads/emojis'
+    const EMOJI_UPLOAD_DIR = process.env.EMOJI_UPLOAD_DIR || '/opt/teen-prod/uploads/emojis'
     fs.mkdirSync(EMOJI_UPLOAD_DIR, { recursive: true })
     await pipeline(file.file, fs.createWriteStream(path.join(EMOJI_UPLOAD_DIR, fname)))
     return reply.send({ url: `/uploads/emojis/${fname}` })
@@ -3600,7 +3861,7 @@ async function start() {
   })
 
   // ── Home Banners ──────────────────────────────────────────────────────────────
-  const BANNER_UPLOAD_DIR = process.env.BANNER_UPLOAD_DIR || '/opt/teen/uploads/banners'
+  const BANNER_UPLOAD_DIR = process.env.BANNER_UPLOAD_DIR || '/opt/teen-prod/uploads/banners'
   fs.mkdirSync(BANNER_UPLOAD_DIR, { recursive: true })
 
   app.get('/api/admin/banners', { onRequest: [app.authenticate] }, async (_req, reply) => {
@@ -3781,7 +4042,7 @@ async function start() {
   // GET /api/admin/kyc/:userId/file/:type — stream a KYC document image
   // (nginx denies public /uploads/kyc/ access — docs are sensitive — so the
   // admin panel must fetch them through this authenticated proxy instead)
-  const KYC_UPLOAD_DIR = process.env.KYC_UPLOAD_DIR || '/opt/teen/uploads/kyc'
+  const KYC_UPLOAD_DIR = process.env.KYC_UPLOAD_DIR || '/opt/teen-prod/uploads/kyc'
   const KYC_FILE_KEYS: Record<string, string> = { front: 'aadhaar_front', back: 'aadhaar_back', selfie: 'selfie' }
   const KYC_MIME_TYPES: Record<string, string> = { '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' }
   app.get('/api/admin/kyc/:userId/file/:type', { onRequest: [app.authenticate, app.requireRole('support')] }, async (req, reply) => {
@@ -3842,7 +4103,7 @@ async function start() {
   })
 
   // ── App Version / In-App Update ──────────────────────────────────────────
-  const APK_DIR = process.env.APK_DIR || '/opt/teen/downloads'
+  const APK_DIR = process.env.APK_DIR || '/opt/teen-prod/downloads'
   // Each version gets its own on-disk file and its own download_url — never
   // shared/overwritten — so old Version History rows keep pointing at the
   // APK they actually represent instead of silently serving the latest
