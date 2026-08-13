@@ -17,7 +17,7 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-BASE="/opt/teen"
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BACKUP_DIR="/home/admin/backups/postgres"
 CRON_DIR="/home/admin/infra/cron"
 

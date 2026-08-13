@@ -15,7 +15,7 @@
 # Secrets live only in the per-service .env files already on the VPS.
 set -euo pipefail
 
-REPO=/opt/teen
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BRANCH=claude/confident-archimedes-e2dd1k
 
 cd "$REPO"

@@ -16,7 +16,7 @@
 # script never writes or echoes them.
 set -euo pipefail
 
-REPO=/opt/teen
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BRANCH=claude/confident-archimedes-e2dd1k
 
 cd "$REPO"

@@ -1,8 +1,8 @@
 #!/bin/bash
-# Run from /opt/teen after git pull
+# Run from repository root after git pull
 set -e
 
-BASE=/opt/teen
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Nested paths (bot-training/*) are relative to services/ like the rest — the
 # loop below joins on "$BASE/services/$svc", so a subdirectory works unchanged.
 SERVICES=(core-api-service auth-service user-service wallet-service game-gateway betting-service leaderboard-service notification-service admin-service monitoring-service risk-service churn-service bot-learning-service app-monitor-service bot-training/teen-patti bot-training/ludo)
@@ -62,10 +62,10 @@ cp -rf "$BASE/admin-panel/dist/." /home/admin/web/game.myonlinejoker.com/public_
 echo "  Admin panel deployed to webroot."
 
 echo "==> Setting up upload and download directories..."
-mkdir -p /opt/teen/uploads/avatars
-mkdir -p /opt/teen/uploads/banners
-mkdir -p /opt/teen/uploads/kyc
-mkdir -p /opt/teen/downloads
+mkdir -p "$BASE/uploads/avatars"
+mkdir -p "$BASE/uploads/banners"
+mkdir -p "$BASE/uploads/kyc"
+mkdir -p "$BASE/downloads"
 echo "  Directories created."
 
 echo "==> Setting up Nginx..."

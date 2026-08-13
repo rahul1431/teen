@@ -68,3 +68,10 @@ npm-debug.log*
 .superpowers/
 .worktrees/
 services/game-engines/teen-patti/teen-patti-engine.exe
+
+# Ruflo local secrets and runtime data
+.env.local
+.env.*.local
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/

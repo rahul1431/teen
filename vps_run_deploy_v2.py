@@ -18,7 +18,7 @@ def run_deploy():
 
         # 1. Pull the latest commits on our branch
         cmds = [
-            "cd /opt/teen && git clean -fd && git reset --hard && git fetch origin && (git checkout feature/admin-responsive || git checkout -b feature/admin-responsive origin/feature/admin-responsive) && git reset --hard origin/feature/admin-responsive"
+            "cd /opt/teen-prod && git clean -fd && git reset --hard && git fetch origin && (git checkout feature/admin-responsive || git checkout -b feature/admin-responsive origin/feature/admin-responsive) && git reset --hard origin/feature/admin-responsive"
         ]
         for cmd in cmds:
             print(f"---> CMD: {cmd}")
@@ -30,7 +30,7 @@ def run_deploy():
         print("Reading admin-service .env secrets...")
         sftp = client.open_sftp()
         try:
-            admin_env_content = sftp.open("/opt/teen/services/admin-service/.env").read().decode('utf-8')
+            admin_env_content = sftp.open("/opt/teen-prod/services/admin-service/.env").read().decode('utf-8')
         except Exception as e:
             print(f"Error reading admin-service .env: {e}")
             admin_env_content = ""
@@ -54,7 +54,7 @@ REDIS_URL={redis_url_val}
 WEBSOCKET_SOURCE_URL=ws://127.0.0.1:3004/ws
 """
         print("Writing monitoring-service .env...")
-        monitoring_env_file = sftp.open("/opt/teen/services/monitoring-service/.env", "w")
+        monitoring_env_file = sftp.open("/opt/teen-prod/services/monitoring-service/.env", "w")
         monitoring_env_file.write(monitoring_env)
         monitoring_env_file.close()
 
@@ -74,7 +74,7 @@ FRAUD_REFERRAL_DEPTH=2
 LOG_LEVEL=info
 """
         print("Writing risk-service .env...")
-        risk_env_file = sftp.open("/opt/teen/services/risk-service/.env", "w")
+        risk_env_file = sftp.open("/opt/teen-prod/services/risk-service/.env", "w")
         risk_env_file.write(risk_env)
         risk_env_file.close()
 
@@ -88,7 +88,7 @@ NOTIFICATION_SERVICE_URL=http://127.0.0.1:3001
 WALLET_SERVICE_URL=http://127.0.0.1:3003
 """
         print("Writing churn-service .env...")
-        churn_env_file = sftp.open("/opt/teen/services/churn-service/.env", "w")
+        churn_env_file = sftp.open("/opt/teen-prod/services/churn-service/.env", "w")
         churn_env_file.write(churn_env)
         churn_env_file.close()
 
@@ -100,7 +100,7 @@ DATABASE_URL={db_url_val}
 REDIS_URL={redis_url_val}
 """
         print("Writing bot-learning-service .env...")
-        bot_learning_env_file = sftp.open("/opt/teen/services/bot-learning-service/.env", "w")
+        bot_learning_env_file = sftp.open("/opt/teen-prod/services/bot-learning-service/.env", "w")
         bot_learning_env_file.write(bot_learning_env)
         bot_learning_env_file.close()
 
@@ -112,7 +112,7 @@ DATABASE_URL={db_url_val}
 REDIS_URL={redis_url_val}
 """
         print("Writing app-monitor-service .env...")
-        app_monitor_env_file = sftp.open("/opt/teen/services/app-monitor-service/.env", "w")
+        app_monitor_env_file = sftp.open("/opt/teen-prod/services/app-monitor-service/.env", "w")
         app_monitor_env_file.write(app_monitor_env)
         app_monitor_env_file.close()
 
@@ -122,7 +122,7 @@ PORT=3020
 DATABASE_URL={db_url_val}
 """
         print("Writing churn-ml-service .env...")
-        churn_ml_env_file = sftp.open("/opt/teen/services/churn-ml-service/.env", "w")
+        churn_ml_env_file = sftp.open("/opt/teen-prod/services/churn-ml-service/.env", "w")
         churn_ml_env_file.write(churn_ml_env)
         churn_ml_env_file.close()
 
@@ -131,7 +131,7 @@ DATABASE_URL={db_url_val}
         # 5. Run deploy services script
         # This compiles everything and applies database migrations!
         print("Running build and migration script...")
-        stdin, stdout, stderr = client.exec_command("cd /opt/teen && bash infra/deploy/deploy-services.sh")
+        stdin, stdout, stderr = client.exec_command("cd /opt/teen-prod && bash infra/deploy/deploy-services.sh")
         
         # Read build logs in real-time
         while True:
@@ -144,7 +144,7 @@ DATABASE_URL={db_url_val}
 
         # 6. Rebuild and copy admin panel
         print("\nRebuilding admin-panel...")
-        admin_build_cmd = "cd /opt/teen/admin-panel && npm install --no-audit --no-fund && VITE_API_BASE_URL='' npm run build -- --base=/admin/"
+        admin_build_cmd = "cd /opt/teen-prod/admin-panel && npm install --no-audit --no-fund && VITE_API_BASE_URL='' npm run build -- --base=/admin/"
         stdin, stdout, stderr = client.exec_command(admin_build_cmd)
         
         while True:
@@ -158,7 +158,7 @@ DATABASE_URL={db_url_val}
         print("\nCopying admin-panel bundle to web root...")
         copy_cmds = [
             "rm -rf /home/admin/web/game.myonlinejoker.com/public_html/admin/*",
-            "cp -r /opt/teen/admin-panel/dist/* /home/admin/web/game.myonlinejoker.com/public_html/admin/",
+            "cp -r /opt/teen-prod/admin-panel/dist/* /home/admin/web/game.myonlinejoker.com/public_html/admin/",
             "chown -R admin:admin /home/admin/web/game.myonlinejoker.com/public_html/admin/",
             "systemctl reload nginx"
         ]
@@ -177,7 +177,7 @@ DATABASE_URL={db_url_val}
             "pm2 delete teen-churn-ml || true",
             "pm2 delete teen-bot-learning || true",
             "pm2 delete teen-app-monitor || true",
-            "cd /opt/teen && pm2 start ecosystem.config.js",
+            "cd /opt/teen-prod && pm2 start ecosystem.config.js",
             "pm2 save",
             "pm2 status"
         ]

@@ -1,9 +1,9 @@
 #!/bin/bash
 # Deploy script for HestiaCP VPS
-# Run as root from /opt/teen after git pull
+# Run as root from repository root after git pull
 
 set -e
-BASE=/opt/teen
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HESTIA_USER=${HESTIA_USER:-admin}  # Change to your actual Hestia username
 
 echo "==> Building Node.js services..."

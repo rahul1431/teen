@@ -44,6 +44,15 @@ class AppColors {
   // Aviator
   static const aviatorBlue  = Color(0xFF1E3A8A);
   static const aviatorGreen = Color(0xFF00C853);
+
+  // Cricket — pitch/stadium accent layered on the dark base + gold accent.
+  // Distinguishes cricket's fantasy-sports identity from the felt-table
+  // games while staying inside the same dark/gold visual language.
+  static const pitchGreen      = Color(0xFF1BA352);
+  static const pitchGreenLight = Color(0xFF3ED97C);
+  static const pitchDark       = Color(0xFF0A2E1A);
+  static const floodlight      = Color(0xFFFFF3C4);
+  static const stadiumNavy     = Color(0xFF0B1A2E);
 }
 
 class AppTheme {
