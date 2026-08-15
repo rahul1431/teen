@@ -10,7 +10,6 @@ import {
 import { adminApi } from '../../api/client'
 import dayjs from 'dayjs'
 import LotteryScratch from './LotteryScratch'
-import LotteryDailyDraws from '../../components/LotteryDailyDraws'
 
 const { Text, Title } = Typography
 
@@ -722,11 +721,6 @@ export default function Lottery() {
       </Drawer>
     </div>
           ),
-        },
-        {
-          key: 'daily',
-          label: 'Daily Draws',
-          children: <LotteryDailyDraws onRefresh={loadStats} />,
         },
         {
           key: 'scratch',

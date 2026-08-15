@@ -67,19 +67,6 @@ class _LotteryPageState extends State<LotteryPage> with TickerProviderStateMixin
           children: [
             _buildAnimatedCard(
               index: 0,
-              title: 'Daily Lottery',
-              subtitle: 'Pick a 4-digit number',
-              icon: Icons.calendar_today_rounded,
-              color: Colors.cyanAccent,
-              onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => const LotteryDrawsPage(
-                          category: 'daily', title: 'Daily Lottery'))),
-            ),
-            const SizedBox(height: 16),
-            _buildAnimatedCard(
-              index: 1,
               title: 'Instant Lottery',
               subtitle: 'Scratch cards — win instantly',
               icon: Icons.auto_awesome_rounded,
