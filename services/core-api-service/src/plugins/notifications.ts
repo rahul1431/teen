@@ -7,16 +7,40 @@ let firebaseInitialized = false
 
 function initFirebase() {
   if (firebaseInitialized || !process.env.FIREBASE_SERVICE_ACCOUNT_JSON) return
-  admin.initializeApp({ credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)) })
-  firebaseInitialized = true
+  try {
+    let raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON.trim()
+    if ((raw.startsWith("'") && raw.endsWith("'")) || (raw.startsWith('"') && raw.endsWith('"'))) {
+      raw = raw.slice(1, -1)
+    }
+    let sa = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (typeof sa === 'string') sa = JSON.parse(sa)
+    if (sa.private_key) {
+      sa.private_key = sa.private_key.replace(/\\n/g, '\n')
+    }
+    admin.initializeApp({ credential: admin.credential.cert(sa) })
+    firebaseInitialized = true
+    console.log('[notifications] Firebase initialized successfully')
+  } catch (err: any) {
+    console.error('[notifications] Failed to initialize Firebase:', err.message || err)
+  }
 }
 
-async function sendPushNotification(fcmToken: string, title: string, body: string, data?: Record<string, string>) {
+async function sendPushNotification(fcmToken: string, title: string, body: string, data?: Record<string, string>, imageUrl?: string) {
   if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-    console.log(`[PUSH DEV] To: ${fcmToken?.slice(0, 20)}... | ${title}: ${body}`)
+    console.log(`[PUSH DEV] To: ${fcmToken?.slice(0, 20)}... | ${title}: ${body} | Image: ${imageUrl}`)
     return
   }
-  await admin.messaging().send({ token: fcmToken, notification: { title, body }, data, android: { priority: 'high' }, apns: { payload: { aps: { sound: 'default' } } } })
+  const payload: any = {
+    token: fcmToken,
+    notification: { title, body },
+    data,
+    android: { priority: 'high' },
+    apns: { payload: { aps: { sound: 'default' } } }
+  }
+  if (imageUrl) {
+    payload.notification.imageUrl = imageUrl
+  }
+  await admin.messaging().send(payload)
 }
 
 export function notificationsPlugin(db: Pool, redis?: Redis) {
@@ -77,7 +101,7 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
 
     app.get('/notifications/me', { onRequest: [app.authenticate] }, async (req, reply) => {
       const user = req.user as any
-      const res = await db.query(`SELECT id, type, title, body, data, read, created_at FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, [user.sub])
+      const res = await db.query(`SELECT id, type, title, body, data, read, created_at, image_url FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, [user.sub])
       return reply.send(res.rows)
     })
 
@@ -106,10 +130,7 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
       return reply.send({ success: true })
     })
 
-    // Marks the CALLING user's own notification(s) for a campaign as read —
-    // used when the user taps a push (foreground or background/terminated),
-    // where the client only knows the campaign_id from the FCM payload, not
-    // the underlying per-user notifications.id row.
+    // Marks the CALLING user's own notification(s) for a campaign as read
     app.put('/notifications/read-by-campaign/:campaignId', { onRequest: [app.authenticate] }, async (req, reply) => {
       const user = req.user as any
       const { campaignId } = req.params as any
@@ -121,40 +142,59 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
     })
 
     app.post('/internal/notifications/send', { onRequest: [internal] }, async (req, reply) => {
-      const { user_id, title, body, type = 'general', data, campaign_id } = req.body as any
+      const { user_id, title, body, type = 'general', data, campaign_id, image_url } = req.body as any
       const pushData = { ...(data || {}), ...(campaign_id ? { campaign_id: String(campaign_id) } : {}) }
       await db.query(
-        'INSERT INTO notifications (user_id, type, title, body, data, campaign_id) VALUES ($1, $2, $3, $4, $5, $6)',
-        [user_id, type, title, body, JSON.stringify(pushData), campaign_id || null],
+        'INSERT INTO notifications (user_id, type, title, body, data, campaign_id, image_url) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+        [user_id, type, title, body, JSON.stringify(pushData), campaign_id || null, image_url || null],
       )
       const userRes = await db.query('SELECT fcm_token FROM users WHERE id = $1', [user_id])
       let delivered = 0
       if (userRes.rows[0]?.fcm_token) {
-        await sendPushNotification(userRes.rows[0].fcm_token, title, body, pushData)
+        await sendPushNotification(userRes.rows[0].fcm_token, title, body, pushData, image_url)
         delivered = 1
       }
       return reply.send({ success: true, delivered })
     })
 
     app.post('/internal/notifications/broadcast', { onRequest: [internal] }, async (req, reply) => {
-      const { title, body, type = 'broadcast', data, campaign_id } = req.body as any
+      const { title, body, type = 'broadcast', data, campaign_id, image_url, segment_type = 'all' } = req.body as any
       const pushData = { ...(data || {}), ...(campaign_id ? { campaign_id: String(campaign_id) } : {}) }
-      const usersRes = await db.query(`SELECT id, fcm_token FROM users WHERE is_bot = false AND status = $1`, ['active'])
+      
+      // Determine segment query
+      let userQuery = `SELECT id, fcm_token FROM users WHERE is_bot = false AND status = $1`
+      const userParams: any[] = ['active']
+
+      if (segment_type === 'active_7d') {
+        userQuery += ` AND last_login_at >= NOW() - INTERVAL '7 days'`
+      } else if (segment_type === 'inactive_7d') {
+        userQuery += ` AND (last_login_at IS NULL OR last_login_at < NOW() - INTERVAL '7 days')`
+      } else if (segment_type === 'low_balance') {
+        userQuery = `
+          SELECT u.id, u.fcm_token 
+          FROM users u
+          JOIN wallets w ON w.user_id = u.id
+          WHERE u.is_bot = false AND u.status = $1
+            AND (w.deposit_balance + w.winning_balance + w.bonus_balance) < 100
+        `
+      }
+
+      const usersRes = await db.query(userQuery, userParams)
       const users = usersRes.rows
       if (users.length === 0) return reply.send({ success: true, sent: 0, total: 0 })
 
-      // 1. Bulk insert DB notifications in batches of 1000 to stay under Postgres parameter limits
+      // 1. Bulk insert DB notifications in batches of 1000
       const dbBatchSize = 1000
       for (let i = 0; i < users.length; i += dbBatchSize) {
         const batch = users.slice(i, i + dbBatchSize)
         const values: any[] = []
-        let queryText = 'INSERT INTO notifications (user_id, type, title, body, data, campaign_id) VALUES '
+        let queryText = 'INSERT INTO notifications (user_id, type, title, body, data, campaign_id, image_url) VALUES '
         for (let j = 0; j < batch.length; j++) {
           const u = batch[j]
-          const offset = j * 6
-          queryText += `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6})`
+          const offset = j * 7
+          queryText += `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`
           if (j < batch.length - 1) queryText += ', '
-          values.push(u.id, type, title, body, JSON.stringify(pushData), campaign_id || null)
+          values.push(u.id, type, title, body, JSON.stringify(pushData), campaign_id || null, image_url || null)
         }
         await db.query(queryText, values)
       }
@@ -164,16 +204,22 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
       let sent = 0
       if (tokens.length > 0) {
         if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-          console.log(`[PUSH DEV] Broadcasted to ${tokens.length} tokens: ${title}: ${body}`)
+          console.log(`[PUSH DEV] Broadcasted to ${tokens.length} tokens: ${title}: ${body} | Image: ${image_url}`)
           sent = tokens.length
         } else {
-          const fcmMessages = tokens.map(token => ({
-            token,
-            notification: { title, body },
-            data: pushData,
-            android: { priority: 'high' } as any,
-            apns: { payload: { aps: { sound: 'default' } } } as any
-          }))
+          const fcmMessages = tokens.map(token => {
+            const msg: any = {
+              token,
+              notification: { title, body },
+              data: pushData,
+              android: { priority: 'high' } as any,
+              apns: { payload: { aps: { sound: 'default' } } } as any
+            }
+            if (image_url) {
+              msg.notification.imageUrl = image_url
+            }
+            return msg
+          })
           const fcmBatchSize = 500
           for (let i = 0; i < fcmMessages.length; i += fcmBatchSize) {
             const batch = fcmMessages.slice(i, i + fcmBatchSize)
