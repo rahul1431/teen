@@ -65,6 +65,22 @@ export function planTeenPattiSeats(
 ): TeenPattiSeatPlan {
   const reals = Math.min(Math.max(0, realCount), maxPlayers)
   if (reals < 1) return { start: false, reals: 0, bots: 0, requeue: false }
+
+  let requiredReals = 1
+  if (stake === 50) {
+    requiredReals = 2
+  } else if (stake === 100) {
+    requiredReals = 3
+  } else if (stake === 500) {
+    requiredReals = 4
+  } else if (stake === 1000) {
+    requiredReals = 4
+  }
+
+  if (reals < requiredReals) {
+    return { start: false, reals: 0, bots: 0, requeue: true }
+  }
+
   const bots = Math.max(0, TEEN_PATTI_BOT_FLOOR - reals)
   return { start: true, reals, bots, requeue: false }
 }
@@ -155,21 +171,21 @@ export class MatchmakingService {
       }
     }
 
-    // Fast incremental bot fill: bots join at t = 2s, 5s, 8s, 12s so waiting lobby feels fast and alive
-    const ticks = [2, 5, 8, 12, 16, 20]
+    // Fast incremental bot fill: bots join at t = 5s, 15s, 25s, 35s, 45s, 55s so waiting lobby feels fast and alive
+    const ticks = [5, 15, 25, 35, 45, 55]
     for (const elapsed of ticks) {
-      const remaining = Math.max(1, 20 - elapsed)
+      const remaining = Math.max(1, 60 - elapsed)
       const t = setTimeout(() => {
         addBotIfNeeded(remaining, false)
       }, elapsed * 1000)
       timeouts.push(t)
     }
 
-    // At 22s: last safety check & bot fill start
+    // At 60s: last safety check & bot fill start
     const t60 = setTimeout(async () => {
       this.clearBotFillTimers(timerKey)
       await this.botFillRoom(gameType, stake, config, variation)
-    }, 22 * 1000)
+    }, 60 * 1000)
     timeouts.push(t60)
 
     this.multiTimers.set(timerKey, timeouts)
@@ -423,7 +439,7 @@ export class MatchmakingService {
           if (notify && !alreadyNotified) p.waitNotified = true
           await this.redis.zadd(key, Date.now(), JSON.stringify(p))
           if (notify && !alreadyNotified) {
-            this.hub.sendToUser(p.userId, 'error', { message: 'Still searching for an opponent at this stake…' })
+            this.hub.sendToUser(p.userId, 'error', { message: 'Players are in other Game Try Lower amount' })
           }
         }
         this.schedule60sBotFill(gameType, stake, config, variation)
@@ -452,6 +468,27 @@ export class MatchmakingService {
       if (overflow.length) await requeue(overflow, false)
       await this.startGame(gameType, stake, seated, bots, variation)
       return
+    }
+
+    if (gameType === 'ludo') {
+      let requiredReals = 1
+      if (stake === 50) {
+        requiredReals = 1
+      } else if (stake === 100) {
+        requiredReals = 2
+      } else if (stake === 500) {
+        requiredReals = 3
+      }
+
+      if (realPlayers.length < requiredReals) {
+        console.log(`[matchmaking] botFillRoom: Ludo ${stake} requires ${requiredReals} reals, but only has ${realPlayers.length} — re-queuing`)
+        for (const p of realPlayers) {
+          await this.redis.zadd(key, Date.now(), JSON.stringify(p))
+          this.hub.sendToUser(p.userId, 'error', { message: 'Players are in other Game Try Lower amount' })
+        }
+        this.schedule60sBotFill(gameType, stake, config, variation)
+        return
+      }
     }
 
     let targetSize = config.bot_fill_table_size || (gameType === 'ludo' ? 4 : (config.min_players || 2))
@@ -2166,7 +2203,9 @@ export class MatchmakingService {
         return
       }
 
-      await new Promise(r => setTimeout(r, 1200))
+      // Random thinking time for bots between 5 and 15 seconds
+      const delayMs = Math.floor(Math.random() * 10001) + 5000;
+      await new Promise(r => setTimeout(r, delayMs))
       try {
         const res = await fetch(`${engineUrl}/bot-turn`, {
           method: 'POST',
@@ -2337,6 +2376,15 @@ export class MatchmakingService {
 
       console.log(`[gateway] handleRummyEnd room=${roomId} winner=${result?.winner_id} prize=${effectivePrize}`)
 
+      // Dedicated game:result event to all players in the room
+      this.hub.sendToRoom(roomId, 'game:result', {
+        room_id: roomId,
+        winner_id: effectiveWinnerId,
+        winner_name: result?.winner_name || (effectiveWinnerId ? 'Winner' : null),
+        prize: effectivePrize,
+        result: result || null,
+      })
+
       const settlePayload = JSON.stringify({
         room_id: roomId,
         winner_id: effectiveWinnerId,
@@ -2369,6 +2417,30 @@ export class MatchmakingService {
         } catch (redisErr) {
           console.error(`[RECONCILE-NEEDED] Could not record settle-game failure for room=${roomId}`, redisErr)
         }
+      }
+      // Persist game_rooms completion status
+      try {
+        await this.db.query(
+          "UPDATE game_rooms SET status = 'completed', ended_at = NOW() WHERE id = $1",
+          [roomId],
+        )
+      } catch (dbErr) {
+        console.error(`[gateway] Failed to update game_rooms for Rummy room=${roomId}:`, dbErr)
+      }
+
+      // Persist game_participants (prize_won, final_rank) for accurate Game History & Leaderboard
+      try {
+        for (const p of parts.rows) {
+          const isWinner = effectiveWinnerId && p.user_id === effectiveWinnerId
+          const prizeWon = isWinner ? effectivePrize : 0
+          const finalRank = effectiveWinnerId ? (isWinner ? 1 : 2) : null
+          await this.db.query(
+            'UPDATE game_participants SET prize_won = $1, final_rank = $2 WHERE room_id = $3 AND user_id = $4',
+            [prizeWon, finalRank, roomId, p.user_id],
+          )
+        }
+      } catch (dbErr) {
+        console.error(`[gateway] Failed to update game_participants for Rummy room=${roomId}:`, dbErr)
       }
     } catch (err) {
       console.error(`[gateway] handleRummyEnd failed for room=${roomId}:`, err)

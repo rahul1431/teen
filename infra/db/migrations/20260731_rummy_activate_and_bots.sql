@@ -9,7 +9,7 @@ UPDATE game_configs SET is_active = true WHERE game_type = 'rummy';
 DO $$
 DECLARE
   bot_id UUID;
-  bot_names TEXT[] := ARRAY['RummyBot_A', 'RummyBot_B', 'RummyBot_C', 'RummyBot_D', 'RummyBot_E', 'RummyBot_F'];
+  bot_names TEXT[] := ARRAY['Aarav', 'Riya', 'Kabir', 'Ananya', 'Vihaan', 'Diya'];
   bot_name TEXT;
 BEGIN
   FOREACH bot_name IN ARRAY bot_names LOOP
