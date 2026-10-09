@@ -1,0 +1,58 @@
+name: Oracle A1 VM Auto-Retry
+
+on:
+  schedule:
+    # Runs every 5 minutes (GitHub Actions minimum interval)
+    - cron: '*/5 * * * *'
+  workflow_dispatch:  # Also allows manual trigger from GitHub UI
+
+jobs:
+  create-vm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4   # Kill if stuck (stays under 5min cycle)
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install OCI SDK
+        run: pip install oci requests
+
+      - name: Write OCI config
+        env:
+          OCI_USER_OCID:        ${{ secrets.OCI_USER_OCID }}
+          OCI_TENANCY_OCID:     ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_FINGERPRINT:      ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY:      ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_REGION:           ${{ secrets.OCI_REGION }}
+        run: |
+          mkdir -p ~/.oci
+          # Write the private key file
+          echo "$OCI_PRIVATE_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+
+          # Write the config file
+          cat > ~/.oci/config << EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          fingerprint=$OCI_FINGERPRINT
+          key_file=~/.oci/oci_api_key.pem
+          EOF
+          chmod 600 ~/.oci/config
+
+      - name: Run Oracle VM creation script
+        env:
+          OCI_COMPARTMENT_ID:   ${{ secrets.OCI_COMPARTMENT_ID }}
+          OCI_SUBNET_ID:        ${{ secrets.OCI_SUBNET_ID }}
+          OCI_IMAGE_ID:         ${{ secrets.OCI_IMAGE_ID }}
+          OCI_SSH_PUBLIC_KEY:   ${{ secrets.OCI_SSH_PUBLIC_KEY }}
+          OCI_REGION:           ${{ secrets.OCI_REGION }}
+        run: python scripts/oracle_vm_retry.py
