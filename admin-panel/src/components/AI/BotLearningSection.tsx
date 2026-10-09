@@ -41,6 +41,7 @@ interface BotConfig {
 const GAME_LABELS: Record<string, string> = {
   teen_patti: 'Teen Patti',
   ludo: 'Ludo',
+  rummy: 'Rummy',
 }
 
 const DIFF_COLORS: Record<string, string> = { easy: 'green', medium: 'orange', hard: 'red' }
@@ -48,7 +49,7 @@ const DIFF_COLORS: Record<string, string> = { easy: 'green', medium: 'orange', h
 interface BotLearningSectionProps {
   /** Which game's bots to show. Each game has its own trainer, profiles, and
    *  training config — there is no cross-game view any more. */
-  gameType: 'teen_patti' | 'ludo'
+  gameType: 'teen_patti' | 'ludo' | 'rummy'
 }
 
 const num = (v: unknown) => Number(v) || 0

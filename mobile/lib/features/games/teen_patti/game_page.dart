@@ -16,6 +16,7 @@ import 'coin_rain.dart';
 import '../../../core/constants/app_config.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:lottie/lottie.dart';
+import '../../../core/services/app_config_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Teen Patti Game Page — portrait layout, layered Stack architecture.
@@ -267,7 +268,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     _gsNotifier.value = gs;
     _betAmount = (data['min_bet'] as num?)?.toDouble() ?? 0;
     _betNotifier.value = _betAmount;
-    final idx = ((gs['current_turn'] ?? 0) as num).toInt();
+    final rawIdx = gs['current_turn'] ?? 0;
+    final idx = int.tryParse(rawIdx.toString()) ?? (rawIdx is num ? rawIdx.toInt() : 0);
     final cur = idx < players.length ? players[idx] : null;
     final isMe = (cur?['userId'] ?? cur?['user_id']) == _myUserId;
     _myTurnNotifier.value = isMe;
@@ -302,7 +304,186 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     } catch (_) {/* leave at 0 if wallet unreachable */}
   }
 
+  bool get _isOffline =>
+      widget.roomId == 'offline-practice' || AppConfigService.isSafeMode();
+
+  void _setupOfflinePracticeGame() {
+    _myCardsNotifier.value = [
+      {'suit': 'S', 'value': 'A'},
+      {'suit': 'H', 'value': 'K'},
+      {'suit': 'D', 'value': 'Q'},
+    ];
+    _isSeen = false;
+    final offlinePlayers = [
+      {
+        'userId': 'me',
+        'user_id': 'me',
+        'username': 'You',
+        'avatar': 'avatar_user',
+        'is_seen': false,
+        'is_active': true,
+        'is_folded': false,
+        'status': 'playing',
+        'chips': 10000,
+        'current_bet': 50,
+        'cards': [
+          {'suit': 'S', 'value': 'A'},
+          {'suit': 'H', 'value': 'K'},
+          {'suit': 'D', 'value': 'Q'},
+        ],
+      },
+      {
+        'userId': 'bot_1',
+        'user_id': 'bot_1',
+        'username': 'Alex',
+        'avatar': 'avatar_steven',
+        'is_bot': true,
+        'is_seen': false,
+        'is_active': true,
+        'is_folded': false,
+        'status': 'playing',
+        'chips': 10000,
+        'current_bet': 50,
+        'cards': [
+          {'suit': 'C', 'value': 'J'},
+          {'suit': 'D', 'value': '9'},
+          {'suit': 'H', 'value': '7'},
+        ],
+      },
+      {
+        'userId': 'bot_2',
+        'user_id': 'bot_2',
+        'username': 'Sam',
+        'avatar': 'avatar_nairobi',
+        'is_bot': true,
+        'is_seen': false,
+        'is_active': true,
+        'is_folded': false,
+        'status': 'playing',
+        'chips': 10000,
+        'current_bet': 50,
+        'cards': [
+          {'suit': 'H', 'value': '10'},
+          {'suit': 'S', 'value': '8'},
+          {'suit': 'D', 'value': '4'},
+        ],
+      },
+    ];
+    final Map<String, dynamic> gs = {
+      'status': 'playing',
+      'pot': 150,
+      'min_bet': 50,
+      'pot_limit': 10000,
+      'current_turn': 0,
+      'players': offlinePlayers,
+    };
+    _gsNotifier.value = gs;
+    _betAmount = 50;
+    _betNotifier.value = 50;
+    _myTurnNotifier.value = true;
+    _startTurnTimer();
+    _triggerCardDealingAnimation(gs);
+  }
+
+  void _handleOfflineAction(String action, {double? amount}) {
+    _turnTimer?.cancel();
+    _myTurnNotifier.value = false;
+    if (action == 'see') {
+      _isSeen = true;
+      final gs = Map<String, dynamic>.from(_gsNotifier.value ?? {});
+      final players = List<Map<String, dynamic>>.from(gs['players'] ?? []);
+      if (players.isNotEmpty) {
+        players[0] = Map<String, dynamic>.from(players[0]);
+        players[0]['is_seen'] = true;
+      }
+      gs['players'] = players;
+      _gsNotifier.value = gs;
+      _myTurnNotifier.value = true;
+      _startTurnTimer();
+      return;
+    }
+    if (action == 'fold') {
+      SoundService.instance.play(Sfx.buttonTap);
+      final gs = _gsNotifier.value;
+      final pot = (gs?['pot'] as num?)?.toDouble() ?? 150.0;
+      _resultNotifier.value = {
+        'won': false,
+        'winnerName': 'Alex',
+        'cards': [
+          {'suit': 'C', 'value': 'J'},
+          {'suit': 'D', 'value': '9'},
+          {'suit': 'H', 'value': '7'},
+        ],
+        'handRank': 'High Card',
+        'prizeText': AppConfigService.isSafeMode()
+            ? '${pot.toInt()} 🪙'
+            : '₹${pot.toInt()}',
+      };
+      HapticFeedback.mediumImpact();
+      SoundService.instance.play(Sfx.lose);
+      return;
+    }
+
+    // Chaal, Raise, Show, or Sideshow
+    SoundService.instance.play(Sfx.chipBet);
+    final gs = Map<String, dynamic>.from(_gsNotifier.value ?? {});
+    final stake = (gs['min_bet'] as num?)?.toDouble() ?? 50.0;
+    final bet = amount ?? (_isSeen ? stake * 2 : stake);
+    final newPot = ((gs['pot'] as num?)?.toDouble() ?? 150.0) + bet;
+    gs['pot'] = newPot;
+    _gsNotifier.value = gs;
+
+    if (action == 'show') {
+      _finishOfflineShowdown(gs);
+      return;
+    }
+
+    // Simulate bot turns sequentially
+    Future.delayed(const Duration(milliseconds: 900), () {
+      if (!mounted || _resultNotifier.value != null) return;
+      SoundService.instance.play(Sfx.chipBet);
+      final curGs = Map<String, dynamic>.from(_gsNotifier.value ?? {});
+      curGs['pot'] = ((curGs['pot'] as num?)?.toDouble() ?? newPot) + stake;
+      _gsNotifier.value = curGs;
+
+      Future.delayed(const Duration(milliseconds: 900), () {
+        if (!mounted || _resultNotifier.value != null) return;
+        SoundService.instance.play(Sfx.chipBet);
+        final nextGs = Map<String, dynamic>.from(_gsNotifier.value ?? {});
+        nextGs['pot'] =
+            ((nextGs['pot'] as num?)?.toDouble() ?? (newPot + stake)) + stake;
+        _gsNotifier.value = nextGs;
+
+        _myTurnNotifier.value = true;
+        _startTurnTimer();
+      });
+    });
+  }
+
+  void _finishOfflineShowdown(Map<String, dynamic> gs) {
+    final pot = (gs['pot'] as num?)?.toDouble() ?? 300.0;
+    _resultNotifier.value = {
+      'won': true,
+      'winnerName': 'You',
+      'cards': _myCardsNotifier.value,
+      'handRank': 'Color (Flush)',
+      'prizeText': AppConfigService.isSafeMode()
+          ? '${pot.toInt()} 🪙'
+          : '₹${pot.toInt()}',
+    };
+    HapticFeedback.heavyImpact();
+    SoundService.instance.play(Sfx.win);
+  }
+
   Future<void> _init() async {
+    if (_isOffline) {
+      _myUserId = 'me';
+      _myBalance = 10000.0;
+      _setupOfflinePracticeGame();
+      if (mounted) setState(() => _ready = true);
+      return;
+    }
+
     _myUserId = await SecureStorage.getUserId();
     _loadConfig(); // fire-and-forget
     _fetchBalance(); // load wallet balance for the action bar display
@@ -335,8 +516,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         _triggerCardDealingAnimation(gs);
       }
 
-      final idx =
-          ((inner['current_turn'] ?? inner['CurrentTurn'] ?? 0) as num).toInt();
+      final rawIdx = inner['current_turn'] ?? inner['CurrentTurn'] ?? 0;
+      final idx = int.tryParse(rawIdx.toString()) ?? (rawIdx is num ? rawIdx.toInt() : 0);
       final cur = idx < players.length ? players[idx] : null;
       final isMe = (cur?['userId'] ?? cur?['user_id']) == _myUserId;
       final wasMyTurn = _myTurnNotifier.value;
@@ -413,7 +594,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           'winnerName': winnerName,
           'cards': winnerCards,
           'handRank': handRank,
-          'prizeText': '₹${prizeAmount.toStringAsFixed(2)}',
+          'prizeText': AppConfigService.isSafeMode()
+              ? '${prizeAmount.toStringAsFixed(0)} 🪙'
+              : '₹${prizeAmount.toStringAsFixed(2)}',
         };
         _myTurnNotifier.value = false;
         if (won) {
@@ -479,13 +662,17 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       final userId = data['user_id']?.toString() ?? '';
       final name = data['username']?.toString() ?? 'Player';
       final amount = (data['amount'] as num?)?.toInt() ?? 0;
-      _spawnReaction(userId, '💰 ₹$amount', isTip: true);
+      _spawnReaction(userId,
+          AppConfigService.isSafeMode() ? '💰 $amount 🪙' : '💰 ₹$amount',
+          isTip: true);
 
       // Increment tip trigger for hostess animation
       _tipTriggerNotifier.value++;
 
       final who = userId == _myUserId ? 'You' : name;
-      _tipBannerNotifier.value = '💰 $who tipped the dealer ₹$amount';
+      _tipBannerNotifier.value = AppConfigService.isSafeMode()
+          ? '💰 $who tipped the dealer $amount 🪙'
+          : '💰 $who tipped the dealer ₹$amount';
       _tipBannerTimer?.cancel();
       _tipBannerTimer = Timer(2600.ms, () {
         if (mounted) _tipBannerNotifier.value = null;
@@ -697,6 +884,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   /// Paid actions go through here: if the wallet can't cover the cost the
   /// server would reject it and freeze the turn, so warn first and offer Pack.
   void _guardedAction(String action, {double? amount}) {
+    if (_isOffline) {
+      _handleOfflineAction(action, amount: amount);
+      return;
+    }
     final cost = _actionCost(action, amount: amount);
     if (cost > 0 && _myBalance < cost) {
       HapticFeedback.mediumImpact();
@@ -739,9 +930,12 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           ],
         ),
         content: Text(
-          'The next Chaal costs ₹${cost.toInt()} but you only have '
-          '₹${_myBalance.toInt()}.\n\nYou can Pack now to fold this hand, '
-          'or add money after the game.',
+          AppConfigService.isSafeMode()
+              ? 'The next Chaal costs ${cost.toInt()} 🪙 but you only have '
+                '${_myBalance.toInt()} 🪙.\n\nYou can Pack now to fold this hand.'
+              : 'The next Chaal costs ₹${cost.toInt()} but you only have '
+                '₹${_myBalance.toInt()}.\n\nYou can Pack now to fold this hand, '
+                'or add money after the game.',
           style: const TextStyle(
               color: Colors.white70, fontSize: 13.5, height: 1.4),
         ),
@@ -771,6 +965,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   }
 
   void _sendAction(String action, {double? amount}) {
+    if (_isOffline) {
+      _handleOfflineAction(action, amount: amount);
+      return;
+    }
     _turnTimer?.cancel();
     _myTurnNotifier.value = false;
     if (action == 'show') _isSeen = true;
@@ -865,7 +1063,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   }
 
   void _doExit() {
-    _socket.emit('leave_room', {'room_id': widget.roomId});
+    if (!_isOffline) {
+      _socket.emit('leave_room', {'room_id': widget.roomId});
+    }
     Navigator.pop(context);
   }
 
@@ -1048,7 +1248,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                                         ),
                                       ),
                                       child: Text(
-                                        '₹$amount',
+                                        AppConfigService.isSafeMode()
+                                            ? '$amount 🪙'
+                                            : '₹$amount',
                                         style: const TextStyle(
                                           color: Colors.white,
                                           fontSize: 7.0,
@@ -1849,7 +2051,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                 ),
                 const SizedBox(width: 3),
                 Text(
-                  '₹$chips',
+                  AppConfigService.isSafeMode() ? '$chips' : '₹$chips',
                   style: TextStyle(
                     color: const Color(0xFFFFD700), // Brilliant gold
                     fontSize: fChips,
@@ -2063,7 +2265,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           Row(mainAxisAlignment: MainAxisAlignment.center, children: [
             Text('🪙', style: TextStyle(fontSize: (13 * _ls).clamp(11, 16))),
             const SizedBox(width: 4),
-            Text('₹${gs?['pot'] ?? 0}',
+            Text(
+                AppConfigService.isSafeMode()
+                    ? '${gs?['pot'] ?? 0}'
+                    : '₹${gs?['pot'] ?? 0}',
                 style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w900,
@@ -2074,7 +2279,10 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           ]),
           if (_potLimitOf(gs) > 0) ...[
             const SizedBox(height: 2),
-            Text('Limit ₹${_fmtAmount(_potLimitOf(gs))}',
+            Text(
+                AppConfigService.isSafeMode()
+                    ? 'Limit ${_fmtAmount(_potLimitOf(gs))} 🪙'
+                    : 'Limit ₹${_fmtAmount(_potLimitOf(gs))}',
                 style: TextStyle(
                     color: const Color(0xFFFFD54F),
                     fontSize: (8.0 * _ls).clamp(7.0, 10.0),
@@ -2255,12 +2463,16 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _infoLine('Table ID', widget.roomId),
-            _infoLine('Stake', '₹$stake'),
-            _infoLine('Pot', '₹$pot'),
+            _infoLine('Stake',
+                AppConfigService.isSafeMode() ? '$stake 🪙' : '₹$stake'),
+            _infoLine(
+                'Pot', AppConfigService.isSafeMode() ? '$pot 🪙' : '₹$pot'),
             _infoLine(
                 'Pot Limit',
                 _potLimitOf(gs) > 0
-                    ? '₹${_fmtAmount(_potLimitOf(gs))}'
+                    ? (AppConfigService.isSafeMode()
+                        ? '${_fmtAmount(_potLimitOf(gs))} 🪙'
+                        : '₹${_fmtAmount(_potLimitOf(gs))}')
                     : 'No Limit'),
             _infoLine('Players', '${(gs?['players'] as List?)?.length ?? 0}'),
           ],
@@ -2462,8 +2674,12 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
               final bet = rawBet.clamp(minBet, maxBet);
               _betAmount = bet;
               final label = bet > minBet
-                  ? 'Raise ₹${bet.toInt()}'
-                  : 'Chaal ₹${bet.toInt()}';
+                  ? (AppConfigService.isSafeMode()
+                      ? 'Raise ${bet.toInt()} 🪙'
+                      : 'Raise ₹${bet.toInt()}')
+                  : (AppConfigService.isSafeMode()
+                      ? 'Chaal ${bet.toInt()} 🪙'
+                      : 'Chaal ₹${bet.toInt()}');
               final btnPack = (86 * _ls).clamp(62.0, 110.0);
               final btnMain = (114 * _ls).clamp(88.0, 140.0);
               final btnSecond = (72 * _ls).clamp(54.0, 90.0);
@@ -2517,7 +2733,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                                 fontSize: (13 * _ls).clamp(11.0, 15.0))),
                         const SizedBox(width: 4),
                         Text(
-                          '₹${_myBalance.toStringAsFixed(2)}',
+                          AppConfigService.isSafeMode()
+                              ? '${_myBalance.toInt()}'
+                              : '₹${_myBalance.toStringAsFixed(2)}',
                           style: TextStyle(
                             color: const Color(0xFFFFD700),
                             fontWeight: FontWeight.w900,
@@ -2820,7 +3038,27 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     label: const Text('Exit Lobby',
                         style: TextStyle(fontWeight: FontWeight.w900)),
                   ),
-                ] else
+                ] else ...[
+                  if (_isOffline) ...[
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2ECC71),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20)),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 12),
+                      ),
+                      onPressed: () {
+                        _resultNotifier.value = null;
+                        _setupOfflinePracticeGame();
+                      },
+                      icon: const Icon(Icons.replay),
+                      label: const Text('Play Again',
+                          style: TextStyle(fontWeight: FontWeight.w900)),
+                    ),
+                    const SizedBox(width: 12),
+                  ],
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: won
@@ -2846,6 +3084,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     label: const Text('Back to Lobby',
                         style: TextStyle(fontWeight: FontWeight.w900)),
                   ),
+                ],
               ]),
             ]),
           ),

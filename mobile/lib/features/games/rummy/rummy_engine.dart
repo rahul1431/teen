@@ -38,6 +38,42 @@ class RummyEngineState {
   });
 }
 
+class GroupMeldInfo {
+  final int groupIdx;
+  final String kind; // 'pure_sequence' | 'impure_sequence' | 'set' | 'invalid'
+  final bool isPure;
+  final bool isValidMeld;
+  final int penaltyPoints;
+  final String label;
+
+  GroupMeldInfo({
+    required this.groupIdx,
+    required this.kind,
+    required this.isPure,
+    required this.isValidMeld,
+    required this.penaltyPoints,
+    required this.label,
+  });
+}
+
+class HandValidationSummary {
+  final int totalScore;
+  final int pureSequences;
+  final int impureSequences;
+  final int sets;
+  final bool isReadyToDeclare;
+  final List<GroupMeldInfo> groupStatuses;
+
+  HandValidationSummary({
+    required this.totalScore,
+    required this.pureSequences,
+    required this.impureSequences,
+    required this.sets,
+    required this.isReadyToDeclare,
+    required this.groupStatuses,
+  });
+}
+
 const _suits = ['S', 'H', 'D', 'C'];
 const _ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
 const _rankValue = {
@@ -84,7 +120,7 @@ class RummyEngine {
       }
     }
     final wildIndicator = deck[cursor++];
-    final wildRank = wildIndicator.suit == 'JK' ? '__NONE__' : wildIndicator.rank;
+    final wildRank = (wildIndicator.suit == 'JK' || wildIndicator.rank == 'JOKER') ? 'A' : wildIndicator.rank;
     final openPile = [deck[cursor++]];
     final closedPile = deck.sublist(cursor);
     return RummyEngineState(
@@ -164,11 +200,25 @@ class RummyEngine {
   // player) if invalid. groups is a list of card-id lists.
   bool declare(RummyEngineState s, int playerIdx, List<List<String>> groups) {
     final player = s.players[playerIdx];
-    final valid = _validateDeclare(player.hand, groups, s.wildRank);
+    var validGroups = groups;
+    final flat = validGroups.expand((g) => g).toList();
+    if (flat.length != 13) {
+      final computed = findValidDeclareGrouping(player.hand, s.wildRank);
+      if (computed != null) {
+        validGroups = computed;
+      }
+    } else {
+      final check = _validateDeclare(player.hand, validGroups, s.wildRank);
+      if (!check) {
+        final computed = findValidDeclareGrouping(player.hand, s.wildRank);
+        if (computed != null) {
+          validGroups = computed;
+        }
+      }
+    }
+
+    final valid = _validateDeclare(player.hand, validGroups, s.wildRank);
     if (!valid) {
-      player.isEliminated = true;
-      _checkLastStanding(s);
-      if (s.status != 'completed') _advanceTurn(s);
       return false;
     }
     s.status = 'completed';
@@ -339,5 +389,270 @@ class RummyEngine {
       }
     }
     return sequenceCount >= 2 && pureCount >= 1;
+  }
+
+  // Calculate Indian Rummy penalty score (0 - 80 points)
+  int calculateHandScore(List<RummyCard> hand, List<List<String>> groups, String wildRank) {
+    return getHandValidationSummary(hand, groups, wildRank).totalScore;
+  }
+
+  // Comprehensive Hand Validation Summary for live UI badges and scoring HUD
+  HandValidationSummary getHandValidationSummary(
+      List<RummyCard> hand, List<List<String>> groups, String wildRank) {
+    if (hand.isEmpty) {
+      return HandValidationSummary(
+        totalScore: 80,
+        pureSequences: 0,
+        impureSequences: 0,
+        sets: 0,
+        isReadyToDeclare: false,
+        groupStatuses: [],
+      );
+    }
+
+    final byId = {for (final c in hand) c.id: c};
+
+    int cardPoint(RummyCard c) {
+      if (isJokerCard(c, wildRank)) return 0;
+      if (['A', 'K', 'Q', 'J', '10'].contains(c.rank)) return 10;
+      return int.tryParse(c.rank) ?? 10;
+    }
+
+    var pureSeqCount = 0;
+    var secondSeqCount = 0;
+    var setsCount = 0;
+    final validGroupIndices = <int>{};
+    final groupStatuses = <GroupMeldInfo>[];
+
+    // Pass 1: Identify pure sequences (no jokers)
+    for (var i = 0; i < groups.length; i++) {
+      final ids = groups[i];
+      final cards = ids.map((id) => byId[id]).whereType<RummyCard>().toList();
+      if (cards.length >= 3) {
+        final check = checkGroup(cards, wildRank);
+        if (check.valid && check.kind == 'sequence' && check.pure) {
+          pureSeqCount++;
+          validGroupIndices.add(i);
+        }
+      }
+    }
+
+    // Pass 2: Identify second sequence (impure or another pure)
+    for (var i = 0; i < groups.length; i++) {
+      if (validGroupIndices.contains(i)) continue;
+      final ids = groups[i];
+      final cards = ids.map((id) => byId[id]).whereType<RummyCard>().toList();
+      if (cards.length >= 3) {
+        final check = checkGroup(cards, wildRank);
+        if (check.valid && check.kind == 'sequence') {
+          secondSeqCount++;
+          validGroupIndices.add(i);
+        }
+      }
+    }
+
+    // Pass 3: Identify valid sets (only valid if at least 1 pure + 1 second sequence present)
+    final hasRequiredSequences = (pureSeqCount >= 1) && ((pureSeqCount + secondSeqCount) >= 2);
+    if (hasRequiredSequences) {
+      for (var i = 0; i < groups.length; i++) {
+        if (validGroupIndices.contains(i)) continue;
+        final ids = groups[i];
+        final cards = ids.map((id) => byId[id]).whereType<RummyCard>().toList();
+        if (cards.length >= 3 && cards.length <= 4) {
+          final check = checkGroup(cards, wildRank);
+          if (check.valid && check.kind == 'set') {
+            setsCount++;
+            validGroupIndices.add(i);
+          }
+        }
+      }
+    }
+
+    // Build GroupMeldInfo for each group
+    for (var i = 0; i < groups.length; i++) {
+      final ids = groups[i];
+      final cards = ids.map((id) => byId[id]).whereType<RummyCard>().toList();
+      if (cards.length < 3) {
+        final pts = cards.map(cardPoint).fold<int>(0, (a, b) => a + b);
+        groupStatuses.add(GroupMeldInfo(
+          groupIdx: i,
+          kind: 'invalid',
+          isPure: false,
+          isValidMeld: false,
+          penaltyPoints: pts,
+          label: '${cards.length} Cards',
+        ));
+        continue;
+      }
+
+      final check = checkGroup(cards, wildRank);
+      if (check.valid) {
+        if (check.kind == 'sequence') {
+          if (check.pure) {
+            groupStatuses.add(GroupMeldInfo(
+              groupIdx: i,
+              kind: 'pure_sequence',
+              isPure: true,
+              isValidMeld: true,
+              penaltyPoints: 0,
+              label: 'Pure Sec',
+            ));
+          } else {
+            groupStatuses.add(GroupMeldInfo(
+              groupIdx: i,
+              kind: 'impure_sequence',
+              isPure: false,
+              isValidMeld: true,
+              penaltyPoints: pureSeqCount >= 1 ? 0 : cards.map(cardPoint).fold<int>(0, (a, b) => a + b),
+              label: 'Impure Sec',
+            ));
+          }
+        } else if (check.kind == 'set') {
+          groupStatuses.add(GroupMeldInfo(
+            groupIdx: i,
+            kind: 'set',
+            isPure: false,
+            isValidMeld: hasRequiredSequences,
+            penaltyPoints: hasRequiredSequences ? 0 : cards.map(cardPoint).fold<int>(0, (a, b) => a + b),
+            label: 'Set',
+          ));
+        }
+      } else {
+        final pts = cards.map(cardPoint).fold<int>(0, (a, b) => a + b);
+        groupStatuses.add(GroupMeldInfo(
+          groupIdx: i,
+          kind: 'invalid',
+          isPure: false,
+          isValidMeld: false,
+          penaltyPoints: pts,
+          label: 'Invalid ($pts pts)',
+        ));
+      }
+    }
+
+    // Calculate total hand penalty score
+    int total = 0;
+    if (pureSeqCount == 0) {
+      // No pure sequence: all cards count
+      total = hand.map(cardPoint).fold<int>(0, (a, b) => a + b);
+    } else if (pureSeqCount + secondSeqCount < 2) {
+      // Has pure, but lacking 2nd sequence: pure groups are exempt, all others count
+      for (var i = 0; i < groups.length; i++) {
+        if (validGroupIndices.contains(i)) continue;
+        for (final id in groups[i]) {
+          final c = byId[id];
+          if (c != null) total += cardPoint(c);
+        }
+      }
+    } else {
+      // Both sequences satisfied: only invalid groups & unassigned count
+      for (var i = 0; i < groups.length; i++) {
+        if (!validGroupIndices.contains(i)) {
+          for (final id in groups[i]) {
+            final c = byId[id];
+            if (c != null) total += cardPoint(c);
+          }
+        }
+      }
+    }
+
+    // Add any unassigned cards
+    final assigned = groups.expand((g) => g).toSet();
+    for (final c in hand) {
+      if (!assigned.contains(c.id)) total += cardPoint(c);
+    }
+
+    final totalScore = min(80, total);
+    final totalAssigned = assigned.length;
+    final isReady = totalScore == 0 &&
+        pureSeqCount >= 1 &&
+        (pureSeqCount + secondSeqCount >= 2) &&
+        (totalAssigned == 13 || totalAssigned == 14);
+
+    return HandValidationSummary(
+      totalScore: totalScore,
+      pureSequences: pureSeqCount,
+      impureSequences: secondSeqCount,
+      sets: setsCount,
+      isReadyToDeclare: isReady,
+      groupStatuses: groupStatuses,
+    );
+  }
+
+  // Smart Auto-Grouper / Magic Meld for 13 or 14 card hands
+  List<List<String>> smartAutoGroup(List<RummyCard> hand, String wildRank) {
+    if (hand.isEmpty) return [];
+    final pool = List<RummyCard>.from(hand);
+    final groups = <List<RummyCard>>[];
+
+    // 1. Try finding complete valid declare grouping first if 14 cards
+    if (pool.length == 14) {
+      final decl = findValidDeclareGrouping(pool, wildRank);
+      if (decl != null) return decl;
+    }
+
+    // 2. Identify pure sequences first
+    final suitMap = <String, List<RummyCard>>{};
+    for (final c in pool) {
+      if (!isJokerCard(c, wildRank)) {
+        suitMap.putIfAbsent(c.suit, () => []).add(c);
+      }
+    }
+
+    for (final entry in suitMap.entries) {
+      final naturals = entry.value;
+      naturals.sort((a, b) => (_rankValue[a.rank] ?? 0).compareTo(_rankValue[b.rank] ?? 0));
+      // Find consecutive runs of 3 or more
+      var currentRun = <RummyCard>[];
+      for (var i = 0; i < naturals.length; i++) {
+        if (currentRun.isEmpty) {
+          currentRun.add(naturals[i]);
+        } else {
+          final lastVal = _rankValue[currentRun.last.rank] ?? 0;
+          final curVal = _rankValue[naturals[i].rank] ?? 0;
+          if (curVal == lastVal + 1) {
+            currentRun.add(naturals[i]);
+          } else if (curVal > lastVal + 1) {
+            if (currentRun.length >= 3) {
+              groups.add(List.from(currentRun));
+              for (final c in currentRun) pool.removeWhere((p) => p.id == c.id);
+            }
+            currentRun = [naturals[i]];
+          }
+        }
+      }
+      if (currentRun.length >= 3) {
+        groups.add(List.from(currentRun));
+        for (final c in currentRun) pool.removeWhere((p) => p.id == c.id);
+      }
+    }
+
+    // 3. Fallback: Group remaining cards by suit & rank order
+    final leftoverSuitMap = <String, List<RummyCard>>{};
+    final jokers = <RummyCard>[];
+    for (final c in pool) {
+      if (isJokerCard(c, wildRank)) {
+        jokers.add(c);
+      } else {
+        leftoverSuitMap.putIfAbsent(c.suit, () => []).add(c);
+      }
+    }
+
+    for (final s in ['S', 'H', 'C', 'D']) {
+      final list = leftoverSuitMap[s] ?? [];
+      if (list.isNotEmpty) {
+        list.sort((a, b) => (_rankValue[a.rank] ?? 0).compareTo(_rankValue[b.rank] ?? 0));
+        groups.add(list);
+      }
+    }
+    if (jokers.isNotEmpty) {
+      if (groups.isNotEmpty) {
+        groups.last.addAll(jokers);
+      } else {
+        groups.add(jokers);
+      }
+    }
+
+    return groups.map((g) => g.map((c) => c.id).toList()).toList();
   }
 }

@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import '../../../core/services/app_config_service.dart';
 
 class CoinParticle {
   double x;
@@ -218,7 +219,7 @@ class CoinRainPainter extends CustomPainter {
       // Draw rupee sign (₹) or star in the center
       final textPainter = TextPainter(
         text: TextSpan(
-          text: '₹',
+          text: AppConfigService.isSafeMode() ? '★' : '₹',
           style: TextStyle(
             color: const Color(0xFFFFF8DC).withValues(alpha: p.opacity),
             fontSize: p.size * 0.9,

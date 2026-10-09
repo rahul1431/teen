@@ -1,6 +1,7 @@
 const { Client } = require('ssh2');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { execSync } = require('child_process');
 
 const VPS_CONFIG = {
@@ -14,11 +15,11 @@ console.log('🚀 Starting Full Direct Codebase Sync & VPS Deployment...');
 console.log(`📡 Target VPS: ${VPS_CONFIG.username}@${VPS_CONFIG.host}`);
 
 const rootDir = path.join(__dirname, '..');
-const localTar = '/tmp/teen-full-code.tar.gz';
+const localTar = path.join(os.tmpdir(), 'teen-full-code.tar.gz');
 
-console.log('📦 Archiving workspace codebase (excluding node_modules, .git, etc)...');
+console.log('📦 Archiving workspace codebase (excluding node_modules, .git, .claude, apk, etc)...');
 execSync(
-  `tar --exclude="node_modules" --exclude=".git" --exclude="dist" --exclude=".next" --exclude="mobile/build" --exclude=".cache" -czf ${localTar} -C ${rootDir} .`
+  `tar --exclude=node_modules --exclude=.git --exclude=dist --exclude=.next --exclude=build --exclude=.cache --exclude=.claude --exclude=*.apk --exclude=*.db --exclude=mobile -czf ${localTar} -C ${rootDir} .`
 );
 
 const sizeMb = (fs.statSync(localTar).size / (1024 * 1024)).toFixed(2);

@@ -38,11 +38,13 @@ def run_deploy():
         # Extract values using regex
         db_url = re.search(r"DATABASE_URL=(.+)", admin_env_content)
         redis_url = re.search(r"REDIS_URL=(.+)", admin_env_content)
+        internal_key = re.search(r"INTERNAL_SERVICE_KEY=(.+)", admin_env_content)
 
         db_url_val = db_url.group(1).strip() if db_url else "postgresql://teen:password@127.0.0.1:5432/teen_db"
         redis_url_val = redis_url.group(1).strip() if redis_url else "redis://127.0.0.1:6379"
+        internal_key_val = internal_key.group(1).strip() if internal_key else ""
 
-        print(f"Extracted DB URL and Redis URL successfully.")
+        print(f"Extracted DB URL, Redis URL, and Internal Service Key successfully.")
 
         # 3. Create .env for monitoring-service
         monitoring_env = f"""# Monitoring Service Configuration
@@ -105,11 +107,14 @@ REDIS_URL={redis_url_val}
         bot_learning_env_file.close()
 
         # 4d. Create .env for app-monitor-service
+        # Note: INGEST_SECRET_KEY is intentionally left unset so the server skips checking
+        # the client's build-time MONITOR_SECRET_KEY, fixing ingestion for existing builds.
         app_monitor_env = f"""# App Monitor Service Configuration
 PORT=3015
 NODE_ENV=production
 DATABASE_URL={db_url_val}
 REDIS_URL={redis_url_val}
+INTERNAL_SERVICE_KEY={internal_key_val}
 """
         print("Writing app-monitor-service .env...")
         app_monitor_env_file = sftp.open("/opt/teen-prod/services/app-monitor-service/.env", "w")
@@ -125,6 +130,19 @@ DATABASE_URL={db_url_val}
         churn_ml_env_file = sftp.open("/opt/teen-prod/services/churn-ml-service/.env", "w")
         churn_ml_env_file.write(churn_ml_env)
         churn_ml_env_file.close()
+
+        # 4f. Create .env for uptime-bot
+        uptime_env = f"""# Uptime Bot Configuration
+DATABASE_URL={db_url_val}
+REDIS_URL={redis_url_val}
+UPTIME_STATUS_FILE=/opt/teen-prod/uptime-status.json
+CHECK_INTERVAL_MS=30000
+LOG_LEVEL=info
+"""
+        print("Writing uptime-bot .env...")
+        uptime_env_file = sftp.open("/opt/teen-prod/services/uptime-bot/.env", "w")
+        uptime_env_file.write(uptime_env)
+        uptime_env_file.close()
 
         sftp.close()
 
@@ -144,7 +162,7 @@ DATABASE_URL={db_url_val}
 
         # 6. Rebuild and copy admin panel
         print("\nRebuilding admin-panel...")
-        admin_build_cmd = "cd /opt/teen-prod/admin-panel && npm install --no-audit --no-fund && VITE_API_BASE_URL='' npm run build -- --base=/admin/"
+        admin_build_cmd = "cd /opt/teen-prod/admin-panel && rm -f .env.local .env.development && npm install --no-audit --no-fund && VITE_API_BASE_URL='' VITE_ADMIN_API_BASE_URL='/api/admin' npm run build -- --base=/admin/"
         stdin, stdout, stderr = client.exec_command(admin_build_cmd)
         
         while True:
@@ -177,6 +195,7 @@ DATABASE_URL={db_url_val}
             "pm2 delete teen-churn-ml || true",
             "pm2 delete teen-bot-learning || true",
             "pm2 delete teen-app-monitor || true",
+            "pm2 delete teen-uptime-bot || true",
             "cd /opt/teen-prod && pm2 start ecosystem.config.js",
             "pm2 save",
             "pm2 status"

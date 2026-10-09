@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_config.dart';
+import '../../../core/services/sync_service.dart';
 import '../../../shared/theme/app_theme.dart';
 
 /// Step 1 of password recovery: enter phone, receive OTP, enter OTP.
@@ -25,7 +26,21 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   String? _errorMsg;
 
   @override
+  void initState() {
+    super.initState();
+    SyncService.onOtpReceived = (otp) {
+      if (mounted) {
+        setState(() {
+          _otpCtrl.text = otp;
+        });
+        _continueToReset();
+      }
+    };
+  }
+
+  @override
   void dispose() {
+    SyncService.onOtpReceived = null;
     _phoneCtrl.dispose();
     _otpCtrl.dispose();
     _resendTimer?.cancel();
@@ -37,7 +52,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     setState(() { _loading = true; _errorMsg = null; });
     try {
       await Dio().post('${AppConfig.apiBaseUrl}/api/auth/send-otp',
-          data: {'phone': _phoneCtrl.text.trim()});
+          data: {'phone': _phoneCtrl.text.trim(), 'reason': 'reset'});
       setState(() { _otpSent = true; _resendIn = 60; });
       _resendTimer?.cancel();
       _resendTimer = Timer.periodic(const Duration(seconds: 1), (t) {
@@ -51,14 +66,34 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     }
   }
 
-  void _continueToReset() {
+  Future<void> _continueToReset() async {
+    final phone = _phoneCtrl.text.trim();
     final otp = _otpCtrl.text.trim();
     if (otp.length != 6) {
       setState(() => _errorMsg = 'Enter the 6-digit OTP');
       return;
     }
-    context.push('/auth/reset-password?phone=${_phoneCtrl.text.trim()}&otp=$otp');
+    setState(() {
+      _loading = true;
+      _errorMsg = null;
+    });
+    try {
+      await Dio().post('${AppConfig.apiBaseUrl}/api/auth/verify-otp',
+          data: {'phone': phone, 'otp': otp});
+      setState(() {
+        _loading = false;
+      });
+      if (mounted) {
+        context.push('/auth/reset-password?phone=$phone&otp=$otp');
+      }
+    } on DioException catch (e) {
+      setState(() {
+        _errorMsg = e.response?.data?['error'] ?? 'Invalid or expired OTP';
+        _loading = false;
+      });
+    }
   }
+
 
   @override
   Widget build(BuildContext context) {

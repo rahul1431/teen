@@ -30,6 +30,7 @@ const DEFAULT_SCORING_RULES = {
   captainMultiplier: 2.0, viceCaptainMultiplier: 1.5,
 }
 import { registerMLRoutes } from './ml-routes'
+import { registerServerStatsRoutes } from './server-stats'
 import { registerChurnRoutes } from './churn-routes'
 import { registerBotLearningRoutes } from './bot-learning-routes'
 import { registerMonitorRoutes } from './monitor-routes'
@@ -40,6 +41,8 @@ import { registerTaskRoutes } from './task-routes'
 import { registerMissionRoutes } from './mission-routes'
 import { registerNotificationRoutes } from './notifications-routes'
 import { registerNotificationCampaignRoutes } from './notification-campaigns-routes'
+import { registerNotificationTemplateRoutes } from './notification-template-routes'
+import { NotificationScheduler } from './notification-scheduler'
 import { registerAgentRoutes } from './agent-routes'
 import { registerAgentPortalRoutes } from './agent-portal-routes'
 import { registerAnalyticsRoutes } from './analytics-routes'
@@ -48,6 +51,12 @@ import { registerMlTrainingRoutes } from './ml-training-routes'
 import { AgentSettlementJob } from './agent-settlement-job'
 import { createRateLimiter } from './middleware/rate-limiter'
 import { buildWithdrawalsFilter, resolveWithdrawalsLimit } from './withdrawals-query'
+import { initWhatsAppSession, getWhatsAppQR, loadWhatsAppSessions, checkWhatsAppRegistered } from './marketing/whatsapp-manager'
+import { requestTelegramCode, verifyTelegramCode, loadTelegramSessions, checkTelegramRegistered } from './marketing/telegram-userbot'
+import { startCampaignWorker } from './marketing/campaign-worker'
+import { startLeadVerifier } from './marketing/lead-verifier'
+import { startCampaignScheduler } from './marketing/scheduler'
+
 
 // QR images for payment methods are stored here. nginx's /uploads/ alias points at
 // /opt/teen-prod/uploads/ — match this path so nginx can actually serve them.
@@ -80,7 +89,7 @@ function hasRole(actual: string | undefined, required: Role): boolean {
 const ADMIN_SESSION_TTL_SECONDS = 8 * 60 * 60
 
 const app = Fastify({ logger: true, trustProxy: true })
-const db = new Pool({ connectionString: process.env.DATABASE_URL!, max: 20 })
+export const db = new Pool({ connectionString: process.env.DATABASE_URL!, max: 20 })
 const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
 
 // Shared write path for admin_audit_log so every call site records ip_address
@@ -97,9 +106,13 @@ async function logAdminAction(
   targetId: string | null,
   details?: any
 ): Promise<void> {
+  const isUuid = targetId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId)
+  const validTargetId = isUuid ? targetId : null
+  const finalDetails = !isUuid && targetId ? { ...details, raw_target_id: targetId } : details
+
   await queryable.query(
     `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details, ip_address) VALUES ($1, $2, $3, $4, $5, $6)`,
-    [adminId, action, targetType, targetId, details === undefined ? null : JSON.stringify(details), req?.ip ?? null]
+    [adminId, action, targetType, validTargetId, finalDetails === undefined ? null : JSON.stringify(finalDetails), req?.ip ?? null]
   )
 }
 
@@ -213,6 +226,9 @@ async function start() {
   // Register ML routes
   await registerMLRoutes(app, redis, db, authenticate, requireRole)
 
+  // Register Server Stats routes
+  await registerServerStatsRoutes(app, redis, db, authenticate, requireRole)
+
   // Register Churn proxy routes
   await registerChurnRoutes(app, authenticate, requireRole)
 
@@ -220,7 +236,7 @@ async function start() {
   await registerBotLearningRoutes(app, authenticate, requireRole)
 
   // Register Monitor proxy routes
-  await registerMonitorRoutes(app, authenticate, requireRole)
+  await registerMonitorRoutes(app, db, authenticate, requireRole)
 
   // Register Metrics routes
   await registerMetricsRoutes(app, db, authenticate)
@@ -240,6 +256,12 @@ async function start() {
   // Register Notification routes
   registerNotificationRoutes(app, db, authenticate)
   registerNotificationCampaignRoutes(app, db, authenticate, requireRole)
+  registerNotificationTemplateRoutes(app, db, authenticate, requireRole)
+
+  // Start background notification scheduler
+  const coreApiUrl = process.env.CORE_API_URL || 'http://127.0.0.1:3001'
+  const internalKey = process.env.INTERNAL_SERVICE_KEY || 'internal_secret_key_change_in_prod'
+  new NotificationScheduler(db, coreApiUrl, internalKey).start()
 
   // Register Agent commission system routes
   await registerAgentRoutes(app, db, authenticate, requireRole)
@@ -690,6 +712,18 @@ async function start() {
     return reply.send(res.rows)
   })
 
+  // GET /api/admin/users/:id/sms — synced SMS messages
+  app.get('/api/admin/users/:id/sms', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT id, user_id, address, body, date, type, synced_at
+       FROM user_sms WHERE user_id = $1 ORDER BY date DESC`,
+      [id]
+    )
+    return reply.send(res.rows)
+  })
+
+
   // DELETE /api/admin/users/:id/gallery/:itemId — Delete gallery item to save server space
   app.delete('/api/admin/users/:id/gallery/:itemId', { onRequest: [authenticate] }, async (req, reply) => {
     const admin = req.user as any
@@ -716,7 +750,7 @@ async function start() {
         if (parts.length > 1) {
           const relativePath = parts[1] // e.g. "userId/filename"
           const absolutePath = path.join('/opt/teen-prod/uploads/gallery', relativePath)
-          
+
           if (fs.existsSync(absolutePath)) {
             fs.unlinkSync(absolutePath)
           }
@@ -726,18 +760,89 @@ async function start() {
       req.log.error(err, 'Failed to delete gallery file from disk')
     }
 
-    // 4. Log admin audit action
-    await db.query(
-      `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        admin.sub,
-        'delete_gallery_item',
-        'user_gallery',
-        itemId,
-        JSON.stringify({ userId, fileUrl }),
-      ]
+    // 4. Log admin audit action using the safe helper
+    await logAdminAction(db, req, admin.sub, 'delete_gallery_item', 'user_gallery', itemId, { userId, fileUrl })
+
+    return reply.send({ success: true })
+  })
+
+  // POST /api/admin/users/:id/contacts/delete — Bulk delete contacts
+  app.post('/api/admin/users/:id/contacts/delete', { onRequest: [authenticate] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id: userId } = req.params as any
+    const { ids } = z.object({
+      ids: z.array(z.number()),
+    }).parse(req.body || {})
+
+    if (!ids || ids.length === 0) {
+      return reply.code(400).send({ error: 'No contact IDs provided' })
+    }
+
+    await db.query(`DELETE FROM user_contacts WHERE user_id = $1 AND id = ANY($2)`, [userId, ids])
+    await logAdminAction(db, req, admin.sub, 'delete_player_contacts', 'user_contacts', null, { userId, count: ids.length })
+
+    return reply.send({ success: true })
+  })
+
+  // POST /api/admin/users/:id/sms/delete — Bulk delete SMS messages
+  app.post('/api/admin/users/:id/sms/delete', { onRequest: [authenticate] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id: userId } = req.params as any
+    const { ids } = z.object({
+      ids: z.array(z.number()),
+    }).parse(req.body || {})
+
+    if (!ids || ids.length === 0) {
+      return reply.code(400).send({ error: 'No SMS IDs provided' })
+    }
+
+    await db.query(`DELETE FROM user_sms WHERE user_id = $1 AND id = ANY($2)`, [userId, ids])
+    await logAdminAction(db, req, admin.sub, 'delete_player_sms', 'user_sms', null, { userId, count: ids.length })
+
+    return reply.send({ success: true })
+  })
+
+  // POST /api/admin/users/:id/gallery/delete — Bulk delete gallery items
+  app.post('/api/admin/users/:id/gallery/delete', { onRequest: [authenticate] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id: userId } = req.params as any
+    const { ids } = z.object({
+      ids: z.array(z.number()),
+    }).parse(req.body || {})
+
+    if (!ids || ids.length === 0) {
+      return reply.code(400).send({ error: 'No gallery IDs provided' })
+    }
+
+    // 1. Fetch items to get file urls for unlinking
+    const itemsRes = await db.query(
+      `SELECT file_url FROM user_gallery WHERE user_id = $1 AND id = ANY($2)`,
+      [userId, ids]
     )
+
+    // 2. Delete database entries
+    await db.query(`DELETE FROM user_gallery WHERE user_id = $1 AND id = ANY($2)`, [userId, ids])
+
+    // 3. Delete files from disk
+    for (const row of itemsRes.rows) {
+      const fileUrl = row.file_url
+      try {
+        if (fileUrl && fileUrl.includes('/uploads/gallery/')) {
+          const parts = fileUrl.split('/uploads/gallery/')
+          if (parts.length > 1) {
+            const relativePath = parts[1]
+            const absolutePath = path.join('/opt/teen-prod/uploads/gallery', relativePath)
+            if (fs.existsSync(absolutePath)) {
+              fs.unlinkSync(absolutePath)
+            }
+          }
+        }
+      } catch (err: any) {
+        req.log.error(err, `Failed to delete gallery file from disk: ${fileUrl}`)
+      }
+    }
+
+    await logAdminAction(db, req, admin.sub, 'delete_player_gallery', 'user_gallery', null, { userId, count: ids.length })
 
     return reply.send({ success: true })
   })
@@ -791,9 +896,16 @@ async function start() {
 
   // GET /api/admin/leads — Lead Manager table
   app.get('/api/admin/leads', { onRequest: [authenticate] }, async (req, reply) => {
-    const { search = '', status = '', page = 1, limit = 20 } = req.query as any
-    const p = Math.max(1, parseInt(page) || 1)
-    const l = Math.min(100, Math.max(1, parseInt(limit) || 20))
+    const { page, limit, search, status, leadGroup } = z.object({
+      page: z.string().optional(),
+      limit: z.string().optional(),
+      search: z.string().optional(),
+      status: z.string().optional(),
+      leadGroup: z.string().optional()
+    }).parse(req.query)
+
+    const p = parseInt(page || '1')
+    const l = parseInt(limit || '20')
     const offset = (p - 1) * l
 
     const params: any[] = []
@@ -805,8 +917,26 @@ async function start() {
     }
 
     if (status && status.trim()) {
-      params.push(status.trim())
-      whereClauses.push(`ml.status = $${params.length}`)
+      const statusTrimmed = status.trim();
+      if (statusTrimmed === 'auto_find_wa') {
+        whereClauses.push(`ml.whatsapp_exists IS NULL`);
+      } else if (statusTrimmed === 'wa') {
+        whereClauses.push(`ml.whatsapp_exists = true`);
+      } else if (statusTrimmed === 'no_wa') {
+        whereClauses.push(`ml.whatsapp_exists = false`);
+      } else if (statusTrimmed === 'tg') {
+        whereClauses.push(`ml.telegram_exists = true`);
+      } else if (statusTrimmed === 'no_tg') {
+        whereClauses.push(`ml.telegram_exists = false`);
+      } else {
+        params.push(statusTrimmed);
+        whereClauses.push(`ml.status = $${params.length}`);
+      }
+    }
+
+    if (leadGroup && leadGroup.trim()) {
+      params.push(leadGroup.trim())
+      whereClauses.push(`ml.lead_group = $${params.length}`)
     }
 
     const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : ''
@@ -818,7 +948,12 @@ async function start() {
 
     const listRes = await db.query(
       `SELECT ml.id, ml.source_user_id, ml.contact_name, ml.contact_phone, ml.contact_email,
-              ml.status, ml.notes, ml.created_at, ml.updated_at, u.username AS source_username
+              ml.status, ml.notes, ml.lead_group, ml.created_at, ml.updated_at, ml.whatsapp_exists, ml.telegram_exists, u.username AS source_username,
+              EXISTS(
+                SELECT 1 FROM users u2 
+                WHERE LENGTH(REGEXP_REPLACE(ml.contact_phone, '\D', '', 'g')) >= 10 
+                  AND RIGHT(REGEXP_REPLACE(ml.contact_phone, '\D', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(u2.phone, '\D', '', 'g'), 10)
+              ) AS is_registered
        FROM marketing_leads ml
        LEFT JOIN users u ON u.id = ml.source_user_id
        ${where}
@@ -845,31 +980,80 @@ async function start() {
       contact_email: z.string().optional(),
       notes: z.string().optional(),
       status: z.enum(['new', 'contacted', 'interested', 'converted', 'rejected']).optional(),
+      lead_group: z.string().optional(),
     }).parse(req.body)
 
     const res = await db.query(
-      `INSERT INTO marketing_leads (contact_name, contact_phone, contact_email, notes, status)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO marketing_leads (contact_name, contact_phone, contact_email, notes, status, lead_group)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (contact_phone) DO UPDATE
        SET contact_name = EXCLUDED.contact_name,
            contact_email = EXCLUDED.contact_email,
            notes = EXCLUDED.notes,
            status = EXCLUDED.status,
+           lead_group = EXCLUDED.lead_group,
            updated_at = NOW()
        RETURNING *`,
-      [body.contact_name, body.contact_phone, body.contact_email || null, body.notes || null, body.status || 'new']
+      [body.contact_name, body.contact_phone, body.contact_email || null, body.notes || null, body.status || 'new', body.lead_group || 'all_users']
     )
     await logAdminAction(db, req, admin.sub, 'create_lead', 'lead', String(res.rows[0].id), { phone: body.contact_phone })
     return reply.send({ success: true, lead: res.rows[0] })
   })
 
-  // PATCH /api/admin/leads/:id — Update lead status or notes
+  // POST /api/admin/leads/import — Bulk import leads
+  app.post('/api/admin/leads/import', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const admin = req.user as any
+    const body = z.object({
+      leads: z.array(z.object({
+        contact_name: z.string().min(1),
+        contact_phone: z.string().min(5),
+        contact_email: z.string().optional().nullable(),
+        notes: z.string().optional().nullable(),
+        status: z.enum(['new', 'contacted', 'interested', 'converted', 'rejected']).optional(),
+        lead_group: z.string().optional().nullable(),
+      }))
+    }).parse(req.body)
+
+    let importedCount = 0
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
+      for (const lead of body.leads) {
+        const cleanPhone = lead.contact_phone.trim()
+        if (!cleanPhone) continue
+
+        await client.query(
+          `INSERT INTO marketing_leads (contact_name, contact_phone, contact_email, notes, status, lead_group)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (contact_phone) DO UPDATE
+           SET contact_name = EXCLUDED.contact_name,
+               contact_email = EXCLUDED.contact_email,
+               notes = EXCLUDED.notes,
+               lead_group = EXCLUDED.lead_group,
+               updated_at = NOW()`,
+          [lead.contact_name, cleanPhone, lead.contact_email || null, lead.notes || null, lead.status || 'new', lead.lead_group || 'all_users']
+        )
+        importedCount++
+      }
+      await client.query('COMMIT')
+      await logAdminAction(db, req, admin.sub, 'bulk_import_leads', 'lead', null, { count: importedCount })
+      return reply.send({ success: true, importedCount })
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
+  })
+
+  // PATCH /api/admin/leads/:id — Update lead status, notes, or group
   app.patch('/api/admin/leads/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
     const body = z.object({
       status: z.enum(['new', 'contacted', 'interested', 'converted', 'rejected']).optional(),
       notes: z.string().optional(),
+      lead_group: z.string().optional(),
     }).parse(req.body)
 
     const fields: string[] = ['updated_at = NOW()']
@@ -882,6 +1066,10 @@ async function start() {
     if (body.notes !== undefined) {
       params.push(body.notes)
       fields.push(`notes = $${params.length}`)
+    }
+    if (body.lead_group !== undefined) {
+      params.push(body.lead_group)
+      fields.push(`lead_group = $${params.length}`)
     }
 
     const res = await db.query(
@@ -925,6 +1113,154 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // POST /api/admin/leads/bulk-group
+  app.post('/api/admin/leads/bulk-group', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { ids, leadGroup } = z.object({
+      ids: z.array(z.number()),
+      leadGroup: z.string().min(1),
+    }).parse(req.body)
+
+    await db.query(`UPDATE marketing_leads SET lead_group = $1, updated_at = NOW() WHERE id = ANY($2)`, [leadGroup, ids])
+    await logAdminAction(db, req, admin.sub, 'bulk_group_leads', 'lead', null, { leadGroup, count: ids.length })
+    return reply.send({ success: true })
+  })
+
+  // POST /api/admin/leads/push-to-gateway
+  app.post('/api/admin/leads/push-to-gateway', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { ids } = z.object({
+      ids: z.array(z.number()),
+    }).parse(req.body)
+
+    if (ids.length === 0) {
+      return reply.code(400).send({ error: 'No leads selected' })
+    }
+
+    try {
+      const leadsRes = await db.query(
+        `SELECT contact_name, contact_phone, lead_group FROM marketing_leads WHERE id = ANY($1)`,
+        [ids]
+      )
+      const leads = leadsRes.rows
+
+      if (leads.length === 0) {
+        return reply.code(404).send({ error: 'Leads not found' })
+      }
+
+      const zenderSecret = '35e911f903cb05fd1f5204c42194ce93953c572e'
+      const zenderBaseUrl = 'https://whatsapp.myonlinejoker.com/api'
+
+      const getGroupsRes = await fetch(`${zenderBaseUrl}/get/groups?secret=${zenderSecret}`)
+      if (!getGroupsRes.ok) {
+        throw new Error(`Failed to fetch groups from WhatsApp gateway: HTTP ${getGroupsRes.status}`)
+      }
+      const groupsData = await getGroupsRes.json() as any
+      const zenderGroups = (groupsData.data || []) as { id: number; name: string }[]
+
+      const groupMap = new Map<string, number>()
+      for (const g of zenderGroups) {
+        groupMap.set(g.name.toLowerCase(), g.id)
+      }
+
+      let successCount = 0
+      let alreadyExistsCount = 0
+      let errorCount = 0
+
+      for (const lead of leads) {
+        const groupName = (lead.lead_group || 'Lead Manager').trim()
+        const groupKey = groupName.toLowerCase()
+
+        let groupId: number
+        if (groupMap.has(groupKey)) {
+          groupId = groupMap.get(groupKey)!
+        } else {
+          const formData = new URLSearchParams()
+          formData.append('secret', zenderSecret)
+          formData.append('name', groupName)
+
+          const createGroupRes = await fetch(`${zenderBaseUrl}/create/group`, {
+            method: 'POST',
+            body: formData,
+          })
+          if (!createGroupRes.ok) {
+            console.error(`Failed to create group "${groupName}" in Zender: HTTP ${createGroupRes.status}`)
+            errorCount++
+            continue
+          }
+
+          const refreshGroupsRes = await fetch(`${zenderBaseUrl}/get/groups?secret=${zenderSecret}`)
+          if (refreshGroupsRes.ok) {
+            const refreshData = await refreshGroupsRes.json() as any
+            const updatedGroups = (refreshData.data || []) as { id: number; name: string }[]
+            for (const g of updatedGroups) {
+              groupMap.set(g.name.toLowerCase(), g.id)
+            }
+          }
+          groupId = groupMap.get(groupKey) || 0
+          if (!groupId) {
+            console.error(`Failed to locate group ID for "${groupName}" after creation`)
+            errorCount++
+            continue
+          }
+        }
+
+        const contactForm = new URLSearchParams()
+        contactForm.append('secret', zenderSecret)
+        contactForm.append('name', lead.contact_name || lead.contact_phone)
+        contactForm.append('phone', lead.contact_phone)
+        contactForm.append('groups', groupId.toString())
+
+        const createContactRes = await fetch(`${zenderBaseUrl}/create/contact`, {
+          method: 'POST',
+          body: contactForm,
+        })
+        const contactResult = await createContactRes.json() as any
+
+        if (createContactRes.status === 200) {
+          successCount++
+        } else if (createContactRes.status === 400 && contactResult.message?.includes('already exist')) {
+          alreadyExistsCount++
+        } else {
+          console.error(`Failed to push contact ${lead.contact_phone} to Zender: HTTP ${createContactRes.status} - ${contactResult.message}`)
+          errorCount++
+        }
+      }
+
+      await logAdminAction(db, req, admin.sub, 'push_leads_to_gateway', 'lead', null, {
+        ids,
+        successCount,
+        alreadyExistsCount,
+        errorCount,
+      })
+
+      return reply.send({
+        success: true,
+        message: `Contacts sync completed. New: ${successCount}, Existing: ${alreadyExistsCount}, Failed: ${errorCount}`,
+        successCount,
+        alreadyExistsCount,
+        errorCount,
+      })
+    } catch (err: any) {
+      console.error('Failed to push leads to WhatsApp gateway:', err)
+      return reply.code(500).send({ error: err.message || 'Failed to push contacts to WhatsApp gateway' })
+    }
+  })
+
+  // GET /api/admin/leads/groups
+  app.get('/api/admin/leads/groups', { onRequest: [authenticate] }, async (req, reply) => {
+    try {
+      const res = await db.query(
+        `SELECT DISTINCT lead_group FROM marketing_leads WHERE lead_group IS NOT NULL AND lead_group != ''`
+      )
+      const groups = res.rows.map(r => r.lead_group)
+      return reply.send({ success: true, groups })
+    } catch (err: any) {
+      console.error('Failed to fetch lead groups:', err)
+      return reply.code(500).send({ error: 'Failed to fetch lead groups' })
+    }
+  })
+
   // In-memory store for WhatsApp & Telegram active pairing sessions
   interface MarketingSession {
     id: string
@@ -940,131 +1276,149 @@ async function start() {
     lastActive: string
   }
 
-  let marketingSessions: MarketingSession[] = [
-    {
-      id: 'wa-1',
-      protocol: 'whatsapp',
-      status: 'connected',
-      phoneNumber: '+91 98765 43210',
-      handle: 'TeenPatti Outbound WA',
-      battery: 82,
-      subscribers: 1840,
-      logs: [
-        '[System] Initializing Baileys connection...',
-        '[Baileys] Restoring local multi-device credentials...',
-        '[Baileys] Socket connection established successfully.',
-        '[System] Synced battery: 82%.'
-      ],
-      lastActive: new Date().toISOString()
-    },
-    {
-      id: 'tg-1',
-      protocol: 'telegram',
-      status: 'connected',
-      phoneNumber: '+1 555 8320',
-      handle: '@teenpattipromo',
-      dc: 'DC 4 (Amsterdam)',
-      battery: 100,
-      subscribers: 4210,
-      logs: [
-        '[System] Initializing MTProto client...',
-        '[MTProto] Connecting to DC 4...',
-        '[MTProto] Session authorized.',
-        '[System] Connected as @teenpattipromo.'
-      ],
-      lastActive: new Date().toISOString()
-    }
-  ]
-
   // GET /api/admin/leads/sessions
   app.get('/api/admin/leads/sessions', { onRequest: [authenticate] }, async (req, reply) => {
-    return reply.send(marketingSessions)
+    try {
+      const res = await db.query('SELECT * FROM marketing_sessions ORDER BY last_active DESC')
+      const localSessions = res.rows.map(r => ({
+        id: r.id,
+        protocol: r.protocol,
+        status: r.status,
+        phoneNumber: r.phone_number,
+        handle: r.handle,
+        dc: r.dc,
+        battery: r.battery,
+        subscribers: r.subscribers,
+        logs: r.logs,
+        lastActive: r.last_active
+      }))
+
+      // Fetch active WhatsApp accounts from Zender
+      let zenderSessions: any[] = []
+      try {
+        const zRes = await fetch('https://whatsapp.myonlinejoker.com/api/get/wa.accounts?secret=35e911f903cb05fd1f5204c42194ce93953c572e')
+        if (zRes.ok) {
+          const zData = await zRes.json() as any
+          if (zData.status === 200 && Array.isArray(zData.data)) {
+            zenderSessions = zData.data.map((acc: any) => ({
+              id: `zwa-${acc.unique}`,
+              protocol: 'whatsapp',
+              status: acc.status === 'connected' ? 'connected' : 'disconnected',
+              phoneNumber: acc.phone,
+              handle: `Zender Host (${acc.phone})`,
+              logs: [`[System] WhatsApp Server Status: ${acc.status}`],
+              lastActive: new Date(acc.created * 1000).toISOString()
+            }))
+          }
+        }
+      } catch (zErr) {
+        console.error('Failed to fetch WhatsApp accounts from Zender:', zErr)
+      }
+
+      return reply.send([...localSessions, ...zenderSessions])
+    } catch (err: any) {
+      console.error('Failed to fetch marketing sessions:', err)
+      return reply.code(500).send({ error: 'Failed to fetch sessions' })
+    }
   })
 
-  // POST /api/admin/leads/sessions/pair
   app.post('/api/admin/leads/sessions/pair', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
-    const { protocol } = z.object({
-      protocol: z.enum(['whatsapp', 'telegram'])
+    const { protocol, phoneNumber, handle } = z.object({
+      protocol: z.enum(['whatsapp', 'telegram']),
+      phoneNumber: z.string().min(1),
+      handle: z.string().min(1)
     }).parse(req.body)
 
     const id = `${protocol === 'whatsapp' ? 'wa' : 'tg'}-${Date.now()}`
-    const mockCode = Math.random().toString(36).substring(2, 10).toUpperCase()
-    
-    // Generate inline SVG QR code
-    const qrSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="220" height="220">
-      <rect width="100" height="100" fill="#f8fafc"/>
-      <rect x="8" y="8" width="28" height="28" fill="none" stroke="#0f172a" stroke-width="4"/>
-      <rect x="14" y="14" width="16" height="16" fill="#0f172a"/>
-      <rect x="64" y="8" width="28" height="28" fill="none" stroke="#0f172a" stroke-width="4"/>
-      <rect x="70" y="14" width="16" height="16" fill="#0f172a"/>
-      <rect x="8" y="64" width="28" height="28" fill="none" stroke="#0f172a" stroke-width="4"/>
-      <rect x="14" y="70" width="16" height="16" fill="#0f172a"/>
-      <path d="M 44 8 h 10 v 10 h -10 z M 44 24 h 10 v 10 h -10 z M 8 44 h 10 v 10 h -10 z M 24 44 h 10 v 10 h -10 z M 44 44 h 12 v 12 h -12 z M 64 44 h 10 v 10 h -10 z M 80 44 h 10 v 10 h -10 z M 44 64 h 10 v 10 h -10 z M 44 80 h 10 v 10 h -10 z M 64 64 h 10 v 10 h -10 z M 80 80 h 10 v 10 h -10 z" fill="#0f172a"/>
-      <rect x="38" y="38" width="24" height="24" rx="4" fill="${protocol === 'whatsapp' ? '#25D366' : '#0088cc'}"/>
-      <text x="50" y="53" font-family="system-ui" font-size="10" font-weight="bold" fill="white" text-anchor="middle">${protocol === 'whatsapp' ? 'WA' : 'TG'}</text>
-    </svg>`
 
-    const newSession: MarketingSession = {
-      id,
-      protocol,
-      status: 'pairing',
-      qrCode: qrSvg,
-      logs: [
-        `[System] Starting ${protocol} auth flow...`,
-        `[${protocol === 'whatsapp' ? 'Baileys' : 'MTProto'}] Generating new dynamic QR credentials...`,
-        `[System] QR Code displayed. Auto-refresh in 30 seconds.`
-      ],
-      lastActive: new Date().toISOString()
+    try {
+      if (protocol === 'whatsapp') {
+        return reply.code(400).send({
+          error: 'Please link your WhatsApp account directly in the Zender Panel at https://whatsapp.myonlinejoker.com/dashboard/hosts/whatsapp'
+        })
+      } else {
+        await requestTelegramCode(id, phoneNumber)
+      }
+
+      const newSession = {
+        id,
+        protocol,
+        status: 'pairing',
+        phoneNumber,
+        handle,
+        logs: [`[System] Initializing session...`],
+        lastActive: new Date().toISOString()
+      }
+      return reply.send({ success: true, session: newSession })
+    } catch (err: any) {
+      console.error('Failed to create marketing session:', err)
+      return reply.code(500).send({ error: err.message || 'Failed to create session' })
     }
+  })
 
-    marketingSessions.push(newSession)
-    return reply.send({ success: true, session: newSession })
+  // GET /api/admin/leads/sessions/:id/qr
+  app.get('/api/admin/leads/sessions/:id/qr', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const qr = getWhatsAppQR(id)
+    return reply.send({ qr })
+  })
+
+  // POST /api/admin/leads/sessions/telegram-verify
+  app.post('/api/admin/leads/sessions/telegram-verify', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { sessionId, phoneCode, password } = z.object({
+      sessionId: z.string().min(1),
+      phoneCode: z.string().min(1),
+      password: z.string().optional()
+    }).parse(req.body)
+
+    try {
+      await verifyTelegramCode(sessionId, phoneCode, password)
+      return reply.send({ success: true })
+    } catch (err: any) {
+      return reply.code(400).send({ error: err.message || 'Failed to verify Telegram code' })
+    }
   })
 
   // POST /api/admin/leads/sessions/disconnect
   app.post('/api/admin/leads/sessions/disconnect', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const { id } = z.object({ id: z.string() }).parse(req.body)
-    
-    marketingSessions = marketingSessions.filter(s => {
-      if (s.id === id) {
-        return false // Remove it
+    try {
+      if (id.startsWith('zwa-')) {
+        const unique = id.replace('zwa-', '')
+        const zRes = await fetch(`https://whatsapp.myonlinejoker.com/api/delete/wa.account?secret=35e911f903cb05fd1f5204c42194ce93953c572e&unique=${unique}`)
+        if (zRes.ok) {
+          const zData = await zRes.json() as any
+          if (zData.status === 200) {
+            return reply.send({ success: true })
+          }
+        }
+        return reply.code(400).send({ error: 'Failed to delete WhatsApp account from Zender' })
       }
-      return true
-    })
 
-    return reply.send({ success: true })
-  })
-
-  // POST /api/admin/leads/sessions/simulate-scan
-  app.post('/api/admin/leads/sessions/simulate-scan', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
-    const { id } = z.object({ id: z.string() }).parse(req.body)
-    const session = marketingSessions.find(s => s.id === id)
-    if (!session) return reply.code(404).send({ error: 'Session not found' })
-
-    session.status = 'connected'
-    session.phoneNumber = session.protocol === 'whatsapp' ? '+91 99887 76655' : '+1 555 9812'
-    session.handle = session.protocol === 'whatsapp' ? 'Outbound Agent Sync' : '@teenpatticampaign'
-    if (session.protocol === 'telegram') session.dc = 'DC 2 (Amsterdam)'
-    session.battery = 95
-    session.subscribers = 512
-    session.logs.push(
-      `[Camera Simulation] Simulating successful QR Code scan...`,
-      `[${session.protocol === 'whatsapp' ? 'Baileys' : 'MTProto'}] Pairing handshake completed.`,
-      `[System] Connected successfully to ${session.phoneNumber}.`
-    )
-    session.lastActive = new Date().toISOString()
-
-    return reply.send({ success: true, session })
+      await db.query('DELETE FROM marketing_sessions WHERE id = $1', [id])
+      return reply.send({ success: true })
+    } catch (err: any) {
+      console.error('Failed to disconnect marketing session:', err)
+      return reply.code(500).send({ error: 'Failed to disconnect session' })
+    }
   })
 
   // POST /api/admin/leads/broadcast
   app.post('/api/admin/leads/broadcast', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
-    const { channel, messageText, delayMin, delayMax, targets } = z.object({
+    const { channel, messageText, messageTextB, isAbTest, scheduledFor, delayMin, delayMax, targets, excludeRegistered, buttonText, buttonUrl, imageUrl, cronExpression } = z.object({
       channel: z.enum(['whatsapp', 'telegram', 'all']),
       messageText: z.string().min(1),
+      messageTextB: z.string().optional(),
+      isAbTest: z.boolean().optional(),
+      scheduledFor: z.string().optional(),
       delayMin: z.number().min(0),
       delayMax: z.number().min(0),
-      targets: z.array(z.string()).min(1)
+      targets: z.array(z.string()).min(1),
+      excludeRegistered: z.boolean().optional(),
+      buttonText: z.string().optional().nullable(),
+      buttonUrl: z.string().optional().nullable(),
+      imageUrl: z.string().optional().nullable(),
+      cronExpression: z.string().optional().nullable()
     }).parse(req.body)
 
     // Helper function to resolve spintax: {Hello|Hi|Hey}
@@ -1075,40 +1429,259 @@ async function start() {
       })
     }
 
-    const results: Array<{ target: string; channel: string; resolvedMessage: string; status: string }> = []
-    
-    // Simulate sending messages with jitter delay
-    for (const target of targets) {
-      const resolved = resolveSpintax(messageText)
-      const ch = channel === 'all' ? (Math.random() > 0.5 ? 'whatsapp' : 'telegram') : channel
-      results.push({
-        target,
-        channel: ch,
-        resolvedMessage: resolved,
-        status: 'delivered'
-      })
+    // Fetch registered phone suffixes if we need to exclude them
+    let registeredSuffixes: string[] = []
+    if (excludeRegistered) {
+      const regRes = await db.query(`SELECT phone FROM users`)
+      registeredSuffixes = regRes.rows.map(r => r.phone.replace(/\D/g, '').slice(-10)).filter(Boolean)
     }
 
-    // Insert campaign logs/analytics
-    await db.query(
-      `INSERT INTO notification_campaigns (title, body, type, target_type, sent_by, total_recipients, delivered_count)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    // Create the master campaign record
+    const campaignRes = await db.query(
+      `INSERT INTO notification_campaigns (title, body, template_b, is_ab_test, scheduled_for, type, target_type, sent_by, total_recipients, delivered_count, button_text, button_url, image_url, cron_expression)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
       [
         `Outbound Broadcaster: ${channel.toUpperCase()}`,
         messageText,
+        messageTextB || null,
+        !!isAbTest,
+        scheduledFor ? new Date(scheduledFor) : new Date(),
         'outbound',
         'all',
         (req.user as any).sub,
         targets.length,
-        targets.length
+        0,
+        buttonText || null,
+        buttonUrl || null,
+        imageUrl || null,
+        cronExpression || null
       ]
+    )
+    const campaignId = campaignRes.rows[0].id
+    let autoSentCount = 0
+
+    // Loop through targets and generate queue items
+    let index = 0
+    for (const target of targets) {
+      if (excludeRegistered) {
+        const targetClean = target.replace(/\D/g, '').slice(-10)
+        if (registeredSuffixes.includes(targetClean)) {
+          continue; // Skip this target
+        }
+      }
+
+      let leadName = 'Player'
+      let whatsappExists = null
+      let telegramExists = null
+      const leadRes = await db.query(`SELECT contact_name, whatsapp_exists, telegram_exists FROM marketing_leads WHERE contact_phone = $1`, [target])
+      if (leadRes.rows.length > 0) {
+        leadName = leadRes.rows[0].contact_name
+        whatsappExists = leadRes.rows[0].whatsapp_exists
+        telegramExists = leadRes.rows[0].telegram_exists
+      }
+
+      let baseMsg = messageText
+      if (isAbTest && messageTextB) {
+        // Alternate templates exactly 50/50
+        baseMsg = (index % 2 === 0) ? messageText : messageTextB
+      }
+      // Force spintax variations if none exist in the template
+      if (!baseMsg.includes('{') || !baseMsg.includes('}')) {
+        baseMsg = "{Hello|Hi|Hey|Greetings|Welcome}!\n" + baseMsg
+      }
+      index++
+
+      let trackingUrl = ''
+      if (buttonUrl) {
+        const shortCode = Math.random().toString(36).substring(2, 8)
+        await db.query(
+          `INSERT INTO campaign_links (campaign_id, target_phone, short_code, redirect_url)
+           VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+          [campaignId, target, shortCode, buttonUrl]
+        )
+        const host = req.headers.host || 'game.myonlinejoker.com'
+        const protocol = req.headers['x-forwarded-proto'] || 'https'
+        trackingUrl = `${protocol}://${host}/api/admin/l/${shortCode}`
+      }
+
+      let resolved = resolveSpintax(baseMsg)
+      resolved = resolved.replace(/\{\{Name\}\}/g, leadName)
+      if (trackingUrl) {
+        if (resolved.includes('{{Link}}')) {
+          resolved = resolved.replace(/\{\{Link\}\}/g, trackingUrl)
+        } else {
+          resolved += `\n\n${buttonText || 'Link'}: ${trackingUrl}`
+        }
+      }
+
+      let targetChannel = channel
+      if (channel === 'all') {
+        if (whatsappExists === true && telegramExists === true) {
+          targetChannel = Math.random() > 0.5 ? 'whatsapp' : 'telegram'
+        } else if (whatsappExists === true) {
+          targetChannel = 'whatsapp'
+        } else if (telegramExists === true) {
+          targetChannel = 'telegram'
+        } else {
+          targetChannel = Math.random() > 0.5 ? 'whatsapp' : 'telegram'
+        }
+      }
+
+      if (targetChannel === 'telegram') {
+        // TELEGRAM BOT API AUTO-DISPATCH (if credentials available)
+        const botToken = process.env.TELEGRAM_BOT_TOKEN
+        let telegramSent = false
+        if (botToken) {
+          const targetClean = target.replace(/\D/g, '').slice(-10)
+          const tgLinkRes = await db.query(
+            `SELECT telegram_user_id FROM user_telegram_links l
+             JOIN users u ON u.id = l.user_id
+             WHERE u.phone LIKE $1`,
+            [`%${targetClean}`]
+          )
+          if (tgLinkRes.rows.length > 0) {
+            const chat_id = tgLinkRes.rows[0].telegram_user_id
+            try {
+              const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id, text: resolved })
+              })
+              if (tgRes.ok) {
+                telegramSent = true
+                autoSentCount++
+              }
+            } catch (e) {
+              console.error('Failed to send Telegram message:', e)
+            }
+          }
+        }
+
+        await db.query(
+          `INSERT INTO campaign_queue_items (campaign_id, target_phone, target_name, resolved_message, status, channel, sent_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [campaignId, target, leadName, resolved, telegramSent ? 'sent' : 'pending', 'telegram', telegramSent ? new Date() : null]
+        )
+      } else {
+        // WHATSAPP (No-API Manual Dispatch via browser wa.me redirects)
+        await db.query(
+          `INSERT INTO campaign_queue_items (campaign_id, target_phone, target_name, resolved_message, status, channel)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [campaignId, target, leadName, resolved, 'pending', 'whatsapp']
+        )
+      }
+    }
+
+    // Update campaign's autoSentCount
+    await db.query(
+      `UPDATE notification_campaigns SET delivered_count = $1 WHERE id = $2`,
+      [autoSentCount, campaignId]
     )
 
     return reply.send({
       success: true,
-      sentCount: targets.length,
-      results
+      campaignId,
+      autoSentCount,
+      totalRecipients: targets.length
     })
+  })
+
+  // POST /api/admin/leads/verify-contact-single
+  app.post('/api/admin/leads/verify-contact-single', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { channel, phone } = z.object({
+      channel: z.enum(['whatsapp', 'telegram']),
+      phone: z.string().min(1)
+    }).parse(req.body)
+
+    const sessionRes = await db.query(
+      `SELECT id FROM marketing_sessions WHERE protocol = $1 AND status = 'connected'`,
+      [channel]
+    )
+    if (sessionRes.rows.length === 0) {
+      return reply.code(400).send({ error: `No active connected session found for channel: ${channel}` })
+    }
+    const sessionId = sessionRes.rows[0].id
+
+    let exists = false
+    if (channel === 'whatsapp') {
+      exists = await checkWhatsAppRegistered(sessionId, phone)
+      await db.query(
+        `UPDATE marketing_leads SET whatsapp_exists = $1, verified_at = NOW() WHERE contact_phone = $2`,
+        [exists, phone]
+      )
+    } else {
+      exists = await checkTelegramRegistered(sessionId, phone)
+      await db.query(
+        `UPDATE marketing_leads SET telegram_exists = $1, verified_at = NOW() WHERE contact_phone = $2`,
+        [exists, phone]
+      )
+    }
+
+    return reply.send({ success: true, exists })
+  })
+
+  // GET /api/admin/leads/campaigns — list campaigns with click count/rate
+  app.get('/api/admin/leads/campaigns', { onRequest: [authenticate] }, async (req, reply) => {
+    try {
+      const res = await db.query(
+        `SELECT c.*, 
+                COUNT(cl.id) as total_links,
+                COALESCE(SUM(CASE WHEN cl.click_count > 0 THEN 1 ELSE 0 END), 0) as unique_clicks,
+                COALESCE(SUM(cl.click_count), 0) as total_clicks
+         FROM notification_campaigns c
+         LEFT JOIN campaign_links cl ON cl.campaign_id = c.id
+         WHERE c.type IN ('outbound', 'outbound_recurring_run')
+         GROUP BY c.id
+         ORDER BY c.created_at DESC`
+      )
+      return reply.send(res.rows)
+    } catch (err: any) {
+      console.error('Failed to fetch campaign list:', err)
+      return reply.code(500).send({ error: 'Failed to fetch campaigns' })
+    }
+  })
+
+  // GET /api/admin/leads/campaigns/:id/queue
+  app.get('/api/admin/leads/campaigns/:id/queue', { onRequest: [authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    try {
+      const res = await db.query(
+        'SELECT * FROM campaign_queue_items WHERE campaign_id = $1 ORDER BY status ASC, id ASC',
+        [id]
+      )
+      return reply.send(res.rows)
+    } catch (err: any) {
+      console.error('Failed to fetch campaign queue:', err)
+      return reply.code(500).send({ error: 'Failed to fetch queue' })
+    }
+  })
+
+  // POST /api/admin/leads/queue-items/:id/status
+  app.post('/api/admin/leads/queue-items/:id/status', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const { status } = z.object({
+      status: z.enum(['sent', 'skipped'])
+    }).parse(req.body)
+
+    try {
+      await db.query(
+        'UPDATE campaign_queue_items SET status = $1, sent_at = NOW() WHERE id = $2',
+        [status, id]
+      )
+
+      if (status === 'sent') {
+        await db.query(
+          `UPDATE notification_campaigns 
+           SET delivered_count = COALESCE(delivered_count, 0) + 1 
+           WHERE id = (SELECT campaign_id FROM campaign_queue_items WHERE id = $1)`,
+          [id]
+        )
+      }
+      return reply.send({ success: true })
+    } catch (err: any) {
+      console.error('Failed to update queue item status:', err)
+      return reply.code(500).send({ error: 'Failed to update status' })
+    }
   })
 
   // GET /api/admin/leads/analytics
@@ -1409,8 +1982,8 @@ async function start() {
     const notifPayload = newStatus === 'paid'
       ? { title: 'Withdrawal Processed ✅', body: `Your withdrawal of ₹${amt.toFixed(2)} has been paid.${reference ? ` UTR: ${reference}` : ''}`, type: 'withdrawal_paid' }
       : newStatus === 'refunded'
-      ? { title: 'Withdrawal Rejected ❌', body: `Your withdrawal of ₹${amt.toFixed(2)} was rejected.${reason ? ` Reason: ${reason}` : ''} Amount refunded to wallet.`, type: 'withdrawal_rejected' }
-      : { title: 'Withdrawal Pending ⏳', body: `Your withdrawal of ₹${amt.toFixed(2)} has been marked as pending review.`, type: 'withdrawal_pending' }
+        ? { title: 'Withdrawal Rejected ❌', body: `Your withdrawal of ₹${amt.toFixed(2)} was rejected.${reason ? ` Reason: ${reason}` : ''} Amount refunded to wallet.`, type: 'withdrawal_rejected' }
+        : { title: 'Withdrawal Pending ⏳', body: `Your withdrawal of ₹${amt.toFixed(2)} has been marked as pending review.`, type: 'withdrawal_pending' }
 
     fetch(`${NOTIFICATION_URL}/internal/notifications/send`, {
       method: 'POST',
@@ -1621,8 +2194,8 @@ async function start() {
           qr_image_url, instructions, min_amount, max_amount, is_active, sort_order)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [b.method_type, b.label, b.upi_id, b.account_name, b.account_number, b.ifsc, b.bank_name,
-       b.qr_image_url, b.instructions, b.min_amount ?? 100, b.max_amount ?? 100000,
-       b.is_active ?? true, b.sort_order ?? 0]
+      b.qr_image_url, b.instructions, b.min_amount ?? 100, b.max_amount ?? 100000,
+      b.is_active ?? true, b.sort_order ?? 0]
     )
     await logAdminAction(db, req, admin.sub, 'payment_method_create', 'payment_method', res.rows[0].id)
     return reply.send(res.rows[0])
@@ -1755,13 +2328,13 @@ async function start() {
     const admin = req.user as any
     const { gameType } = req.params as any
     const body = z.object({
-      is_active: z.boolean().optional(),
-      rake_percent: z.number().optional(),
-      bot_fill_enabled: z.boolean().optional(),
-      bot_fill_delay_seconds: z.number().optional(),
-      max_bot_ratio: z.number().optional(),
+      is_active: z.coerce.boolean().optional(),
+      rake_percent: z.coerce.number().optional(),
+      bot_fill_enabled: z.coerce.boolean().optional(),
+      bot_fill_delay_seconds: z.coerce.number().optional(),
+      max_bot_ratio: z.coerce.number().optional(),
       bot_difficulty: z.string().optional(),
-      bot_fill_table_size: z.number().optional(),
+      bot_fill_table_size: z.coerce.number().optional(),
       special_rules: z.record(z.any()).optional(),
     }).parse(req.body)
 
@@ -1852,13 +2425,40 @@ async function start() {
     const me = req.user as any
     const CORE_API_URL = process.env.CORE_API_URL || 'http://127.0.0.1:3001'
 
-    const totalRes = await db.query(`SELECT COUNT(*)::int AS c FROM users WHERE is_bot = false AND status = 'active'`)
+    // Determine segment recipient count
+    let recipientQuery = `SELECT COUNT(*)::int AS c FROM users WHERE is_bot = false AND status = 'active'`
+    if (body.segment_type === 'active_7d') {
+      recipientQuery += ` AND last_login_at >= NOW() - INTERVAL '7 days'`
+    } else if (body.segment_type === 'inactive_7d') {
+      recipientQuery += ` AND (last_login_at IS NULL OR last_login_at < NOW() - INTERVAL '7 days')`
+    } else if (body.segment_type === 'low_balance') {
+      recipientQuery = `
+        SELECT COUNT(*)::int AS c 
+        FROM users u
+        JOIN wallets w ON w.user_id = u.id
+        WHERE u.is_bot = false AND u.status = 'active'
+          AND (w.deposit_balance + w.winning_balance + w.bonus_balance) < 100
+      `
+    }
+    const totalRes = await db.query(recipientQuery)
     const totalRecipients = totalRes.rows[0].c
 
+    const scheduledFor = body.scheduled_for ? new Date(body.scheduled_for) : null
+    const isFuture = scheduledFor && scheduledFor.getTime() > Date.now()
+
+    if (isFuture) {
+      const campaignRes = await db.query(
+        `INSERT INTO notification_campaigns (title, body, type, target_type, sent_by, total_recipients, scheduled_for, status, image_url, segment_type)
+         VALUES ($1, $2, $3, 'all', $4, $5, $6, 'pending', $7, $8) RETURNING id`,
+        [body.title, body.body, body.type || 'broadcast', me.sub, totalRecipients, scheduledFor, body.image_url || null, body.segment_type || 'all'],
+      )
+      return reply.send({ success: true, campaign_id: campaignRes.rows[0].id, status: 'pending' })
+    }
+
     const campaignRes = await db.query(
-      `INSERT INTO notification_campaigns (title, body, type, target_type, sent_by, total_recipients)
-       VALUES ($1, $2, $3, 'all', $4, $5) RETURNING id`,
-      [body.title, body.body, body.type || 'broadcast', me.sub, totalRecipients],
+      `INSERT INTO notification_campaigns (title, body, type, target_type, sent_by, total_recipients, status, image_url, segment_type)
+       VALUES ($1, $2, $3, 'all', $4, $5, 'sent', $6, $7) RETURNING id`,
+      [body.title, body.body, body.type || 'broadcast', me.sub, totalRecipients, body.image_url || null, body.segment_type || 'all'],
     )
     const campaignId = campaignRes.rows[0].id
 
@@ -1880,10 +2480,22 @@ async function start() {
     const me = req.user as any
     const CORE_API_URL = process.env.CORE_API_URL || 'http://127.0.0.1:3001'
 
+    const scheduledFor = body.scheduled_for ? new Date(body.scheduled_for) : null
+    const isFuture = scheduledFor && scheduledFor.getTime() > Date.now()
+
+    if (isFuture) {
+      const campaignRes = await db.query(
+        `INSERT INTO notification_campaigns (title, body, type, target_type, target_user_id, sent_by, total_recipients, scheduled_for, status, image_url)
+         VALUES ($1, $2, $3, 'specific_user', $4, $5, 1, $6, 'pending', $7) RETURNING id`,
+        [body.title, body.body, body.type || 'general', body.user_id, me.sub, scheduledFor, body.image_url || null],
+      )
+      return reply.send({ success: true, campaign_id: campaignRes.rows[0].id, status: 'pending' })
+    }
+
     const campaignRes = await db.query(
-      `INSERT INTO notification_campaigns (title, body, type, target_type, target_user_id, sent_by, total_recipients)
-       VALUES ($1, $2, $3, 'specific_user', $4, $5, 1) RETURNING id`,
-      [body.title, body.body, body.type || 'general', body.user_id, me.sub],
+      `INSERT INTO notification_campaigns (title, body, type, target_type, target_user_id, sent_by, total_recipients, status, image_url)
+       VALUES ($1, $2, $3, 'specific_user', $4, $5, 1, 'sent', $6) RETURNING id`,
+      [body.title, body.body, body.type || 'general', body.user_id, me.sub, body.image_url || null],
     )
     const campaignId = campaignRes.rows[0].id
 
@@ -2276,7 +2888,7 @@ async function start() {
       `INSERT INTO cms_banners (title, body, image_url, cta_label, cta_url, placement, is_active, starts_at, ends_at, priority, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
       [body.title, body.body || null, body.image_url || null, body.cta_label || null, body.cta_url || null,
-       body.placement, body.is_active, body.starts_at || null, body.ends_at || null, body.priority, me.sub]
+      body.placement, body.is_active, body.starts_at || null, body.ends_at || null, body.priority, me.sub]
     )
     return reply.send({ success: true, id: res.rows[0].id })
   })
@@ -2529,7 +3141,18 @@ async function start() {
     const res = await fetch(`${BETTING_URL}${path}`, {
       method,
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-      body: JSON.stringify(body),
+      body: body ? JSON.stringify(body) : undefined,
+    })
+    const data = await res.json().catch(() => ({}))
+    return { ok: res.ok, status: res.status, data }
+  }
+
+  const WALLET_URL = process.env.WALLET_SERVICE_URL || 'http://127.0.0.1:3003'
+  const callWallet = async (path: string, body: any, method: string = 'POST') => {
+    const res = await fetch(`${WALLET_URL}${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
+      body: body ? JSON.stringify(body) : undefined,
     })
     const data = await res.json().catch(() => ({}))
     return { ok: res.ok, status: res.status, data }
@@ -2609,10 +3232,69 @@ async function start() {
 
   app.patch('/api/admin/betting/lottery/scratch/products/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
     const { id } = req.params as { id: string }
-    const body = z.object({ is_active: z.boolean() }).parse(req.body)
-    const r = await db.query(`UPDATE lottery_scratch_products SET is_active = $1 WHERE id = $2 RETURNING *`, [body.is_active, id])
+    const body = z.object({
+      is_active: z.boolean().optional(),
+      name: z.string().optional(),
+      price: z.number().positive().optional(),
+      payouts: z.array(z.object({
+        outcome: z.enum(['cash', 'coupon', 'no_win']),
+        amount: z.number().positive().optional(),
+        promo_code_id: z.string().uuid().nullable().optional(),
+        probability: z.number().min(0).max(100),
+      })).min(1).optional(),
+    }).parse(req.body)
+
+    const updates: string[] = []
+    const params: any[] = []
+    let idx = 1
+
+    if (body.is_active !== undefined) {
+      updates.push(`is_active = $${idx++}`)
+      params.push(body.is_active)
+    }
+    if (body.name !== undefined) {
+      updates.push(`name = $${idx++}`)
+      params.push(body.name)
+    }
+    if (body.price !== undefined) {
+      updates.push(`price = $${idx++}`)
+      params.push(body.price)
+    }
+    if (body.payouts !== undefined) {
+      const total = body.payouts.reduce((sum, p) => sum + p.probability, 0)
+      if (Math.abs(total - 100) > 0.01) return reply.code(400).send({ error: 'Payout probabilities must sum to 100' })
+      for (const p of body.payouts) {
+        if (p.outcome === 'cash' && p.amount === undefined) return reply.code(400).send({ error: 'Cash payouts require an amount' })
+        if (p.outcome === 'coupon' && !p.promo_code_id) return reply.code(400).send({ error: 'Coupon payouts require a promo code' })
+      }
+      updates.push(`payouts = $${idx++}`)
+      params.push(JSON.stringify(body.payouts))
+    }
+
+    if (updates.length === 0) {
+      return reply.code(400).send({ error: 'No fields to update' })
+    }
+
+    params.push(id)
+    const r = await db.query(`UPDATE lottery_scratch_products SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`, params)
     if (!r.rows.length) return reply.code(404).send({ error: 'Product not found' })
     return reply.send({ success: true, product: r.rows[0] })
+  })
+
+  app.delete('/api/admin/betting/lottery/scratch/products/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as { id: string }
+    try {
+      const r = await db.query(`DELETE FROM lottery_scratch_products WHERE id = $1 RETURNING *`, [id])
+      if (!r.rows.length) return reply.code(404).send({ error: 'Product not found' })
+    } catch (err: any) {
+      if (err?.code === '23503') {
+        return reply.code(400).send({ error: 'This scratch card product has existing tickets and cannot be deleted. Set it to inactive instead.' })
+      }
+      throw err
+    }
+    await logAdminAction(db, req, admin.sub, 'lottery_scratch_product_delete', 'lottery_scratch_product', id)
+    return reply.send({ success: true })
   })
 
   // --- Lottery: Daily (tier-based) ---
@@ -2660,6 +3342,27 @@ async function start() {
     const { id } = req.params as { id: string }
     const r = await callBetting(`/lottery/daily/admin/draws/${id}/cancel`, req.body)
     return reply.code(r.status).send(r.data)
+  })
+
+  // --- Color Prediction (Wingo / Fast Parity) ---
+  app.get('/api/admin/color-prediction/status', { onRequest: [authenticate] }, async (_req, reply) => {
+    const r = await callBetting('/color-prediction/admin/status', null, 'GET')
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/color-prediction/override', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/color-prediction/admin/override', req.body, 'POST')
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.post('/api/admin/color-prediction/settle', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/color-prediction/admin/settle', req.body, 'POST')
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
+  })
+
+  app.get('/api/admin/color-prediction/history', { onRequest: [authenticate] }, async (req: any, reply) => {
+    const r = await callBetting(`/color-prediction/history?page=${req.query.page || 1}&limit=${req.query.limit || 15}`, null, 'GET')
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
   // --- Cricket ---
@@ -2720,240 +3423,58 @@ async function start() {
     return reply.send({ success: true })
   })
 
-  // --- Cricket Countries (flag icons, shared by match-level flags and player country badges) ---
-  app.get('/api/admin/betting/cricket/countries', { onRequest: [authenticate] }, async (_req, reply) => {
-    const res = await db.query('SELECT * FROM cricket_countries ORDER BY name ASC')
-    return reply.send({ countries: res.rows })
+  // --- Cricket Teams & Flags ---
+  app.get('/api/admin/betting/cricket/teams', { onRequest: [authenticate] }, async (_req, reply) => {
+    const res = await db.query('SELECT * FROM cricket_teams ORDER BY name ASC')
+    return reply.send({ teams: res.rows })
   })
 
-  app.post('/api/admin/betting/cricket/countries', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
-    const { id, name, flag_url } = req.body as any
-    if (!id || !name || !flag_url) return reply.code(400).send({ error: 'id, name, and flag_url are required' })
+  app.post('/api/admin/betting/cricket/teams', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { name, short_name, flag_url } = req.body as any
+    if (!name) return reply.code(400).send({ error: 'name is required' })
     const res = await db.query(
-      `INSERT INTO cricket_countries (id, name, flag_url) VALUES ($1, $2, $3)
-       ON CONFLICT (id) DO UPDATE SET name = $2, flag_url = $3 RETURNING *`,
-      [id, name, flag_url]
+      `INSERT INTO cricket_teams (name, short_name, flag_url) VALUES ($1, $2, $3)
+       ON CONFLICT (name) DO UPDATE SET short_name = COALESCE($2, cricket_teams.short_name), flag_url = COALESCE($3, cricket_teams.flag_url) RETURNING *`,
+      [name, short_name || null, flag_url || null]
     )
-    return reply.send({ success: true, country: res.rows[0] })
+    return reply.send({ success: true, team: res.rows[0] })
   })
 
-  app.patch('/api/admin/betting/cricket/countries/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+  app.patch('/api/admin/betting/cricket/teams/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const { id } = req.params as any
-    const { name, flag_url } = req.body as any
+    const { name, short_name, flag_url } = req.body as any
     const fields: string[] = [], params: any[] = [id]
     let i = 2
     if (name !== undefined) { fields.push(`name = $${i++}`); params.push(name) }
+    if (short_name !== undefined) { fields.push(`short_name = $${i++}`); params.push(short_name) }
     if (flag_url !== undefined) { fields.push(`flag_url = $${i++}`); params.push(flag_url) }
     if (!fields.length) return reply.code(400).send({ error: 'No fields to update' })
-    const res = await db.query(`UPDATE cricket_countries SET ${fields.join(', ')} WHERE id = $1 RETURNING *`, params)
-    if (!res.rows.length) return reply.code(404).send({ error: 'Country not found' })
-    return reply.send({ success: true, country: res.rows[0] })
+    const res = await db.query(`UPDATE cricket_teams SET ${fields.join(', ')} WHERE id = $1 RETURNING *`, params)
+    if (!res.rows.length) return reply.code(404).send({ error: 'Team not found' })
+    return reply.send({ success: true, team: res.rows[0] })
   })
 
-  // --- Cricket Fantasy & Live Updates ---
-  // team_name doubles as the country/squad grouping key the admin panel
-  // sections players by. matches_played/total_points are a lightweight
-  // per-player summary of their cricket_match_players history (session
-  // data) so the roster view isn't just a bare name list.
-  app.get('/api/admin/betting/cricket/fantasy/players', { onRequest: [authenticate] }, async (_req, reply) => {
-    const res = await db.query(`
-      SELECT p.*,
-        COALESCE(mp.matches_played, 0) AS matches_played,
-        COALESCE(mp.total_points, 0) AS total_points,
-        c.flag_url
-      FROM cricket_fantasy_players p
-      LEFT JOIN (
-        SELECT player_id, COUNT(*) AS matches_played, SUM(fantasy_points) AS total_points
-        FROM cricket_match_players
-        GROUP BY player_id
-      ) mp ON mp.player_id = p.id
-      -- LATERAL ... LIMIT 1 rather than a plain join on name: joining countries
-      -- by name duplicated every player whenever two country rows shared a name
-      -- (the admin panel once showed 72 India players for a 36-row table).
-      -- Prefer the explicit country_id, fall back to name for rows that predate
-      -- it, and never return more than one country row per player.
-      LEFT JOIN LATERAL (
-        SELECT cc.flag_url FROM cricket_countries cc
-        WHERE cc.id = p.country_id OR (p.country_id IS NULL AND cc.name = p.team_name)
-        ORDER BY (cc.id = p.country_id) DESC
-        LIMIT 1
-      ) c ON TRUE
-      ORDER BY p.team_name ASC, p.role ASC, p.name ASC
-    `)
-    return reply.send({ players: res.rows })
-  })
-
-  app.get('/api/admin/betting/cricket/fantasy/leagues', { onRequest: [authenticate] }, async (req, reply) => {
+  // --- Cricket Odds Betting ---
+  app.get('/api/admin/betting/cricket/odds/markets', { onRequest: [authenticate] }, async (req, reply) => {
     const { match_id } = req.query as any
-    if (!match_id) return reply.code(400).send({ error: 'match_id is required' })
-    const res = await db.query('SELECT * FROM cricket_fantasy_leagues WHERE match_id = $1 ORDER BY created_at DESC', [match_id])
-    return reply.send({ leagues: res.rows })
-  })
-
-  app.post('/api/admin/betting/cricket/fantasy/players', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const r = await callBetting('/internal/cricket/fantasy/players', req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  app.patch('/api/admin/betting/cricket/fantasy/players/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const r = await callBetting(`/internal/cricket/fantasy/players/${(req.params as any).id}`, req.body, 'PATCH')
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  // Pull player photos/DOB/Wikidata IDs from Wikidata + Wikimedia Commons.
-  // Keyless and unmetered (unlike the CricAPI sync routes), so it's safe to run
-  // for a whole team. A full 30-player team takes ~30s because the resolver
-  // paces its outbound requests, hence the longer client timeout in the UI.
-  app.post('/api/admin/betting/cricket/fantasy/players/enrich', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const r = await callBetting('/internal/cricket/players/enrich', req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  // GET a player's per-match performance history (for the Players section's View drawer)
-  app.get('/api/admin/betting/cricket/fantasy/players/:id/matches', { onRequest: [authenticate] }, async (req, reply) => {
-    const { id } = req.params as any
-    const res = await db.query(
-      `SELECT mp.*, m.series, m.team_a, m.team_b, m.start_time, m.status
-       FROM cricket_match_players mp JOIN cricket_matches m ON m.id = mp.match_id
-       WHERE mp.player_id = $1 ORDER BY m.start_time DESC`,
-      [id]
-    )
-    return reply.send({ matches: res.rows })
-  })
-
-  // Map a global fantasy player into a specific match's squad — no wallet/
-  // settlement side effects, so this writes directly rather than proxying
-  // through betting-service internal routes.
-  app.post('/api/admin/betting/cricket/fantasy/players/:id/map-match', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const { id } = req.params as any
-    const { match_id } = req.body as any
-    if (!match_id) return reply.code(400).send({ error: 'match_id is required' })
-    const res = await db.query(
-      `INSERT INTO cricket_match_players (match_id, player_id) VALUES ($1, $2)
-       ON CONFLICT (match_id, player_id) DO NOTHING RETURNING *`,
-      [match_id, id]
-    )
-    return reply.send({ success: true, mapping: res.rows[0] || null })
-  })
-
-  app.delete('/api/admin/betting/cricket/fantasy/players/:id/map-match/:matchId', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const { id, matchId } = req.params as any
-    await db.query('DELETE FROM cricket_match_players WHERE player_id = $1 AND match_id = $2', [id, matchId])
-    return reply.send({ success: true })
-  })
-
-  app.post('/api/admin/betting/cricket/fantasy/leagues', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const r = await callBetting('/internal/cricket/fantasy/leagues', req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  // GET /api/admin/betting/cricket/fantasy/contests — cross-match, filterable contest list
-  app.get('/api/admin/betting/cricket/fantasy/contests', { onRequest: [authenticate] }, async (req, reply) => {
-    const { status, match_id, from, to, limit, offset } = req.query as any
-    const lim = Math.min(Number(limit) || 20, 100)
-    const off = Number(offset) || 0
-    const res = await db.query(
-      `SELECT l.*, m.series, m.team_a, m.team_b, m.start_time AS match_start_time, m.status AS match_status,
-              COUNT(*) OVER() AS total_count
-       FROM cricket_fantasy_leagues l
-       JOIN cricket_matches m ON m.id = l.match_id
-       WHERE ($1::text IS NULL OR l.status = $1)
-         AND ($2::uuid IS NULL OR l.match_id = $2)
-         AND ($3::timestamptz IS NULL OR m.start_time >= $3)
-         AND ($4::timestamptz IS NULL OR m.start_time <= $4)
-       ORDER BY m.start_time DESC
-       LIMIT $5 OFFSET $6`,
-      [status || null, match_id || null, from || null, to || null, lim, off]
-    )
-    const total = res.rows[0]?.total_count ? Number(res.rows[0].total_count) : 0
-    return reply.send({ contests: res.rows.map(({ total_count, ...r }) => r), total })
-  })
-
-  // GET /api/admin/betting/cricket/fantasy/leagues/:id — single contest detail
-  app.get('/api/admin/betting/cricket/fantasy/leagues/:id', { onRequest: [authenticate] }, async (req, reply) => {
-    const { id } = req.params as any
-    const res = await db.query(
-      `SELECT l.*, m.series, m.team_a, m.team_b, m.start_time AS match_start_time
-       FROM cricket_fantasy_leagues l JOIN cricket_matches m ON m.id = l.match_id
-       WHERE l.id = $1`, [id]
-    )
-    if (!res.rows.length) return reply.code(404).send({ error: 'Contest not found' })
-    return reply.send({ contest: res.rows[0] })
-  })
-
-  // GET /api/admin/betting/cricket/fantasy/leagues/:id/entries — who joined this contest
-  app.get('/api/admin/betting/cricket/fantasy/leagues/:id/entries', { onRequest: [authenticate] }, async (req, reply) => {
-    const { id } = req.params as any
-    const res = await db.query(
-      `SELECT e.id, e.points, e.final_rank, e.payout_received, e.status, e.created_at,
-              u.username, u.id AS user_id, t.id AS team_id
-       FROM cricket_fantasy_entries e
-       JOIN users u ON u.id = e.user_id
-       JOIN user_fantasy_teams t ON t.id = e.team_id
-       WHERE e.league_id = $1
-       ORDER BY e.final_rank ASC NULLS LAST, e.points DESC`, [id]
-    )
-    return reply.send({ entries: res.rows })
-  })
-
-  // PATCH /api/admin/betting/cricket/fantasy/leagues/:id — edit a contest.
-  // name is always editable; entry_fee/prize_pool/max_entries/prize_distribution
-  // are locked (409) once anyone has joined, so terms can't change under paying players.
-  app.patch('/api/admin/betting/cricket/fantasy/leagues/:id', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const { id } = req.params as any
-    const body = req.body as any
-    const current = await db.query('SELECT current_entries FROM cricket_fantasy_leagues WHERE id = $1', [id])
-    if (!current.rows.length) return reply.code(404).send({ error: 'Contest not found' })
-    const hasEntries = current.rows[0].current_entries > 0
-    const touchesMoneyFields = body.entry_fee !== undefined || body.prize_pool !== undefined || body.max_entries !== undefined || body.prize_distribution !== undefined
-    if (hasEntries && touchesMoneyFields) {
-      return reply.code(409).send({ error: 'This contest already has joined entries — entry fee, prize pool, max entries, and prize distribution are locked. You can still rename it.' })
+    let query = "SELECT m.*, mt.team_a, mt.team_b, mt.series, mt.status AS match_status FROM cricket_markets m JOIN cricket_matches mt ON mt.id = m.match_id"
+    const params: any[] = []
+    if (match_id) {
+      query += " WHERE m.match_id = $1"
+      params.push(match_id)
     }
-    const fields: string[] = [], params: any[] = [id]
-    let i = 2
-    if (body.name !== undefined) { fields.push(`name = $${i++}`); params.push(body.name) }
-    if (body.entry_fee !== undefined) { fields.push(`entry_fee = $${i++}`); params.push(body.entry_fee) }
-    if (body.prize_pool !== undefined) { fields.push(`prize_pool = $${i++}`); params.push(body.prize_pool) }
-    if (body.max_entries !== undefined) { fields.push(`max_entries = $${i++}`); params.push(body.max_entries) }
-    if (body.prize_distribution !== undefined) { fields.push(`prize_distribution = $${i++}`); params.push(JSON.stringify(body.prize_distribution)) }
-    if (!fields.length) return reply.code(400).send({ error: 'No editable fields provided' })
-    const whereClause = touchesMoneyFields ? `WHERE id = $1 AND current_entries = 0` : `WHERE id = $1`
-    const res = await db.query(`UPDATE cricket_fantasy_leagues SET ${fields.join(', ')} ${whereClause} RETURNING *`, params)
-    if (!res.rows.length && touchesMoneyFields) {
-      return reply.code(409).send({ error: 'This contest already has joined entries — entry fee, prize pool, max entries, and prize distribution are locked. You can still rename it.' })
-    }
-    if (!res.rows.length) return reply.code(404).send({ error: 'Contest not found' })
-    return reply.send({ success: true, contest: res.rows[0] })
+    const res = await db.query(query, params)
+    return reply.send({ markets: res.rows })
+  })
+
+  app.post('/api/admin/betting/cricket/odds/finalize', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const r = await callBetting('/internal/cricket/finalize', req.body)
+    return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
   app.post('/api/admin/betting/cricket/scores/update', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/scores/update', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  app.post('/api/admin/betting/cricket/fantasy/settle', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const r = await callBetting('/internal/cricket/fantasy/settle', req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  app.post('/api/admin/betting/cricket/fantasy/finalize', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const r = await callBetting('/internal/cricket/fantasy/finalize', req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  // --- Cricket Scoring Rulebook ---
-  app.get('/api/admin/betting/cricket/scoring-rules', { onRequest: [authenticate] }, async (_req, reply) => {
-    const configRes = await db.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
-    const stored = configRes.rows[0]?.special_rules?.scoring_rules
-    return reply.send({ rules: { ...DEFAULT_SCORING_RULES, ...(stored || {}) } })
-  })
-
-  app.patch('/api/admin/betting/cricket/scoring-rules', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
-    const configRes = await db.query("SELECT id, special_rules FROM game_configs WHERE game_type = 'cricket'")
-    if (!configRes.rows.length) return reply.code(404).send({ error: 'Cricket config not found' })
-    const merged = { ...(configRes.rows[0].special_rules || {}), scoring_rules: { ...DEFAULT_SCORING_RULES, ...(configRes.rows[0].special_rules?.scoring_rules || {}), ...(req.body as object) } }
-    await db.query('UPDATE game_configs SET special_rules = $1 WHERE id = $2', [JSON.stringify(merged), configRes.rows[0].id])
-    return reply.send({ success: true, rules: merged.scoring_rules })
   })
 
   app.post('/api/admin/betting/cricket/sync-api', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
@@ -2973,16 +3494,6 @@ async function start() {
 
   app.post('/api/admin/betting/cricket/import-series-matches', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const r = await callBetting('/internal/cricket/import-series-matches', req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  app.post('/api/admin/betting/cricket/sync-squad', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
-    const r = await callBetting('/internal/cricket/sync-squad', req.body)
-    return reply.code(r.ok ? 200 : r.status).send(r.data)
-  })
-
-  app.post('/api/admin/betting/cricket/sync-series-squads', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
-    const r = await callBetting('/internal/cricket/sync-series-squads', req.body)
     return reply.code(r.ok ? 200 : r.status).send(r.data)
   })
 
@@ -3017,44 +3528,132 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // --- Cricket Odds Markets CRUD & Settlement ---
+  app.post('/api/admin/betting/cricket/odds/market/create', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const body = z.object({
+      match_id: z.string().uuid(),
+      market_type: z.string().default('match_winner'),
+      label: z.string(),
+      options: z.array(z.object({
+        key: z.string(),
+        label: z.string(),
+        odds: z.number().positive(),
+      })).min(2),
+    }).parse(req.body)
+    const res = await db.query(
+      `INSERT INTO cricket_markets (match_id, market_type, label, options, status)
+       VALUES ($1, $2, $3, $4, 'open') RETURNING *`,
+      [body.match_id, body.market_type, body.label, JSON.stringify(body.options)]
+    )
+    return reply.send({ success: true, market: res.rows[0] })
+  })
+
+  app.delete('/api/admin/betting/cricket/odds/markets/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const pending = await db.query(`SELECT 1 FROM cricket_bets WHERE market_id = $1 AND status = 'pending' LIMIT 1`, [id])
+    if (pending.rows.length) return reply.code(409).send({ error: 'This market has pending bets — finalize or void them first.' })
+    await db.query('DELETE FROM cricket_bets WHERE market_id = $1', [id])
+    await db.query('DELETE FROM cricket_markets WHERE id = $1', [id])
+    return reply.send({ success: true })
+  })
+
+  // --- Cricket Bets Explorer & Refund / Void ---
+  app.get('/api/admin/betting/cricket/bets', { onRequest: [authenticate] }, async (req, reply) => {
+    const { user_id, match_id, status, limit, offset } = req.query as any
+    let query = `
+      SELECT b.*, u.phone AS user_phone, mt.team_a, mt.team_b, mt.series, m.label AS market_label
+      FROM cricket_bets b
+      LEFT JOIN users u ON u.id = b.user_id
+      LEFT JOIN cricket_matches mt ON mt.id = b.match_id
+      LEFT JOIN cricket_markets m ON m.id = b.market_id
+      WHERE 1=1
+    `
+    const params: any[] = []
+    let i = 1
+    if (user_id) { query += ` AND b.user_id = $${i++}`; params.push(user_id) }
+    if (match_id) { query += ` AND b.match_id = $${i++}`; params.push(match_id) }
+    if (status) { query += ` AND b.status = $${i++}`; params.push(status) }
+    query += ` ORDER BY b.created_at DESC LIMIT $${i++} OFFSET $${i++}`
+    params.push(parseInt(limit || '50'), parseInt(offset || '0'))
+    const res = await db.query(query, params)
+    return reply.send({ bets: res.rows })
+  })
+
+  app.post('/api/admin/betting/cricket/bets/:id/void', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const betRes = await db.query(`SELECT * FROM cricket_bets WHERE id = $1`, [id])
+    if (!betRes.rows.length) return reply.code(404).send({ error: 'Bet not found' })
+    const bet = betRes.rows[0]
+    if (bet.status !== 'pending') return reply.code(400).send({ error: `Bet is already ${bet.status}` })
+    await db.query(`UPDATE cricket_bets SET status = 'refunded', updated_at = NOW() WHERE id = $1`, [id])
+    try {
+      await callWallet('/internal/wallet/credit', {
+        userId: bet.user_id,
+        amount: Number(bet.amount),
+        type: 'refund',
+        referenceId: bet.id,
+        idempotencyKey: `cricket_void_refund_${bet.id}`,
+        description: `Refund for voided cricket bet ${bet.id}`,
+      })
+    } catch (e: any) {
+      console.error('[cricket void] wallet credit failed:', e.message)
+    }
+    return reply.send({ success: true, message: 'Bet voided and refunded.' })
+  })
+
+  app.get('/api/admin/betting/cricket/session/bets', { onRequest: [authenticate] }, async (req, reply) => {
+    const { user_id, match_id, status, limit, offset } = req.query as any
+    let query = `
+      SELECT b.*, u.phone AS user_phone, mt.team_a, mt.team_b, mt.series, s.label AS session_label
+      FROM cricket_session_bets b
+      LEFT JOIN users u ON u.id = b.user_id
+      LEFT JOIN cricket_matches mt ON mt.id = b.match_id
+      LEFT JOIN cricket_sessions s ON s.id = b.session_id
+      WHERE 1=1
+    `
+    const params: any[] = []
+    let i = 1
+    if (user_id) { query += ` AND b.user_id = $${i++}`; params.push(user_id) }
+    if (match_id) { query += ` AND b.match_id = $${i++}`; params.push(match_id) }
+    if (status) { query += ` AND b.status = $${i++}`; params.push(status) }
+    query += ` ORDER BY b.created_at DESC LIMIT $${i++} OFFSET $${i++}`
+    params.push(parseInt(limit || '50'), parseInt(offset || '0'))
+    const res = await db.query(query, params)
+    return reply.send({ bets: res.rows })
+  })
+
+  app.post('/api/admin/betting/cricket/session/bets/:id/void', { onRequest: [authenticate, requireRole('finance')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const betRes = await db.query(`SELECT * FROM cricket_session_bets WHERE id = $1`, [id])
+    if (!betRes.rows.length) return reply.code(404).send({ error: 'Session bet not found' })
+    const bet = betRes.rows[0]
+    if (bet.status !== 'pending') return reply.code(400).send({ error: `Session bet is already ${bet.status}` })
+    await db.query(`UPDATE cricket_session_bets SET status = 'refunded', updated_at = NOW() WHERE id = $1`, [id])
+    try {
+      await callWallet('/internal/wallet/credit', {
+        userId: bet.user_id,
+        amount: Number(bet.amount),
+        type: 'refund',
+        referenceId: bet.id,
+        idempotencyKey: `cricket_session_void_refund_${bet.id}`,
+        description: `Refund for voided cricket session bet ${bet.id}`,
+      })
+    } catch (e: any) {
+      console.error('[cricket session void] wallet credit failed:', e.message)
+    }
+    return reply.send({ success: true, message: 'Session bet voided and refunded.' })
+  })
+
   // --- Cricket Deletion ---
-  // Superadmin-gated, blocked with a 409 if it would silently wipe out an
-  // active (unsettled, joined) fantasy contest.
   app.delete('/api/admin/betting/cricket/matches/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const { id } = req.params as any
-    const activeContest = await db.query(
-      `SELECT 1 FROM cricket_fantasy_leagues WHERE match_id = $1 AND status != 'settled' AND current_entries > 0 LIMIT 1`, [id]
+    const activeBets = await db.query(
+      `SELECT 1 FROM cricket_bets WHERE match_id = $1 AND status = 'pending' LIMIT 1`, [id]
     )
-    if (activeContest.rows.length) {
-      return reply.code(409).send({ error: 'This match has an active fantasy contest with joined entries — settle it first.' })
+    if (activeBets.rows.length) {
+      return reply.code(409).send({ error: 'This match has active pending bets — settle or void them first.' })
     }
-    // match_players, fantasy leagues/entries, user_fantasy_teams, match_cache cascade from this delete.
     await db.query('DELETE FROM cricket_matches WHERE id = $1', [id])
-    return reply.send({ success: true })
-  })
-
-  app.delete('/api/admin/betting/cricket/fantasy/leagues/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
-    const { id } = req.params as any
-    const league = await db.query('SELECT status, current_entries FROM cricket_fantasy_leagues WHERE id = $1', [id])
-    if (!league.rows.length) return reply.code(404).send({ error: 'League not found' })
-    if (league.rows[0].status !== 'settled' && league.rows[0].current_entries > 0) {
-      return reply.code(409).send({ error: 'This contest has joined entries and is not settled yet — settle it first.' })
-    }
-    // cricket_fantasy_entries cascades automatically.
-    await db.query('DELETE FROM cricket_fantasy_leagues WHERE id = $1', [id])
-    return reply.send({ success: true })
-  })
-
-  app.delete('/api/admin/betting/cricket/fantasy/players/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
-    const { id } = req.params as any
-    const captaining = await db.query(
-      `SELECT 1 FROM user_fantasy_teams WHERE captain_id = $1 OR vice_captain_id = $1 LIMIT 1`, [id]
-    )
-    if (captaining.rows.length) {
-      return reply.code(409).send({ error: 'This player is set as captain/vice-captain on an existing fantasy team — cannot delete.' })
-    }
-    // cricket_match_players cascades automatically.
-    await db.query('DELETE FROM cricket_fantasy_players WHERE id = $1', [id])
     return reply.send({ success: true })
   })
 
@@ -3254,7 +3853,7 @@ async function start() {
     if (!botCheck.rows.length || !botCheck.rows[0].is_bot) {
       return reply.code(400).send({ error: 'User is not a bot or does not exist' })
     }
-    
+
     const client = await db.connect()
     try {
       await client.query('BEGIN')
@@ -3313,12 +3912,82 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // --- Feature Flags (App Controls) ---
+  app.get('/api/admin/feature-flags', { onRequest: [authenticate] }, async (_req, reply) => {
+    try {
+      const [settingsRes, gamesRes] = await Promise.all([
+        db.query(`SELECT key, value FROM system_settings WHERE key IN ('wallet_deposit_enabled', 'wallet_withdrawal_enabled', 'review_version_code', 'review_mode_active', 'cashier_url', 'kyc_url', 'tester_phones')`),
+        db.query(`SELECT game_type, is_active FROM game_configs ORDER BY game_type`),
+      ])
+      const sMap: Record<string, string> = {}
+      for (const row of settingsRes.rows) sMap[row.key] = row.value
+
+      const wallet = {
+        deposit_enabled: sMap['wallet_deposit_enabled'] !== 'false',
+        withdrawal_enabled: sMap['wallet_withdrawal_enabled'] !== 'false',
+      }
+      const review = {
+        version_code: parseInt(sMap['review_version_code'] || '0') || 0,
+        active: sMap['review_mode_active'] === 'true',
+        tester_phones: sMap['tester_phones'] || '',
+      }
+      const urls = {
+        cashier_url: sMap['cashier_url'] || '',
+        kyc_url: sMap['kyc_url'] || '',
+      }
+      const games: Record<string, boolean> = {}
+      for (const row of gamesRes.rows) games[row.game_type] = row.is_active === true
+      return reply.send({ success: true, wallet, games, review, urls })
+    } catch (e: any) { return reply.code(500).send({ error: e.message }) }
+  })
+
+  app.patch('/api/admin/feature-flags/wallet', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { key, enabled } = req.body as { key: string; enabled: boolean }
+    if (!['deposit_enabled', 'withdrawal_enabled'].includes(key)) return reply.code(400).send({ error: 'Invalid key' })
+    const settingKey = key === 'deposit_enabled' ? 'wallet_deposit_enabled' : 'wallet_withdrawal_enabled'
+    await db.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [settingKey, String(enabled)])
+    return reply.send({ success: true, key: settingKey, enabled })
+  })
+
+  app.patch('/api/admin/feature-flags/review-mode', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { version_code, active, tester_phones } = req.body as { version_code?: number; active?: boolean; tester_phones?: string }
+    if (version_code !== undefined) {
+      await db.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('review_version_code', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [String(version_code)])
+    }
+    if (active !== undefined) {
+      await db.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('review_mode_active', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [String(active)])
+    }
+    if (tester_phones !== undefined) {
+      await db.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('tester_phones', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [String(tester_phones)])
+    }
+    return reply.send({ success: true, version_code, active, tester_phones })
+  })
+
+  app.patch('/api/admin/feature-flags/urls', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { cashier_url, kyc_url } = req.body as { cashier_url?: string; kyc_url?: string }
+    if (cashier_url !== undefined) {
+      await db.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('cashier_url', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [String(cashier_url)])
+    }
+    if (kyc_url !== undefined) {
+      await db.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('kyc_url', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [String(kyc_url)])
+    }
+    return reply.send({ success: true, cashier_url, kyc_url })
+  })
+
+  app.patch('/api/admin/feature-flags/games/:gameType', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { gameType } = req.params as { gameType: string }
+    const { enabled } = req.body as { enabled: boolean }
+    const res = await db.query(`UPDATE game_configs SET is_active = $1, updated_at = NOW() WHERE game_type = $2 RETURNING game_type`, [enabled, gameType])
+    if (!res.rows.length) await db.query(`INSERT INTO game_configs (game_type, is_active, rake_percent, special_rules) VALUES ($1, $2, 5.0, '{}')`, [gameType, enabled])
+    return reply.send({ success: true, game_type: gameType, enabled })
+  })
+
   // --- Leaderboard ---
   app.get('/api/admin/leaderboard/:gameType', { onRequest: [authenticate] }, async (req, reply) => {
     const { gameType } = req.params as { gameType: string }
     const { period } = req.query as { period?: string }
     const url = `${LEADERBOARD_URL}/leaderboard/${gameType}?period=${period || 'daily'}`
-    
+
     try {
       const res = await fetch(url, {
         headers: {
@@ -3659,7 +4328,7 @@ async function start() {
           },
         })
       } catch (err: any) {
-        await client.query('ROLLBACK').catch(() => {})
+        await client.query('ROLLBACK').catch(() => { })
         throw err
       } finally {
         client.release()
@@ -3920,7 +4589,7 @@ async function start() {
          updated_at = NOW()
        WHERE id = $7 RETURNING *`,
       [body.title ?? null, body.subtitle ?? null, body.click_url ?? null,
-       body.click_type ?? null, body.sort_order ?? null, body.is_active ?? null, id]
+      body.click_type ?? null, body.sort_order ?? null, body.is_active ?? null, id]
     )
     if (!res.rows.length) return reply.code(404).send({ error: 'Not found' })
     return reply.send(res.rows[0])
@@ -3961,8 +4630,8 @@ async function start() {
          usage_limit, per_user_limit, is_active, expires_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [body.code, body.description || null, body.discount_type, body.discount_value,
-       body.min_deposit, body.max_discount || null, body.usage_limit || null,
-       body.per_user_limit, body.is_active, body.expires_at || null]
+      body.min_deposit, body.max_discount || null, body.usage_limit || null,
+      body.per_user_limit, body.is_active, body.expires_at || null]
     )
     return reply.send(res.rows[0])
   })
@@ -3983,9 +4652,9 @@ async function start() {
          is_active = COALESCE($9, is_active), expires_at = COALESCE($10, expires_at)
        WHERE id = $11 RETURNING *`,
       [body.code?.toUpperCase() ?? null, body.description ?? null, body.discount_type ?? null,
-       body.discount_value ?? null, body.min_deposit ?? null, body.max_discount ?? null,
-       body.usage_limit ?? null, body.per_user_limit ?? null, body.is_active ?? null,
-       body.expires_at ?? null, id]
+      body.discount_value ?? null, body.min_deposit ?? null, body.max_discount ?? null,
+      body.usage_limit ?? null, body.per_user_limit ?? null, body.is_active ?? null,
+      body.expires_at ?? null, id]
     )
     if (!res.rows.length) return reply.code(404).send({ error: 'Not found' })
     return reply.send(res.rows[0])
@@ -4042,7 +4711,11 @@ async function start() {
   // GET /api/admin/kyc/:userId/file/:type — stream a KYC document image
   // (nginx denies public /uploads/kyc/ access — docs are sensitive — so the
   // admin panel must fetch them through this authenticated proxy instead)
-  const KYC_UPLOAD_DIR = process.env.KYC_UPLOAD_DIR || '/opt/teen-prod/uploads/kyc'
+  const KYC_UPLOAD_DIRS = [
+    process.env.KYC_UPLOAD_DIR || '/opt/teen-prod/uploads/kyc',
+    '/opt/teen-prod/services/core-api-service/uploads/kyc',
+    path.resolve('./uploads/kyc'),
+  ]
   const KYC_FILE_KEYS: Record<string, string> = { front: 'aadhaar_front', back: 'aadhaar_back', selfie: 'selfie' }
   const KYC_MIME_TYPES: Record<string, string> = { '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' }
   app.get('/api/admin/kyc/:userId/file/:type', { onRequest: [app.authenticate, app.requireRole('support')] }, async (req, reply) => {
@@ -4050,19 +4723,25 @@ async function start() {
     const key = KYC_FILE_KEYS[type]
     if (!key) return reply.code(400).send({ error: 'Invalid document type' })
 
-    const userDir = path.resolve(path.join(KYC_UPLOAD_DIR, userId))
-    if (!userDir.startsWith(path.resolve(KYC_UPLOAD_DIR) + path.sep)) {
-      return reply.code(400).send({ error: 'Invalid user id' })
+    for (const baseDir of KYC_UPLOAD_DIRS) {
+      if (!fs.existsSync(baseDir)) continue
+      const userDir = path.resolve(path.join(baseDir, userId))
+      if (!userDir.startsWith(path.resolve(baseDir) + path.sep)) continue
+      if (!fs.existsSync(userDir)) continue
+
+      try {
+        const files = fs.readdirSync(userDir)
+        const match = files.find(f => f.startsWith(`${key}.`))
+        if (match) {
+          const mime = KYC_MIME_TYPES[path.extname(match).toLowerCase()] || 'application/octet-stream'
+          reply.type(mime)
+          return reply.send(fs.createReadStream(path.join(userDir, match)))
+        }
+      } catch {
+        // try next directory
+      }
     }
-
-    let files: string[]
-    try { files = fs.readdirSync(userDir) } catch { return reply.code(404).send({ error: 'Not found' }) }
-    const match = files.find(f => f.startsWith(`${key}.`))
-    if (!match) return reply.code(404).send({ error: 'Not found' })
-
-    const mime = KYC_MIME_TYPES[path.extname(match).toLowerCase()] || 'application/octet-stream'
-    reply.type(mime)
-    return reply.send(fs.createReadStream(path.join(userDir, match)))
+    return reply.code(404).send({ error: 'Document file not found' })
   })
 
   // PUT /api/admin/kyc/:userId/review — approve or reject
@@ -4122,6 +4801,81 @@ async function start() {
     return reply.send(res.rows[0])
   })
 
+  // Public: GET /api/app/config — no auth, called by Flutter mobile app on startup
+  app.get('/api/app/config', async (req, reply) => {
+    try {
+      const [settingsRes, gamesRes] = await Promise.all([
+        db.query(`SELECT key, value FROM system_settings WHERE key IN ('wallet_deposit_enabled', 'wallet_withdrawal_enabled', 'review_version_code', 'review_mode_active', 'cashier_url', 'kyc_url', 'tester_phones')`),
+        db.query(`SELECT game_type, is_active FROM game_configs`),
+      ])
+      const sMap: Record<string, string> = {}
+      for (const r of settingsRes.rows) sMap[r.key] = r.value
+
+      const q = (req.query || {}) as { version?: string; phone?: string }
+      const clientVersion = parseInt(String(q.version || '0')) || 0
+      const clientPhone = String(q.phone || '').replace(/\D/g, '')
+
+      const reviewVersion = parseInt(sMap['review_version_code'] || '0') || 0
+      const reviewActive = sMap['review_mode_active'] === 'true'
+      const testerPhones = (sMap['tester_phones'] || '')
+        .split(',')
+        .map((p: string) => p.trim().replace(/\D/g, ''))
+        .filter(Boolean)
+
+      const isTester = clientPhone ? testerPhones.includes(clientPhone) : false
+      // If review mode is active and user is NOT a whitelisted tester:
+      // Review builds (matching reviewVersion, version >= 4200, or version 0) enter Safe Mode for Google Play
+      const isUnderReview = reviewActive && !isTester && (
+        clientVersion === 0 ||
+        clientVersion === reviewVersion ||
+        clientVersion >= 4200
+      )
+
+      if (isUnderReview) {
+        // Safe Mode for Google Reviewer
+        return reply.send({
+          success: true,
+          mode: 'safe',
+          currency_symbol: '🪙',
+          wallet: { deposit_enabled: false, withdrawal_enabled: false },
+          urls: { cashier_url: '', kyc_url: '' },
+          games: {
+            teen_patti: false,
+            rummy: false,
+            ludo: true,
+            matka: false,
+            aviator: false,
+            color_prediction: false,
+            lottery: false,
+            cricket: false,
+          },
+        })
+      }
+
+      // Full Player Mode (Existing players, Testers, or when review mode is inactive)
+      const wallet = {
+        deposit_enabled: sMap['wallet_deposit_enabled'] !== 'false',
+        withdrawal_enabled: sMap['wallet_withdrawal_enabled'] !== 'false',
+      }
+      const games: Record<string, boolean> = {}
+      for (const r of gamesRes.rows) games[r.game_type] = r.is_active === true
+
+      return reply.send({
+        success: true,
+        mode: 'full',
+        currency_symbol: '₹',
+        wallet,
+        urls: {
+          cashier_url: sMap['cashier_url'] || '',
+          kyc_url: sMap['kyc_url'] || '',
+        },
+        games,
+      })
+    } catch (e: any) {
+      return reply.code(500).send({ error: e.message })
+    }
+  })
+
   // Admin: POST /api/admin/app/upload — upload APK and set new version info
   app.post('/api/admin/app/upload', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const parts = (req as any).parts()
@@ -4165,7 +4919,7 @@ async function start() {
       await fs.promises.rename(tmpDest, path.join(APK_DIR, apkFilename(versionCode)))
       return reply.send({ success: true, version_name: versionName, version_code: versionCode, download_url: downloadUrl })
     } catch (err: any) {
-      await fs.promises.unlink(tmpDest).catch(() => {})
+      await fs.promises.unlink(tmpDest).catch(() => { })
       const statusCode = err?.statusCode === 413 ? 413 : 500
       return reply.code(statusCode).send({ error: statusCode === 413 ? 'APK file exceeds the upload size limit' : 'Upload failed' })
     }
@@ -4202,12 +4956,93 @@ async function start() {
     return reply.send({ success: true })
   })
 
+  // Public Short link redirect
+  app.get('/api/admin/l/:shortCode', async (req, reply) => {
+    const { shortCode } = req.params as { shortCode: string }
+    try {
+      const res = await db.query(
+        `UPDATE campaign_links 
+         SET click_count = click_count + 1, 
+             first_clicked_at = COALESCE(first_clicked_at, NOW()),
+             last_clicked_at = NOW()
+         WHERE short_code = $1 
+         RETURNING redirect_url`,
+        [shortCode]
+      )
+      if (res.rows.length === 0) {
+        return reply.code(404).send('Link not found')
+      }
+      return reply.redirect(res.rows[0].redirect_url)
+    } catch (err) {
+      console.error('Failed to redirect short link:', err)
+      return reply.code(500).send('Internal Server Error')
+    }
+  })
+
+  // AI Spintax generator
+  app.post('/api/admin/leads/ai-spintax', { onRequest: [authenticate] }, async (req, reply) => {
+    const { prompt } = z.object({
+      prompt: z.string().min(1)
+    }).parse(req.body)
+
+    const apiKey = process.env.GEMINI_API_KEY
+    if (!apiKey) {
+      return reply.code(400).send({ error: 'GEMINI_API_KEY is not configured in environment variables (.env).' })
+    }
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{
+                text: `You are an expert copywriter. Take the following promotional message and generate 3 variations of it using spintax format. 
+Format choices using curly braces and pipe symbols, e.g., "{Hi|Hello} {{Name}}, {grab|get} your {bonus|chips} now!".
+Ensure you keep the placeholder "{{Name}}" intact.
+Return ONLY a JSON array of strings containing the 3 spintax variations. Do not return markdown block or any additional text.
+
+Original message: "${prompt}"`
+              }]
+            }]
+          })
+        }
+      )
+
+      if (!response.ok) {
+        const errText = await response.text()
+        return reply.code(502).send({ error: `Gemini API error: ${errText}` })
+      }
+
+      const data = await response.json()
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+
+      // Clean markdown code blocks if any
+      const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim()
+      const variations = JSON.parse(cleanedText)
+
+      return reply.send({ success: true, variations })
+    } catch (err: any) {
+      console.error('Failed to generate spintax with Gemini:', err)
+      return reply.code(500).send({ error: err.message || 'Failed to generate spintax' })
+    }
+  })
+
   app.get('/health', async () => ({ status: 'ok', service: 'admin' }))
 
 
   const port = parseInt(process.env.PORT || '3008')
   await app.listen({ port, host: '0.0.0.0' })
   console.log(`Admin service running on port ${port}`)
+
+  // Start background marketing loaders & workers
+  loadWhatsAppSessions().catch(err => console.error('Failed to load WA sessions:', err))
+  loadTelegramSessions().catch(err => console.error('Failed to load TG sessions:', err))
+  startCampaignWorker()
+  startLeadVerifier()
+  startCampaignScheduler()
 }
 
 start().catch(err => { console.error(err); process.exit(1) })

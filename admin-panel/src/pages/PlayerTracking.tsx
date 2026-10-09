@@ -74,7 +74,7 @@ export default function PlayerTracking() {
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               attribution="&copy; OpenStreetMap" />
             {geo.filter(g => g.lat != null && g.lon != null).map((g, i) => (
-              <CircleMarker key={i} center={[g.lat, g.lon]} radius={6 + Math.min(g.players, 12)}
+              <CircleMarker key={i} center={[Number(g.lat), Number(g.lon)]} radius={6 + Math.min(g.players, 12)}
                 pathOptions={{ color: '#d4af37', fillOpacity: 0.5 }}>
                 <LTooltip>{`${g.city ?? 'Unknown'}: ${g.players} player(s)`}</LTooltip>
               </CircleMarker>
@@ -96,7 +96,7 @@ export default function PlayerTracking() {
             { title: 'User', dataIndex: 'username', width: 150, render: (_v, r) => <Text strong>{userLabel(r)}</Text> },
             { title: 'Live Location', dataIndex: 'geo_city', width: 180,
               render: (v, r) => r.geo_lat != null
-                ? <span><EnvironmentOutlined /> {v ?? ''}{r.geo_region ? `, ${r.geo_region}` : ''} <Text type="secondary" style={{ fontSize: 10 }}>({r.geo_lat?.toFixed(2)}, {r.geo_lon?.toFixed(2)})</Text></span>
+                ? <span><EnvironmentOutlined /> {v ?? ''}{r.geo_region ? `, ${r.geo_region}` : ''} <Text type="secondary" style={{ fontSize: 10 }}>({Number(r.geo_lat).toFixed(2)}, {Number(r.geo_lon).toFixed(2)})</Text></span>
                 : <Text type="secondary">—</Text> },
             { title: 'IP Address', dataIndex: 'ip_address', width: 130, render: v => <Text code style={{ fontSize: 11 }}>{v ?? '—'}</Text> },
             { title: 'Game', dataIndex: 'last_game', width: 130, render: v => v ? <Tag color="purple">{v}</Tag> : <Text type="secondary">{'—'}</Text> },

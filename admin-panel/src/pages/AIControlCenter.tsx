@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { Tabs, Card, Alert, Button, Space, Tag, Divider, Tooltip } from 'antd'
-import { RobotOutlined, SettingOutlined, DashboardOutlined, SyncOutlined, AlertOutlined, AimOutlined, SafetyOutlined, MonitorOutlined } from '@ant-design/icons'
+import { RobotOutlined, SettingOutlined, DashboardOutlined, SyncOutlined, AlertOutlined, AimOutlined, SafetyOutlined, MonitorOutlined, CloudServerOutlined } from '@ant-design/icons'
 import { AIPromptConsole } from '../components/AI/AIPromptConsole'
 import { MLConfigPanel } from '../components/AI/MLConfigPanel'
 import { WorkflowDashboard } from '../components/AI/WorkflowDashboard'
+import { ServerStatsTab } from '../components/AI/ServerStatsTab'
 import { ChurnTab } from '../components/AI/ChurnTab'
 import { WatchdogTab } from '../components/AI/WatchdogTab'
 import { AppMonitorTab } from '../components/AI/AppMonitorTab'
@@ -98,6 +99,17 @@ export function AIControlCenter() {
       children: <AppMonitorTab />,
       extra: <Tag color="cyan">App Health</Tag>,
     },
+    {
+      key: '8',
+      label: (
+        <span>
+          <CloudServerOutlined />
+          Server Stats
+        </span>
+      ),
+      children: <ServerStatsTab />,
+      extra: <Tag color="geekblue">Diagnostics</Tag>,
+    },
   ]
 
   return (
@@ -141,6 +153,7 @@ export function AIControlCenter() {
           items={tabItems}
           tabPosition="top"
           size="large"
+          destroyInactiveTabPane={true}
         />
 
         <Divider style={{ marginTop: 24 }} />

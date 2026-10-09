@@ -1,6 +1,7 @@
 const { Client } = require('ssh2');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { execSync } = require('child_process');
 
 const VPS_CONFIG = {
@@ -12,7 +13,7 @@ const VPS_CONFIG = {
 
 console.log('📦 Tarring admin-panel/dist...');
 const localDist = path.join(__dirname, '../admin-panel/dist');
-const localTar = '/tmp/admin-dist.tar.gz';
+const localTar = path.join(os.tmpdir(), 'admin-dist.tar.gz');
 
 execSync(`tar -czf ${localTar} -C ${localDist} .`);
 console.log('✅ Local tar created:', fs.statSync(localTar).size, 'bytes');

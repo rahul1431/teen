@@ -16,7 +16,8 @@ import {
   DollarOutlined, WarningOutlined, SafetyOutlined, AuditOutlined,
   BellOutlined, TrophyOutlined, CustomerServiceOutlined,
   FundOutlined, MobileOutlined, SettingOutlined, LineChartOutlined,
-  RobotOutlined, ProfileOutlined, HistoryOutlined, AlertOutlined,
+  RobotOutlined, ProfileOutlined, HistoryOutlined, AlertOutlined, BgColorsOutlined,
+  PoweroffOutlined,
 } from '@ant-design/icons'
 
 // Wraps a leaf item's label in a real <Link>, so the sidebar renders actual
@@ -57,6 +58,7 @@ export function buildMenuItems(): MenuProps['items'] {
         { key: '/admin/games/lottery', icon: createElement(CrownOutlined), label: link('/admin/games/lottery', 'Lottery') },
         { key: '/admin/games/cricket', icon: createElement(AimOutlined), label: link('/admin/games/cricket', 'Cricket') },
         { key: '/admin/games/rummy', icon: createElement(IdcardOutlined), label: link('/admin/games/rummy', 'Rummy') },
+        { key: '/admin/games/color-prediction', icon: createElement(BgColorsOutlined), label: link('/admin/games/color-prediction', 'Color Prediction') },
       ],
     },
     {
@@ -101,6 +103,7 @@ export function buildMenuItems(): MenuProps['items'] {
       label: 'Platform',
       children: [
         { key: '/admin/ai-control', icon: createElement(FundOutlined), label: link('/admin/ai-control', 'AI Control Center') },
+        { key: '/admin/app-controls', icon: createElement(PoweroffOutlined), label: link('/admin/app-controls', 'App Controls') },
         { key: '/admin/app-update', icon: createElement(MobileOutlined), label: link('/admin/app-update', 'App Update') },
         { key: '/admin/settings', icon: createElement(SettingOutlined), label: link('/admin/settings', 'Website Settings') },
         { key: '/admin/analytics', icon: createElement(LineChartOutlined), label: link('/admin/analytics', 'Analytics') },

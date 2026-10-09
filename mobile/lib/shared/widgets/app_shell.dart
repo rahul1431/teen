@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/services/balance_service.dart';
 import '../../core/services/notification_service.dart';
+import '../../core/services/app_config_service.dart';
 import '../theme/app_theme.dart';
 
 /// Persistent chrome around the five main tabs: a fixed top bar (brand,
@@ -29,35 +30,56 @@ class AppShell extends StatelessWidget {
           ],
         ),
       ),
-      bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
-          border: Border(top: BorderSide(color: AppColors.border, width: 0.5)),
-        ),
-        child: BottomNavigationBar(
-          currentIndex: navigationShell.currentIndex,
-          onTap: _goBranch,
-          type: BottomNavigationBarType.fixed,
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          selectedItemColor: AppColors.gold,
-          unselectedItemColor: AppColors.textSecondary,
-          selectedFontSize: 11,
-          unselectedFontSize: 11,
-          items: const [
-            BottomNavigationBarItem(
-                icon: Icon(Icons.home_rounded), label: 'Home'),
-            BottomNavigationBarItem(
-                icon: Icon(Icons.casino_rounded), label: 'Games'),
-            BottomNavigationBarItem(
-                icon: Icon(Icons.account_balance_wallet_rounded),
-                label: 'Wallet'),
-            BottomNavigationBarItem(
-                icon: Icon(Icons.emoji_events_rounded), label: 'Leaders'),
-            BottomNavigationBarItem(
-                icon: Icon(Icons.person_rounded), label: 'Profile'),
-          ],
-        ),
+      bottomNavigationBar: ValueListenableBuilder<int>(
+        valueListenable: AppConfigService.changeNotifier,
+        builder: (context, _, __) {
+          final isSafe = AppConfigService.isSafeMode();
+          return Container(
+            decoration: const BoxDecoration(
+              color: AppColors.surface,
+              border: Border(top: BorderSide(color: AppColors.border, width: 0.5)),
+            ),
+            child: NavigationBar(
+              selectedIndex: navigationShell.currentIndex,
+              onDestinationSelected: _goBranch,
+              backgroundColor: Colors.transparent,
+              height: 64,
+              destinations: [
+                const NavigationDestination(
+                  icon: Icon(Icons.home_outlined),
+                  selectedIcon: Icon(Icons.home_rounded, color: AppColors.gold),
+                  label: 'Home',
+                ),
+                const NavigationDestination(
+                  icon: Icon(Icons.casino_outlined),
+                  selectedIcon: Icon(Icons.casino_rounded, color: AppColors.gold),
+                  label: 'Games',
+                ),
+                NavigationDestination(
+                  icon: Icon(isSafe
+                      ? Icons.card_giftcard_outlined
+                      : Icons.account_balance_wallet_outlined),
+                  selectedIcon: Icon(
+                      isSafe
+                          ? Icons.card_giftcard_rounded
+                          : Icons.account_balance_wallet_rounded,
+                      color: AppColors.gold),
+                  label: isSafe ? 'Rewards' : 'Wallet',
+                ),
+                const NavigationDestination(
+                  icon: Icon(Icons.emoji_events_outlined),
+                  selectedIcon: Icon(Icons.emoji_events_rounded, color: AppColors.gold),
+                  label: 'Leaders',
+                ),
+                const NavigationDestination(
+                  icon: Icon(Icons.person_outline_rounded),
+                  selectedIcon: Icon(Icons.person_rounded, color: AppColors.gold),
+                  label: 'Profile',
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -89,43 +111,61 @@ class _TopBar extends StatelessWidget {
               )),
           const Spacer(),
           // Live balance chip
-          GestureDetector(
-            onTap: onWalletTap,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: AppColors.gold.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(20),
-                border:
-                    Border.all(color: AppColors.gold.withValues(alpha: 0.4)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.account_balance_wallet_rounded,
-                      color: AppColors.gold, size: 15),
-                  const SizedBox(width: 5),
-                  // Total balance = real (deposits + winnings) + bonus
-                  AnimatedBuilder(
-                    animation: Listenable.merge([
-                      BalanceService.instance.real,
-                      BalanceService.instance.bonus,
-                    ]),
-                    builder: (_, __) => Text(
-                      formatCurrency(BalanceService.instance.real.value +
-                          BalanceService.instance.bonus.value),
-                      style: const TextStyle(
-                        color: AppColors.gold,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
+          ValueListenableBuilder<int>(
+            valueListenable: AppConfigService.changeNotifier,
+            builder: (context, _, __) {
+              final isSafe = AppConfigService.isSafeMode();
+              return GestureDetector(
+                onTap: onWalletTap,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.gold.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: AppColors.gold.withValues(alpha: 0.4)),
                   ),
-                  const SizedBox(width: 4),
-                  const Icon(Icons.add_circle_rounded,
-                      color: AppColors.gold, size: 15),
-                ],
-              ),
-            ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isSafe ? Icons.monetization_on_rounded : Icons.account_balance_wallet_rounded,
+                        color: AppColors.gold,
+                        size: 15,
+                      ),
+                      const SizedBox(width: 5),
+                      if (isSafe)
+                        const Text(
+                          '10,000 🪙',
+                          style: TextStyle(
+                            color: AppColors.gold,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        )
+                      else ...[
+                        AnimatedBuilder(
+                          animation: Listenable.merge([
+                            BalanceService.instance.real,
+                            BalanceService.instance.bonus,
+                          ]),
+                          builder: (_, __) => Text(
+                            formatCurrency(BalanceService.instance.real.value +
+                                BalanceService.instance.bonus.value),
+                            style: const TextStyle(
+                              color: AppColors.gold,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.add_circle_rounded,
+                            color: AppColors.gold, size: 15),
+                      ],
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
           const SizedBox(width: 4),
           const _NotificationBell(),

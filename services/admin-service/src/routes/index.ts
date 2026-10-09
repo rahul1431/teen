@@ -5,7 +5,7 @@ import { computeEffectiveBoldness } from '../repositories/adaptiveBoldness'
 import Redis from 'ioredis'
 import { Database } from '../db'
 
-const SUPPORTED_GAME_TYPES = ['teen_patti', 'ludo'] as const
+const SUPPORTED_GAME_TYPES = ['teen_patti', 'ludo', 'rummy'] as const
 type SupportedGameType = (typeof SUPPORTED_GAME_TYPES)[number]
 
 function parseGameType(req: any, reply: any): SupportedGameType | null {

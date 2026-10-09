@@ -21,7 +21,7 @@ interface TrendPoint {
 }
 
 interface BotTrainingTrendChartProps {
-  gameType?: 'ludo' | 'teen_patti'
+  gameType?: 'ludo' | 'teen_patti' | 'rummy'
 }
 
 export const BotTrainingTrendChart: React.FC<BotTrainingTrendChartProps> = ({ gameType = 'ludo' }) => {

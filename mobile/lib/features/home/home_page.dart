@@ -13,6 +13,7 @@ import '../../core/storage/secure_storage.dart';
 import '../../core/monitor/monitor_service.dart';
 import '../../core/monitor/location_consent_service.dart';
 import '../../core/services/locale_service.dart';
+import '../../core/services/app_config_service.dart';
 import '../../shared/widgets/cms_banner_strip.dart';
 import '../../shared/utils/permission_helper.dart';
 
@@ -178,7 +179,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       final data = res.data as Map? ?? {};
       setState(() {
         _liveCounts = data.map(
-            (k, v) => MapEntry(k.toString(), (v as num?)?.toInt() ?? 0));
+            (k, v) => MapEntry(k.toString(), int.tryParse(v?.toString() ?? '') ?? (v is num ? (v as num).toInt() : 0)));
       });
     } catch (_) {}
   }
@@ -266,13 +267,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: RefreshIndicator(
-        onRefresh: _loadData,
-        color: AppColors.gold,
-        backgroundColor: AppColors.surface,
-        child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
+      body: ValueListenableBuilder<int>(
+        valueListenable: AppConfigService.changeNotifier,
+        builder: (context, _, __) {
+          return RefreshIndicator(
+            onRefresh: _loadData,
+            color: AppColors.gold,
+            backgroundColor: AppColors.surface,
+            child: CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
             SliverToBoxAdapter(child: _buildHeroBanner()),
             const SliverToBoxAdapter(
                 child: Padding(
@@ -282,17 +286,37 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             SliverToBoxAdapter(child: _buildBalanceSection()),
             SliverToBoxAdapter(child: _buildPromoStrip()),
             SliverToBoxAdapter(
-                child: _buildSectionLabel('🎮  Popular Games',
-                    trailing: 'See All')),
-            SliverToBoxAdapter(child: _buildMainGamesGrid()),
-            SliverToBoxAdapter(child: _buildSectionLabel('🎲  Luck Games')),
-            SliverToBoxAdapter(child: _buildLuckGamesRow()),
+              child: ValueListenableBuilder<int>(
+                valueListenable: AppConfigService.changeNotifier,
+                builder: (context, _, __) {
+                  final hasAnyLuckGame = AppConfigService.isGameEnabled('color_prediction') ||
+                      AppConfigService.isGameEnabled('matka') ||
+                      AppConfigService.isGameEnabled('lottery');
+                  return Column(
+                    children: [
+                      _buildSectionLabel(
+                          AppConfigService.isSafeMode()
+                              ? '🎲  Featured Game'
+                              : '🎮  Popular Games',
+                          trailing: AppConfigService.isSafeMode() ? null : 'See All'),
+                      _buildMainGamesGrid(),
+                      if (hasAnyLuckGame) ...[
+                        _buildSectionLabel('🎲  Luck Games'),
+                        _buildLuckGamesRow(),
+                      ],
+                    ],
+                  );
+                },
+              ),
+            ),
             const SliverToBoxAdapter(child: SizedBox(height: 24)),
           ],
         ),
-      ),
-    );
-  }
+      );
+    },
+  ),
+);
+}
 
   // ─── Hero Banner ─────────────────────────────────────────────────────────────
 
@@ -470,7 +494,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           Positioned(
             right: 20,
             top: 16,
-            child: Text('♠ ♥ ♦ ♣',
+            child: Text(
+                AppConfigService.isSafeMode() ? '🎲 🏆 🎯' : '♠ ♥ ♦ ♣',
                 style: TextStyle(
                     color: AppColors.gold.withValues(alpha: 0.15),
                     fontSize: 28,
@@ -482,8 +507,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Text('PLAY & WIN BIG! 🏆',
-                    style: TextStyle(
+                Text(
+                    AppConfigService.isSafeMode()
+                        ? 'PLAY LUDO NOW! 🎲'
+                        : 'PLAY & WIN BIG! 🏆',
+                    style: const TextStyle(
                       color: AppColors.gold,
                       fontSize: 22,
                       fontWeight: FontWeight.w900,
@@ -491,13 +519,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     )),
                 const SizedBox(height: 6),
                 Text(
-                    'Hey, ${_user?['username'] ?? 'Player'} — your table awaits!',
+                    AppConfigService.isSafeMode()
+                        ? 'Roll the dice and master the board!'
+                        : 'Hey, ${_user?['username'] ?? 'Player'} — your table awaits!',
                     style:
                         const TextStyle(color: Colors.white70, fontSize: 13)),
                 const SizedBox(height: 14),
                 Row(
                   children: [
-                    _heroBadge('🎰 Jackpot ₹10 CR', AppColors.orange),
+                    _heroBadge(
+                        AppConfigService.isSafeMode()
+                            ? '🎲 Quick Match 2-4 Players'
+                            : '🎰 Jackpot ₹10 CR',
+                        AppColors.orange),
                   ],
                 ),
               ],
@@ -518,16 +552,33 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 color: color, fontSize: 11, fontWeight: FontWeight.bold)),
       );
 
+  Future<void> _openCashier() async {
+    final url = AppConfigService.getCashierUrl();
+    if (url.isNotEmpty && !url.contains('game.myonlinejoker.com/cashier')) {
+      final uri = Uri.tryParse(url);
+      if (uri != null) {
+        await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+        return;
+      }
+    }
+    context.push('/wallet');
+  }
+
   // ─── Balance Section ─────────────────────────────────────────────────────────
 
   Widget _buildBalanceSection() {
+    if (AppConfigService.isSafeMode()) return const SizedBox.shrink();
     if (_loadingData) return _buildBalanceShimmer();
-    if (_hasError)
+    if (_hasError) {
       return Padding(
         padding: const EdgeInsets.all(16),
         child:
             ErrorRetry(message: 'Could not load balance', onRetry: _loadData),
       );
+    }
+
+    final isSafe = AppConfigService.isSafeMode();
+
     return FadeTransition(
       opacity: _balanceFade,
       child: Container(
@@ -559,10 +610,17 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.account_balance_wallet_rounded,
-                              color: AppColors.textSecondary, size: 13),
+                          Icon(
+                              isSafe
+                                  ? Icons.monetization_on_rounded
+                                  : Icons.account_balance_wallet_rounded,
+                              color: AppColors.textSecondary,
+                              size: 13),
                           const SizedBox(width: 5),
-                          Text(locale.t('total_balance'),
+                          Text(
+                              isSafe
+                                  ? 'PLAY CHIPS BALANCE'
+                                  : locale.t('total_balance'),
                               style: const TextStyle(
                                   color: AppColors.textSecondary,
                                   fontSize: 11,
@@ -571,7 +629,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Text(formatCurrency(_realBalance),
+                      Text(
+                          isSafe
+                              ? '10,000 🪙'
+                              : formatCurrency(_realBalance),
                           style: const TextStyle(
                             fontSize: 32,
                             fontWeight: FontWeight.w900,
@@ -598,12 +659,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                       const Icon(Icons.card_giftcard_rounded,
                           color: AppColors.orange, size: 16),
                       const SizedBox(height: 3),
-                      Text(formatCurrency(_bonusBalance),
+                      Text(
+                          isSafe
+                              ? '5,000 🪙'
+                              : formatCurrency(_bonusBalance),
                           style: const TextStyle(
                               color: AppColors.orange,
                               fontSize: 12,
                               fontWeight: FontWeight.bold)),
-                      Text(locale.t('bonus_balance'),
+                      Text(
+                          isSafe ? 'FREE BONUS' : locale.t('bonus_balance'),
                           style: const TextStyle(
                               color: AppColors.textSecondary, fontSize: 10)),
                     ],
@@ -612,29 +677,57 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ],
             ),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _balanceBtn(
-                      Icons.add_rounded,
-                      locale.t('add_money'),
-                      AppColors.gold,
-                      Colors.black,
-                      () => context.push('/wallet')),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _balanceBtn(
-                      Icons.arrow_upward_rounded,
-                      locale.t('withdraw'),
-                      AppColors.surface,
-                      AppColors.gold,
-                      () => context.push('/wallet'),
-                      border: Border.all(
-                          color: AppColors.gold.withValues(alpha: 0.4))),
-                ),
-              ],
-            ),
+            if (isSafe)
+              Row(
+                children: [
+                  Expanded(
+                    child: _balanceBtn(
+                        Icons.card_giftcard_rounded,
+                        'Daily Bonus 🎁',
+                        AppColors.gold,
+                        Colors.black, () {
+                      AppSnackBar.show(context,
+                          '🎉 1,000 Free Play Coins claimed successfully!',
+                          success: true);
+                    }),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _balanceBtn(
+                        Icons.play_arrow_rounded,
+                        'Play Ludo 🎲',
+                        AppColors.surface,
+                        AppColors.gold,
+                        () => context.push('/games/ludo/practice'),
+                        border: Border.all(
+                            color: AppColors.gold.withValues(alpha: 0.4))),
+                  ),
+                ],
+              )
+            else if (AppConfigService.isWalletEnabled())
+              Row(
+                children: [
+                  Expanded(
+                    child: _balanceBtn(
+                        Icons.add_rounded,
+                        locale.t('add_money'),
+                        AppColors.gold,
+                        Colors.black,
+                        () => _openCashier()),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _balanceBtn(
+                        Icons.arrow_upward_rounded,
+                        locale.t('withdraw'),
+                        AppColors.surface,
+                        AppColors.gold,
+                        () => _openCashier(),
+                        border: Border.all(
+                            color: AppColors.gold.withValues(alpha: 0.4))),
+                  ),
+                ],
+              ),
           ],
         ),
       ),
@@ -696,7 +789,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             _promoCard(
                 '👥',
                 'Refer &\nEarn',
-                'Get ₹50 Per Ref',
+                AppConfigService.isSafeMode() ? 'Get 50 🪙 Per Ref' : 'Get ₹50 Per Ref',
                 [const Color(0xFF4A1A00), const Color(0xFF2A0E00)],
                 AppColors.orange,
                 onTap: () => context.push('/referral')),
@@ -781,84 +874,109 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   // ─── Main Games Grid ──────────────────────────────────────────────────────────
 
-  Widget _buildMainGamesGrid() => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-        child: Column(
+  Widget _buildMainGamesGrid() {
+    final tpOn = AppConfigService.isGameEnabled('teen_patti');
+    final aviatorOn = AppConfigService.isGameEnabled('aviator');
+    final ludoOn = AppConfigService.isGameEnabled('ludo');
+    final rummyOn = AppConfigService.isGameEnabled('rummy');
+    final cricketOn = AppConfigService.isGameEnabled('cricket');
+
+    final List<Widget> cardList = [];
+
+    if (tpOn) {
+      cardList.add(_richGameCard(
+        title: locale.t('teen_patti'),
+        emoji: '🃏',
+        subtitle: '${_formatOnline(_liveCounts['teen_patti'] ?? 0)} ${locale.t('online')}',
+        ctaLabel: locale.t('play_now'),
+        gradient: const [Color(0xFFB11226), Color(0xFF7A0C1A), Color(0xFF4A0010)],
+        accentColor: const Color(0xFFFF6B6B),
+        showAvatars: true,
+        route: '/games/teen-patti',
+      ));
+    }
+
+    if (aviatorOn) {
+      cardList.add(_richGameCard(
+        title: locale.t('aviator'),
+        emoji: '✈️',
+        subtitle: 'Real-time Chart',
+        ctaLabel: locale.t('bet_now'),
+        gradient: const [Color(0xFF1E3A8A), Color(0xFF0B1E52), Color(0xFF060F2E)],
+        accentColor: const Color(0xFF60A5FA),
+        badge: '1000x',
+        route: '/games/aviator',
+      ));
+    }
+
+    if (ludoOn) {
+      cardList.add(_richGameCard(
+        title: locale.t('ludo'),
+        emoji: '🎲',
+        subtitle: '${_formatOnline(_liveCounts['ludo'] ?? 0)} ${locale.t('online')}',
+        ctaLabel: locale.t('start_game'),
+        gradient: const [Color(0xFF6A1B9A), Color(0xFF3D1165), Color(0xFF1C0735)],
+        accentColor: const Color(0xFFCE93D8),
+        route: '/games/ludo',
+      ));
+    }
+
+    if (rummyOn) {
+      cardList.add(_richGameCard(
+        title: locale.t('rummy'),
+        emoji: '🂡',
+        subtitle: '${_formatOnline(_liveCounts['rummy'] ?? 0)} ${locale.t('online')}',
+        ctaLabel: locale.t('play_now'),
+        gradient: AppColors.rummyGrad,
+        accentColor: const Color(0xFF5EEAD4),
+        badge: 'POPULAR',
+        route: '/games/rummy',
+      ));
+    }
+
+    if (cricketOn) {
+      cardList.add(_richGameCard(
+        title: locale.t('cricket'),
+        emoji: '🏏',
+        subtitle: '${_formatOnline(_liveCounts['cricket'] ?? 0)} ${locale.t('online')}',
+        ctaLabel: locale.t('bet_now'),
+        gradient: const [Color(0xFF15803D), Color(0xFF0A4521), Color(0xFF062B14)],
+        accentColor: const Color(0xFF86EFAC),
+        badge: 'LIVE',
+        route: '/games/cricket',
+      ));
+    }
+
+    if (cardList.isEmpty) return const SizedBox.shrink();
+
+    // Group into 2-column rows
+    final List<Widget> rows = [];
+    for (int i = 0; i < cardList.length; i += 2) {
+      if (i + 1 < cardList.length) {
+        rows.add(Row(
           children: [
-            Row(
-              children: [
-                Expanded(
-                    child: _richGameCard(
-                  title: locale.t('teen_patti'),
-                  emoji: '🃏',
-                  subtitle:
-                      '${_formatOnline(_liveCounts['teen_patti'] ?? 0)} ${locale.t('online')}',
-                  ctaLabel: locale.t('play_now'),
-                  gradient: const [
-                    Color(0xFFB11226),
-                    Color(0xFF7A0C1A),
-                    Color(0xFF4A0010)
-                  ],
-                  accentColor: const Color(0xFFFF6B6B),
-                  showAvatars: true,
-                  route: '/games/teen-patti',
-                )),
-                const SizedBox(width: 12),
-                Expanded(
-                    child: _richGameCard(
-                  title: locale.t('aviator'),
-                  emoji: '✈️',
-                  subtitle: 'Real-time Chart',
-                  ctaLabel: locale.t('bet_now'),
-                  gradient: const [
-                    Color(0xFF1E3A8A),
-                    Color(0xFF0B1E52),
-                    Color(0xFF060F2E)
-                  ],
-                  accentColor: const Color(0xFF60A5FA),
-                  badge: '7.2x',
-                  route: '/games/aviator',
-                )),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                    child: _richGameCard(
-                  title: locale.t('ludo'),
-                  emoji: '🎲',
-                  subtitle: '${_formatOnline(_liveCounts['ludo'] ?? 0)} ${locale.t('online')}',
-                  ctaLabel: locale.t('start_game'),
-                  gradient: const [
-                    Color(0xFF6A1B9A),
-                    Color(0xFF3D1165),
-                    Color(0xFF1C0735)
-                  ],
-                  accentColor: const Color(0xFFCE93D8),
-                  route: '/games/ludo',
-                )),
-                const SizedBox(width: 12),
-                Expanded(
-                    child: _richGameCard(
-                  title: locale.t('cricket'),
-                  emoji: '🏏',
-                  subtitle: '${_formatOnline(_liveCounts['cricket'] ?? 0)} ${locale.t('online')}',
-                  ctaLabel: locale.t('bet_now'),
-                  gradient: const [
-                    Color(0xFF15803D),
-                    Color(0xFF0A4521),
-                    Color(0xFF062B14)
-                  ],
-                  accentColor: const Color(0xFF86EFAC),
-                  badge: 'LIVE',
-                  route: '/games/cricket',
-                )),
-              ],
-            ),
+            Expanded(child: cardList[i]),
+            const SizedBox(width: 12),
+            Expanded(child: cardList[i + 1]),
           ],
-        ),
-      );
+        ));
+      } else {
+        rows.add(Row(
+          children: [
+            Expanded(child: cardList[i]),
+          ],
+        ));
+      }
+      if (i + 2 < cardList.length) {
+        rows.add(const SizedBox(height: 12));
+      }
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Column(children: rows),
+    );
+  }
 
   String _formatOnline(int n) {
     if (n >= 1000) return '${(n / 1000).toStringAsFixed(0)}K';
@@ -877,7 +995,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     bool showAvatars = false,
   }) =>
       GestureDetector(
-        onTap: () => context.push(route),
+        onTap: () {
+          String targetRoute = route;
+          if (AppConfigService.isSafeMode()) {
+            if (route.contains('teen-patti')) {
+              targetRoute = '/games/teen-patti/play/offline-practice';
+            } else if (route.contains('ludo')) {
+              targetRoute = '/games/ludo/practice';
+            } else if (route.contains('rummy')) {
+              targetRoute = '/games/rummy/practice';
+            }
+          }
+          context.push(targetRoute);
+        },
         child: Container(
           height: 155,
           decoration: BoxDecoration(
@@ -1006,18 +1136,36 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   // ─── Luck Games Row (Matka + Lottery) ────────────────────────────────────────
 
-  Widget _buildLuckGamesRow() => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-        child: Column(
-          children: [
-            // Matka — full width
-            _matkaCard(),
-            const SizedBox(height: 12),
-            // Lottery — full width
-            _lotteryCard(),
-          ],
-        ),
-      );
+  Widget _buildLuckGamesRow() {
+    final colorPredictionOn = AppConfigService.isGameEnabled('color_prediction');
+    final matkaOn = AppConfigService.isGameEnabled('matka');
+    final lotteryOn = AppConfigService.isGameEnabled('lottery');
+
+    final List<Widget> items = [];
+
+    if (colorPredictionOn) {
+      items.add(_colorPredictionCard());
+    }
+
+    if (matkaOn) {
+      if (items.isNotEmpty) items.add(const SizedBox(height: 12));
+      items.add(_matkaCard());
+    }
+
+    if (lotteryOn) {
+      if (items.isNotEmpty) items.add(const SizedBox(height: 12));
+      items.add(_lotteryCard());
+    }
+
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Column(
+        children: items,
+      ),
+    );
+  }
 
   Widget _matkaCard() {
     final market = _featuredMatkaMarket;
@@ -1216,6 +1364,108 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                           textAlign: TextAlign.center,
                           style: TextStyle(
                               color: Colors.black,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _colorPredictionCard() => GestureDetector(
+        onTap: () => context.push('/games/color-prediction'),
+        child: Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF7C3AED), Color(0xFF5B21B6), Color(0xFF2E1065)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+                color: const Color(0xFFA78BFA).withValues(alpha: 0.4),
+                width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                  color: const Color(0xFF7C3AED).withValues(alpha: 0.4),
+                  blurRadius: 20,
+                  offset: const Offset(0, 6))
+            ],
+          ),
+          child: Row(
+            children: [
+              const Text('🎨', style: TextStyle(fontSize: 40)),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Text('COLOR PREDICTION',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.8)),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF10B981),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Text('30s Fast', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    const Text('🟢 Green (2x)  🟣 Violet (4.5x)  🔴 Red (2x)',
+                        style: TextStyle(
+                            color: Color(0xFFDDD6FE),
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    Text(
+                        AppConfigService.isSafeMode()
+                            ? 'Pick color, numbers (9x), or Big/Small (2x)\nwith instant 30-second round results!'
+                            : 'Pick color, numbers (9x), or Big/Small (2x)\nwith instant 30-second cashouts in ₹!',
+                        style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 10.5,
+                            height: 1.35)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              GestureDetector(
+                onTap: () => context.push('/games/color-prediction'),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981),
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                          color: const Color(0xFF10B981).withValues(alpha: 0.4),
+                          blurRadius: 10)
+                    ],
+                  ),
+                  child: const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.play_arrow_rounded,
+                          color: Colors.white, size: 22),
+                      SizedBox(height: 2),
+                      Text('Play\nNow',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: Colors.white,
                               fontSize: 11,
                               fontWeight: FontWeight.w900)),
                     ],

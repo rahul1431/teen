@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/services/app_config_service.dart';
 import '../../../shared/theme/app_theme.dart';
 
 /// Ludo game history — paginated list of settled Ludo games for the player,
@@ -181,7 +182,9 @@ class _GameHistoryCard extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                'Entry: ₹${entryFee.toStringAsFixed(2)}  •  Prize: ₹${prize.toStringAsFixed(2)}',
+                AppConfigService.isSafeMode()
+                    ? 'Coins: ${entryFee.toInt()} 🪙  •  Reward: ${prize.toInt()} 🪙'
+                    : 'Entry: ₹${entryFee.toStringAsFixed(2)}  •  Prize: ₹${prize.toStringAsFixed(2)}',
                 style: const TextStyle(color: Colors.white54, fontSize: 12),
               ),
               if (endedAt != null) ...[
@@ -195,7 +198,9 @@ class _GameHistoryCard extends StatelessWidget {
           ),
           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
             Text(
-              '${won ? '+' : ''}₹${net.abs().toStringAsFixed(2)}',
+              AppConfigService.isSafeMode()
+                  ? '${won ? '+' : ''}${net.abs().toInt()} 🪙'
+                  : '${won ? '+' : ''}₹${net.abs().toStringAsFixed(2)}',
               style: TextStyle(
                   color: won ? const Color(0xFF2ECC71) : AppColors.red,
                   fontWeight: FontWeight.bold, fontSize: 16),

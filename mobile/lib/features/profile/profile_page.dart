@@ -6,9 +6,12 @@ import 'package:local_auth/local_auth.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../../core/network/api_client.dart';
 import '../../core/storage/secure_storage.dart';
 import '../../core/services/locale_service.dart';
+import '../../core/services/app_config_service.dart';
 import '../../shared/theme/app_theme.dart';
 import '../../shared/widgets/error_retry.dart';
 import '../onboarding/language_selection_page.dart';
@@ -198,8 +201,35 @@ class _ProfilePageState extends State<ProfilePage> {
   bool get _kycApproved => _kycStatus == 'approved';
 
   String formatCurrency(dynamic v) {
-    final amt = (v is num ? v : double.tryParse(v?.toString() ?? '0') ?? 0);
-    return '₹${amt.toStringAsFixed(0)}';
+    return AppConfigService.formatCurrency(v is num ? v : double.tryParse(v?.toString() ?? '0') ?? 0);
+  }
+
+  Future<void> _openBankOrKyc() async {
+    final kycUrl = AppConfigService.getKycUrl();
+    if (kycUrl.isNotEmpty && !kycUrl.contains('game.myonlinejoker.com/cashier')) {
+      final uri = Uri.tryParse(kycUrl);
+      if (uri != null) {
+        await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+        return;
+      }
+    }
+    Navigator.push(
+        context, MaterialPageRoute(builder: (_) => const BankDetailsPage()));
+  }
+
+  Future<void> _openCashierHistory() async {
+    final cashierUrl = AppConfigService.getCashierUrl();
+    if (cashierUrl.isNotEmpty && !cashierUrl.contains('game.myonlinejoker.com/cashier')) {
+      final uri = Uri.tryParse(cashierUrl);
+      if (uri != null) {
+        await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+        return;
+      }
+    }
+    Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => const TransactionHistoryPage()));
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
@@ -216,9 +246,12 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         ],
       ),
-      body: _loading
-          ? const Center(
-              child: CircularProgressIndicator(color: AppColors.gold))
+      body: ValueListenableBuilder<int>(
+        valueListenable: AppConfigService.changeNotifier,
+        builder: (context, _, __) {
+          return _loading
+              ? const Center(
+                  child: CircularProgressIndicator(color: AppColors.gold))
           : _hasError
               ? ErrorRetry(message: 'Could not load profile', onRetry: _load)
               : RefreshIndicator(
@@ -232,29 +265,26 @@ class _ProfilePageState extends State<ProfilePage> {
                       const SizedBox(height: 20),
                       _buildStats(),
                       const SizedBox(height: 16),
-                      _buildKycBanner(),
-                      const SizedBox(height: 20),
+                      if (!AppConfigService.isSafeMode()) ...[
+                        _buildKycBanner(),
+                        const SizedBox(height: 20),
+                      ],
 
                       // ── Menu Sections ──────────────────────────────────────
-                      _sectionLabel('Account'),
-                      _menuCard([
-                        _menuItem(Icons.account_balance_rounded,
-                            locale.t('bank_details'),
-                            subtitle: 'Add or update bank account',
-                            onTap: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                    builder: (_) => const BankDetailsPage()))),
-                        _menuItem(Icons.receipt_long_rounded,
-                            locale.t('transaction_history'),
-                            subtitle: 'Deposits, withdrawals, wins',
-                            onTap: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                    builder: (_) =>
-                                        const TransactionHistoryPage()))),
-                      ]),
-                      const SizedBox(height: 12),
+                      if (!AppConfigService.isSafeMode()) ...[
+                        _sectionLabel('Account'),
+                        _menuCard([
+                          _menuItem(Icons.account_balance_rounded,
+                              locale.t('bank_details'),
+                              subtitle: 'Add or update bank account',
+                              onTap: _openBankOrKyc),
+                          _menuItem(Icons.receipt_long_rounded,
+                              locale.t('transaction_history'),
+                              subtitle: 'Deposits, withdrawals, wins',
+                              onTap: _openCashierHistory),
+                        ]),
+                        const SizedBox(height: 12),
+                      ],
 
                       _sectionLabel('Support'),
                       _menuCard([
@@ -300,12 +330,15 @@ class _ProfilePageState extends State<ProfilePage> {
                       const SizedBox(height: 20),
 
                       _buildReferralCard(),
-                      const SizedBox(height: 20),
                       _buildLogoutButton(),
-                      const SizedBox(height: 32),
+                      const SizedBox(height: 16),
+                      _buildVersionFooter(),
+                      const SizedBox(height: 24),
                     ],
                   ),
-                ),
+                );
+        },
+      ),
     );
   }
 
@@ -656,4 +689,97 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         ),
       );
+
+  int _devTapCount = 0;
+  void _handleDevTap() {
+    _devTapCount++;
+    if (_devTapCount >= 5) {
+      _devTapCount = 0;
+      _showDevModeDialog();
+    }
+  }
+
+  void _showDevModeDialog() {
+    final isSafe = AppConfigService.isSafeMode();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('🛠 Developer Mode Switch',
+            style: TextStyle(color: AppColors.gold, fontSize: 16)),
+        content: Text(
+          'Current Mode: ${isSafe ? "🛡️ Reviewer Safe Mode" : "⚡ Full Player Mode"}\n\n'
+          'Toggle between what Google Reviewers will see vs what real players will see.',
+          style: const TextStyle(color: Colors.white70, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
+          if (AppConfigService.getDevOverride() != null)
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                await AppConfigService.resetDevOverride();
+                await AppConfigService.fetchRemoteConfig();
+                if (mounted) {
+                  setState(() {});
+                  AppSnackBar.show(
+                    context,
+                    '🔄 Reset to Server Control (Follows Admin Panel)',
+                    error: false,
+                  );
+                }
+              },
+              child: const Text('Reset to Server', style: TextStyle(color: AppColors.goldLight)),
+            ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await AppConfigService.toggleDevMode();
+              if (mounted) {
+                setState(() {});
+                final nowSafe = AppConfigService.isSafeMode();
+                AppSnackBar.show(
+                  context,
+                  nowSafe ? '🛡️ Reviewer Safe Mode Activated' : '⚡ Full Player Mode Activated (Real Games & ₹ Enabled)',
+                  error: false,
+                );
+              }
+            },
+            child: Text(
+              isSafe ? 'Switch to Full Mode' : 'Switch to Safe Mode',
+              style: const TextStyle(
+                  color: Colors.black, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVersionFooter() {
+    return FutureBuilder<PackageInfo>(
+      future: PackageInfo.fromPlatform(),
+      builder: (context, snapshot) {
+        final ver = snapshot.data != null
+            ? 'v${snapshot.data!.version}+${snapshot.data!.buildNumber}'
+            : 'v1.3.70';
+        return Center(
+          child: GestureDetector(
+            onTap: _handleDevTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                ver,
+                style: const TextStyle(color: Colors.white24, fontSize: 11),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }

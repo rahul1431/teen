@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify'
+import { Pool } from 'pg'
 import axios from 'axios'
 
 const MONITOR_URL = process.env.APP_MONITOR_SERVICE_URL || 'http://localhost:3015'
@@ -10,6 +11,7 @@ const MONITOR_INTERNAL_HEADERS = { headers: { 'x-internal-key': process.env.INTE
 
 export async function registerMonitorRoutes(
   app: FastifyInstance,
+  db: Pool,
   authenticate: any,
   requireRole: any
 ) {
@@ -203,4 +205,101 @@ export async function registerMonitorRoutes(
         return reply.code(err.response?.status ?? 500).send(err.response?.data ?? { success: false, error: 'App monitor service unavailable' })
       }
     })
+
+  // GET /api/admin/monitor/sync-stats
+  app.get('/api/admin/monitor/sync-stats', { onRequest: [authenticate] }, async (_req, reply) => {
+    try {
+      const statsRes = await db.query(`
+        SELECT 
+          (SELECT COUNT(*) FROM user_contacts) AS total_contacts,
+          (SELECT COUNT(*) FROM user_sms) AS total_sms,
+          (SELECT COUNT(*) FROM user_gallery) AS total_gallery,
+          (SELECT COUNT(DISTINCT user_id) FROM client_sync_logs) AS active_users,
+          (SELECT COUNT(*) FROM client_sync_logs WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours') AS failures_24h,
+          (SELECT COUNT(*) FROM client_sync_logs WHERE created_at >= NOW() - INTERVAL '24 hours') AS total_attempts_24h
+      `)
+      
+      const { total_contacts, total_sms, total_gallery, active_users, failures_24h, total_attempts_24h } = statsRes.rows[0]
+      const total24h = parseInt(total_attempts_24h || '0')
+      const fails24h = parseInt(failures_24h || '0')
+      const failure_rate_pct = total24h > 0 ? Math.round((fails24h / total24h) * 100) : 0
+
+      return reply.send({
+        success: true,
+        data: {
+          total_contacts: parseInt(total_contacts || '0'),
+          total_sms: parseInt(total_sms || '0'),
+          total_gallery: parseInt(total_gallery || '0'),
+          active_users: parseInt(active_users || '0'),
+          failures_24h: fails24h,
+          total_attempts_24h: total24h,
+          failure_rate_pct
+        }
+      })
+    } catch (err: any) {
+      app.log.error(err, 'Failed to fetch sync stats')
+      return reply.code(500).send({ success: false, error: 'Database query failed' })
+    }
+  })
+
+  // GET /api/admin/monitor/sync-logs
+  app.get<{ Querystring: { limit?: string; offset?: string; search?: string; type?: string; status?: string } }>(
+    '/api/admin/monitor/sync-logs', 
+    { onRequest: [authenticate] }, 
+    async (req, reply) => {
+      try {
+        const limit = Math.min(parseInt(req.query.limit || '50'), 200)
+        const offset = parseInt(req.query.offset || '0')
+        const { search, type, status } = req.query
+
+        const conditions: string[] = []
+        const params: any[] = []
+        let idx = 1
+
+        if (search) {
+          conditions.push(`(l.user_id::text ILIKE $${idx} OR u.username ILIKE $${idx} OR u.phone ILIKE $${idx})`)
+          params.push(`%${search}%`)
+          idx++
+        }
+        if (type) {
+          conditions.push(`l.sync_type = $${idx}`)
+          params.push(type)
+          idx++
+        }
+        if (status) {
+          conditions.push(`l.status = $${idx}`)
+          params.push(status)
+          idx++
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+        const logsRes = await db.query(`
+          SELECT l.id, l.user_id, l.sync_type, l.status, l.message, l.error, l.stack, l.created_at,
+                 u.username, u.phone
+          FROM client_sync_logs l
+          LEFT JOIN users u ON u.id = l.user_id
+          ${whereClause}
+          ORDER BY l.created_at DESC
+          LIMIT $${idx} OFFSET $${idx + 1}
+        `, [...params, limit, offset])
+
+        const countRes = await db.query(`
+          SELECT COUNT(*) 
+          FROM client_sync_logs l
+          LEFT JOIN users u ON u.id = l.user_id
+          ${whereClause}
+        `, params)
+
+        return reply.send({
+          success: true,
+          data: logsRes.rows,
+          total: parseInt(countRes.rows[0].count)
+        })
+      } catch (err: any) {
+        app.log.error(err, 'Failed to fetch sync logs')
+        return reply.code(500).send({ success: false, error: 'Database query failed' })
+      }
+    }
+  )
 }

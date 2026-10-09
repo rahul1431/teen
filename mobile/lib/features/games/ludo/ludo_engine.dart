@@ -41,12 +41,12 @@ class LudoPlayer {
   factory LudoPlayer.fromJson(Map<String, dynamic> j) => LudoPlayer(
         userId: (j['user_id'] ?? j['userId'] ?? '').toString(),
         username: (j['username'] ?? 'Player').toString(),
-        seat: ((j['seat'] ?? 1) as num).toInt(),
-        isBot: (j['is_bot'] ?? j['isBot'] ?? false) as bool,
+        seat: int.tryParse(j['seat']?.toString() ?? '') ?? (j['seat'] is num ? (j['seat'] as num).toInt() : 1),
+        isBot: (j['is_bot'] ?? j['isBot'] ?? false) == true,
         color: (j['color'] ?? 'red').toString(),
-        tokens: ((j['tokens'] as List?)?.map((e) => (e as num).toInt()).toList()) ??
+        tokens: ((j['tokens'] as List?)?.map((e) => int.tryParse(e?.toString() ?? '') ?? (e is num ? (e as num).toInt() : -1)).toList()) ??
             [-1, -1, -1, -1],
-        finished: ((j['finished'] ?? 0) as num).toInt(),
+        finished: int.tryParse(j['finished']?.toString() ?? '') ?? (j['finished'] is num ? (j['finished'] as num).toInt() : 0),
         status: (j['status'] ?? 'active').toString(),
       );
 }
@@ -80,20 +80,20 @@ class LudoState {
 
   factory LudoState.fromJson(Map<String, dynamic> j) => LudoState(
         roomId: (j['room_id'] ?? j['roomId'] ?? '').toString(),
-        stake: double.tryParse((j['stake'] ?? 0).toString()) ?? 0,
+        stake: double.tryParse((j['stake'] ?? 0).toString()) ?? 0.0,
         players: ((j['players'] as List?) ?? [])
-            .map((e) => LudoPlayer.fromJson(e as Map<String, dynamic>))
+            .map((e) => LudoPlayer.fromJson(e is Map<String, dynamic> ? e : Map<String, dynamic>.from(e as Map)))
             .toList(),
         status: (j['status'] ?? 'active').toString(),
-        currentTurn: ((j['current_turn'] ?? j['currentTurn'] ?? 0) as num).toInt(),
-        dice: j['dice'] != null ? (j['dice'] as num).toInt() : null,
+        currentTurn: int.tryParse((j['current_turn'] ?? j['currentTurn'])?.toString() ?? '') ?? ((j['current_turn'] ?? j['currentTurn']) is num ? ((j['current_turn'] ?? j['currentTurn']) as num).toInt() : 0),
+        dice: j['dice'] != null ? (int.tryParse(j['dice'].toString()) ?? (j['dice'] is num ? (j['dice'] as num).toInt() : 1)) : null,
         movableTokens:
-            ((j['movable_tokens'] as List?)?.map((e) => (e as num).toInt()).toList()) ??
+            ((j['movable_tokens'] as List?)?.map((e) => int.tryParse(e?.toString() ?? '') ?? (e is num ? (e as num).toInt() : 0)).toList()) ??
                 const [],
         awaiting: (j['awaiting'] ?? 'roll').toString(),
-        consecutiveSixes: ((j['consecutive_sixes'] ?? 0) as num).toInt(),
+        consecutiveSixes: int.tryParse(j['consecutive_sixes']?.toString() ?? '') ?? (j['consecutive_sixes'] is num ? (j['consecutive_sixes'] as num).toInt() : 0),
         winnerId: (j['winner_id'] ?? j['winnerId'])?.toString(),
-        round: (j['round'] ?? 1) as int,
+        round: int.tryParse(j['round']?.toString() ?? '') ?? (j['round'] is num ? (j['round'] as num).toInt() : 1),
       );
 
   LudoPlayer get current => players[currentTurn];

@@ -15,7 +15,8 @@ export function registerNotificationCampaignRoutes(app: FastifyInstance, db: Poo
 
     const rows = await db.query(
       `SELECT c.id, c.title, c.type, c.target_type, c.target_user_id, c.total_recipients,
-              c.delivered_count, c.created_at, au.username AS sent_by_username,
+              c.delivered_count, c.created_at, c.scheduled_for, c.status, c.image_url, c.segment_type,
+              au.username AS sent_by_username,
               (SELECT COUNT(*)::int FROM notifications n WHERE n.campaign_id = c.id AND n.read = true) AS read_count
        FROM notification_campaigns c
        LEFT JOIN admin_users au ON au.id = c.sent_by

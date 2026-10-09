@@ -39,7 +39,7 @@ const WINNER_SKILL_OPTIONS = [
 ]
 
 interface BotTrainingConfigPanelProps {
-  gameType?: 'ludo' | 'teen_patti'
+  gameType?: 'ludo' | 'teen_patti' | 'rummy'
 }
 
 export const BotTrainingConfigPanel: React.FC<BotTrainingConfigPanelProps> = ({ gameType = 'ludo' }) => {

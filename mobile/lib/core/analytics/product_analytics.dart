@@ -28,13 +28,14 @@ class ProductAnalytics {
   /// Fire-and-forget event log. Never throws — a tracking failure must
   /// never surface to the user or interrupt their flow.
   void track(String eventName, [Map<String, dynamic>? properties]) {
-    ApiClient().dio.post('/api/analytics/events', data: {
-      'event_name': eventName,
-      'properties': properties ?? {},
-    }).catchError((_) {
+    try {
+      ApiClient().dio.post('/api/analytics/events', data: {
+        'event_name': eventName,
+        'properties': properties ?? {},
+      }).ignore();
+    } catch (_) {
       // Swallow — analytics is best-effort.
-      return null;
-    });
+    }
   }
 
   bool isEnabled(String flagKey) {

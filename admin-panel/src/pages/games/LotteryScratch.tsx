@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, message, Switch
+  Space, Modal, Input, message, Switch, Popconfirm
 } from 'antd'
 import { ReloadOutlined, PlusOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
@@ -14,6 +14,7 @@ export default function LotteryScratch() {
   const [loading, setLoading] = useState(false)
   const [promoCodes, setPromoCodes] = useState<any[]>([])
   const [createOpen, setCreateOpen] = useState(false)
+  const [editingProduct, setEditingProduct] = useState<any | null>(null)
   const [form] = Form.useForm()
 
   const loadProducts = () => {
@@ -34,20 +35,26 @@ export default function LotteryScratch() {
     loadPromoCodes()
   }, [])
 
-  const create = async (v: any) => {
+  const handleSubmit = async (v: any) => {
     const total = (v.payouts || []).reduce((sum: number, p: any) => sum + Number(p.probability || 0), 0)
     if (Math.abs(total - 100) > 0.01) {
       message.error(`Payout probabilities must sum to 100 (currently ${total})`)
       return
     }
     try {
-      await adminApi.post('/betting/lottery/scratch/create', { name: v.name, price: v.price, payouts: v.payouts })
-      message.success('Scratch card product created!')
+      if (editingProduct) {
+        await adminApi.patch(`/betting/lottery/scratch/products/${editingProduct.id}`, { name: v.name, price: v.price, payouts: v.payouts })
+        message.success('Scratch card product updated!')
+      } else {
+        await adminApi.post('/betting/lottery/scratch/create', { name: v.name, price: v.price, payouts: v.payouts })
+        message.success('Scratch card product created!')
+      }
       setCreateOpen(false)
+      setEditingProduct(null)
       form.resetFields()
       loadProducts()
     } catch (e: any) {
-      message.error(e?.response?.data?.error || 'Create failed')
+      message.error(e?.response?.data?.error || 'Operation failed')
     }
   }
 
@@ -58,6 +65,16 @@ export default function LotteryScratch() {
       loadProducts()
     } catch {
       message.error('Failed to update product')
+    }
+  }
+
+  const deleteProduct = async (id: string) => {
+    try {
+      await adminApi.delete(`/betting/lottery/scratch/products/${id}`)
+      message.success('Product deleted successfully')
+      loadProducts()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to delete product')
     }
   }
 
@@ -79,7 +96,11 @@ export default function LotteryScratch() {
             <Button
               type="primary"
               icon={<PlusOutlined />}
-              onClick={() => setCreateOpen(true)}
+              onClick={() => {
+                setEditingProduct(null)
+                form.resetFields()
+                setCreateOpen(true)
+              }}
               style={{ borderRadius: '8px', background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)', border: 'none', fontWeight: 600 }}
             >
               Create Product
@@ -124,19 +145,54 @@ export default function LotteryScratch() {
               )
             },
             { title: 'Created', dataIndex: 'created_at', render: (v: string) => dayjs(v).format('DD MMM YY') },
+            {
+              title: 'Actions',
+              key: 'actions',
+              render: (_: any, record: any) => (
+                <Space size="middle">
+                  <Button
+                    type="link"
+                    style={{ padding: 0 }}
+                    onClick={() => {
+                      setEditingProduct(record)
+                      form.setFieldsValue({
+                        name: record.name,
+                        price: Number(record.price),
+                        payouts: record.payouts
+                      })
+                      setCreateOpen(true)
+                    }}
+                  >
+                    Edit
+                  </Button>
+                  <Popconfirm
+                    title="Are you sure you want to delete this product?"
+                    onConfirm={() => deleteProduct(record.id)}
+                    okText="Yes"
+                    cancelText="No"
+                  >
+                    <Button type="link" danger style={{ padding: 0 }}>Delete</Button>
+                  </Popconfirm>
+                </Space>
+              )
+            },
           ]}
         />
       </Card>
 
       <Modal
         open={createOpen}
-        title="Create Scratch Card Product"
-        onCancel={() => setCreateOpen(false)}
+        title={editingProduct ? "Edit Scratch Card Product" : "Create Scratch Card Product"}
+        onCancel={() => {
+          setCreateOpen(false)
+          setEditingProduct(null)
+          form.resetFields()
+        }}
         onOk={() => form.submit()}
-        okText="Create Product"
+        okText={editingProduct ? "Save Changes" : "Create Product"}
         width={640}
       >
-        <Form form={form} layout="vertical" onFinish={create} style={{ marginTop: '16px' }}>
+        <Form form={form} layout="vertical" onFinish={handleSubmit} style={{ marginTop: '16px' }}>
           <Form.Item name="name" label="Product Name" rules={[{ required: true, message: 'Please enter a name' }]}>
             <Input placeholder="e.g., ₹10 Lucky Scratch" />
           </Form.Item>

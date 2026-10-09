@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
+import '../../../core/services/app_config_service.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../shared/theme/app_theme.dart';
 
@@ -165,9 +166,11 @@ class _LudoFriendsPageState extends State<LudoFriendsPage> {
   void _shareCode() {
     final stake = (_lobby?['stake'] as num?)?.toInt() ?? widget.stake.toInt();
     HapticFeedback.selectionClick();
+    final isSafe = AppConfigService.isSafeMode();
+    final entryText = isSafe ? 'Entry: $stake 🪙' : 'Entry ₹$stake';
     Share.share(
       '🎲 Join my Ludo table on MyOnlineJoker!\n'
-      'Table code: $_code · Entry ₹$stake\n'
+      'Table code: $_code · $entryText\n'
       'Tap to join: https://game.myonlinejoker.com/table/?code=$_code',
       subject: 'Ludo — join my table',
     );
@@ -270,7 +273,10 @@ class _LudoFriendsPageState extends State<LudoFriendsPage> {
                         fontWeight: FontWeight.bold,
                         letterSpacing: 10)),
                 const SizedBox(height: 6),
-                Text('Entry ₹${stake.toInt()} · No bots · Max $maxPlayers players',
+                Text(
+                    AppConfigService.isSafeMode()
+                        ? 'Coins: ${stake.toInt()} 🪙 · No bots · Max $maxPlayers players'
+                        : 'Entry ₹${stake.toInt()} · No bots · Max $maxPlayers players',
                     style: const TextStyle(
                         color: AppColors.textSecondary, fontSize: 12)),
                 const SizedBox(height: 10),

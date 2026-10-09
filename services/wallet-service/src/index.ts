@@ -596,7 +596,7 @@ async function start() {
   app.post('/internal/wallet/lock', { onRequest: [authenticateInternal] }, async (req, reply) => {
     const body = z.object({
       user_id: z.string().uuid(),
-      amount: z.number(),
+      amount: z.number().positive(),
       room_id: z.string(),
       lock_id: z.string().optional(),
     }).parse(req.body)
@@ -607,14 +607,14 @@ async function start() {
 
   // Internal: POST /internal/wallet/unlock (called by game-gateway on termination/cancel)
   app.post('/internal/wallet/unlock', { onRequest: [authenticateInternal] }, async (req, reply) => {
-    const body = z.object({ user_id: z.string().uuid(), amount: z.number(), room_id: z.string() }).parse(req.body)
+    const body = z.object({ user_id: z.string().uuid(), amount: z.number().positive(), room_id: z.string() }).parse(req.body)
     await walletSvc.unlockFunds(body.user_id, body.amount, body.room_id)
     return reply.send({ success: true })
   })
 
   // Internal: POST /internal/wallet/consume (called on withdrawal approval)
   app.post('/internal/wallet/consume', { onRequest: [authenticateInternal] }, async (req, reply) => {
-    const body = z.object({ user_id: z.string().uuid(), amount: z.number(), room_id: z.string() }).parse(req.body)
+    const body = z.object({ user_id: z.string().uuid(), amount: z.number().positive(), room_id: z.string() }).parse(req.body)
     await walletSvc.consumeLockedFunds(body.user_id, body.amount, undefined, body.room_id)
     return reply.send({ success: true })
   })
@@ -668,7 +668,7 @@ async function start() {
   app.post('/internal/wallet/credit', { onRequest: [authenticateInternal] }, async (req, reply) => {
     const body = z.object({
       user_id: z.string().uuid(),
-      amount: z.number(),
+      amount: z.number().positive(),
       type: z.enum(['game_credit', 'bonus', 'referral', 'manual_credit']),
       reference_id: z.string().optional(),
       idempotency_key: z.string(),

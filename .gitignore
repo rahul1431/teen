@@ -42,6 +42,9 @@ uptime-status-dev.json
 # Flutter
 mobile/.dart_tool/
 mobile/android/local.properties
+mobile/android/key.properties
+*.jks
+*.keystore
 mobile/android/.gradle/
 mobile/android/app/release/
 mobile/.flutter-plugins
@@ -50,6 +53,7 @@ mobile/build/
 mobile/.pub-cache/
 mobile/android/.gradle/
 *.apk
+*.aab
 
 # Runtime user uploads — keep the directory layout, ignore the content
 uploads/**/*

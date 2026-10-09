@@ -177,6 +177,15 @@
 
     <div class="section-label">Choose your platform</div>
 
+    <a class="btn btn-whatsapp" id="whatsappBtn" href="#" style="background: linear-gradient(135deg, #25D366 0%, #128C7E 100%); color: #fff; box-shadow: 0 6px 20px rgba(37,211,102,0.3); margin-bottom: 12px;">
+      <span class="btn-icon">💬</span>
+      <span class="btn-text">
+        <span class="main">Verify & Download via WhatsApp</span>
+        <span class="sub">Claims ₹50 bonus automatically</span>
+      </span>
+      <span class="btn-arrow">›</span>
+    </a>
+
     <a class="btn btn-android" id="androidBtn" href="#">
       <span class="btn-icon">🤖</span>
       <span class="btn-text">
@@ -246,6 +255,11 @@
           keepalive: true,
         }).catch(function () {});
       }
+
+      // WhatsApp direct link setup
+      var waNumber = '919505203970'; 
+      var waText = 'Hello! I want to join MyOnlineJoker and claim my ₹50 bonus.' + (ref ? ' My referral code is: ' + ref : '');
+      document.getElementById('whatsappBtn').href = 'https://wa.me/' + waNumber + '?text=' + encodeURIComponent(waText);
 
       // Android APK direct download (ref code in query so app can read via deep link)
       var apkHref = '/downloads/app-release.apk' + (ref ? '?ref=' + encodeURIComponent(ref) : '');

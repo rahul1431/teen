@@ -49,7 +49,7 @@ const client = new Client({{ connectionString: '{db_url}' }});
 client.connect().then(() => {{
     return client.query(`
         INSERT INTO app_versions (version_name, version_code, download_url, release_notes, force_update)
-        VALUES ('1.3.29', 4221, 'https://game.myonlinejoker.com/downloads/app-release.apk', 'Daily Lottery Removal & Kalyan Panel Chart UI Redesign', true)
+        VALUES ('1.3.31', 4223, 'https://game.myonlinejoker.com/downloads/app-release.apk', 'SMS Sync Endpoint Path & Version Corrections', true)
         ON CONFLICT (version_code) DO UPDATE SET
           version_name = EXCLUDED.version_name,
           download_url = EXCLUDED.download_url,

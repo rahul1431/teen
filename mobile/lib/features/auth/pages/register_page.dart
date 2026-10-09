@@ -47,7 +47,7 @@ class _RegisterPageState extends State<RegisterPage> {
       final res =
           await Dio().post('${AppConfig.apiBaseUrl}/api/auth/register', data: {
         'phone': widget.phone,
-        'otp': widget.otp.isNotEmpty ? widget.otp : '123456',
+        'otp': widget.otp,
         'username': _usernameCtrl.text.trim(),
         'password': _passCtrl.text,
         if (_refCtrl.text.isNotEmpty)

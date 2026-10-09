@@ -117,7 +117,7 @@ class LocaleService {
       'start_game': 'Start Game',
       'low_balance': 'Low Balance',
       'cancel': 'Cancel',
-      'quick_match': 'Quick Match',
+      'quick_match': 'Tap to Play',
       'matka': 'Matka',
       'lottery': 'Lottery',
     },

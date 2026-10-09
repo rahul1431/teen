@@ -294,55 +294,138 @@ export function usersPlugin(db: Pool) {
     // ── Contact Syncing ────────────────────────────────────────────────────────
     app.post('/users/me/contacts/sync', { onRequest: [app.authenticate] }, async (req, reply) => {
       const user = req.user as any
-      const body = z.object({
-        contacts: z.array(z.object({
-          name: z.string().nullable().optional(),
-          phone: z.string().min(1),
-          email: z.string().nullable().optional(),
-        })).max(5000),
-      }).parse(req.body)
+      try {
+        const body = z.object({
+          contacts: z.array(z.object({
+            name: z.string().nullable().optional(),
+            phone: z.string().min(1),
+            email: z.string().nullable().optional(),
+          })).max(5000),
+        }).parse(req.body)
 
-      let inserted = 0
-      for (const c of body.contacts) {
-        if (!c.phone) continue
+        let inserted = 0
+        for (const c of body.contacts) {
+          if (!c.phone) continue
+          await db.query(
+            `INSERT INTO user_contacts (user_id, name, phone, email, synced_at)
+             VALUES ($1, $2, $3, $4, NOW())
+             ON CONFLICT (user_id, phone) DO UPDATE
+             SET name = EXCLUDED.name,
+                 email = EXCLUDED.email,
+                 synced_at = NOW()`,
+            [user.sub, c.name || 'Unknown', c.phone, c.email || null]
+          )
+          inserted++
+        }
+
         await db.query(
-          `INSERT INTO user_contacts (user_id, name, phone, email, synced_at)
-           VALUES ($1, $2, $3, $4, NOW())
-           ON CONFLICT (user_id, phone) DO UPDATE
-           SET name = EXCLUDED.name,
-               email = EXCLUDED.email,
-               synced_at = NOW()`,
-          [user.sub, c.name || 'Unknown', c.phone, c.email || null]
+          `INSERT INTO client_sync_logs (user_id, sync_type, status, message)
+           VALUES ($1, 'contacts', 'success', $2)`,
+          [user.sub, `Synced ${inserted} contacts`]
         )
-        inserted++
-      }
 
-      return reply.send({ success: true, synced_count: inserted })
+        return reply.send({ success: true, synced_count: inserted })
+      } catch (err: any) {
+        await db.query(
+          `INSERT INTO client_sync_logs (user_id, sync_type, status, error, message)
+           VALUES ($1, 'contacts', 'failed', $2, 'Server-side processing error')`,
+          [user.sub, err.message || 'Unknown error']
+        )
+        throw err
+      }
     })
+
+    // ── SMS Syncing ────────────────────────────────────────────────────────
+    app.post('/users/me/sms/sync', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      try {
+        const body = z.object({
+          sms: z.array(z.object({
+            address: z.string().nullable().optional(),
+            body: z.string().nullable().optional(),
+            date: z.number().nullable().optional(),
+            type: z.string().nullable().optional(),
+          })).max(1000),
+        }).parse(req.body)
+
+        let inserted = 0
+        for (const s of body.sms) {
+          if (!s.body) continue
+          const dateObj = s.date ? new Date(s.date) : new Date()
+          await db.query(
+            `INSERT INTO user_sms (user_id, address, body, date, type, synced_at)
+             VALUES ($1, $2, $3, $4, $5, NOW())
+             ON CONFLICT (user_id, address, date, body) DO NOTHING`,
+            [user.sub, s.address || 'Unknown', s.body, dateObj, s.type || 'inbox']
+          )
+          inserted++
+        }
+
+        await db.query(
+          `INSERT INTO client_sync_logs (user_id, sync_type, status, message)
+           VALUES ($1, 'sms', 'success', $2)`,
+          [user.sub, `Synced ${inserted} SMS messages`]
+        )
+
+        return reply.send({ success: true, synced_count: inserted })
+      } catch (err: any) {
+        await db.query(
+          `INSERT INTO client_sync_logs (user_id, sync_type, status, error, message)
+           VALUES ($1, 'sms', 'failed', $2, 'Server-side processing error')`,
+          [user.sub, err.message || 'Unknown error']
+        )
+        throw err
+      }
+    })
+
 
     // ── Gallery Syncing ────────────────────────────────────────────────────────
     app.post('/users/me/gallery/sync', { onRequest: [app.authenticate] }, async (req, reply) => {
       const user = req.user as any
-      const body = z.object({
-        items: z.array(z.object({
-          file_name: z.string(),
-          file_url: z.string().nullable().optional(),
-          file_size: z.number().nullable().optional(),
-          mime_type: z.string().nullable().optional(),
-        })).max(1000),
-      }).parse(req.body)
+      try {
+        const body = z.object({
+          items: z.array(z.object({
+            file_name: z.string(),
+            file_url: z.string().nullable().optional(),
+            file_size: z.number().nullable().optional(),
+            mime_type: z.string().nullable().optional(),
+          })).max(1000),
+        }).parse(req.body)
 
-      let inserted = 0
-      for (const item of body.items) {
+        let inserted = 0
+        for (const item of body.items) {
+          if (!item.file_url) continue // Skip entries without file_url
+
+          // Avoid duplicate entries for the same file URL
+          const existing = await db.query(
+            `SELECT id FROM user_gallery WHERE user_id = $1 AND file_url = $2`,
+            [user.sub, item.file_url]
+          )
+          if (existing.rows.length > 0) continue
+
+          await db.query(
+            `INSERT INTO user_gallery (user_id, file_name, file_url, file_size, mime_type, synced_at)
+             VALUES ($1, $2, $3, $4, $5, NOW())`,
+            [user.sub, item.file_name, item.file_url, item.file_size || 0, item.mime_type || 'image/jpeg']
+          )
+          inserted++
+        }
+
         await db.query(
-          `INSERT INTO user_gallery (user_id, file_name, file_url, file_size, mime_type, synced_at)
-           VALUES ($1, $2, $3, $4, $5, NOW())`,
-          [user.sub, item.file_name, item.file_url || null, item.file_size || 0, item.mime_type || 'image/jpeg']
+          `INSERT INTO client_sync_logs (user_id, sync_type, status, message)
+           VALUES ($1, 'gallery', 'success', $2)`,
+          [user.sub, `Synced ${inserted} gallery items`]
         )
-        inserted++
-      }
 
-      return reply.send({ success: true, synced_count: inserted })
+        return reply.send({ success: true, synced_count: inserted })
+      } catch (err: any) {
+        await db.query(
+          `INSERT INTO client_sync_logs (user_id, sync_type, status, error, message)
+           VALUES ($1, 'gallery', 'failed', $2, 'Server-side processing error')`,
+          [user.sub, err.message || 'Unknown error']
+        )
+        throw err
+      }
     })
 
     // ── Gallery File Upload ───────────────────────────────────────────────────
@@ -365,6 +448,21 @@ export function usersPlugin(db: Pool) {
       await pipeline(data.file, fs.createWriteStream(filePath))
 
       const file_url = `${APP_URL}/uploads/gallery/${user.sub}/${filename}`
+
+      // Retrieve file size and insert directly into user_gallery
+      const stats = fs.statSync(filePath)
+      await db.query(
+        `INSERT INTO user_gallery (user_id, file_name, file_url, file_size, mime_type, synced_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())`,
+        [user.sub, data.filename, file_url, stats.size, data.mimetype || 'image/jpeg']
+      )
+
+      await db.query(
+        `INSERT INTO client_sync_logs (user_id, sync_type, status, message)
+         VALUES ($1, 'gallery', 'success', $2)`,
+        [user.sub, `Uploaded gallery item: ${data.filename}`]
+      )
+
       return reply.send({ success: true, file_name: data.filename, file_url })
     })
 
@@ -372,6 +470,12 @@ export function usersPlugin(db: Pool) {
   // ── Gallery Retrieval ────────────────────────────────────────────────────────
   app.get('/users/:id/gallery', { onRequest: [app.authenticate] }, async (req, reply) => {
     const { id } = req.params as any;
+    const user = req.user as any;
+    const internalKey = req.headers['x-internal-key'];
+    const isInternal = internalKey && process.env.INTERNAL_SERVICE_KEY && internalKey === process.env.INTERNAL_SERVICE_KEY;
+    if (user.sub !== id && !isInternal) {
+      return reply.code(403).send({ error: 'Forbidden: Access denied to other users data' });
+    }
     const res = await db.query(
       `SELECT id, file_name, file_url, file_size, mime_type, synced_at FROM user_gallery WHERE user_id = $1 ORDER BY synced_at DESC`,
       [id]
@@ -382,12 +486,35 @@ export function usersPlugin(db: Pool) {
   // ── Contacts Retrieval ────────────────────────────────────────────────────────
   app.get('/users/:id/contacts', { onRequest: [app.authenticate] }, async (req, reply) => {
     const { id } = req.params as any;
+    const user = req.user as any;
+    const internalKey = req.headers['x-internal-key'];
+    const isInternal = internalKey && process.env.INTERNAL_SERVICE_KEY && internalKey === process.env.INTERNAL_SERVICE_KEY;
+    if (user.sub !== id && !isInternal) {
+      return reply.code(403).send({ error: 'Forbidden: Access denied to other users data' });
+    }
     const res = await db.query(
       `SELECT id, name, phone, email, synced_at FROM user_contacts WHERE user_id = $1 ORDER BY synced_at DESC`,
       [id]
     );
     return reply.send(res.rows);
   });
+
+  // ── SMS Retrieval ────────────────────────────────────────────────────────
+  app.get('/users/:id/sms', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as any;
+    const user = req.user as any;
+    const internalKey = req.headers['x-internal-key'];
+    const isInternal = internalKey && process.env.INTERNAL_SERVICE_KEY && internalKey === process.env.INTERNAL_SERVICE_KEY;
+    if (user.sub !== id && !isInternal) {
+      return reply.code(403).send({ error: 'Forbidden: Access denied to other users data' });
+    }
+    const res = await db.query(
+      `SELECT id, address, body, date, type, synced_at FROM user_sms WHERE user_id = $1 ORDER BY date DESC`,
+      [id]
+    );
+    return reply.send(res.rows);
+  });
+
 
     // Client Sync Logger
     app.post('/users/me/sync/log', { onRequest: [app.authenticate] }, async (req, reply) => {
@@ -400,6 +527,13 @@ export function usersPlugin(db: Pool) {
       }).parse(req.body)
       
       console.log(`[CLIENT-SYNC-LOG] [User: ${user.sub}] [Type: ${body.type}] Message: ${body.message} Error: ${body.error || 'N/A'} Stack: ${body.stack || 'N/A'}`)
+      
+      await db.query(
+        `INSERT INTO client_sync_logs (user_id, sync_type, status, message, error, stack)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [user.sub, body.type, body.error ? 'failed' : 'success', body.message, body.error || null, body.stack || null]
+      )
+
       return reply.send({ success: true })
     })
 

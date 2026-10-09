@@ -7,13 +7,14 @@ import { rebalanceWeeklyMonthlyBotTickets } from '../helpers/lottery-bot-fill'
 import { MATKA_MULTIPLIERS, validateMatkaBet, settleMatkaSession } from '../helpers/matka'
 import { settleLottery, generateWinningNumber } from '../helpers/lottery'
 import { rollOutcome } from '../helpers/scratch'
-import { settleFantasyLeague, settleCricketSession } from '../helpers/cricket'
+import { settleCricketSession } from '../helpers/cricket'
 import { cricApiFetch } from '../helpers/cricapi-client'
-import { enrichPlayers } from '../helpers/wikidata-cricket'
 import { syncCurrentMatches } from '../helpers/cricket-sync'
 import { finalizeMatch } from '../helpers/cricket-finalize'
+import { syncMatchOdds } from '../helpers/odds-api-client'
 import { initPool } from '../db/pool'
 import { startCricketAutomationScheduler } from '../modules/cricket/scheduler'
+import { settleColorPredictionRound, getColorFromNumber, getSizeFromNumber, calculateBetPayout } from '../helpers/color-prediction'
 
 export function bettingPlugin(db: Pool) {
   // Initialize the shared pool for lottery/betting modules
@@ -89,35 +90,58 @@ export function bettingPlugin(db: Pool) {
       return { bets: rows.rows }
     })
 
-    function getMonday(d: Date) {
-      const date = new Date(d)
-      const day = date.getDay()
-      const diff = date.getDate() - day + (day === 0 ? -6 : 1)
-      return new Date(date.setDate(diff)).toISOString().slice(0, 10)
+    function getMonday(dStr: string) {
+      const parts = dStr.split('-').map(Number)
+      const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]))
+      const day = d.getUTCDay()
+      const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1)
+      const mon = new Date(Date.UTC(parts[0], parts[1] - 1, diff))
+      return mon.toISOString().slice(0, 10)
     }
 
     app.get('/matka/markets/:id/chart', { onRequest: [auth] }, async (req) => {
       const { id } = req.params as { id: string }
       const draws = await db.query(
-        `SELECT draw_date, open_panna, open_digit, close_panna, close_digit, jodi, status 
+        `SELECT to_char(draw_date, 'YYYY-MM-DD') AS draw_date, 
+                open_panna, open_digit, close_panna, close_digit, jodi, status 
          FROM matka_draws 
          WHERE market_id = $1 
-         ORDER BY draw_date DESC LIMIT 100`,
+         ORDER BY draw_date DESC LIMIT 150`,
         [id],
       )
+
+      const daily = draws.rows.map(row => {
+        const parts = row.draw_date.split('-')
+        const d = new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])))
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+        return {
+          date: row.draw_date,
+          day_name: days[d.getUTCDay()],
+          open_panna: row.open_panna ?? '***',
+          open_digit: row.open_digit !== null ? String(row.open_digit) : '*',
+          jodi: row.jodi ?? '**',
+          close_digit: row.close_digit !== null ? String(row.close_digit) : '*',
+          close_panna: row.close_panna ?? '***',
+          status: row.status
+        }
+      })
+
       const weeks: Record<string, any> = {}
       for (const row of draws.rows) {
-        const d = new Date(row.draw_date)
-        const mondayStr = getMonday(d)
+        const dStr = row.draw_date
+        const mondayStr = getMonday(dStr)
         if (!weeks[mondayStr]) {
           weeks[mondayStr] = {
             week_start: mondayStr,
             mon: null, tue: null, wed: null, thu: null, fri: null, sat: null, sun: null
           }
         }
+        const parts = dStr.split('-').map(Number)
+        const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]))
         const days = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
-        const dayKey = days[d.getDay()]
+        const dayKey = days[d.getUTCDay()]
         weeks[mondayStr][dayKey] = {
+          date: dStr,
           open_panna: row.open_panna ?? '***',
           close_panna: row.close_panna ?? '***',
           jodi: row.jodi ?? '**',
@@ -125,7 +149,10 @@ export function bettingPlugin(db: Pool) {
           close_digit: row.close_digit !== null ? String(row.close_digit) : '*'
         }
       }
-      return { chart: Object.values(weeks).sort((a, b) => b.week_start.localeCompare(a.week_start)) }
+      return { 
+        chart: Object.values(weeks).sort((a, b) => b.week_start.localeCompare(a.week_start)),
+        daily: daily
+      }
     })
 
     // ══ LOTTERY ══
@@ -269,7 +296,8 @@ export function bettingPlugin(db: Pool) {
       const out = []
       for (const m of matches.rows) {
         const sessions = await db.query(`SELECT id, label, min_runs, max_runs, odds_yes, odds_no, status, result_runs FROM cricket_sessions WHERE match_id = $1 AND status = 'open'`, [m.id])
-        out.push({ ...m, sessions: sessions.rows })
+        const markets = await db.query(`SELECT id, market_type, label, options, status FROM cricket_markets WHERE match_id = $1 AND status = 'open'`, [m.id])
+        out.push({ ...m, sessions: sessions.rows, markets: markets.rows })
       }
       return { matches: out }
     })
@@ -295,178 +323,80 @@ export function bettingPlugin(db: Pool) {
       return { bets: rows.rows }
     })
 
-    app.get('/cricket/players', { onRequest: [auth] }, async (req) => {
+    app.get('/cricket/odds/markets', { onRequest: [auth] }, async (req) => {
       const { match_id } = req.query as { match_id?: string }
+      let query = "SELECT m.*, mt.team_a, mt.team_b, mt.series, mt.start_time FROM cricket_markets m JOIN cricket_matches mt ON mt.id = m.match_id WHERE m.status = 'open'"
+      const params: any[] = []
       if (match_id) {
-        const mRes = await db.query('SELECT team_a, team_b FROM cricket_matches WHERE id = $1', [match_id])
-        if (mRes.rows.length) {
-          const players = await db.query(`SELECT * FROM cricket_fantasy_players WHERE team_name IN ($1, $2) ORDER BY role ASC, name ASC`, [mRes.rows[0].team_a, mRes.rows[0].team_b])
-          return { players: players.rows }
-        }
+        query += " AND m.match_id = $1"
+        params.push(match_id)
       }
-      const all = await db.query('SELECT * FROM cricket_fantasy_players ORDER BY role ASC, name ASC')
-      return { players: all.rows }
+      const res = await db.query(query, params)
+      return { markets: res.rows }
     })
 
-    app.post('/cricket/fantasy/team', { onRequest: [auth] }, async (req, reply) => {
-      const body = z.object({ match_id: z.string().uuid(), player_ids: z.array(z.string().uuid()).length(11), captain_id: z.string().uuid(), vice_captain_id: z.string().uuid() }).parse(req.body)
-      if (body.captain_id === body.vice_captain_id) return reply.code(400).send({ error: 'Captain and Vice-Captain cannot be the same player' })
-      if (!body.player_ids.includes(body.captain_id) || !body.player_ids.includes(body.vice_captain_id)) return reply.code(400).send({ error: 'Captain and Vice-Captain must be members of the selected team' })
-      const mRes = await db.query('SELECT status FROM cricket_matches WHERE id = $1', [body.match_id])
-      if (!mRes.rows.length) return reply.code(404).send({ error: 'Match not found' })
-      if (mRes.rows[0].status !== 'upcoming') return reply.code(400).send({ error: 'Cannot submit team: Match has already started or settled' })
-      const playersRes = await db.query('SELECT id, role, credits, team_name FROM cricket_fantasy_players WHERE id = ANY($1)', [body.player_ids])
-      if (playersRes.rows.length !== 11) return reply.code(400).send({ error: 'One or more selected players do not exist' })
-      let totalCredits = 0, wk = 0, bat = 0, ar = 0, bowl = 0
-      const teamCounts: Record<string, number> = {}
-      for (const p of playersRes.rows) {
-        totalCredits += Number(p.credits)
-        if (p.role === 'wicket_keeper') wk++
-        else if (p.role === 'batsman') bat++
-        else if (p.role === 'all_rounder') ar++
-        else if (p.role === 'bowler') bowl++
-        teamCounts[p.team_name] = (teamCounts[p.team_name] || 0) + 1
-      }
-      if (totalCredits > 120.0) return reply.code(400).send({ error: `Roster exceeds budget cap: ${totalCredits.toFixed(1)}/120 credits` })
-      if (wk < 1 || wk > 4) return reply.code(400).send({ error: 'Roster must contain between 1 and 4 Wicket Keepers' })
-      if (bat < 3 || bat > 6) return reply.code(400).send({ error: 'Roster must contain between 3 and 6 Batsmen' })
-      if (ar < 1 || ar > 4) return reply.code(400).send({ error: 'Roster must contain between 1 and 4 All-Rounders' })
-      if (bowl < 3 || bowl > 6) return reply.code(400).send({ error: 'Roster must contain between 3 and 6 Bowlers' })
-      // Mirrors the mobile client's per-team-representation cap (cricket_page.dart)
-      // — enforce server-side too so it can't be bypassed via direct API calls.
-      const overTeam = Object.entries(teamCounts).find(([, count]) => count > 7)
-      if (overTeam) return reply.code(400).send({ error: `Roster cannot include more than 7 players from a single team (${overTeam[0]})` })
-      const teamRes = await db.query(`INSERT INTO user_fantasy_teams (user_id, match_id, player_ids, captain_id, vice_captain_id) VALUES ($1, $2, $3, $4, $5) RETURNING id`, [uid(req), body.match_id, body.player_ids, body.captain_id, body.vice_captain_id])
-      return { success: true, team_id: teamRes.rows[0].id }
-    })
+    app.post('/cricket/odds/bet', { onRequest: [auth] }, async (req, reply) => {
+      const body = z.object({
+        market_id: z.string().uuid(),
+        option_key: z.string(),
+        amount: z.number().positive()
+      }).parse(req.body)
 
-    app.get('/cricket/fantasy/my-teams', { onRequest: [auth] }, async (req) => {
-      const { match_id } = req.query as { match_id: string }
-      const res = await db.query(`SELECT t.*, (SELECT name FROM cricket_fantasy_players WHERE id = t.captain_id) AS captain_name, (SELECT name FROM cricket_fantasy_players WHERE id = t.vice_captain_id) AS vice_captain_name FROM user_fantasy_teams t WHERE t.user_id = $1 AND t.match_id = $2`, [uid(req), match_id])
-      return { teams: res.rows }
-    })
-
-    app.get('/cricket/fantasy/leagues', { onRequest: [auth] }, async (req) => {
-      const { match_id } = req.query as { match_id: string }
-      // joined_count supports multi-entry contests — a user can hold more
-      // than one entry in the same league (with different drafted teams),
-      // so this is a count rather than a single scalar entry id.
-      const res = await db.query(`SELECT l.*, (SELECT COUNT(*) FROM cricket_fantasy_entries WHERE league_id = l.id AND user_id = $2) AS joined_count FROM cricket_fantasy_leagues l WHERE l.match_id = $1 ORDER BY l.entry_fee ASC`, [match_id, uid(req)])
-      return { leagues: res.rows.map(r => ({ ...r, joined_count: Number(r.joined_count) })) }
-    })
-
-    app.get('/cricket/fantasy/leagues/:id/leaderboard', { onRequest: [auth] }, async (req) => {
-      const { id } = req.params as { id: string }
-      const res = await db.query(`
-        SELECT e.id, e.points, e.final_rank, e.payout_received, e.status,
-               u.username,
-               t.id AS team_id,
-               (SELECT name FROM cricket_fantasy_players WHERE id = t.captain_id) AS captain_name,
-               (SELECT name FROM cricket_fantasy_players WHERE id = t.vice_captain_id) AS vice_captain_name
-        FROM cricket_fantasy_entries e
-        JOIN users u ON u.id = e.user_id
-        JOIN user_fantasy_teams t ON t.id = e.team_id
-        WHERE e.league_id = $1
-        ORDER BY e.points DESC, e.created_at ASC
-      `, [id])
-      return { leaderboard: res.rows }
-    })
-
-    app.get('/cricket/fantasy/team/:id', { onRequest: [auth] }, async (req, reply) => {
-      const { id } = req.params as { id: string }
-      const teamRes = await db.query('SELECT * FROM user_fantasy_teams WHERE id = $1', [id])
-      if (!teamRes.rows.length) return reply.code(404).send({ error: 'Team not found' })
-      const team = teamRes.rows[0]
-      const playersRes = await db.query('SELECT * FROM cricket_fantasy_players WHERE id = ANY($1)', [team.player_ids])
-      return { team, players: playersRes.rows }
-    })
-
-    app.post('/cricket/fantasy/join', { onRequest: [auth] }, async (req, reply) => {
-      const body = z.object({ league_id: z.string().uuid(), team_id: z.string().uuid() }).parse(req.body)
-      const leagueRes = await db.query('SELECT * FROM cricket_fantasy_leagues WHERE id = $1', [body.league_id])
-      if (!leagueRes.rows.length) return reply.code(404).send({ error: 'League not found' })
-      const league = leagueRes.rows[0]
-      if (league.status !== 'open') return reply.code(400).send({ error: 'League is not open' })
-      if (league.current_entries >= league.max_entries) return reply.code(400).send({ error: 'League is full' })
-      const teamRes = await db.query('SELECT * FROM user_fantasy_teams WHERE id = $1', [body.team_id])
-      if (!teamRes.rows.length) return reply.code(404).send({ error: 'Team roster not found' })
-      const team = teamRes.rows[0]
-      if (team.user_id !== uid(req)) return reply.code(403).send({ error: 'Not your team roster' })
-      if (team.match_id !== league.match_id) return reply.code(400).send({ error: 'Team match mismatch' })
-
-      // Multi-entry contests: a user can join the same league more than
-      // once, but only with a different drafted XI each time — reject if
-      // any of their existing entries in this league used an identical
-      // roster (same 11 players + same captain/vice-captain).
-      const existingRes = await db.query(
-        `SELECT t.player_ids, t.captain_id, t.vice_captain_id FROM cricket_fantasy_entries e
-         JOIN user_fantasy_teams t ON t.id = e.team_id
-         WHERE e.league_id = $1 AND e.user_id = $2`,
-        [body.league_id, uid(req)],
+      const marketRes = await db.query(
+        `SELECT m.*, mt.status AS match_status, mt.start_time 
+         FROM cricket_markets m 
+         JOIN cricket_matches mt ON mt.id = m.match_id 
+         WHERE m.id = $1`,
+        [body.market_id]
       )
-      const newRoster = [...team.player_ids].sort()
-      const isDuplicateRoster = existingRes.rows.some((r: any) => {
-        if (r.captain_id !== team.captain_id || r.vice_captain_id !== team.vice_captain_id) return false
-        const existingRoster = [...r.player_ids].sort()
-        return existingRoster.length === newRoster.length && existingRoster.every((id: string, i: number) => id === newRoster[i])
-      })
-      if (isDuplicateRoster) return reply.code(409).send({ error: 'You already joined this contest with an identical team — draft a different XI to join again.' })
+      if (!marketRes.rows.length) return reply.code(404).send({ error: 'Market not found' })
+      const market = marketRes.rows[0]
 
-      const entryId = crypto.randomUUID()
-      const debit = await debitStake({ userId: uid(req), amount: Number(league.entry_fee), referenceId: entryId, idempotencyKey: `cricket_fantasy_stake_${entryId}`, description: `Joined fantasy league: ${league.name}` })
-      if (!debit.ok) return reply.code(400).send({ error: debit.error || 'Debit failed' })
-      const client = await db.connect()
-      try {
-        await client.query('BEGIN')
-        const lc = (await client.query('SELECT current_entries, max_entries, status FROM cricket_fantasy_leagues WHERE id = $1 FOR UPDATE', [body.league_id])).rows[0]
-        if (lc.status !== 'open' || lc.current_entries >= lc.max_entries) {
-          await client.query('ROLLBACK')
-          client.release()
-          await creditPrize({ userId: uid(req), amount: Number(league.entry_fee), referenceId: entryId, idempotencyKey: `cricket_fantasy_refund_${entryId}` })
-          return reply.code(409).send({ error: 'League is full or closed' })
-        }
-        await client.query(`INSERT INTO cricket_fantasy_entries (id, league_id, team_id, user_id, points, payout_received, status) VALUES ($1,$2,$3,$4,0.0,0.0,'joined')`, [entryId, body.league_id, body.team_id, uid(req)])
-        await client.query('UPDATE cricket_fantasy_leagues SET current_entries = current_entries + 1 WHERE id = $1', [body.league_id])
-        await client.query('COMMIT')
-        return { success: true, entry_id: entryId }
-      } catch (err) {
-        await client.query('ROLLBACK')
-        // Insert/update failed after the stake was already debited (e.g. a
-        // double-submit hitting the league_id+team_id unique constraint) —
-        // refund so the user isn't charged for a contest they never joined.
-        await creditPrize({ userId: uid(req), amount: Number(league.entry_fee), referenceId: entryId, idempotencyKey: `cricket_fantasy_refund_${entryId}` })
-        const pgErr = err as { code?: string }
-        if (pgErr.code === '23505') return reply.code(409).send({ error: 'This team has already been entered into this contest' })
-        return reply.code(400).send({ error: (err as Error).message })
-      } finally {
-        client.release()
+      if (market.status !== 'open' || ['closed', 'settled'].includes(market.match_status)) {
+        return reply.code(409).send({ error: 'Market is closed' })
       }
+
+      if (new Date() >= new Date(market.start_time)) {
+        return reply.code(409).send({ error: 'Match has already started' })
+      }
+
+      const options = typeof market.options === 'string' ? JSON.parse(market.options) : market.options || []
+      const option = options.find((o: any) => o.key === body.option_key)
+      if (!option) return reply.code(400).send({ error: 'Invalid option key selected' })
+
+      const odds = Number(option.odds)
+      const potential = Math.round(body.amount * odds * 100) / 100
+      const betId = crypto.randomUUID()
+
+      const debit = await debitStake({
+        userId: uid(req),
+        amount: body.amount,
+        referenceId: betId,
+        idempotencyKey: `cricket_odds_stake_${betId}`,
+        description: `Cricket odds bet: ${option.label}`
+      })
+      if (!debit.ok) return reply.code(400).send({ error: debit.error })
+
+      await db.query(
+        `INSERT INTO cricket_bets (id, user_id, match_id, market_id, option_key, option_label, odds, amount, potential_payout) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [betId, uid(req), market.match_id, market.id, body.option_key, option.label, odds, body.amount, potential]
+      )
+
+      return { success: true, bet_id: betId, potential_payout: potential }
     })
 
-    app.get('/cricket/matches/:id/live', { onRequest: [auth] }, async (req, reply) => {
-      const { id } = req.params as { id: string }
-      const matchRes = await db.query('SELECT * FROM cricket_matches WHERE id = $1', [id])
-      if (!matchRes.rows.length) return reply.code(404).send({ error: 'Match not found' })
-      const [players, sessions] = await Promise.all([
-        db.query(`SELECT mp.*, fp.name, fp.role, fp.team_name FROM cricket_match_players mp JOIN cricket_fantasy_players fp ON fp.id = mp.player_id WHERE mp.match_id = $1`, [id]),
-        db.query(`SELECT id, label, min_runs, max_runs, odds_yes, odds_no, status, result_runs FROM cricket_sessions WHERE match_id = $1`, [id]),
-      ])
-      // fantasy_points/overs_bowled are NUMERIC columns — node-postgres
-      // returns those as strings, and the mobile app does an unguarded
-      // `as num?` cast on fantasy_points that throws on a String, taking
-      // down the whole live match screen. Coerce to real numbers here so
-      // every client gets proper JSON numbers, not a type it has to guess at.
-      const performances = players.rows.map(p => ({
-        ...p,
-        overs_bowled: Number(p.overs_bowled),
-        fantasy_points: Number(p.fantasy_points),
-      }))
-      const sessionRows = sessions.rows.map(s => ({
-        ...s,
-        odds_yes: Number(s.odds_yes),
-        odds_no: Number(s.odds_no),
-      }))
-      return { match: matchRes.rows[0], player_performances: performances, sessions: sessionRows }
+    app.get('/cricket/odds/my-bets', { onRequest: [auth] }, async (req) => {
+      const rows = await db.query(
+        `SELECT b.*, mt.team_a, mt.team_b, mt.series, m.label AS market_label 
+         FROM cricket_bets b 
+         JOIN cricket_matches mt ON mt.id = b.match_id 
+         JOIN cricket_markets m ON m.id = b.market_id 
+         WHERE b.user_id = $1 
+         ORDER BY b.created_at DESC LIMIT 100`,
+        [uid(req)]
+      )
+      return { bets: rows.rows }
     })
 
     // ══ INTERNAL ══
@@ -583,7 +513,7 @@ export function bettingPlugin(db: Pool) {
     // import-series-matches, so manually-added matches get flags too instead
     // of relying only on the sync flows.
     async function findCountryFlag(name: string): Promise<string | null> {
-      const flagsRes = await db.query('SELECT name, flag_url FROM cricket_countries')
+      const flagsRes = await db.query('SELECT name, flag_url FROM cricket_teams WHERE flag_url IS NOT NULL')
       const n = name?.toLowerCase() || ''
       for (const row of flagsRes.rows) {
         const k = row.name.toLowerCase()
@@ -592,59 +522,11 @@ export function bettingPlugin(db: Pool) {
       return null
     }
 
-    // Squad syncs (sync-squad, sync-series-squads) used to match only by
-    // external_id, so any pre-existing player row without one (manually
-    // seeded, or created before external_id existed) got duplicated the
-    // first time a real API sync ran for their team. Falls back to a
-    // name+team match and backfills external_id so it's tagged going
-    // forward. Also never overwrites role/team_name on an existing row —
-    // the API's role string is unreliable (e.g. it mis-tagged wicket-
-    // keepers Jos Buttler and KL Rahul as "batsman"), so a curated role
-    // shouldn't get clobbered by every sync.
-    async function upsertFantasyPlayer(p: { name: string; externalId: string; role: string; teamName: string; avatarUrl: string }): Promise<string> {
-      let match = await db.query('SELECT id FROM cricket_fantasy_players WHERE external_id = $1', [p.externalId])
-      if (!match.rows.length) {
-        match = await db.query('SELECT id FROM cricket_fantasy_players WHERE external_id IS NULL AND lower(name) = lower($1) AND team_name = $2', [p.name, p.teamName])
-      }
-      if (match.rows.length) {
-        const pId = match.rows[0].id
-        await db.query('UPDATE cricket_fantasy_players SET external_id = COALESCE(external_id, $1), avatar_url = COALESCE(avatar_url, $2) WHERE id = $3', [p.externalId, p.avatarUrl, pId])
-        return pId
-      }
-      const ins = await db.query(`INSERT INTO cricket_fantasy_players (name, role, credits, team_name, external_id, avatar_url) VALUES ($1,$2,9.0,$3,$4,$5) RETURNING id`, [p.name, p.role, p.teamName, p.externalId, p.avatarUrl])
-      return ins.rows[0].id
-    }
-
     app.post('/internal/cricket/match', { onRequest: [internal] }, async (req) => {
       const body = z.object({ series: z.string(), format: z.string(), team_a: z.string(), team_b: z.string(), team_a_short: z.string().optional(), team_b_short: z.string().optional(), start_time: z.string() }).parse(req.body)
       const [teamAFlag, teamBFlag] = await Promise.all([findCountryFlag(body.team_a), findCountryFlag(body.team_b)])
       const r = await db.query(`INSERT INTO cricket_matches (series, format, team_a, team_b, team_a_short, team_b_short, start_time, team_a_flag, team_b_flag) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [body.series, body.format, body.team_a, body.team_b, body.team_a_short, body.team_b_short, body.start_time, teamAFlag, teamBFlag])
       return { success: true, match: r.rows[0] }
-    })
-
-    app.post('/internal/cricket/fantasy/players', { onRequest: [internal] }, async (req) => {
-      // credits uses z.coerce.number() because the admin panel round-trips
-      // this value from cricket_fantasy_players.credits (NUMERIC column),
-      // which node-postgres returns as a string, not a JS number.
-      const body = z.object({ name: z.string(), role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']), credits: z.coerce.number().min(5.0).max(15.0), team_name: z.string(), avatar_url: z.string().optional(), batting_style: z.string().nullish(), bowling_style: z.string().nullish() }).parse(req.body)
-      const res = await db.query(`INSERT INTO cricket_fantasy_players (name, role, credits, team_name, avatar_url, batting_style, bowling_style) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [body.name, body.role, body.credits, body.team_name, body.avatar_url || null, body.batting_style || null, body.bowling_style || null])
-      return { success: true, player: res.rows[0] }
-    })
-
-    app.patch('/internal/cricket/fantasy/players/:id', { onRequest: [internal] }, async (req, reply) => {
-      const { id } = req.params as { id: string }
-      const body = z.object({ name: z.string().optional(), role: z.enum(['wicket_keeper', 'batsman', 'all_rounder', 'bowler']).optional(), credits: z.coerce.number().min(5.0).max(15.0).optional(), team_name: z.string().optional(), avatar_url: z.string().optional(), batting_style: z.string().nullable().optional(), bowling_style: z.string().nullable().optional() }).parse(req.body)
-      const fields: string[] = [], params: any[] = [id]
-      let i = 2
-      for (const [key, val] of Object.entries(body)) {
-        if (val === undefined) continue
-        fields.push(`${key} = $${i++}`)
-        params.push(val)
-      }
-      if (!fields.length) return reply.code(400).send({ error: 'No fields to update' })
-      const res = await db.query(`UPDATE cricket_fantasy_players SET ${fields.join(', ')} WHERE id = $1 RETURNING *`, params)
-      if (!res.rows.length) return reply.code(404).send({ error: 'Player not found' })
-      return { success: true, player: res.rows[0] }
     })
 
     app.post('/internal/cricket/session/create', { onRequest: [internal] }, async (req) => {
@@ -671,22 +553,14 @@ export function bettingPlugin(db: Pool) {
       return { success: true, session: res.rows[0] }
     })
 
-    // Bulk-create the over-bracket sessions for a match in one call. Sessions
-    // are always the same shape — "runs at the end of over N" for a run of
-    // consecutive overs — and creating them one at a time is the slowest part
-    // of setting a match up. Ranges already covered by an existing session are
-    // skipped, so this is safe to re-run as a match progresses.
     app.post('/internal/cricket/session/bulk-create', { onRequest: [internal] }, async (req, reply) => {
       const body = z.object({
         match_id: z.string().uuid(),
         label_template: z.string().default('{over} over runs'),
         from_over: z.number().int().min(1),
         to_over: z.number().int().min(1),
-        // Expected runs at the first over in the range, and how much that
-        // expectation grows per over — together these generate each bracket.
         base_runs: z.number().int().min(0),
         runs_per_over: z.number().min(0).default(8),
-        // Bracket width: a session on "45-47" is min 45, max 47.
         bracket_width: z.number().int().min(0).default(2),
         odds_yes: z.number().default(1.0),
         odds_no: z.number().default(1.0),
@@ -723,12 +597,6 @@ export function bettingPlugin(db: Pool) {
       return { success: true, ...res }
     })
 
-    app.post('/internal/cricket/fantasy/leagues', { onRequest: [internal] }, async (req) => {
-      const body = z.object({ match_id: z.string().uuid(), name: z.string(), entry_fee: z.number().nonnegative(), prize_pool: z.number().nonnegative(), max_entries: z.number().int().positive(), prize_distribution: z.array(z.object({ rank_start: z.number().int().positive(), rank_end: z.number().int().positive(), payout: z.number().positive() })) }).parse(req.body)
-      const res = await db.query(`INSERT INTO cricket_fantasy_leagues (match_id, name, entry_fee, prize_pool, max_entries, prize_distribution) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`, [body.match_id, body.name, body.entry_fee, body.prize_pool, body.max_entries, JSON.stringify(body.prize_distribution)])
-      return { success: true, league: res.rows[0] }
-    })
-
     app.post('/internal/cricket/scores/update', { onRequest: [internal] }, async (req, reply) => {
       const body = z.object({ match_id: z.string().uuid(), live_score: z.any().optional(), live_tv_url: z.string().optional(), status: z.enum(['upcoming', 'live', 'closed', 'settled']).optional() }).parse(req.body)
       const fields: string[] = [], params: any[] = [body.match_id]
@@ -741,16 +609,8 @@ export function bettingPlugin(db: Pool) {
       return { success: true, match: res.rows[0] }
     })
 
-    // Manual override — kept as an emergency fallback (e.g. cricapi is down
-    // right when a match ends) but no longer the primary path. The admin
-    // panel now uses /finalize below, which computes points automatically.
-    app.post('/internal/cricket/fantasy/settle', { onRequest: [internal] }, async (req) => {
-      const body = z.object({ match_id: z.string().uuid(), player_points: z.record(z.string().uuid(), z.number()) }).parse(req.body)
-      const res = await settleFantasyLeague(db, body.match_id, body.player_points)
-      return { success: true, ...res }
-    })
-
-    app.post('/internal/cricket/fantasy/finalize', { onRequest: [internal] }, async (req, reply) => {
+    // Settle/Finalize match winner odds-based bets.
+    app.post('/internal/cricket/finalize', { onRequest: [internal] }, async (req, reply) => {
       const body = z.object({ match_id: z.string().uuid() }).parse(req.body)
       try {
         const res = await finalizeMatch(db, body.match_id)
@@ -775,19 +635,13 @@ export function bettingPlugin(db: Pool) {
         let count = 0
         for (const c of (data.data || [])) {
           if (!c.id || !c.name || !c.genericFlag) continue
-          // Country names are unique (idx_cricket_countries_name_unique). Skip
-          // any row whose name is already owned by a different id rather than
-          // letting the whole sync abort on a unique violation — that is how a
-          // second 'India' row got created before the constraint existed, which
-          // then duplicated every India player in the admin list.
           await db.query(
-            `INSERT INTO cricket_countries (id, name, flag_url)
-             SELECT $1, $2, $3
+            `INSERT INTO cricket_teams (name, flag_url)
+             SELECT $1, $2
              WHERE NOT EXISTS (
-               SELECT 1 FROM cricket_countries WHERE lower(name) = lower($2) AND id <> $1
-             )
-             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, flag_url = EXCLUDED.flag_url`,
-            [c.id.toLowerCase(), c.name, c.genericFlag],
+               SELECT 1 FROM cricket_teams WHERE lower(name) = lower($1)
+             )`,
+            [c.name, c.genericFlag],
           )
           count++
         }
@@ -795,10 +649,6 @@ export function bettingPlugin(db: Pool) {
       } catch (e: any) { return reply.code(500).send({ error: `Sync countries failed: ${e.message}` }) }
     })
 
-    // Search cricapi's series catalog by name (e.g. "IPL 2026") — the admin
-    // panel's "Import Series" modal calls this to find a series_id, but this
-    // handler never existed (the panel's fetch just 404'd silently). Adding
-    // it here also backs the new bulk squad-sync-by-series feature below.
     app.post('/internal/cricket/sync-series', { onRequest: [internal] }, async (req, reply) => {
       const { search } = req.body as any
       try {
@@ -810,10 +660,6 @@ export function bettingPlugin(db: Pool) {
       } catch (e: any) { return reply.code(500).send({ error: `Series search failed: ${e.message}` }) }
     })
 
-    // Pulls every match in a series in one call (series_info) and upserts
-    // them the same way sync-api does for live matches — plus registers the
-    // series in the cricket_series catalog so it shows up in the Add Match
-    // dropdown without an admin re-typing it.
     app.post('/internal/cricket/import-series-matches', { onRequest: [internal] }, async (req, reply) => {
       const { series_id } = req.body as any
       if (!series_id) return reply.code(400).send({ error: 'series_id is required' })
@@ -824,7 +670,7 @@ export function bettingPlugin(db: Pool) {
         const seriesName = info?.name || 'Imported Series'
         await db.query(`INSERT INTO cricket_series (name, api_series_id) VALUES ($1,$2) ON CONFLICT (name) DO UPDATE SET api_series_id = $2`, [seriesName, series_id])
 
-        const flagsRes = await db.query('SELECT name, flag_url FROM cricket_countries')
+        const flagsRes = await db.query('SELECT name, flag_url FROM cricket_teams WHERE flag_url IS NOT NULL')
         const flagMap = new Map(flagsRes.rows.map(r => [r.name.toLowerCase(), r.flag_url]))
         const findFlag = (n: string) => { for (const [k, v] of flagMap) if (n?.toLowerCase().includes(k) || k.includes(n?.toLowerCase())) return v; return null }
 
@@ -847,78 +693,358 @@ export function bettingPlugin(db: Pool) {
       } catch (e: any) { return reply.code(500).send({ error: `Series import failed: ${e.message}` }) }
     })
 
-    // Bulk player sync for a WHOLE series at once (all teams' squads in one
-    // call) instead of the existing sync-squad, which only pulls the two
-    // teams of a single already-imported match — that's why the fantasy
-    // player catalog stayed stuck around ~20 rows despite 89 matches synced.
-    app.post('/internal/cricket/sync-series-squads', { onRequest: [internal] }, async (req, reply) => {
-      const { series_id } = req.body as any
-      if (!series_id) return reply.code(400).send({ error: 'series_id is required' })
-      try {
-        const data = await cricApiFetch(db, apiKey => `https://api.cricapi.com/v1/series_info?apikey=${apiKey}&id=${series_id}`)
-        if (data.status !== 'success') throw new Error(data.reason || 'Failed')
-        let playersSeeded = 0, teamsSeeded = 0
-        for (const team of (data.data?.squads || [])) {
-          teamsSeeded++
-          for (const p of (team.players || [])) {
-            if (!p.id) continue
-            const role = p.role?.toLowerCase().replace(/[^a-z]/g, '').includes('keeper') ? 'wicket_keeper' : p.role?.toLowerCase().includes('bowl') ? 'bowler' : p.role?.toLowerCase().includes('allrounder') ? 'all_rounder' : 'batsman'
-            // Prefer the real squad photo the API already returned; the DiceBear
-            // cartoon is only a last resort (and is what the Wikidata enrichment
-            // pass later treats as a placeholder worth replacing).
-            const avatar = p.playerImg && !/no_?img|placeholder/i.test(p.playerImg)
-              ? p.playerImg
-              : `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.name)}`
-            await upsertFantasyPlayer({ name: p.name, externalId: p.id, role, teamName: team.teamName, avatarUrl: avatar })
-            playersSeeded++
-          }
-        }
-        return { success: true, teamsSeeded, playersSeeded }
-      } catch (e: any) { return reply.code(500).send({ error: `Series squad sync failed: ${e.message}` }) }
-    })
+    // ═══════════════════════════════════════════════════════════════════════
+    // 🎨 COLOR PREDICTION (WINGO / PARITY) ENDPOINTS
+    // ═══════════════════════════════════════════════════════════════════════
 
-    // Fill in player photos, DOB and Wikidata IDs from Wikidata/Wikimedia
-    // Commons. Keyless and unmetered, unlike the CricAPI routes above, so this
-    // can be re-run as often as needed. Only writes columns that are currently
-    // empty unless `force` is set, so admin corrections survive a re-sync.
-    app.post('/internal/cricket/players/enrich', { onRequest: [internal] }, async (req, reply) => {
-      const body = z.object({
-        player_id: z.string().uuid().optional(),
-        team_name: z.string().optional(),
-        force: z.boolean().default(false),
-      }).parse(req.body ?? {})
-      try {
-        const res = await enrichPlayers(db, { playerId: body.player_id, teamName: body.team_name, force: body.force })
-        return { success: true, ...res }
-      } catch (e: any) {
-        return reply.code(502).send({ error: `Player enrichment failed: ${e.message}` })
+    // ═══════════════════════════════════════════════════════════════════════
+    // 🎨 COLOR PREDICTION (WINGO / PARITY) ENDPOINTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // GET /color-prediction/current-round?game_mode=30s|1m|3m|5m
+    app.get('/color-prediction/current-round', async (req, reply) => {
+      const mode = ((req.query as any)?.game_mode || '30s').toString().toLowerCase()
+      const validModes = ['30s', '1m', '3m', '5m']
+      const gameMode = validModes.includes(mode) ? mode : '30s'
+
+      let currentRes = await db.query(
+        `SELECT *, 
+                GREATEST(0, EXTRACT(EPOCH FROM (end_time - NOW()))::int) AS remaining_seconds
+         FROM color_prediction_rounds
+         WHERE game_mode = $1 AND status IN ('open', 'locked') AND end_time > NOW()
+         ORDER BY end_time ASC LIMIT 1`,
+        [gameMode]
+      )
+
+      let currentRound = currentRes.rows[0]
+
+      // If no active round exists yet for this mode, initialize one immediately
+      if (!currentRound) {
+        const intervalMap: Record<string, number> = { '30s': 30, '1m': 60, '3m': 180, '5m': 300 }
+        const intervalSec = intervalMap[gameMode] || 30
+        const periodId = `${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}_${gameMode.toUpperCase()}`
+        await db.query(
+          `INSERT INTO color_prediction_rounds (period_id, game_mode, start_time, end_time, status)
+           VALUES ($1, $2, NOW(), NOW() + ($3 || ' seconds')::INTERVAL, 'open')
+           ON CONFLICT (period_id) DO NOTHING`,
+          [periodId, gameMode, intervalSec]
+        )
+        currentRes = await db.query(
+          `SELECT *, 
+                  GREATEST(0, EXTRACT(EPOCH FROM (end_time - NOW()))::int) AS remaining_seconds
+           FROM color_prediction_rounds
+           WHERE game_mode = $1 AND status IN ('open', 'locked') AND end_time > NOW()
+           ORDER BY end_time ASC LIMIT 1`,
+          [gameMode]
+        )
+        currentRound = currentRes.rows[0]
+      }
+
+      // Previous 20 settled rounds for trend & bead matrix of this mode
+      const historyRes = await db.query(
+        `SELECT period_id, winning_number, winning_color, winning_size, settled_at
+         FROM color_prediction_rounds
+         WHERE game_mode = $1 AND status = 'settled'
+         ORDER BY settled_at DESC LIMIT 20`,
+        [gameMode]
+      )
+
+      const remainingSeconds = currentRound ? Number(currentRound.remaining_seconds) : 30
+      const isLocked = currentRound ? (currentRound.status === 'locked' || remainingSeconds <= 5) : false
+
+      return {
+        game_mode: gameMode,
+        round: currentRound ? {
+          id: currentRound.id,
+          period_id: currentRound.period_id,
+          game_mode: currentRound.game_mode || gameMode,
+          start_time: currentRound.start_time,
+          end_time: currentRound.end_time,
+          remaining_seconds: remainingSeconds,
+          is_locked: isLocked,
+          status: currentRound.status,
+        } : null,
+        history: historyRes.rows,
+        server_time: new Date().toISOString()
       }
     })
 
-    app.post('/internal/cricket/sync-squad', { onRequest: [internal] }, async (req, reply) => {
-      const { match_id, match_api_id } = req.body as any
-      if (!match_id || !match_api_id) return reply.code(400).send({ error: 'match_id and match_api_id are required' })
-      try {
-        const data = await cricApiFetch(db, apiKey => `https://api.cricapi.com/v1/match_squad?apikey=${apiKey}&id=${match_api_id}`)
-        if (data.status !== 'success') throw new Error(data.reason || 'Failed')
-        let playersSeeded = 0
-        for (const team of (data.data || [])) {
-          for (const p of (team.players || [])) {
-            if (!p.id) continue
-            const role = p.role?.toLowerCase().replace(/[^a-z]/g, '').includes('keeper') ? 'wicket_keeper' : p.role?.toLowerCase().includes('bowl') ? 'bowler' : p.role?.toLowerCase().includes('allrounder') ? 'all_rounder' : 'batsman'
-            // Prefer the real squad photo the API already returned; the DiceBear
-            // cartoon is only a last resort (and is what the Wikidata enrichment
-            // pass later treats as a placeholder worth replacing).
-            const avatar = p.playerImg && !/no_?img|placeholder/i.test(p.playerImg)
-              ? p.playerImg
-              : `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.name)}`
-            const pId = await upsertFantasyPlayer({ name: p.name, externalId: p.id, role, teamName: team.teamName, avatarUrl: avatar })
-            await db.query(`INSERT INTO cricket_match_players (match_id, player_id, runs_scored, balls_faced, fours, sixes, wickets, runs_conceded, overs_bowled, catches, stumpings, run_outs, fantasy_points) VALUES ($1,$2,0,0,0,0,0,0,0.0,0,0,0,0.0) ON CONFLICT (match_id, player_id) DO NOTHING`, [match_id, pId])
-            playersSeeded++
+    // POST /color-prediction/bet
+    app.post('/color-prediction/bet', { onRequest: [auth] }, async (req, reply) => {
+      const body = z.object({
+        game_mode: z.enum(['30s', '1m', '3m', '5m']).optional().default('30s'),
+        bet_type: z.enum(['color', 'number', 'size']),
+        bet_value: z.string().min(1).max(16),
+        amount: z.number().positive(),
+      }).parse(req.body)
+
+      const gameMode = body.game_mode
+      const userId = uid(req)
+      if (!userId) {
+        return reply.code(401).send({ error: 'Unauthorized' })
+      }
+
+      const cfgRes = await db.query("SELECT is_active, rake_percent, special_rules FROM game_configs WHERE game_type = 'color_prediction'")
+      if (cfgRes.rows.length && cfgRes.rows[0].is_active === false) {
+        return reply.code(403).send({ error: 'Color Prediction is currently disabled' })
+      }
+
+      const rules = typeof cfgRes.rows[0]?.special_rules === 'string'
+        ? JSON.parse(cfgRes.rows[0]?.special_rules)
+        : (cfgRes.rows[0]?.special_rules || {})
+
+      const minBet = Number(rules.min_bet || 10)
+      const maxBet = Number(rules.max_bet || 50000)
+
+      if (body.amount < minBet) {
+        return reply.code(400).send({ error: `Minimum bet amount is ₹${minBet}` })
+      }
+      if (body.amount > maxBet) {
+        return reply.code(400).send({ error: `Maximum bet amount is ₹${maxBet}` })
+      }
+
+      // Validate bet_value according to bet_type
+      const val = body.bet_value.toLowerCase()
+      if (body.bet_type === 'color' && !['green', 'red', 'violet'].includes(val)) {
+        return reply.code(400).send({ error: 'Invalid color (must be green, red, or violet)' })
+      }
+      if (body.bet_type === 'number' && !/^[0-9]$/.test(val)) {
+        return reply.code(400).send({ error: 'Invalid number (must be 0-9)' })
+      }
+      if (body.bet_type === 'size' && !['big', 'small'].includes(val)) {
+        return reply.code(400).send({ error: 'Invalid size (must be big or small)' })
+      }
+
+      // Get Active Round for this game_mode (Must be open and have > 5s left)
+      const roundRes = await db.query(
+        `SELECT * FROM color_prediction_rounds
+         WHERE game_mode = $1 AND status = 'open' AND end_time > NOW() + INTERVAL '5 seconds'
+         ORDER BY end_time ASC LIMIT 1`,
+        [gameMode]
+      )
+
+      if (roundRes.rows.length === 0) {
+        return reply.code(400).send({ error: `Betting is locked for current ${gameMode.toUpperCase()} round. Please wait for the next period!` })
+      }
+
+      const round = roundRes.rows[0]
+      const betId = crypto.randomUUID()
+
+      // Debit Stake from Wallet
+      const debitRes = await debitStake({
+        userId,
+        amount: body.amount,
+        referenceId: betId,
+        idempotencyKey: `color_stake_${betId}`,
+        description: `Color Prediction (${gameMode.toUpperCase()}) Bet: ${val.toUpperCase()} (Period ${round.period_id})`
+      })
+
+      if (!debitRes.ok) {
+        return reply.code(400).send({ error: debitRes.error || 'Insufficient balance to place bet' })
+      }
+
+      // Determine Multiplier
+      let multiplier = 2.0
+      if (body.bet_type === 'number') multiplier = 9.0
+      else if (body.bet_type === 'color' && val === 'violet') multiplier = 4.5
+
+      await db.query(
+        `INSERT INTO color_prediction_bets (id, user_id, round_id, period_id, game_mode, bet_type, bet_value, amount, multiplier, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')`,
+        [betId, userId, round.id, round.period_id, gameMode, body.bet_type, val, body.amount, multiplier]
+      )
+
+      // Update total staked on round
+      await db.query(
+        `UPDATE color_prediction_rounds
+         SET total_bet_amount = total_bet_amount + $1
+         WHERE id = $2`,
+        [body.amount, round.id]
+      )
+
+      return {
+        success: true,
+        bet_id: betId,
+        period_id: round.period_id,
+        game_mode: gameMode,
+        amount: body.amount,
+        bet_type: body.bet_type,
+        bet_value: val,
+        multiplier
+      }
+    })
+
+    // GET /color-prediction/history?game_mode=30s
+    app.get('/color-prediction/history', async (req) => {
+      const { limit = '50', page = '1', game_mode } = req.query as any
+      const lim = Math.min(parseInt(limit, 10) || 50, 100)
+      const offset = ((parseInt(page, 10) || 1) - 1) * lim
+
+      let query = `SELECT period_id, game_mode, winning_number, winning_color, winning_size,
+                          total_bet_amount, total_payout_amount, house_profit, settled_at
+                   FROM color_prediction_rounds
+                   WHERE status = 'settled'`
+      const params: any[] = []
+
+      if (game_mode) {
+        params.push(game_mode)
+        query += ` AND game_mode = $${params.length}`
+      }
+
+      query += ` ORDER BY settled_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
+      params.push(lim, offset)
+
+      const rows = await db.query(query, params)
+
+      let countQuery = "SELECT COUNT(*)::int AS total FROM color_prediction_rounds WHERE status = 'settled'"
+      const countParams: any[] = []
+      if (game_mode) {
+        countParams.push(game_mode)
+        countQuery += " AND game_mode = $1"
+      }
+      const countRes = await db.query(countQuery, countParams)
+
+      return {
+        rounds: rows.rows,
+        total: countRes.rows[0]?.total || 0,
+        page: parseInt(page, 10) || 1,
+        limit: lim
+      }
+    })
+
+    // GET /color-prediction/my-bets?game_mode=30s
+    app.get('/color-prediction/my-bets', { onRequest: [auth] }, async (req) => {
+      const userId = uid(req)
+      const { game_mode } = req.query as any
+      let query = `SELECT b.*, r.winning_number, r.winning_color, r.winning_size, r.status AS round_status
+                   FROM color_prediction_bets b
+                   LEFT JOIN color_prediction_rounds r ON (r.id = b.round_id OR r.period_id = b.period_id)
+                   WHERE b.user_id = $1`
+      const params: any[] = [userId]
+
+      if (game_mode) {
+        params.push(game_mode)
+        query += ` AND (b.game_mode = $2 OR r.game_mode = $2)`
+      }
+
+      query += ` ORDER BY b.created_at DESC LIMIT 100`
+
+      const rows = await db.query(query, params)
+      return { bets: rows.rows }
+    })
+
+    // ══ COLOR PREDICTION ADMIN & INTERNAL ROUTES ══
+
+    // GET /color-prediction/admin/status?game_mode=30s
+    app.get('/color-prediction/admin/status', { onRequest: [internal] }, async (req) => {
+      const mode = ((req.query as any)?.game_mode || '30s').toString().toLowerCase()
+      const validModes = ['30s', '1m', '3m', '5m']
+      const gameMode = validModes.includes(mode) ? mode : '30s'
+
+      const now = new Date()
+      const activeRes = await db.query(
+        `SELECT * FROM color_prediction_rounds
+         WHERE game_mode = $1 AND status IN ('open', 'locked') AND end_time > $2
+         ORDER BY end_time ASC LIMIT 1`,
+        [gameMode, now]
+      )
+      const activeRound = activeRes.rows[0] || null
+
+      let betSummary = {
+        total_bets: 0,
+        total_amount: 0,
+        green_amount: 0,
+        red_amount: 0,
+        violet_amount: 0,
+        big_amount: 0,
+        small_amount: 0,
+        number_amounts: Array(10).fill(0),
+      }
+
+      if (activeRound) {
+        const bets = await db.query(
+          `SELECT bet_type, bet_value, SUM(amount)::numeric AS sum_amount, COUNT(*)::int AS cnt
+           FROM color_prediction_bets
+           WHERE round_id = $1
+           GROUP BY bet_type, bet_value`,
+          [activeRound.id]
+        )
+
+        for (const row of bets.rows) {
+          const amt = Number(row.sum_amount)
+          betSummary.total_bets += row.cnt
+          betSummary.total_amount += amt
+
+          if (row.bet_type === 'color') {
+            if (row.bet_value === 'green') betSummary.green_amount += amt
+            else if (row.bet_value === 'red') betSummary.red_amount += amt
+            else if (row.bet_value === 'violet') betSummary.violet_amount += amt
+          } else if (row.bet_type === 'size') {
+            if (row.bet_value === 'big') betSummary.big_amount += amt
+            else if (row.bet_value === 'small') betSummary.small_amount += amt
+          } else if (row.bet_type === 'number') {
+            const numIdx = parseInt(row.bet_value, 10)
+            if (numIdx >= 0 && numIdx <= 9) betSummary.number_amounts[numIdx] += amt
           }
         }
-        return { success: true, seededCount: playersSeeded }
-      } catch (e: any) { return reply.code(500).send({ error: `Squad sync failed: ${e.message}` }) }
+      }
+
+      const statsRes = await db.query(`
+        SELECT
+          COUNT(*)::int AS total_settled_rounds,
+          COALESCE(SUM(total_bet_amount), 0)::numeric AS total_turnover,
+          COALESCE(SUM(total_payout_amount), 0)::numeric AS total_payouts,
+          COALESCE(SUM(house_profit), 0)::numeric AS total_house_profit
+        FROM color_prediction_rounds WHERE status = 'settled'
+      `)
+
+      return {
+        active_round: activeRound ? {
+          ...activeRound,
+          remaining_seconds: Math.max(0, Math.floor((new Date(activeRound.end_time).getTime() - now.getTime()) / 1000))
+        } : null,
+        bet_summary: betSummary,
+        overall_stats: statsRes.rows[0]
+      }
+    })
+
+    // POST /color-prediction/admin/override
+    app.post('/color-prediction/admin/override', { onRequest: [internal] }, async (req, reply) => {
+      const body = z.object({
+        round_id: z.string().uuid().optional(),
+        winning_number: z.number().min(0).max(9),
+      }).parse(req.body)
+
+      if (body.round_id) {
+        await db.query(
+          `UPDATE color_prediction_rounds SET manual_override_number = $1 WHERE id = $2`,
+          [body.winning_number, body.round_id]
+        )
+      } else {
+        const now = new Date()
+        await db.query(
+          `UPDATE color_prediction_rounds
+           SET manual_override_number = $1
+           WHERE status IN ('open', 'locked') AND end_time > $2`,
+          [body.winning_number, now]
+        )
+      }
+      return { success: true, winning_number: body.winning_number }
+    })
+
+    // POST /color-prediction/admin/settle
+    app.post('/color-prediction/admin/settle', { onRequest: [internal] }, async (req, reply) => {
+      const body = z.object({
+        round_id: z.string().uuid(),
+        winning_number: z.number().min(0).max(9).optional(),
+      }).parse(req.body)
+
+      try {
+        const settled = await settleColorPredictionRound(db, body.round_id, body.winning_number)
+        return { success: true, round: settled }
+      } catch (err: any) {
+        return reply.code(500).send({ error: err.message || 'Settlement failed' })
+      }
     })
   }
 }

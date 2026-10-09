@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/services/app_config_service.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'history_page.dart';
 
@@ -20,6 +21,7 @@ class _TeenPattiModesPageState extends State<TeenPattiModesPage> {
   }
 
   Future<void> _loadBalance() async {
+    if (AppConfigService.isSafeMode()) return;
     try {
       final res = await ApiClient().dio.get('/api/wallet/balance');
       if (!mounted) return;
@@ -28,28 +30,37 @@ class _TeenPattiModesPageState extends State<TeenPattiModesPage> {
     } catch (_) {/* offline / no auth — leave as '—' */}
   }
 
+  void _openMode(String variation) {
+    if (AppConfigService.isSafeMode()) {
+      context.push('/games/teen-patti/play/offline-practice');
+    } else {
+      context.push('/games/teen-patti/lobby?variation=$variation');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Teen Patti'),
         actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.feltDark,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
+          if (!AppConfigService.isSafeMode())
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.feltDark,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
+                  ),
+                  child: Text(AppConfigService.getSafeBalanceText(_balance),
+                      style: const TextStyle(
+                          color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
                 ),
-                child: Text('₹${_balance ?? '—'}',
-                    style: const TextStyle(
-                        color: AppColors.gold, fontWeight: FontWeight.bold, fontSize: 13)),
               ),
             ),
-          ),
         ],
       ),
       body: ListView(
@@ -66,10 +77,10 @@ class _TeenPattiModesPageState extends State<TeenPattiModesPage> {
           // the remaining 4 modes divide evenly into a 2x2 grid below.
           _heroModeCard(
             title: 'Classic',
-            rule: 'Standard Teen Patti',
+            rule: AppConfigService.isSafeMode() ? 'CASUAL · PRACTICE' : 'Standard Teen Patti',
             icon: Icons.style_rounded,
             gradient: AppColors.teenPattiGrad,
-            onTap: () => context.push('/games/teen-patti/lobby?variation=classic'),
+            onTap: () => _openMode('classic'),
           ),
           const SizedBox(height: 14),
 
@@ -86,28 +97,28 @@ class _TeenPattiModesPageState extends State<TeenPattiModesPage> {
                 rule: 'WILD · A K 4 7',
                 iconWidget: _wildRanksBadge(),
                 gradient: AppColors.premiumGrad,
-                onTap: () => context.push('/games/teen-patti/lobby?variation=ak47'),
+                onTap: () => _openMode('ak47'),
               ),
               _modeCard(
                 title: 'No Limit',
                 rule: 'NO POT CAP',
                 icon: Icons.all_inclusive_rounded,
                 gradient: const [Color(0xFF2196F3), Color(0xFF0D47A1)],
-                onTap: () => context.push('/games/teen-patti/lobby?variation=no_limit'),
+                onTap: () => _openMode('no_limit'),
               ),
               _modeCard(
                 title: 'Muflis',
                 rule: 'LOWEST WINS',
                 icon: Icons.trending_down_rounded,
                 gradient: const [Color(0xFF00C853), Color(0xFF064E3B)],
-                onTap: () => context.push('/games/teen-patti/lobby?variation=muflis'),
+                onTap: () => _openMode('muflis'),
               ),
               _modeCard(
                 title: 'Joker',
                 rule: 'RANDOM WILD',
                 icon: Icons.casino_rounded,
                 gradient: const [Color(0xFF9C27B0), Color(0xFF4A148C)],
-                onTap: () => context.push('/games/teen-patti/lobby?variation=joker'),
+                onTap: () => _openMode('joker'),
               ),
             ],
           ),

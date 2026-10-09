@@ -15,21 +15,13 @@ import { z } from 'zod'
 // nothing in production ever called before this.
 const CHURN_ML_SERVICE_URL = process.env.CHURN_ML_SERVICE_URL || 'http://127.0.0.1:3020'
 
-const SUPPORTED_GAME_TYPES = ['ludo', 'teen_patti'] as const
+const SUPPORTED_GAME_TYPES = ['ludo', 'teen_patti', 'rummy'] as const
 type SupportedGameType = (typeof SUPPORTED_GAME_TYPES)[number]
 
-// The cutover per game is the point after which game_participants rows for
-// that game are trustworthy training data — before it, prize_won/final_rank
-// were silently never written (a different root cause per game: Ludo's own
-// completion write was simply missing; Teen Patti's engine had the write but
-// it was failing against a stale DB password, and a bot's raise could exceed
-// the pot-limit cap and force-end the hand with a null winner — both fixed
-// 2026-07-31). Mirrors these constants in
-// services/churn-ml-service/src/difficulty_predictor.py by hand, since these
-// two services don't share a package.
 const TRAINING_DATA_CUTOVER: Record<SupportedGameType, string> = {
   ludo: '2026-07-25 06:04:03+00',
   teen_patti: '2026-07-31 17:00:00+00',
+  rummy: '2026-08-01 00:00:00+00',
 }
 const MIN_TRAINING_ROWS = 200
 
@@ -53,10 +45,8 @@ export async function registerMlTrainingRoutes(
     const gameType = parseGameType(req, reply)
     if (!gameType) return
     try {
-      // Ludo has its own per-move probability training (captures/safe-play,
-      // see coordination.ts) fed by ludo_move_decisions — no other game logs
-      // that table, so the "Bot Playstyle ML" figures only apply to Ludo.
       const isLudo = gameType === 'ludo'
+      const isRummy = gameType === 'rummy'
       const [configRes, volumeRes, healthRes, playstyleRes, decisionsLoggedRes] = await Promise.all([
         db.query(
           `SELECT personalization_canary_pct FROM game_configs WHERE game_type = $1`,
@@ -74,13 +64,23 @@ export async function registerMlTrainingRoutes(
           .catch(() => null),
         isLudo
           ? db.query(
-              `SELECT difficulty, capture_probability, safe_play_probability, sample_size
-               FROM bot_profiles WHERE game_type = 'ludo' ORDER BY difficulty`
+              `SELECT difficulty, capture_probability, safe_play_probability, sample_size, win_rate_target, avg_decision_delay_ms
+               FROM ludo_bot_profiles ORDER BY CASE difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`
             )
-          : Promise.resolve({ rows: [] }),
+          : isRummy
+          ? db.query(
+              `SELECT difficulty, drop_probability as fold_probability, open_draw_probability as call_probability, declare_speed_factor as raise_probability, aggression_score, sample_size, win_rate_target, avg_decision_delay_ms
+               FROM rummy_bot_profiles ORDER BY CASE difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`
+            )
+          : db.query(
+              `SELECT difficulty, fold_probability, call_probability, raise_probability, aggression_score, sample_size, win_rate_target, avg_decision_delay_ms
+               FROM teen_patti_bot_profiles ORDER BY CASE difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`
+            ),
         isLudo
           ? db.query(`SELECT COUNT(*)::int AS rows FROM ludo_move_decisions`)
-          : Promise.resolve({ rows: [{ rows: 0 }] }),
+          : isRummy
+          ? db.query(`SELECT COUNT(*)::int AS rows FROM bot_learning_sessions WHERE game_type = 'rummy'`).catch(() => ({ rows: [{ rows: 0 }] }))
+          : db.query(`SELECT COUNT(*)::int AS rows FROM teen_patti_move_decisions`).catch(() => ({ rows: [{ rows: 0 }] })),
       ])
 
       const postCutoverRows = volumeRes.rows[0]?.rows ?? 0
@@ -96,12 +96,18 @@ export async function registerMlTrainingRoutes(
         churn_ml_service_reachable: healthRes !== null,
         playstyle_tiers: playstyleRes.rows.map((r: any) => ({
           difficulty: r.difficulty,
-          capture_probability: r.capture_probability !== null ? parseFloat(r.capture_probability) : null,
-          safe_play_probability: r.safe_play_probability !== null ? parseFloat(r.safe_play_probability) : null,
+          win_rate_target: r.win_rate_target !== null ? parseFloat(r.win_rate_target) : null,
+          avg_decision_delay_ms: r.avg_decision_delay_ms !== null ? parseInt(r.avg_decision_delay_ms, 10) : null,
+          capture_probability: r.capture_probability !== null && r.capture_probability !== undefined ? parseFloat(r.capture_probability) : null,
+          safe_play_probability: r.safe_play_probability !== null && r.safe_play_probability !== undefined ? parseFloat(r.safe_play_probability) : null,
+          fold_probability: r.fold_probability !== null && r.fold_probability !== undefined ? parseFloat(r.fold_probability) : null,
+          call_probability: r.call_probability !== null && r.call_probability !== undefined ? parseFloat(r.call_probability) : null,
+          raise_probability: r.raise_probability !== null && r.raise_probability !== undefined ? parseFloat(r.raise_probability) : null,
+          aggression_score: r.aggression_score !== null && r.aggression_score !== undefined ? parseFloat(r.aggression_score) : null,
           sample_size: r.sample_size !== null ? parseInt(r.sample_size, 10) : null,
         })),
         move_decisions_logged: decisionsLoggedRes.rows[0]?.rows ?? 0,
-        supports_playstyle_ml: isLudo,
+        supports_playstyle_ml: true,
       })
     } catch (err: any) {
       app.log.error(err, '[ml-training-routes] GET status error')
@@ -165,8 +171,7 @@ export async function registerMlTrainingRoutes(
 
   // POST /api/admin/:gameType/ml-training/run-anomaly-detection — proxies
   // churn-ml-service's Isolation Forest sweep. Populates player_anomalies,
-  // reviewable at the existing Player Anomalies dashboard. Cross-game, same
-  // note as train-difficulty above re: gameType only gating the route.
+  // reviewable at the existing Player Anomalies dashboard.
   app.post(
     '/api/admin/:gameType/ml-training/run-anomaly-detection',
     { onRequest: [authenticate, requireRole('superadmin')] },
@@ -188,4 +193,31 @@ export async function registerMlTrainingRoutes(
       }
     }
   )
+
+  // POST /api/admin/:gameType/ml-training/trigger-rebuild — triggers immediate
+  // profile rebuild on the game-specific bot-training daemon (3023 for TP, 3024 for Ludo).
+  app.post(
+    '/api/admin/:gameType/ml-training/trigger-rebuild',
+    { onRequest: [authenticate, requireRole('superadmin')] },
+    async (req, reply) => {
+      const gameType = parseGameType(req, reply)
+      if (!gameType) return
+      try {
+        const port = gameType === 'teen_patti' ? (process.env.TP_BOT_TRAINING_PORT || 3023) : (process.env.LUDO_BOT_TRAINING_PORT || 3024)
+        const res = await fetch(`http://127.0.0.1:${port}/internal/bot/rebuild`, {
+          method: 'POST',
+          headers: {
+            'x-internal-key': process.env.INTERNAL_SERVICE_KEY || '',
+          },
+          signal: AbortSignal.timeout(10000),
+        })
+        const body = await res.json().catch(() => null)
+        return reply.code(res.status).send(body || { success: res.ok, message: 'Rebuild triggered' })
+      } catch (err: any) {
+        app.log.error(err, '[ml-training-routes] POST trigger-rebuild error')
+        return reply.code(502).send({ error: `Bot training daemon for ${gameType} unavailable` })
+      }
+    }
+  )
 }
+

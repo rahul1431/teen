@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/audio/sound_service.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/services/app_config_service.dart';
 import '../../../shared/theme/app_theme.dart';
 
 /// Ludo entry screen — mirrors the Teen Patti modes layout.
@@ -19,10 +20,22 @@ class _LudoModesPageState extends State<LudoModesPage> {
   @override
   void initState() {
     super.initState();
+    AppConfigService.changeNotifier.addListener(_onConfigChange);
     _loadBalance();
   }
 
+  @override
+  void dispose() {
+    AppConfigService.changeNotifier.removeListener(_onConfigChange);
+    super.dispose();
+  }
+
+  void _onConfigChange() {
+    if (mounted) setState(() {});
+  }
+
   Future<void> _loadBalance() async {
+    if (AppConfigService.isSafeMode()) return;
     try {
       final res = await ApiClient().dio.get('/api/wallet/balance');
       if (!mounted) return;
@@ -33,30 +46,33 @@ class _LudoModesPageState extends State<LudoModesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isSafe = AppConfigService.isSafeMode();
     return Scaffold(
       appBar: AppBar(
         title: const Text('Ludo'),
         actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: Center(
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.feltDark,
-                  borderRadius: BorderRadius.circular(20),
-                  border:
-                      Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
+          if (!isSafe)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.feltDark,
+                    borderRadius: BorderRadius.circular(20),
+                    border:
+                        Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
+                  ),
+                  child: Text(
+                      AppConfigService.getSafeBalanceText(_balance),
+                      style: const TextStyle(
+                          color: AppColors.gold,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13)),
                 ),
-                child: Text('₹${_balance ?? '—'}',
-                    style: const TextStyle(
-                        color: AppColors.gold,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13)),
               ),
             ),
-          ),
         ],
       ),
       body: ListView(
@@ -165,13 +181,17 @@ class _LudoModesPageState extends State<LudoModesPage> {
             childAspectRatio: 0.92,
             children: [
               _modeCard(
-                title: 'Quick Match',
-                rule: 'ONLINE · WIN CASH',
+                title: 'Tap to Play',
+                rule: AppConfigService.isSafeMode() ? 'CASUAL · PRACTICE' : 'ONLINE · WIN CASH',
                 icon: Icons.bolt_rounded,
                 gradient: AppColors.ludoGrad,
                 onTap: () {
                   SoundService.instance.play(Sfx.ludoTap);
-                  context.push('/games/ludo/lobby');
+                  if (AppConfigService.isSafeMode()) {
+                    context.push('/games/ludo/practice');
+                  } else {
+                    context.push('/games/ludo/lobby');
+                  }
                 },
               ),
               _modeCard(

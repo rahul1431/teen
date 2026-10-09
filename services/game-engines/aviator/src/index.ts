@@ -230,11 +230,12 @@ function generateCrashPoint(serverSeed: string, roundId: string): number {
   const hash = crypto.createHmac('sha256', serverSeed).update(roundId).digest('hex')
   const h = parseInt(hash.slice(0, 8), 16)
   const e = Math.pow(2, 32)
-  // Instant-crash band sized to the configured house edge (e.g. 3% → 3% of rounds bust at 1.00x).
+  // Instant-crash band sized to the configured house edge.
+  // Rule: There should NOT be an instant 1.00x crash. Minimum crash point is strictly 1.02x.
   const instantCrashCutoff = Math.floor((e * aviatorConfig.houseEdgePercent) / 100)
-  if (h < instantCrashCutoff) return 1.00
+  if (h < instantCrashCutoff) return 1.02
   const crash = Math.floor((100 * e - h) / (e - h)) / 100
-  return Math.max(1.00, crash)
+  return Math.max(1.02, crash)
 }
 
 // Final payout for a cashout: stake + profit after rake, capped by maxWin.
@@ -535,8 +536,8 @@ async function start() {
         // Optional server-side auto-cashout target, executed on the engine tick.
         let autoCashout: number | undefined
         const rawTarget = Number(data?.auto_cashout)
-        if (Number.isFinite(rawTarget) && rawTarget > 1) {
-          autoCashout = Math.min(Math.max(rawTarget, 1.01), aviatorConfig.maxAutoCashout)
+        if (Number.isFinite(rawTarget) && rawTarget >= 1.02) {
+          autoCashout = Math.min(Math.max(rawTarget, 1.02), aviatorConfig.maxAutoCashout)
         }
 
         const lockedRoundId = currentRound.roundId

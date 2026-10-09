@@ -139,13 +139,24 @@ export class TeenPattiTrainer {
     return res.rows
   }
 
-  /** Admin override of a single tier. Writes straight through and invalidates
-   *  the gateway's cache so the change takes effect on the next bot decision
-   *  rather than up to an hour later. */
+  /** Admin override of a single tier. Normalizes probabilities if any are modified,
+   *  writes straight through and invalidates the gateway's cache so the change takes
+   *  effect on the next bot decision immediately. */
   async overrideProfile(
     difficulty: string,
     updates: Partial<TeenPattiBotProfile>
   ): Promise<void> {
+    const existing = await this.getProfile(difficulty)
+    const foldP = updates.fold_probability ?? existing?.fold_probability ?? 0.35
+    const callP = updates.call_probability ?? existing?.call_probability ?? 0.50
+    const raiseP = updates.raise_probability ?? existing?.raise_probability ?? 0.15
+    const sumP = foldP + callP + raiseP
+    if (sumP > 0) {
+      updates.fold_probability = Math.round((foldP / sumP) * 10000) / 10000
+      updates.call_probability = Math.round((callP / sumP) * 10000) / 10000
+      updates.raise_probability = Math.round((1 - updates.fold_probability - updates.call_probability) * 10000) / 10000
+    }
+
     const allowed: (keyof TeenPattiBotProfile)[] = [
       'win_rate_target', 'fold_probability', 'call_probability', 'raise_probability',
       'avg_decision_delay_ms', 'avg_stake_preference', 'aggression_score',
@@ -264,17 +275,21 @@ export class TeenPattiTrainer {
       const foldProb = learned.foldRate ?? deriveFromWinRate(avgWinRate, 'fold')
       const callProb = learned.callRate ?? deriveFromWinRate(avgWinRate, 'call')
 
-      const fold = clamp(foldProb, 0.05, 0.70)
-      const call = clamp(callProb, 0.15, 0.75)
-      const raise = Math.max(0, 1 - fold - call)
+      const rawFold = clamp(foldProb, 0.05, 0.70)
+      const rawCall = clamp(callProb, 0.15, 0.75)
+      const rawRaise = Math.max(0.02, 1 - (rawFold + rawCall))
+      const sumProb = rawFold + rawCall + rawRaise
+      const fold = round(rawFold / sumProb, 4)
+      const call = round(rawCall / sumProb, 4)
+      const raise = round(1 - fold - call, 4)
       const aggression = (raise / (call + fold)) * 10
 
       await this.upsertProfile({
         difficulty,
         win_rate_target: round(avgWinRate, 1),
-        fold_probability: round(fold, 4),
-        call_probability: round(call, 4),
-        raise_probability: round(raise, 4),
+        fold_probability: fold,
+        call_probability: call,
+        raise_probability: raise,
         avg_decision_delay_ms: delayForDifficulty(difficulty),
         avg_stake_preference: Math.round(avgStake),
         aggression_score: round(aggression, 1),

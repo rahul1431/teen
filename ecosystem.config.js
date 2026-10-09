@@ -223,7 +223,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '100M',
-      env: { ...NODE_OPTS, UPTIME_STATUS_FILE: '/opt/teen/uptime-status.json' },
+      env: { ...NODE_OPTS, UPTIME_STATUS_FILE: '/opt/teen-prod/uptime-status.json' },
     },
 
     // ── Bot Learning: nightly bot-profile rebuild from real player data ──

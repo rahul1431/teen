@@ -1,10 +1,10 @@
 // admin-panel/src/components/AI/AppMonitorTab.tsx
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Card, Row, Col, Statistic, Table, Tag, Select, Spin, Badge, Radio, Typography, Progress, Tooltip
+  Card, Row, Col, Statistic, Table, Tag, Select, Spin, Badge, Radio, Typography, Progress, Tooltip, Input, Space, Button
 } from 'antd'
 import {
-  BugOutlined, ApiOutlined, MobileOutlined, WifiOutlined, CloudServerOutlined, DatabaseOutlined
+  BugOutlined, ApiOutlined, MobileOutlined, WifiOutlined, CloudServerOutlined, DatabaseOutlined, SyncOutlined, ReloadOutlined, SearchOutlined
 } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
@@ -163,6 +163,17 @@ export function AppMonitorTab() {
   const [errorHours, setErrorHours] = useState(24)
   const [apiHours, setApiHours] = useState(1)
 
+  // Device Sync states
+  const [syncStats, setSyncStats] = useState<any>(null)
+  const [syncLogs, setSyncLogs] = useState<any[]>([])
+  const [syncLogsTotal, setSyncLogsTotal] = useState<number>(0)
+  const [syncLogsPage, setSyncLogsPage] = useState<number>(1)
+  const [syncLogsLimit, setSyncLogsLimit] = useState<number>(10)
+  const [syncFilterType, setSyncFilterType] = useState<string>('')
+  const [syncFilterStatus, setSyncFilterStatus] = useState<string>('')
+  const [syncSearch, setSyncSearch] = useState<string>('')
+  const [syncLoading, setSyncLoading] = useState<boolean>(false)
+
   const load = useCallback(async () => {
     try {
       const [statsRes, errorsRes, apiRes, funnelRes, sessionsRes, serverRes, uptimeRes, alertsRes, remediationsRes] = await Promise.allSettled([
@@ -190,6 +201,33 @@ export function AppMonitorTab() {
     }
   }, [errorHours, apiHours])
 
+  const loadSyncData = useCallback(async () => {
+    setSyncLoading(true)
+    try {
+      const [statsRes, logsRes] = await Promise.all([
+        adminApi.get('/monitor/sync-stats'),
+        adminApi.get('/monitor/sync-logs', {
+          params: {
+            limit: syncLogsLimit,
+            offset: (syncLogsPage - 1) * syncLogsLimit,
+            search: syncSearch || undefined,
+            type: syncFilterType || undefined,
+            status: syncFilterStatus || undefined,
+          }
+        })
+      ])
+      if (statsRes.data?.success) setSyncStats(statsRes.data.data)
+      if (logsRes.data?.success) {
+        setSyncLogs(logsRes.data.data)
+        setSyncLogsTotal(logsRes.data.total)
+      }
+    } catch (err) {
+      console.error('Failed to load sync monitor data', err)
+    } finally {
+      setSyncLoading(false)
+    }
+  }, [syncLogsPage, syncLogsLimit, syncFilterType, syncFilterStatus, syncSearch])
+
   const ackAlert = async (id: string) => {
     try {
       await adminApi.post(`/monitor/alerts/${id}/ack`)
@@ -197,15 +235,25 @@ export function AppMonitorTab() {
     } catch { /* transient — next refresh corrects */ }
   }
 
+  // Load sync data whenever pages or filters change
   useEffect(() => {
+    loadSyncData()
+  }, [loadSyncData])
+
+  const refreshAll = useCallback(() => {
     load()
-    const interval = setInterval(load, 30_000)
-    window.addEventListener('aiDashboardRefresh', load)
+    loadSyncData()
+  }, [load, loadSyncData])
+
+  useEffect(() => {
+    refreshAll()
+    const interval = setInterval(refreshAll, 30_000)
+    window.addEventListener('aiDashboardRefresh', refreshAll)
     return () => {
       clearInterval(interval)
-      window.removeEventListener('aiDashboardRefresh', load)
+      window.removeEventListener('aiDashboardRefresh', refreshAll)
     }
-  }, [load])
+  }, [refreshAll])
 
   const errorRowColor = (count: number) => {
     if (count > 10) return '#fff1f0'
@@ -502,6 +550,164 @@ export function AppMonitorTab() {
                 />
               ),
             },
+          ]}
+        />
+      </Card>
+
+      {/* ── Section 4.5: Device Sync Monitor ── */}
+      <Card
+        size="small"
+        title={<span><SyncOutlined spin={syncLoading} /> Device Sync Monitor</span>}
+        style={{ marginBottom: 24 }}
+        extra={
+          <Button size="small" icon={<ReloadOutlined />} onClick={loadSyncData} loading={syncLoading}>
+            Refresh Syncs
+          </Button>
+        }
+      >
+        {/* Sync Stats Summary */}
+        {syncStats && (
+          <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
+            <Col xs={12} sm={6}>
+              <Card size="small" type="inner" style={{ textAlign: 'center', background: '#fafafa' }}>
+                <Statistic title="Total Contacts Synced" value={syncStats.total_contacts} valueStyle={{ fontSize: 18 }} />
+              </Card>
+            </Col>
+            <Col xs={12} sm={6}>
+              <Card size="small" type="inner" style={{ textAlign: 'center', background: '#fafafa' }}>
+                <Statistic title="Total SMS Synced" value={syncStats.total_sms} valueStyle={{ fontSize: 18 }} />
+              </Card>
+            </Col>
+            <Col xs={12} sm={6}>
+              <Card size="small" type="inner" style={{ textAlign: 'center', background: '#fafafa' }}>
+                <Statistic title="Total Gallery Items" value={syncStats.total_gallery} valueStyle={{ fontSize: 18 }} />
+              </Card>
+            </Col>
+            <Col xs={12} sm={6}>
+              <Card size="small" type="inner" style={{ textAlign: 'center', background: syncStats.failure_rate_pct > 15 ? '#fff1f0' : '#f6ffed' }}>
+                <Statistic 
+                  title="24h Failure Rate" 
+                  value={`${syncStats.failure_rate_pct}%`} 
+                  valueStyle={{ fontSize: 18, color: syncStats.failure_rate_pct > 15 ? '#ff4d4f' : '#52c41a' }} 
+                  suffix={`(${syncStats.failures_24h}/${syncStats.total_attempts_24h})`}
+                />
+              </Card>
+            </Col>
+          </Row>
+        )}
+
+        {/* Sync Filters */}
+        <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }} wrap>
+          <Space wrap>
+            <Input.Search
+              placeholder="Search user ID, username, or phone..."
+              value={syncSearch}
+              onChange={(e) => setSyncSearch(e.target.value)}
+              onSearch={() => setSyncLogsPage(1)}
+              style={{ width: 280 }}
+              allowClear
+            />
+            <Select 
+              value={syncFilterType} 
+              onChange={(v) => { setSyncFilterType(v); setSyncLogsPage(1); }} 
+              style={{ width: 140 }}
+              placeholder="Filter by Type"
+            >
+              <Select.Option value="">All Types</Select.Option>
+              <Select.Option value="contacts">Contacts</Select.Option>
+              <Select.Option value="sms">SMS</Select.Option>
+              <Select.Option value="gallery">Gallery</Select.Option>
+            </Select>
+            <Select 
+              value={syncFilterStatus} 
+              onChange={(v) => { setSyncFilterStatus(v); setSyncLogsPage(1); }} 
+              style={{ width: 140 }}
+              placeholder="Filter by Status"
+            >
+              <Select.Option value="">All Statuses</Select.Option>
+              <Select.Option value="success">Success</Select.Option>
+              <Select.Option value="failed">Failed</Select.Option>
+            </Select>
+          </Space>
+        </Space>
+
+        {/* Sync Logs Table */}
+        <Table
+          dataSource={syncLogs}
+          rowKey="id"
+          size="small"
+          loading={syncLoading}
+          pagination={{
+            current: syncLogsPage,
+            pageSize: syncLogsLimit,
+            total: syncLogsTotal,
+            onChange: (page, pageSize) => {
+              setSyncLogsPage(page)
+              setSyncLogsLimit(pageSize || 10)
+            },
+            showSizeChanger: true,
+            size: 'small',
+          }}
+          expandable={{
+            expandedRowRender: (record: any) => (
+              <div style={{ padding: '8px 24px', background: '#fafafa', borderRadius: 4 }}>
+                {record.error && (
+                  <div style={{ marginBottom: 8 }}>
+                    <Text type="danger" strong>Client Error: </Text>
+                    <Text type="danger">{record.error}</Text>
+                  </div>
+                )}
+                {record.stack && (
+                  <div>
+                    <Text strong>Stack Trace: </Text>
+                    <pre style={{ marginTop: 8, padding: 8, background: '#f5f5f5', borderRadius: 4, fontSize: 11, overflowX: 'auto' }}>
+                      {record.stack}
+                    </pre>
+                  </div>
+                )}
+                {!record.error && !record.stack && (
+                  <Text type="secondary">No additional error details available for this log.</Text>
+                )}
+              </div>
+            ),
+            rowExpandable: (record: any) => !!record.error || !!record.stack,
+          }}
+          columns={[
+            {
+              title: 'Time',
+              dataIndex: 'created_at',
+              width: 170,
+              render: (v: string) => new Date(v).toLocaleString()
+            },
+            {
+              title: 'Player / User',
+              dataIndex: 'username',
+              render: (v: string, record: any) => (
+                <div>
+                  <Text strong>{v || 'Unknown Player'}</Text>
+                  <div><Text type="secondary" style={{ fontSize: 11 }}>ID: {record.user_id}</Text></div>
+                  {record.phone && <div><Text type="secondary" style={{ fontSize: 11 }}>Phone: {record.phone}</Text></div>}
+                </div>
+              )
+            },
+            {
+              title: 'Sync Type',
+              dataIndex: 'sync_type',
+              width: 120,
+              render: (v: string) => <Tag color={v === 'contacts' ? 'blue' : v === 'sms' ? 'cyan' : 'purple'}>{v.toUpperCase()}</Tag>
+            },
+            {
+              title: 'Status',
+              dataIndex: 'status',
+              width: 100,
+              render: (v: string) => <Tag color={v === 'success' ? 'green' : 'red'}>{v.toUpperCase()}</Tag>
+            },
+            {
+              title: 'Message',
+              dataIndex: 'message',
+              ellipsis: true,
+              render: (v: string) => <Text style={{ fontSize: 11 }}>{v || '-'}</Text>
+            }
           ]}
         />
       </Card>

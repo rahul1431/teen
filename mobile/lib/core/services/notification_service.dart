@@ -13,7 +13,7 @@ class NotificationService {
   Future<void> refresh() async {
     try {
       final res = await ApiClient().dio.get('/api/notifications/unread-count');
-      unreadCount.value = (res.data['count'] as num?)?.toInt() ?? 0;
+      unreadCount.value = int.tryParse(res.data['count']?.toString() ?? '') ?? (res.data['count'] is num ? (res.data['count'] as num).toInt() : 0);
     } catch (_) {
       // keep the last known count on network errors
     }

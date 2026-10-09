@@ -36,40 +36,49 @@ export class AgentSettlementJob {
   }
 
   async runSettlementForDate(dateStr: string): Promise<void> {
-    const agentsRes = await this.db.query('SELECT id, parent_agent_id, commission_rate, status FROM agents')
-    const agents: AgentNode[] = agentsRes.rows.map(r => ({
-      id: r.id, parentAgentId: r.parent_agent_id, commissionRate: parseFloat(r.commission_rate), status: r.status,
-    }))
+    const agentsRes = await this.db.query('SELECT id, parent_agent_id, commission_rate, game_commissions, status FROM agents')
+    const agents: AgentNode[] = agentsRes.rows.map(r => {
+      let gameCommissions: Record<string, number> = {}
+      try {
+        if (typeof r.game_commissions === 'string') {
+          gameCommissions = JSON.parse(r.game_commissions)
+        } else if (r.game_commissions && typeof r.game_commissions === 'object') {
+          gameCommissions = r.game_commissions
+        }
+      } catch (_) {}
+      return {
+        id: r.id,
+        parentAgentId: r.parent_agent_id,
+        commissionRate: parseFloat(r.commission_rate),
+        gameCommissions,
+        status: r.status,
+      }
+    })
     if (agents.length === 0) return
 
     // Net house win per player for the target IST day, attributed to their
-    // direct agent. game_debit = player staked/lost, game_credit = player
-    // won back — matches WalletService.TxnType (services/wallet-service/src/wallet.service.ts:5).
-    //
-    // CRITICAL: the `status = 'completed'` filter is required for financial
-    // correctness — DO NOT remove it. WalletService writes TWO distinct
-    // game_debit rows per bet in its lock lifecycle (wallet.service.ts):
-    //   1. lockForGame()      -> a 'pending'   game_debit ("Funds locked for game")
-    //   2. consumeLockedFunds() -> a 'completed' game_debit ("Locked funds consumed")
-    // The pending row is never flipped in place — it stays as a separate row.
-    // Without this filter both rows are summed, roughly DOUBLING net house win
-    // and overpaying agents. Mirrors the per-user PnL query in index.ts (~L377),
-    // which also filters status = 'completed' for the same reason.
+    // direct agent and broken down by game type.
     const lossesRes = await this.db.query(
       `SELECT u.agent_id,
+              CASE WHEN wt.description ILIKE '%color%' THEN 'color_prediction' WHEN wt.description ILIKE '%matka%' THEN 'matka' WHEN wt.description ILIKE '%cricket%' THEN 'cricket' WHEN wt.description ILIKE '%aviator%' THEN 'aviator' ELSE COALESCE(gr.game_type::text, 'general') END AS game_type,
               COALESCE(SUM(CASE WHEN wt.type = 'game_debit' THEN wt.amount ELSE 0 END), 0)
               - COALESCE(SUM(CASE WHEN wt.type = 'game_credit' THEN wt.amount ELSE 0 END), 0) AS net_house_win
        FROM wallet_transactions wt
        JOIN users u ON u.id = wt.user_id
+       LEFT JOIN game_rooms gr ON gr.id::text = wt.reference_id
        WHERE u.agent_id IS NOT NULL
          AND wt.type IN ('game_debit', 'game_credit')
          AND wt.status = 'completed'
          AND wt.created_at >= ($1::date AT TIME ZONE 'Asia/Kolkata')
          AND wt.created_at <  (($1::date + 1) AT TIME ZONE 'Asia/Kolkata')
-       GROUP BY u.agent_id`,
+       GROUP BY u.agent_id, CASE WHEN wt.description ILIKE '%color%' THEN 'color_prediction' WHEN wt.description ILIKE '%matka%' THEN 'matka' WHEN wt.description ILIKE '%cricket%' THEN 'cricket' WHEN wt.description ILIKE '%aviator%' THEN 'aviator' ELSE COALESCE(gr.game_type::text, 'general') END`,
       [dateStr]
     )
-    const playerLosses: PlayerNetLoss[] = lossesRes.rows.map(r => ({ agentId: r.agent_id, netHouseWin: parseFloat(r.net_house_win) }))
+    const playerLosses: PlayerNetLoss[] = lossesRes.rows.map(r => ({
+      agentId: r.agent_id,
+      gameType: r.game_type,
+      netHouseWin: parseFloat(r.net_house_win)
+    }))
 
     const results = calculateDailySettlement(agents, playerLosses)
     if (results.length === 0) return
@@ -79,11 +88,15 @@ export class AgentSettlementJob {
       await client.query('BEGIN')
       for (const r of results) {
         const ledgerRes = await client.query(
-          `INSERT INTO agent_commission_ledger (agent_id, date, direct_commission, override_commission, total_commission)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (agent_id, date) DO NOTHING
+          `INSERT INTO agent_commission_ledger (agent_id, date, direct_commission, override_commission, total_commission, game_breakdown)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (agent_id, date) DO UPDATE SET
+             direct_commission = EXCLUDED.direct_commission,
+             override_commission = EXCLUDED.override_commission,
+             total_commission = EXCLUDED.total_commission,
+             game_breakdown = EXCLUDED.game_breakdown
            RETURNING agent_id`,
-          [r.agentId, dateStr, r.directCommission, r.overrideCommission, r.totalCommission]
+          [r.agentId, dateStr, r.directCommission, r.overrideCommission, r.totalCommission, JSON.stringify(r.gameBreakdown)]
         )
         if (ledgerRes.rows.length > 0 && r.totalCommission > 0) {
           await client.query(
@@ -93,7 +106,7 @@ export class AgentSettlementJob {
         }
       }
       await client.query('COMMIT')
-      this.log(`[agent-settlement] settled ${dateStr}: ${results.length} agent(s)`)
+      this.log(`[agent-settlement] settled ${dateStr}: ${results.length} agent(s) with per-game rates`)
     } catch (err) {
       await client.query('ROLLBACK')
       throw err

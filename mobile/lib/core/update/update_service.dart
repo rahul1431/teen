@@ -22,8 +22,8 @@ class UpdateService {
       final localCode = int.tryParse(info.buildNumber) ?? 0;
 
       final res = await ApiClient().dio.get('/api/app/version');
-      final data = res.data as Map<String, dynamic>;
-      final serverCode = (data['version_code'] as num?)?.toInt() ?? 0;
+      final data = res.data is Map ? (res.data as Map<String, dynamic>) : <String, dynamic>{};
+      final serverCode = int.tryParse(data['version_code']?.toString() ?? '') ?? (data['version_code'] is num ? (data['version_code'] as num).toInt() : 0);
       final forceUpdate = data['force_update'] == true;
       final serverName = data['version_name']?.toString() ?? '';
       final notes = data['release_notes']?.toString();

@@ -17,11 +17,11 @@ IMAGE_ID        = os.environ.get("OCI_IMAGE_ID")
 SSH_PUBLIC_KEY  = os.environ["OCI_SSH_PUBLIC_KEY"]
 REGION          = os.environ.get("OCI_REGION", "ap-singapore-1")
 
-# VM Configuration
+# VM Configuration (2 OCPU, 12 GB RAM - Always Free eligible)
 SHAPE           = "VM.Standard.A1.Flex"
-OCPUS           = 4
-MEMORY_GB       = 24
-BOOT_VOLUME_GB  = 200
+OCPUS           = 2
+MEMORY_GB       = 12
+BOOT_VOLUME_GB  = 100
 INSTANCE_NAME   = "teen-prod"
 
 # ─── Timestamp helper ─────────────────────────────────────────────────────────

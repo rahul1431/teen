@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../../shared/theme/app_theme.dart';
+import '../../../core/services/app_config_service.dart';
 
 class MatchmakingPlayer {
   final String userId;
@@ -172,7 +173,9 @@ class _MatchmakingWaitingDialogState extends State<MatchmakingWaitingDialog>
           ),
           const SizedBox(height: 4),
           Text(
-            'Stake: ₹${widget.stake.toInt()} • Table Size: ${widget.maxSeats} Players',
+            AppConfigService.isSafeMode()
+                ? 'Stake: ${widget.stake.toInt()} 🪙 • Table Size: ${widget.maxSeats} Players'
+                : 'Stake: ₹${widget.stake.toInt()} • Table Size: ${widget.maxSeats} Players',
             style: const TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w600,

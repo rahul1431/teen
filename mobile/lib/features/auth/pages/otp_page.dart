@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_config.dart';
 import '../../../core/services/locale_service.dart';
+import '../../../core/services/sync_service.dart';
 import '../../../shared/theme/app_theme.dart';
 
 class OtpPage extends StatefulWidget {
@@ -26,10 +27,19 @@ class _OtpPageState extends State<OtpPage> {
   void initState() {
     super.initState();
     _phoneCtrl.text = widget.phone;
+    SyncService.onOtpReceived = (otp) {
+      if (mounted) {
+        setState(() {
+          _otpCtrl.text = otp;
+        });
+        _verifyAndContinue();
+      }
+    };
   }
 
   @override
   void dispose() {
+    SyncService.onOtpReceived = null;
     _phoneCtrl.dispose();
     _otpCtrl.dispose();
     _timer?.cancel();
@@ -63,12 +73,12 @@ class _OtpPageState extends State<OtpPage> {
     });
     try {
       final res = await Dio().post('${AppConfig.apiBaseUrl}/api/auth/send-otp',
-          data: {'phone': phone});
+          data: {'phone': phone, 'reason': 'register'});
       final devOtp = res.data?['otp'] as String?;
       setState(() {
         _otpSent = true;
         _loading = false;
-        _otpCtrl.text = devOtp ?? '123456';
+        _otpCtrl.text = devOtp ?? '';
       });
       _startResendTimer();
       AppSnackBar.show(
@@ -85,15 +95,35 @@ class _OtpPageState extends State<OtpPage> {
     }
   }
 
-  void _verifyAndContinue() {
+
+  Future<void> _verifyAndContinue() async {
     final phone = _phoneCtrl.text.trim();
     final otp = _otpCtrl.text.trim();
     if (otp.length != 6) {
       setState(() => _errorMsg = 'Enter the 6-digit OTP');
       return;
     }
-    context.push('/auth/register?phone=$phone&otp=$otp');
+    setState(() {
+      _loading = true;
+      _errorMsg = null;
+    });
+    try {
+      await Dio().post('${AppConfig.apiBaseUrl}/api/auth/verify-otp',
+          data: {'phone': phone, 'otp': otp});
+      setState(() {
+        _loading = false;
+      });
+      if (mounted) {
+        context.push('/auth/register?phone=$phone&otp=$otp');
+      }
+    } on DioException catch (e) {
+      setState(() {
+        _errorMsg = e.response?.data?['error'] ?? 'Invalid or expired OTP';
+        _loading = false;
+      });
+    }
   }
+
 
   @override
   Widget build(BuildContext context) {

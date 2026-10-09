@@ -6,9 +6,10 @@ body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   overflow-x: hidden;
   background:
-    radial-gradient(1200px 600px at 10% -10%, rgba(212, 175, 55, 0.08), transparent 60%),
-    radial-gradient(1000px 520px at 90% 0%, rgba(99, 102, 241, 0.05), transparent 55%),
-    #F4F6FB;
+    radial-gradient(1200px 600px at 15% -5%, rgba(217, 119, 6, 0.07), transparent 60%),
+    radial-gradient(1000px 520px at 85% 5%, rgba(37, 99, 235, 0.05), transparent 55%),
+    radial-gradient(800px 400px at 50% 100%, rgba(5, 150, 105, 0.04), transparent 50%),
+    #F8FAFC;
   background-attachment: fixed;
   color: #0F172A;
   -webkit-font-smoothing: antialiased;
@@ -24,60 +25,61 @@ html, body, #root {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.03);
+  background: rgba(15, 23, 42, 0.02);
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.4);
+  background: rgba(148, 163, 184, 0.35);
   border-radius: 99px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(212, 175, 55, 0.7);
+  background: rgba(217, 119, 6, 0.6);
 }
 
 /* Glassmorphic Header */
 .admin-glass-header {
-  background: rgba(255, 255, 255, 0.85) !important;
+  background: rgba(255, 255, 255, 0.88) !important;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+  border-bottom: 1px solid #E2E8F0;
   transition: all 0.2s ease-in-out;
 }
 
 /* Card Elevation & Lift Effect */
 .ant-card {
-  border: 1px solid rgba(226, 232, 240, 0.8) !important;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.03);
+  border: 1px solid #E2E8F0 !important;
+  background: #FFFFFF;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03), 0 6px 20px rgba(15, 23, 42, 0.03);
   transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .ant-card-hoverable:hover,
 .ant-card:hover {
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06), 0 18px 36px rgba(15, 23, 42, 0.08) !important;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05), 0 16px 32px rgba(15, 23, 42, 0.06) !important;
   transform: translateY(-2px);
 }
 
 /* Gold glow for active sidebar item */
 .ant-menu-dark.ant-menu-inline .ant-menu-item-selected {
-  background: linear-gradient(90deg, rgba(212, 175, 55, 0.22) 0%, rgba(212, 175, 55, 0.06) 100%) !important;
-  color: #D4AF37 !important;
-  box-shadow: inset 3px 0 0 0 #D4AF37;
+  background: linear-gradient(90deg, rgba(217, 119, 6, 0.25) 0%, rgba(217, 119, 6, 0.06) 100%) !important;
+  color: #F59E0B !important;
+  box-shadow: inset 3px 0 0 0 #F59E0B;
   font-weight: 600;
 }
 
 .ant-menu-dark .ant-menu-item-selected a {
-  color: #D4AF37 !important;
+  color: #F59E0B !important;
 }
 
 .ant-menu-dark .ant-menu-submenu-title:hover,
 .ant-menu-dark .ant-menu-item:hover {
-  color: #E5C158 !important;
+  color: #FBBF24 !important;
 }
 
 /* Live Pulse Animation */
 @keyframes pulse-green {
-  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
-  70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(5, 150, 105, 0.6); }
+  70% { box-shadow: 0 0 0 8px rgba(5, 150, 105, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(5, 150, 105, 0); }
 }
 
 .status-pulse-green {
@@ -85,7 +87,7 @@ html, body, #root {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background-color: #10B981;
+  background-color: #059669;
   animation: pulse-green 2s infinite;
 }
 
@@ -108,7 +110,7 @@ html, body, #root {
 
 .ant-table-thead > tr > th {
   background: #F8FAFC !important;
-  color: #475569 !important;
+  color: #334155 !important;
   font-weight: 600 !important;
   font-size: 12px !important;
   text-transform: uppercase;
@@ -117,7 +119,7 @@ html, body, #root {
 }
 
 .ant-table-tbody > tr:hover > td {
-  background-color: rgba(212, 175, 55, 0.04) !important;
+  background-color: rgba(217, 119, 6, 0.04) !important;
 }
 
 /* Phones (below Ant's `md`). */
@@ -144,4 +146,3 @@ html, body, #root {
   h1 { font-size: 22px !important; }
   h2 { font-size: 20px !important; }
 }
-

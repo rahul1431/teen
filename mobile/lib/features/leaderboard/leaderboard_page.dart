@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/network/api_client.dart';
+import '../../core/services/app_config_service.dart';
 import '../../shared/theme/app_theme.dart';
 import '../../shared/widgets/error_retry.dart';
 
@@ -22,14 +23,18 @@ class _LeaderboardPageState extends State<LeaderboardPage>
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 2, vsync: this);
-    _tabCtrl.addListener(() {
-      if (!_tabCtrl.indexIsChanging) {
-        setState(
-            () => _gameType = _tabCtrl.index == 0 ? 'teen_patti' : 'aviator');
-        _load();
-      }
-    });
+    final isSafe = AppConfigService.isSafeMode();
+    _gameType = isSafe ? 'ludo' : 'teen_patti';
+    _tabCtrl = TabController(length: isSafe ? 1 : 2, vsync: this);
+    if (!isSafe) {
+      _tabCtrl.addListener(() {
+        if (!_tabCtrl.indexIsChanging) {
+          setState(
+              () => _gameType = _tabCtrl.index == 0 ? 'teen_patti' : 'aviator');
+          _load();
+        }
+      });
+    }
     _load();
   }
 
@@ -63,19 +68,22 @@ class _LeaderboardPageState extends State<LeaderboardPage>
 
   @override
   Widget build(BuildContext context) {
+    final isSafe = AppConfigService.isSafeMode();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Leaderboard'),
-        bottom: TabBar(
-          controller: _tabCtrl,
-          indicatorColor: AppColors.gold,
-          labelColor: AppColors.gold,
-          unselectedLabelColor: AppColors.textSecondary,
-          tabs: const [
-            Tab(icon: Icon(Icons.style_rounded, size: 16), text: 'Teen Patti'),
-            Tab(icon: Icon(Icons.flight_rounded, size: 16), text: 'Aviator'),
-          ],
-        ),
+        title: Text(isSafe ? 'Ludo Leaderboard 🎲' : 'Leaderboard'),
+        bottom: isSafe
+            ? null
+            : TabBar(
+                controller: _tabCtrl,
+                indicatorColor: AppColors.gold,
+                labelColor: AppColors.gold,
+                unselectedLabelColor: AppColors.textSecondary,
+                tabs: const [
+                  Tab(icon: Icon(Icons.style_rounded, size: 16), text: 'Teen Patti'),
+                  Tab(icon: Icon(Icons.flight_rounded, size: 16), text: 'Aviator'),
+                ],
+              ),
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 8),

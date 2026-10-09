@@ -13,6 +13,7 @@ import {
   dropPlayer,
   forfeitPlayer,
   findValidDeclareGrouping,
+  validateDeclareGroups,
   RummyState,
   ActionResult,
   BotDifficulty,
@@ -134,26 +135,36 @@ async function start() {
             if (!body.card_id) return reply.code(400).send({ error: 'card_id required' })
             discardCard(state, idx, body.card_id)
           } else if (body.action === 'declare') {
-            // `groups` is OPTIONAL. There is no meld-arrangement UI yet, so a
-            // client that had to invent a grouping could only guess (the old
-            // mobile client chunked the hand in dealt order), and a wrong
-            // guess eliminates the player and forfeits their stake — a human
-            // could effectively never win. When groups are omitted (or empty)
-            // the server searches the hand for a legal partition itself.
-            // An explicitly-supplied grouping is still honoured verbatim, so
-            // a future "pick your own arrangement" UI keeps working.
-            let groups = body.groups
+            let groups: string[][] | undefined = body.groups
             let serverComputed = false
-            if (!groups || groups.length === 0) {
-              serverComputed = true
-              groups = findValidDeclareGrouping(state.players[idx].hand, state.wild_rank) ?? []
+
+            // 1. If card_id is provided (the finish/discard card), remove it from groups
+            if (groups && Array.isArray(groups) && body.card_id) {
+              groups = groups.map((g: string[]) => g.filter((id: string) => id !== body.card_id)).filter((g: string[]) => g.length > 0)
             }
-            const { outcome, result: declareResult } = attemptDeclare(state, idx, groups)
+
+            // 2. If groups has 14 cards or wrong count, search for a legal 13-card partition
+            const flat = groups && Array.isArray(groups) ? groups.flat() : []
+            let finalGroups: string[][] = []
+            if (flat.length !== 13) {
+              serverComputed = true
+              finalGroups = findValidDeclareGrouping(state.players[idx].hand, state.wild_rank) ?? []
+            } else {
+              finalGroups = groups ?? []
+              // If user's manual grouping had minor ordering/validation flaw, test solver before rejecting
+              const userCheck = validateDeclareGroups(state.players[idx].hand, finalGroups, state.wild_rank)
+              if (!userCheck.valid) {
+                const autoValid = findValidDeclareGrouping(state.players[idx].hand, state.wild_rank)
+                if (autoValid) {
+                  serverComputed = true
+                  finalGroups = autoValid
+                }
+              }
+            }
+
+            const { outcome, result: declareResult } = attemptDeclare(state, idx, finalGroups)
             if (!outcome.valid) {
-              // A server-computed empty grouping means the search proved the
-              // hand cannot declare — report that instead of the generic
-              // "must contain exactly 13 cards" shape check that fires first.
-              declareRejectedReason = serverComputed && groups.length === 0
+              declareRejectedReason = serverComputed && finalGroups.length === 0
                 ? 'Your hand cannot declare yet — you need 2 sequences, at least one pure'
                 : outcome.reason ?? 'Invalid declare'
             }
@@ -263,6 +274,15 @@ async function saveCompletedGame(state: RummyState, result: ActionResult): Promi
                 platform_fee_collected = $2, ended_at = NOW() WHERE id = $3`,
         [pot, result.rake_fee, state.room_id],
       )
+      for (const p of state.players) {
+        const isWinner = result.winner_id && p.user_id === result.winner_id
+        const prizeWon = isWinner ? result.prize : 0
+        const finalRank = result.winner_id ? (isWinner ? 1 : 2) : null
+        await db.query(
+          `UPDATE game_participants SET prize_won = $1, final_rank = $2 WHERE room_id = $3 AND user_id = $4`,
+          [prizeWon, finalRank, state.room_id, p.user_id],
+        )
+      }
       return
     } catch (err) {
       console.error(`Failed to save completed rummy game (attempt ${i}/${attempts})`, err)

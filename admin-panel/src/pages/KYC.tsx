@@ -87,26 +87,70 @@ export default function KYCPage() {
     } finally { setActing(false) }
   }
 
-  const KycImg = ({ userId, type, style }: { userId: string; type: 'front' | 'back' | 'selfie'; style: React.CSSProperties }) => {
+  const KycImg = ({ userId, type, style, label }: { userId: string; type: 'front' | 'back' | 'selfie'; style: React.CSSProperties; label?: string }) => {
     const [src, setSrc] = useState<string | null>(null)
+    const [loading, setLoading] = useState<boolean>(true)
+    const [notFound, setNotFound] = useState<boolean>(false)
+
     useEffect(() => {
       let objectUrl: string | null = null
       let cancelled = false
-      fetch(`/api/admin/kyc/${userId}/file/${type}`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(res => (res.ok ? res.blob() : Promise.reject()))
+      setLoading(true)
+      setNotFound(false)
+
+      fetch(`/api/admin/kyc/${userId}/file/${type}`, {
+        headers: { Authorization: `Bearer ${token || localStorage.getItem('admin_token')}` },
+      })
+        .then(res => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          return res.blob()
+        })
         .then(blob => {
           if (cancelled) return
           objectUrl = URL.createObjectURL(blob)
           setSrc(objectUrl)
+          setLoading(false)
         })
-        .catch(() => {})
+        .catch(() => {
+          if (cancelled) return
+          setNotFound(true)
+          setLoading(false)
+        })
+
       return () => {
         cancelled = true
         if (objectUrl) URL.revokeObjectURL(objectUrl)
       }
-    }, [userId, type])
-    if (!src) return <div style={{ ...style, background: '#0d1117' }} />
-    return <Image src={src} style={style} />
+    }, [userId, type, token])
+
+    if (loading) {
+      return (
+        <div style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#161b22', border: '1px solid #30363d' }}>
+          <Spin size="small" />
+        </div>
+      )
+    }
+
+    if (notFound || !src) {
+      return (
+        <div style={{ ...style, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#0d1117', border: '1px dashed #30363d', padding: 4 }}>
+          <SafetyOutlined style={{ color: '#8b949e', fontSize: 18, marginBottom: 2 }} />
+          <Text style={{ color: '#8b949e', fontSize: 10 }}>No {label || type}</Text>
+        </div>
+      )
+    }
+
+    return (
+      <Image
+        src={src}
+        style={style}
+        placeholder={
+          <div style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#161b22' }}>
+            <Spin size="small" />
+          </div>
+        }
+      />
+    )
   }
 
   const columns = [

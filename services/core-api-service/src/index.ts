@@ -20,8 +20,10 @@ import { referralPlugin } from './plugins/referral'
 import { missionsPlugin } from './plugins/missions'
 import { telegramPlugin } from './plugins/telegram'
 import { gameConfigsPlugin } from './plugins/game-configs'
-import { FantasyScoringPoller } from './helpers/fantasy-scoring-poller'
+import { appConfigPlugin } from './plugins/app-config'
 import { MatchStatusPoller } from './helpers/match-status-poller'
+import { MatkaAutoDeclaringPoller } from './helpers/matka-auto-poller'
+import { ColorPredictionPoller } from './helpers/color-prediction-poller'
 
 const PORT = parseInt(process.env.PORT || '3001')
 
@@ -86,6 +88,7 @@ async function start() {
   await app.register(missionsPlugin(db))
   await app.register(telegramPlugin(db))
   await app.register(gameConfigsPlugin(db))
+  await app.register(appConfigPlugin(db))
 
   app.get('/health', async () => ({
     status: 'ok',
@@ -93,8 +96,9 @@ async function start() {
     services: ['auth', 'users', 'leaderboard', 'notifications', 'betting', 'support', 'seo-marketing'],
   }))
 
-  new FantasyScoringPoller(bettingDb).start()
   new MatchStatusPoller(bettingDb).start()
+  new MatkaAutoDeclaringPoller(bettingDb).start()
+  new ColorPredictionPoller(bettingDb).start()
 
   await app.listen({ port: PORT, host: '0.0.0.0' })
   console.log(`[core-api] Running on port ${PORT} (auth+users+leaderboard+notify+betting)`)

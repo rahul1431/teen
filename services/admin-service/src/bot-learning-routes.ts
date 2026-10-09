@@ -13,6 +13,7 @@ import axios from 'axios'
 const BOT_SERVICES: Record<string, string> = {
   teen_patti: process.env.TEEN_PATTI_BOT_SERVICE_URL || 'http://localhost:3023',
   ludo:       process.env.LUDO_BOT_SERVICE_URL       || 'http://localhost:3024',
+  rummy:      process.env.RUMMY_BOT_SERVICE_URL      || 'http://localhost:3025',
 }
 
 const INTERNAL_HEADERS = { headers: { 'x-internal-key': process.env.INTERNAL_SERVICE_KEY || '' } }
@@ -35,7 +36,7 @@ export async function registerBotLearningRoutes(app: FastifyInstance, authentica
     async (req, reply) => {
       const url = serviceFor(req.query.game_type)
       if (!url) {
-        return reply.code(400).send({ success: false, error: 'game_type must be teen_patti or ludo' })
+        return reply.code(400).send({ success: false, error: 'game_type must be teen_patti, ludo, or rummy' })
       }
       if (!req.query.difficulty) {
         return reply.code(400).send({ success: false, error: 'difficulty is required' })
@@ -87,7 +88,7 @@ export async function registerBotLearningRoutes(app: FastifyInstance, authentica
     async (req, reply) => {
       const requested = req.body?.game_type
       if (requested && !BOT_SERVICES[requested]) {
-        return reply.code(400).send({ success: false, error: 'game_type must be teen_patti or ludo' })
+        return reply.code(400).send({ success: false, error: 'game_type must be teen_patti, ludo, or rummy' })
       }
       const targets = requested ? [requested] : Object.keys(BOT_SERVICES)
 
@@ -119,7 +120,7 @@ export async function registerBotLearningRoutes(app: FastifyInstance, authentica
     async (req, reply) => {
       const url = serviceFor(req.query.game_type)
       if (!url) {
-        return reply.code(400).send({ success: false, error: 'game_type must be teen_patti or ludo' })
+        return reply.code(400).send({ success: false, error: 'game_type must be teen_patti, ludo, or rummy' })
       }
       try {
         const res = await axios.get(`${url}/api/bot/config`, INTERNAL_HEADERS)
@@ -137,7 +138,7 @@ export async function registerBotLearningRoutes(app: FastifyInstance, authentica
     async (req, reply) => {
       const url = serviceFor(req.query.game_type)
       if (!url) {
-        return reply.code(400).send({ success: false, error: 'game_type must be teen_patti or ludo' })
+        return reply.code(400).send({ success: false, error: 'game_type must be teen_patti, ludo, or rummy' })
       }
       try {
         const res = await axios.patch(`${url}/api/bot/config`, req.body, INTERNAL_HEADERS)
@@ -155,7 +156,7 @@ export async function registerBotLearningRoutes(app: FastifyInstance, authentica
     async (req, reply) => {
       const url = serviceFor(req.params.gameType)
       if (!url) {
-        return reply.code(400).send({ success: false, error: 'gameType must be teen_patti or ludo' })
+        return reply.code(400).send({ success: false, error: 'gameType must be teen_patti, ludo, or rummy' })
       }
       try {
         const res = await axios.patch(

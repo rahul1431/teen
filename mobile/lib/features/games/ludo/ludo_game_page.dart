@@ -8,6 +8,7 @@ import '../../../core/constants/socket_events.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/constants/app_config.dart';
 import '../../../shared/theme/app_theme.dart';
+import '../../../core/services/app_config_service.dart';
 import 'ludo_engine.dart';
 import 'ludo_board.dart';
 import 'package:lottie/lottie.dart';
@@ -131,13 +132,14 @@ class _LudoGamePageState extends State<LudoGamePage>
     super.initState();
     SoundService.instance.init();
     _muted = SoundService.instance.muted;
-    widget.offline ? _initOffline() : _initOnline();
+    final isOffline = widget.offline || AppConfigService.isSafeMode();
+    isOffline ? _initOffline() : _initOnline();
     // Game-start sting as the table opens, then the looping ambience under it.
     SoundService.instance.play(Sfx.ludoStart);
     SoundService.instance.loopAmbience(
         'Ludo King Orginal Sound With licensed/music.mp3',
         volume: 0.5);
-    if (!widget.offline) _loadEmojiConfig();
+    if (!isOffline) _loadEmojiConfig();
   }
 
   void _toggleMute() {
@@ -384,7 +386,8 @@ class _LudoGamePageState extends State<LudoGamePage>
       _isInitialState = false;
       if (!isFirst && la != null && la['dice'] != null) {
         _diceCtrl.forward(from: 0);
-        _showRoll(actorName!, (la['dice'] as num).toInt());
+        final diceVal = int.tryParse(la['dice'].toString()) ?? (la['dice'] is num ? (la['dice'] as num).toInt() : 1);
+        _showRoll(actorName!, diceVal);
       }
       // Gameplay-feel: on my turn, show a "Roll again!" cue after an extra-turn
       // move (6 / capture / home) and auto-play the roll when only one legal
@@ -431,8 +434,9 @@ class _LudoGamePageState extends State<LudoGamePage>
 
     _subs.add(_socket.on(SocketEvents.gameResult).listen((d) {
       if (!mounted) return;
+      final prize = double.tryParse(d?['prize']?.toString() ?? '') ?? (d?['prize'] is num ? (d?['prize'] as num).toDouble() : null);
       _finish(d?['winner_id'],
-          rankings: d?['rankings'], prize: (d?['prize'] as num?)?.toDouble());
+          rankings: d?['rankings'], prize: prize);
     }));
 
     // Server rejected an action (stale room, engine unavailable, not-your-turn
@@ -465,10 +469,11 @@ class _LudoGamePageState extends State<LudoGamePage>
       if (!mounted || data is! Map) return;
       final userId = data['user_id']?.toString() ?? '';
       final name = data['username']?.toString() ?? 'Player';
-      final amount = (data['amount'] as num?)?.toInt() ?? 0;
-      _spawnReaction(userId, '💰 ₹$amount', isTip: true);
+      final amount = int.tryParse(data['amount']?.toString() ?? '') ?? (data['amount'] is num ? (data['amount'] as num).toInt() : 0);
+      final tipText = AppConfigService.formatCurrency(amount);
+      _spawnReaction(userId, '💰 $tipText', isTip: true);
       final who = userId == _myUserId ? 'You' : name;
-      _logActivity('$who tipped the dealer ₹$amount');
+      _logActivity('$who tipped the dealer $tipText');
     }));
   }
 
@@ -1144,7 +1149,9 @@ class _LudoGamePageState extends State<LudoGamePage>
                 children: [
                   const Text('🏆 ', style: TextStyle(fontSize: 11)),
                   Text(
-                    formatCurrency(_winningAmount),
+                    AppConfigService.isSafeMode()
+                        ? '${_winningAmount.toInt() > 0 ? _winningAmount.toInt() : 200} 🪙'
+                        : formatCurrency(_winningAmount),
                     style: const TextStyle(
                         color: AppColors.gold,
                         fontWeight: FontWeight.bold,
@@ -1205,7 +1212,7 @@ class _LudoGamePageState extends State<LudoGamePage>
             children: [
               _DiceWidget(
                 value: justRolled
-                    ? (_lastAction!['dice'] as num).toInt()
+                    ? (int.tryParse(_lastAction!['dice']?.toString() ?? '') ?? (_lastAction!['dice'] is num ? (_lastAction!['dice'] as num).toInt() : 1))
                     : (s.dice ?? _lastDice),
                 controller: isRoller ? _diceCtrl : null,
               ),
@@ -1389,7 +1396,7 @@ class _LudoGamePageState extends State<LudoGamePage>
   }
 
   Widget _tipBar() {
-    if (widget.offline) return const SizedBox.shrink();
+    if (widget.offline || AppConfigService.isSafeMode()) return const SizedBox.shrink();
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 6, 16, 0),
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
@@ -1440,7 +1447,7 @@ class _LudoGamePageState extends State<LudoGamePage>
                           offset: const Offset(0, 2)),
                     ],
                   ),
-                  child: Text('₹$amount',
+                  child: Text(AppConfigService.formatCurrency(amount),
                       style: const TextStyle(
                           color: Colors.black,
                           fontWeight: FontWeight.w800,

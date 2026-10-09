@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
+import '../../core/services/app_config_service.dart';
 
 class AppColors {
   static const background    = Color(0xFF0D1117);
@@ -26,6 +28,7 @@ class AppColors {
   static const List<Color> lotteryGrad    = [Color(0xFF0D9488), Color(0xFF064E45)];
   static const List<Color> cricketGrad    = [Color(0xFF15803D), Color(0xFF0A4521)];
   static const List<Color> rummyGrad      = [Color(0xFF0F766E), Color(0xFF042F2B)];
+  static const List<Color> colorPredictionGrad = [Color(0xFF7C3AED), Color(0xFF3B0764)];
 
   // Ludo token colours (seat order). Values match the board's tuned "reference
   // board" palette in ludo_board.dart so avatars/chips/borders elsewhere on the
@@ -115,6 +118,33 @@ class AppTheme {
       hintStyle: const TextStyle(color: AppColors.textSecondary),
       errorStyle: const TextStyle(color: AppColors.red, fontSize: 12),
     ),
+    navigationBarTheme: NavigationBarThemeData(
+      backgroundColor: AppColors.surface,
+      indicatorColor: AppColors.gold.withValues(alpha: 0.2),
+      elevation: 3,
+      shadowColor: Colors.black.withValues(alpha: 0.5),
+      labelTextStyle: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) {
+          return const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            color: AppColors.gold,
+            letterSpacing: 0.3,
+          );
+        }
+        return const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: AppColors.textSecondary,
+        );
+      }),
+      iconTheme: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) {
+          return const IconThemeData(color: AppColors.gold, size: 24);
+        }
+        return const IconThemeData(color: AppColors.textSecondary, size: 22);
+      }),
+    ),
     bottomNavigationBarTheme: const BottomNavigationBarThemeData(
       backgroundColor: AppColors.surface,
       selectedItemColor: AppColors.gold,
@@ -152,10 +182,15 @@ class AppSnackBar {
 
 String formatCurrency(dynamic value) {
   final v = double.tryParse(value.toString()) ?? 0;
-  if (v >= 10000000) return '₹${(v / 10000000).toStringAsFixed(2)}Cr';
-  if (v >= 100000)   return '₹${(v / 100000).toStringAsFixed(2)}L';
-  if (v >= 1000)     return '₹${(v / 1000).toStringAsFixed(1)}K';
-  return '₹${v.toStringAsFixed(2)}';
+  final numFormat = NumberFormat('#,##,###.##', 'en_IN');
+  final intFormat = NumberFormat('#,##,###', 'en_IN');
+  final formatted = v % 1 == 0 ? intFormat.format(v.toInt()) : numFormat.format(v);
+
+  if (AppConfigService.isSafeMode()) {
+    return '$formatted 🪙';
+  }
+  final sym = AppConfigService.getCurrencySymbol();
+  return '$sym$formatted';
 }
 
 String timeAgo(String isoDate) {

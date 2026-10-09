@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/audio/sound_service.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/theme/app_theme.dart';
+import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'betting_history_page.dart';
 
@@ -428,12 +429,14 @@ class _MatkaPageState extends State<MatkaPage> {
   }
 
   void _openBetSheet(dynamic market) {
+    HapticFeedback.mediumImpact();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF140F1D),
+      showDragHandle: true,
+      backgroundColor: const Color(0xFF161224),
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
       builder: (_) => _MatkaBetSheet(
         market: market,
         multipliers: _multipliers,
@@ -575,7 +578,7 @@ class MatkaPotPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-// --- KALYAN STYLE WEEKLY PANEL CHART DIALOG ---
+// --- REDESIGNED MATKA DATE & PANEL CHART DIALOG ---
 class MatkaPanelChartDialog extends StatefulWidget {
   final String marketId;
   final String marketName;
@@ -587,7 +590,9 @@ class MatkaPanelChartDialog extends StatefulWidget {
 
 class _MatkaPanelChartDialogState extends State<MatkaPanelChartDialog> {
   List<dynamic> _weeks = [];
+  List<dynamic> _daily = [];
   bool _loading = true;
+  int _chartModeIndex = 0; // 0: Date Chart (Clean Daily), 1: Weekly Panel Matrix
 
   @override
   void initState() {
@@ -603,6 +608,7 @@ class _MatkaPanelChartDialogState extends State<MatkaPanelChartDialog> {
       if (!mounted) return;
       setState(() {
         _weeks = res.data['chart'] ?? [];
+        _daily = res.data['daily'] ?? [];
         _loading = false;
       });
     } catch (_) {
@@ -613,162 +619,400 @@ class _MatkaPanelChartDialogState extends State<MatkaPanelChartDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: const Color(0xFF1B1229),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
-      child: Padding(
+      backgroundColor: const Color(0xFF130E1F),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 18),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF221438), Color(0xFF130C22), Color(0xFF0C0716)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+          border: Border.all(color: AppColors.gold.withValues(alpha: 0.3), width: 1.2),
+        ),
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+            // Header Row
             Row(
               children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.gold.withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.table_chart_rounded, color: AppColors.gold, size: 20),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    '${widget.marketName} Panel Chart'.toUpperCase(),
-                    style: const TextStyle(
-                        color: AppColors.gold,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 15,
-                        letterSpacing: 0.5),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.marketName.toUpperCase(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 16,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'Live History & Panna Records',
+                        style: TextStyle(
+                          color: AppColors.gold,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white60),
+                  icon: const Icon(Icons.close_rounded, color: Colors.white70),
                   onPressed: () => Navigator.pop(context),
                 )
               ],
             ),
-            const Divider(color: Colors.white12),
-            Expanded(
-              child: _loading
-                  ? const Center(
-                      child: CircularProgressIndicator(color: AppColors.gold))
-                  : _weeks.isEmpty
-                      ? const Center(
-                          child: Text('No historical results found',
-                              style: TextStyle(color: Colors.white38)))
-                      : SingleChildScrollView(
-                          scrollDirection: Axis.vertical,
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Table(
-                              border: TableBorder.all(
-                                  color: Colors.white12, width: 1),
-                              defaultColumnWidth: const FixedColumnWidth(60),
-                              children: [
-                                // Table Header row
-                                TableRow(
-                                  decoration: BoxDecoration(
-                                      color:
-                                          Colors.white.withValues(alpha: 0.04)),
-                                  children: [
-                                    'Date',
-                                    'Mon',
-                                    'Tue',
-                                    'Wed',
-                                    'Thu',
-                                    'Fri',
-                                    'Sat',
-                                    'Sun'
-                                  ].map((day) {
-                                    return Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 8),
-                                      child: Center(
-                                        child: Text(
-                                          day,
-                                          style: const TextStyle(
-                                            color: AppColors.gold,
-                                            fontWeight: FontWeight.w900,
-                                            fontSize: 10,
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  }).toList(),
-                                ),
-                                // Weekly Rows
-                                ..._weeks.map((week) {
-                                  return TableRow(
-                                    children: [
-                                      // Date block
-                                      Padding(
-                                        padding: const EdgeInsets.all(4.0),
-                                        child: Center(
-                                          child: Text(
-                                            week['week_start']?.substring(5) ??
-                                                '', // MM-DD
-                                            style: const TextStyle(
-                                                color: Colors.white54,
-                                                fontSize: 9,
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        ),
-                                      ),
-                                      ...[
-                                        'mon',
-                                        'tue',
-                                        'wed',
-                                        'thu',
-                                        'fri',
-                                        'sat',
-                                        'sun'
-                                      ].map((dayKey) {
-                                        final result = week[dayKey];
-                                        if (result == null) {
-                                          return const Padding(
-                                            padding: EdgeInsets.all(6.0),
-                                            child: Center(
-                                                child: Text('-',
-                                                    style: TextStyle(
-                                                        color:
-                                                            Colors.white24))),
-                                          );
-                                        }
-                                        final isRed = result['open_digit'] ==
-                                                result['close_digit'] &&
-                                            result['jodi'] != '**';
-                                        return Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                              vertical: 4.0),
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Text(
-                                                  result['open_panna'] ?? '***',
-                                                  style: const TextStyle(
-                                                      color: Colors.white38,
-                                                      fontSize: 8)),
-                                              const SizedBox(height: 1.5),
-                                              Text(
-                                                result['jodi'] ?? '**',
-                                                style: TextStyle(
-                                                  color: isRed
-                                                      ? const Color(0xFFFF5252)
-                                                      : AppColors.gold,
-                                                  fontWeight: FontWeight.w900,
-                                                  fontSize: 11,
-                                                ),
-                                              ),
-                                              const SizedBox(height: 1.5),
-                                              Text(
-                                                  result['close_panna'] ??
-                                                      '***',
-                                                  style: const TextStyle(
-                                                      color: Colors.white38,
-                                                      fontSize: 8)),
-                                            ],
-                                          ),
-                                        );
-                                      }).toList(),
-                                    ],
-                                  );
-                                }),
-                              ],
-                            ),
+            const SizedBox(height: 12),
+
+            // Mode Selector: Date Chart vs Weekly Panel
+            Container(
+              height: 42,
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        if (_chartModeIndex != 0) setState(() => _chartModeIndex = 0);
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: _chartModeIndex == 0 ? AppColors.gold : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          '📅 Date Chart',
+                          style: TextStyle(
+                            color: _chartModeIndex == 0 ? Colors.black : Colors.white70,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13,
                           ),
                         ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        if (_chartModeIndex != 1) setState(() => _chartModeIndex = 1);
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: _chartModeIndex == 1 ? AppColors.gold : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          '📊 Panel Matrix',
+                          style: TextStyle(
+                            color: _chartModeIndex == 1 ? Colors.black : Colors.white70,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
+            const SizedBox(height: 14),
+
+            // Content Area
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
+                  : (_chartModeIndex == 0 ? _buildDateChart() : _buildWeeklyPanelChart()),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- 1. CLEAN DATE-BASED HISTORICAL RECORD ---
+  Widget _buildDateChart() {
+    if (_daily.isEmpty) {
+      return const Center(
+        child: Text('No historical results found for this market',
+            style: TextStyle(color: Colors.white38, fontSize: 13)),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: _daily.length,
+      itemBuilder: (context, idx) {
+        final row = _daily[idx];
+        final date = row['date']?.toString() ?? '';
+        final dayName = row['day_name']?.toString() ?? '';
+        final openPanna = row['open_panna']?.toString() ?? '***';
+        final openDigit = row['open_digit']?.toString() ?? '*';
+        final jodi = row['jodi']?.toString() ?? '**';
+        final closeDigit = row['close_digit']?.toString() ?? '*';
+        final closePanna = row['close_panna']?.toString() ?? '***';
+
+        final isRed = openDigit == closeDigit && jodi != '**';
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E152E),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isRed
+                  ? const Color(0xFFFF5252).withValues(alpha: 0.4)
+                  : Colors.white.withValues(alpha: 0.08),
+            ),
+          ),
+          child: Row(
+            children: [
+              // Date & Day column
+              SizedBox(
+                width: 85,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      date,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      dayName,
+                      style: TextStyle(
+                        color: AppColors.gold.withValues(alpha: 0.8),
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Open Panna Tag
+              Expanded(
+                child: Center(
+                  child: Column(
+                    children: [
+                      const Text('OPEN',
+                          style: TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 2),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.white12),
+                        ),
+                        child: Text(
+                          openPanna,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Jodi (Result Center Badge)
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: isRed
+                        ? [const Color(0xFFE53935), const Color(0xFFC62828)]
+                        : [AppColors.gold, const Color(0xFFD4AF37)],
+                  ),
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: [
+                    BoxShadow(
+                      color: (isRed ? const Color(0xFFE53935) : AppColors.gold).withValues(alpha: 0.3),
+                      blurRadius: 6,
+                    )
+                  ],
+                ),
+                child: Text(
+                  jodi,
+                  style: TextStyle(
+                    color: isRed ? Colors.white : Colors.black,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                    letterSpacing: 1,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+
+              // Close Panna Tag
+              Expanded(
+                child: Center(
+                  child: Column(
+                    children: [
+                      const Text('CLOSE',
+                          style: TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 2),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.white12),
+                        ),
+                        child: Text(
+                          closePanna,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // --- 2. CLASSICAL WEEKLY PANEL MATRIX ---
+  Widget _buildWeeklyPanelChart() {
+    if (_weeks.isEmpty) {
+      return const Center(
+        child: Text('No historical results found', style: TextStyle(color: Colors.white38)),
+      );
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.vertical,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Table(
+          border: TableBorder.all(color: Colors.white12, width: 1),
+          defaultColumnWidth: const FixedColumnWidth(60),
+          children: [
+            // Table Header row
+            TableRow(
+              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.05)),
+              children: [
+                'Date',
+                'Mon',
+                'Tue',
+                'Wed',
+                'Thu',
+                'Fri',
+                'Sat',
+                'Sun'
+              ].map((day) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Center(
+                    child: Text(
+                      day,
+                      style: const TextStyle(
+                        color: AppColors.gold,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+            // Weekly Rows
+            ..._weeks.map((week) {
+              return TableRow(
+                children: [
+                  // Date block
+                  Padding(
+                    padding: const EdgeInsets.all(6.0),
+                    child: Center(
+                      child: Text(
+                        week['week_start']?.substring(5) ?? '', // MM-DD
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+                  ...['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((dayKey) {
+                    final result = week[dayKey];
+                    if (result == null) {
+                      return const Padding(
+                        padding: EdgeInsets.all(8.0),
+                        child: Center(
+                          child: Text('-', style: TextStyle(color: Colors.white24)),
+                        ),
+                      );
+                    }
+                    final isRed = result['open_digit'] == result['close_digit'] &&
+                        result['jodi'] != '**';
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5.0),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(result['open_panna'] ?? '***',
+                              style: const TextStyle(color: Colors.white54, fontSize: 9)),
+                          const SizedBox(height: 2),
+                          Text(
+                            result['jodi'] ?? '**',
+                            style: TextStyle(
+                              color: isRed ? const Color(0xFFFF5252) : AppColors.gold,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(result['close_panna'] ?? '***',
+                              style: const TextStyle(color: Colors.white54, fontSize: 9)),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ],
+              );
+            }),
           ],
         ),
       ),
@@ -793,7 +1037,7 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
   String _betType = 'single';
   String _session = 'open';
   final _numberCtrl = TextEditingController();
-  double _amount = 10;
+  double _amount = 200;
   bool _submitting = false;
   String? _error;
 
@@ -907,28 +1151,29 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
       padding: EdgeInsets.only(
           left: 16,
           right: 16,
-          top: 14,
+          top: 4,
           bottom: MediaQuery.of(context).viewInsets.bottom + 20),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                  color: Colors.white12,
-                  borderRadius: BorderRadius.circular(2)),
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('${widget.market['name']} · Betting Slip'.toUpperCase(),
+                  style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.gold,
+                      letterSpacing: 0.5)),
+              IconButton(
+                icon: const Icon(Icons.close_rounded, size: 20, color: Colors.white54),
+                onPressed: () => Navigator.pop(context),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
-          Text('${widget.market['name']} · Betting Slip'.toUpperCase(),
-              style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
-                  color: AppColors.gold,
-                  letterSpacing: 0.5)),
           const SizedBox(height: 12),
 
           // Main Bidding Mode Tabs
@@ -989,7 +1234,7 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
           const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [10, 50, 100, 500]
+            children: [200, 500, 1000, 2000]
                 .map((v) => _buildPokerChip(v.toDouble()))
                 .toList(),
           ),
@@ -1039,80 +1284,70 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
     );
   }
 
-  // Render main tab bars
+  // Render main tab bars with Material 3 SegmentedButton
   Widget _buildMainTabs() {
-    return Row(
-      children: _tabs.map((t) {
-        final sel = _betType == t[0];
-        return Expanded(
-          child: GestureDetector(
-            onTap: () => setState(() {
-              _betType = t[0];
-              _rebuildBetType();
-            }),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              margin: const EdgeInsets.symmetric(horizontal: 2.5),
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              decoration: BoxDecoration(
-                gradient: sel
-                    ? const LinearGradient(
-                        colors: [Color(0xFFFFD54F), Color(0xFFFFA000)])
-                    : null,
-                color: sel ? null : Colors.white.withValues(alpha: 0.04),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                    color: sel
-                        ? Colors.transparent
-                        : Colors.white.withValues(alpha: 0.04)),
-              ),
-              child: Center(
-                child: Text(t[1],
-                    style: TextStyle(
-                        color: sel ? Colors.black : Colors.white70,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900)),
-              ),
+    return SizedBox(
+      width: double.infinity,
+      child: SegmentedButton<String>(
+        segments: _tabs.map((t) {
+          return ButtonSegment<String>(
+            value: t[0],
+            label: Text(
+              t[1],
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
             ),
-          ),
-        );
-      }).toList(),
+          );
+        }).toList(),
+        selected: {_betType},
+        showSelectedIcon: false,
+        onSelectionChanged: (newSelection) {
+          HapticFeedback.selectionClick();
+          SoundService.instance.play(Sfx.buttonTap);
+          setState(() {
+            _betType = newSelection.first;
+            _rebuildBetType();
+          });
+        },
+        style: SegmentedButton.styleFrom(
+          backgroundColor: Colors.white.withValues(alpha: 0.04),
+          selectedBackgroundColor: AppColors.gold,
+          selectedForegroundColor: Colors.black,
+          foregroundColor: Colors.white70,
+          side: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          visualDensity: VisualDensity.compact,
+        ),
+      ),
     );
   }
 
   Widget _buildSessionChips() {
-    return Row(
-      children: ['open', 'close'].map((s) {
-        final sel = _session == s;
-        return Padding(
-          padding: const EdgeInsets.only(right: 6),
-          child: GestureDetector(
-            onTap: () => setState(() => _session = s),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: sel
-                    ? AppColors.gold.withValues(alpha: 0.18)
-                    : Colors.white.withValues(alpha: 0.03),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                    color: sel
-                        ? AppColors.gold
-                        : Colors.white.withValues(alpha: 0.04)),
-              ),
-              child: Text(
-                s.toUpperCase(),
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  color: sel ? AppColors.gold : Colors.white54,
-                ),
-              ),
-            ),
-          ),
-        );
-      }).toList(),
+    return SegmentedButton<String>(
+      segments: const [
+        ButtonSegment<String>(
+          value: 'open',
+          label: Text('OPEN', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+        ),
+        ButtonSegment<String>(
+          value: 'close',
+          label: Text('CLOSE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+        ),
+      ],
+      selected: {_session},
+      showSelectedIcon: false,
+      onSelectionChanged: (newSelection) {
+        HapticFeedback.selectionClick();
+        setState(() => _session = newSelection.first);
+      },
+      style: SegmentedButton.styleFrom(
+        backgroundColor: Colors.white.withValues(alpha: 0.03),
+        selectedBackgroundColor: AppColors.gold.withValues(alpha: 0.25),
+        selectedForegroundColor: AppColors.gold,
+        foregroundColor: Colors.white54,
+        side: BorderSide(color: AppColors.gold.withValues(alpha: 0.25)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        visualDensity: VisualDensity.compact,
+      ),
     );
   }
 
@@ -1296,59 +1531,57 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
 
   Widget _subtypeChip(String val, String label) {
     final sel = _pannaSubtype == val;
-    return GestureDetector(
-      onTap: () => setState(() {
-        _pannaSubtype = val;
-        _rebuildBetType();
-      }),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: sel
-              ? AppColors.gold.withValues(alpha: 0.2)
-              : Colors.white.withValues(alpha: 0.02),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: sel ? AppColors.gold : Colors.white10),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: sel ? AppColors.gold : Colors.white54,
-            fontSize: 9,
-            fontWeight: FontWeight.w900,
-          ),
+    return FilterChip(
+      selected: sel,
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          color: sel ? Colors.black : Colors.white70,
         ),
       ),
+      selectedColor: AppColors.gold,
+      backgroundColor: Colors.white.withValues(alpha: 0.04),
+      side: BorderSide(color: sel ? Colors.transparent : Colors.white12),
+      showCheckmark: false,
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      onSelected: (_) {
+        HapticFeedback.selectionClick();
+        setState(() {
+          _pannaSubtype = val;
+          _rebuildBetType();
+        });
+      },
     );
   }
 
   Widget _sangamChip(String val, String label) {
     final sel = _sangamSubtype == val;
-    return GestureDetector(
-      onTap: () => setState(() {
-        _sangamSubtype = val;
-        _rebuildBetType();
-      }),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: sel
-              ? AppColors.gold.withValues(alpha: 0.2)
-              : Colors.white.withValues(alpha: 0.02),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: sel ? AppColors.gold : Colors.white10),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: sel ? AppColors.gold : Colors.white54,
-            fontSize: 9,
-            fontWeight: FontWeight.w900,
-          ),
+    return FilterChip(
+      selected: sel,
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          color: sel ? Colors.black : Colors.white70,
         ),
       ),
+      selectedColor: AppColors.gold,
+      backgroundColor: Colors.white.withValues(alpha: 0.04),
+      side: BorderSide(color: sel ? Colors.transparent : Colors.white12),
+      showCheckmark: false,
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      onSelected: (_) {
+        HapticFeedback.selectionClick();
+        setState(() {
+          _sangamSubtype = val;
+          _rebuildBetType();
+        });
+      },
     );
   }
 
@@ -1376,6 +1609,7 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
         final sel = _numberCtrl.text == p.number;
         return GestureDetector(
           onTap: () {
+            HapticFeedback.selectionClick();
             SoundService.instance.play(Sfx.buttonTap);
             setState(() => _numberCtrl.text = p.number);
           },
@@ -1596,22 +1830,32 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
   Widget _circleButton(String val, bool sel, VoidCallback onTap) {
     return GestureDetector(
       onTap: () {
+        HapticFeedback.selectionClick();
         SoundService.instance.play(Sfx.buttonTap);
         onTap();
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         decoration: BoxDecoration(
-          color: sel ? AppColors.gold : Colors.white.withValues(alpha: 0.03),
+          color: sel ? AppColors.gold : Colors.white.withValues(alpha: 0.04),
           shape: BoxShape.circle,
+          boxShadow: sel
+              ? [
+                  BoxShadow(
+                    color: AppColors.gold.withValues(alpha: 0.35),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ]
+              : null,
           border: Border.all(
-              color: sel ? Colors.transparent : Colors.white10, width: 1),
+              color: sel ? AppColors.gold : Colors.white12, width: 1.2),
         ),
         child: Center(
           child: Text(
             val,
             style: TextStyle(
-              fontSize: 14,
+              fontSize: 15,
               fontWeight: FontWeight.w900,
               color: sel ? Colors.black : Colors.white,
             ),
@@ -1623,23 +1867,36 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
 
   Widget _buildPayoutDisplay(String mult) {
     if (mult.isEmpty) return const SizedBox();
+    final payout = _amount * (double.tryParse(mult) ?? 0);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: AppColors.gold.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.gold.withValues(alpha: 0.2)),
+        color: AppColors.gold.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.gold.withValues(alpha: 0.3)),
       ),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          const Icon(Icons.stars_rounded, color: AppColors.gold, size: 14),
-          const SizedBox(width: 6),
+          Row(
+            children: [
+              const Icon(Icons.stars_rounded, color: AppColors.gold, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                'Odds: ${mult}x',
+                style: const TextStyle(
+                    color: AppColors.goldLight,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12),
+              ),
+            ],
+          ),
           Text(
-            'Potential payout: ₹${(_amount * (double.tryParse(mult) ?? 0)).toStringAsFixed(0)} (${mult}x)',
+            'Win: ₹${payout.toStringAsFixed(0)}',
             style: const TextStyle(
-                color: AppColors.goldLight,
+                color: Colors.white,
                 fontWeight: FontWeight.w900,
-                fontSize: 11),
+                fontSize: 14),
           ),
         ],
       ),
@@ -1648,16 +1905,17 @@ class _MatkaBetSheetState extends State<_MatkaBetSheet> {
 
   Widget _buildPokerChip(double v) {
     final sel = _amount == v;
-    final color = v == 10
+    final color = v == 200
         ? const Color(0xFF1E88E5)
-        : v == 50
+        : v == 500
             ? const Color(0xFF43A047)
-            : v == 100
+            : v == 1000
                 ? const Color(0xFFE53935)
                 : const Color(0xFF8E24AA);
 
     return GestureDetector(
       onTap: () {
+        HapticFeedback.lightImpact();
         SoundService.instance.play(Sfx.buttonTap);
         setState(() => _amount = v);
       },

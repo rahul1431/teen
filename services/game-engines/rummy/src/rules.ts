@@ -109,7 +109,7 @@ export function createInitialState(
   }
 
   const wildIndicator = deck[cursor++]
-  const wildRank = wildIndicator.suit === 'JK' ? '__NONE__' : wildIndicator.rank
+  const wildRank = (wildIndicator.suit === 'JK' || wildIndicator.rank === 'JOKER') ? 'A' : wildIndicator.rank
   const openPile = [deck[cursor++]]
   const closedPile = deck.slice(cursor)
 

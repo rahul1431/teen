@@ -18,22 +18,22 @@ export const antdTheme: ThemeConfig = {
     colorText: tokens.color.textPrimary,
     colorTextSecondary: tokens.color.textSecondary,
     colorTextTertiary: tokens.color.textMuted,
-    colorBorder: 'rgba(226, 232, 240, 0.9)',
-    colorBorderSecondary: 'rgba(241, 245, 249, 0.9)',
+    colorBorder: '#E2E8F0',
+    colorBorderSecondary: '#F1F5F9',
   },
   components: {
     Layout: {
-      siderBg: tokens.color.inkBase,
+      siderBg: tokens.color.sidebarBase,
       headerBg: 'transparent',
       bodyBg: tokens.color.bgLayout,
     },
     Menu: {
       darkItemBg: 'transparent',
       darkItemColor: tokens.color.textOnDarkMuted,
-      darkItemHoverColor: tokens.color.goldHover,
-      darkItemHoverBg: 'rgba(255, 255, 255, 0.05)',
-      darkItemSelectedBg: 'rgba(212, 175, 55, 0.15)',
-      darkItemSelectedColor: tokens.color.gold,
+      darkItemHoverColor: '#FBBF24',
+      darkItemHoverBg: 'rgba(255, 255, 255, 0.06)',
+      darkItemSelectedBg: 'linear-gradient(90deg, rgba(217, 119, 6, 0.25) 0%, rgba(217, 119, 6, 0.08) 100%)',
+      darkItemSelectedColor: '#F59E0B',
       darkSubMenuItemBg: 'transparent',
       itemMarginInline: 10,
       itemBorderRadius: tokens.radius.base,
@@ -42,7 +42,7 @@ export const antdTheme: ThemeConfig = {
     Card: {
       borderRadiusLG: tokens.radius.card,
       boxShadowTertiary: tokens.shadow.card,
-      colorBorderSecondary: 'rgba(226, 232, 240, 0.8)',
+      colorBorderSecondary: '#E2E8F0',
     },
     Button: {
       borderRadius: tokens.radius.base,
@@ -53,8 +53,8 @@ export const antdTheme: ThemeConfig = {
     Table: {
       borderRadius: tokens.radius.card,
       headerBg: '#F8FAFC',
-      headerColor: '#475569',
-      rowHoverBg: 'rgba(212, 175, 55, 0.04)',
+      headerColor: '#334155',
+      rowHoverBg: 'rgba(217, 119, 6, 0.04)',
       borderColor: '#E2E8F0',
     },
     Input: {
@@ -84,4 +84,3 @@ export const antdTheme: ThemeConfig = {
     },
   },
 }
-

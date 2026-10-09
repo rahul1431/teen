@@ -2,8 +2,8 @@ import { CronJob } from 'cron'
 import { pool } from '../../db/pool'
 import { syncCurrentMatches } from '../../helpers/cricket-sync'
 import { finalizeMatch } from '../../helpers/cricket-finalize'
+import { syncMatchOdds, syncMatchResults } from '../../helpers/odds-api-client'
 import { tryConsumeApiCall } from './apiBudget'
-import { createDefaultContests } from './contestFactory'
 
 async function isAutomationEnabled(): Promise<boolean> {
   const res = await pool.query("SELECT special_rules FROM game_configs WHERE game_type = 'cricket'")
@@ -16,29 +16,6 @@ async function getSyncIntervalMinutes(): Promise<number> {
   return typeof minutes === 'number' && minutes > 0 ? minutes : 15
 }
 
-// Both eligibility check and contest creation for one match, isolated so
-// one bad match can't stop the rest of the tick.
-async function autoCreateContestsIfEligible(matchId: string): Promise<void> {
-  try {
-    const matchRes = await pool.query('SELECT team_a, team_b FROM cricket_matches WHERE id = $1', [matchId])
-    if (!matchRes.rows.length) return
-    const { team_a, team_b } = matchRes.rows[0]
-    const playersRes = await pool.query(
-      'SELECT DISTINCT team_name FROM cricket_fantasy_players WHERE team_name = ANY($1)',
-      [[team_a, team_b]],
-    )
-    const seededTeams = new Set(playersRes.rows.map((r: any) => r.team_name))
-    if (!seededTeams.has(team_a) || !seededTeams.has(team_b)) {
-      console.log(`[Cricket Automation] Skipping contest creation for match ${matchId} — no seeded squad for "${team_a}" and/or "${team_b}"`)
-      return
-    }
-    const created = await createDefaultContests(pool, matchId)
-    if (created > 0) console.log(`[Cricket Automation] Created ${created} contests for match ${matchId} (${team_a} vs ${team_b})`)
-  } catch (err: any) {
-    console.error(`[Cricket Automation] Error auto-creating contests for match ${matchId}:`, err.message)
-  }
-}
-
 async function runTick(): Promise<void> {
   if (!(await isAutomationEnabled())) return
 
@@ -47,18 +24,32 @@ async function runTick(): Promise<void> {
     return
   }
 
+  // 1. Sync match list and status updates from CricAPI
   let syncResult: { insertedIds: string[]; updatedCount: number }
   try {
     syncResult = await syncCurrentMatches(pool)
+    console.log(`[Cricket Automation] Synced matches: ${syncResult.insertedIds.length} new, ${syncResult.updatedCount} updated`)
   } catch (err: any) {
-    console.error('[Cricket Automation] Sync failed:', err.message)
-    return
+    console.error('[Cricket Automation] Match list sync failed:', err.message)
   }
 
-  for (const matchId of syncResult.insertedIds) {
-    await autoCreateContestsIfEligible(matchId)
+  // 2. Sync match-winner odds from The Odds API
+  try {
+    await syncMatchOdds(pool)
+    console.log('[Cricket Automation] Match odds sync completed successfully')
+  } catch (err: any) {
+    console.error('[Cricket Automation] Odds sync failed:', err.message)
   }
 
+  // 2.5. Sync match results/scores from The Odds API to auto-settle completed matches
+  try {
+    await syncMatchResults(pool)
+    console.log('[Cricket Automation] Match results sync completed successfully')
+  } catch (err: any) {
+    console.error('[Cricket Automation] Match results sync failed:', err.message)
+  }
+
+  // 3. Auto-finalize bets for closed matches
   const closedRes = await pool.query("SELECT id FROM cricket_matches WHERE status = 'closed'")
   for (const row of closedRes.rows) {
     if (!(await tryConsumeApiCall(pool))) {
@@ -67,7 +58,7 @@ async function runTick(): Promise<void> {
     }
     try {
       const res = await finalizeMatch(pool, row.id)
-      console.log(`[Cricket Automation] Finalized match ${row.id}: ${res.settledLeagues} leagues, ₹${res.totalPaid} paid`)
+      console.log(`[Cricket Automation] Finalized match ${row.id}: ${res.settledBets} bets settled. Winner: ${res.resultWinner}`)
     } catch (err: any) {
       console.error(`[Cricket Automation] Finalize failed for match ${row.id} (will retry next tick):`, err.message)
     }

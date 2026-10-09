@@ -140,7 +140,7 @@ class _AviatorPageState extends State<AviatorPage>
   // ── Socket event handlers ──────────────────────────────────────────────
   void _onRoundStart(dynamic data) {
     if (!mounted) return;
-    final ms = (data?['betting_time_ms'] as num?)?.toInt() ?? 5000;
+    final ms = int.tryParse(data?['betting_time_ms']?.toString() ?? '') ?? (data?['betting_time_ms'] is num ? (data?['betting_time_ms'] as num).toInt() : 5000);
     setState(() {
       _phase = 'betting';
       _betPlaced1 = false;
@@ -153,9 +153,9 @@ class _AviatorPageState extends State<AviatorPage>
       _prize2 = 0.0;
       _serverAuto1 = false;
       _serverAuto2 = false;
-      _multiplier = 0.00;
+      _multiplier = 1.00;
       _serverMultiplier = 1.00;
-      _displayMultiplier.value = 0.00;
+      _displayMultiplier.value = 1.00;
       _crashAt = null;
       _history = _parseHistory(data?['history']);
       _bettingSecondsLeft = (ms / 1000).ceil();
@@ -196,19 +196,17 @@ class _AviatorPageState extends State<AviatorPage>
     _bettingTimer?.cancel();
     setState(() {
       _phase = 'flying';
-      // Display counts up from 0x at takeoff; the server's authoritative
-      // multiplier (and all payouts) still start at 1.00x — the render loop
-      // eases the shown value 0 → 1.00+ in the first few frames.
-      _multiplier = 0.00;
+      // Multiplier begins at 1.00x at takeoff and smoothly climbs as server ticks arrive
+      _multiplier = 1.00;
       _serverMultiplier = 1.00;
-      _displayMultiplier.value = 0.00;
+      _displayMultiplier.value = 1.00;
     });
   }
 
   void _onTick(dynamic data) {
-    final m = (data?['multiplier'] as num?)?.toDouble();
+    final m = double.tryParse(data?['multiplier']?.toString() ?? '') ?? (data?['multiplier'] is num ? (data?['multiplier'] as num).toDouble() : null);
     if (m == null) return;
-    final seq = data?['sequence_id'] as int?;
+    final seq = int.tryParse(data?['sequence_id']?.toString() ?? '');
     if (seq != null && seq <= _lastSequenceId) return; // drop out-of-order tick
     if (seq != null) _lastSequenceId = seq;
     _serverMultiplier = m;
@@ -234,7 +232,7 @@ class _AviatorPageState extends State<AviatorPage>
 
   void _onCrashed(dynamic data) {
     if (!mounted) return;
-    final crash = (data?['crash_at'] as num?)?.toDouble() ?? _serverMultiplier;
+    final crash = double.tryParse(data?['crash_at']?.toString() ?? '') ?? (data?['crash_at'] is num ? (data?['crash_at'] as num).toDouble() : _serverMultiplier);
     HapticFeedback.heavyImpact();
     setState(() {
       _phase = 'crashed';
@@ -257,7 +255,7 @@ class _AviatorPageState extends State<AviatorPage>
           : status == 'crashed'
               ? 'crashed'
               : 'betting';
-      _serverMultiplier = (data?['multiplier'] as num?)?.toDouble() ?? 1.00;
+      _serverMultiplier = double.tryParse(data?['multiplier']?.toString() ?? '') ?? (data?['multiplier'] is num ? (data?['multiplier'] as num).toDouble() : 1.00);
       _multiplier = _serverMultiplier;
       _displayMultiplier.value = _multiplier;
       _history = _parseHistory(data?['history']);
@@ -266,7 +264,7 @@ class _AviatorPageState extends State<AviatorPage>
 
   void _onBetPlaced(dynamic data) {
     if (!mounted) return;
-    final betIndex = data?['bet_index'] as int? ?? 1;
+    final betIndex = int.tryParse(data?['bet_index']?.toString() ?? '') ?? 1;
     final serverAuto = data?['auto_cashout'] != null;
     setState(() {
       if (betIndex == 1) {
@@ -283,9 +281,9 @@ class _AviatorPageState extends State<AviatorPage>
 
   void _onCashedOut(dynamic data) {
     if (!mounted) return;
-    final m = (data?['multiplier'] as num?)?.toDouble() ?? _serverMultiplier;
-    final betIndex = data?['bet_index'] as int? ?? 1;
-    final prize = (data?['prize'] as num?)?.toDouble() ?? 0.0;
+    final m = double.tryParse(data?['multiplier']?.toString() ?? '') ?? (data?['multiplier'] is num ? (data?['multiplier'] as num).toDouble() : _serverMultiplier);
+    final betIndex = int.tryParse(data?['bet_index']?.toString() ?? '') ?? 1;
+    final prize = double.tryParse(data?['prize']?.toString() ?? '') ?? (data?['prize'] is num ? (data?['prize'] as num).toDouble() : 0.0);
     setState(() {
       if (betIndex == 1) {
         _cashedOut1 = true;
@@ -450,10 +448,10 @@ class _AviatorPageState extends State<AviatorPage>
   }
 
   Widget _historyRow(Map<String, dynamic> bet) {
-    final amount = (bet['amount'] as num?)?.toDouble() ?? 0;
-    final payout = (bet['payout'] as num?)?.toDouble() ?? 0;
-    final cashoutM = (bet['cashout_multiplier'] as num?)?.toDouble();
-    final crashAt = (bet['crash_at'] as num?)?.toDouble() ?? 0;
+    final amount = double.tryParse(bet['amount']?.toString() ?? '') ?? (bet['amount'] is num ? (bet['amount'] as num).toDouble() : 0.0);
+    final payout = double.tryParse(bet['payout']?.toString() ?? '') ?? (bet['payout'] is num ? (bet['payout'] as num).toDouble() : 0.0);
+    final cashoutM = double.tryParse(bet['cashout_multiplier']?.toString() ?? '') ?? (bet['cashout_multiplier'] is num ? (bet['cashout_multiplier'] as num).toDouble() : null);
+    final crashAt = double.tryParse(bet['crash_at']?.toString() ?? '') ?? (bet['crash_at'] is num ? (bet['crash_at'] as num).toDouble() : 0.0);
     final won = payout > 0;
     final when =
         DateTime.tryParse(bet['created_at']?.toString() ?? '')?.toLocal();
@@ -1082,16 +1080,16 @@ class _AviatorPageState extends State<AviatorPage>
                     Icons.remove,
                     () => setState(() {
                           if (betIndex == 1) {
-                            _autoTarget1 =
-                                (_autoTarget1 - 0.5).clamp(1.5, 50.0);
+                            final next = _autoTarget1 <= 1.10 ? _autoTarget1 - 0.02 : (_autoTarget1 <= 2.0 ? _autoTarget1 - 0.1 : _autoTarget1 - 0.5);
+                            _autoTarget1 = double.parse(next.clamp(1.02, 100.0).toStringAsFixed(2));
                           } else {
-                            _autoTarget2 =
-                                (_autoTarget2 - 0.5).clamp(1.5, 50.0);
+                            final next = _autoTarget2 <= 1.10 ? _autoTarget2 - 0.02 : (_autoTarget2 <= 2.0 ? _autoTarget2 - 0.1 : _autoTarget2 - 0.5);
+                            _autoTarget2 = double.parse(next.clamp(1.02, 100.0).toStringAsFixed(2));
                           }
                         })),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 6),
-                  child: Text('${target.toStringAsFixed(1)}x',
+                  child: Text('${target.toStringAsFixed(2)}x',
                       style: const TextStyle(
                           color: AppColors.gold,
                           fontWeight: FontWeight.w900,
@@ -1101,11 +1099,11 @@ class _AviatorPageState extends State<AviatorPage>
                     Icons.add,
                     () => setState(() {
                           if (betIndex == 1) {
-                            _autoTarget1 =
-                                (_autoTarget1 + 0.5).clamp(1.5, 50.0);
+                            final next = _autoTarget1 < 1.10 ? _autoTarget1 + 0.02 : (_autoTarget1 < 2.0 ? _autoTarget1 + 0.1 : _autoTarget1 + 0.5);
+                            _autoTarget1 = double.parse(next.clamp(1.02, 100.0).toStringAsFixed(2));
                           } else {
-                            _autoTarget2 =
-                                (_autoTarget2 + 0.5).clamp(1.5, 50.0);
+                            final next = _autoTarget2 < 1.10 ? _autoTarget2 + 0.02 : (_autoTarget2 < 2.0 ? _autoTarget2 + 0.1 : _autoTarget2 + 0.5);
+                            _autoTarget2 = double.parse(next.clamp(1.02, 100.0).toStringAsFixed(2));
                           }
                         })),
               ],

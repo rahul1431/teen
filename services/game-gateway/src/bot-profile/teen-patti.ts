@@ -101,12 +101,41 @@ export async function getTeenPattiBotProfile(
 
 export function pickBotAction(profile: TeenPattiBotProfile): 'fold' | 'call' | 'raise' {
   const rand = Math.random()
-  if (rand < profile.fold_probability) return 'fold'
-  if (rand < profile.fold_probability + profile.call_probability) return 'call'
+  const foldP = profile.fold_probability
+  const callP = profile.call_probability
+  if (rand < foldP) return 'fold'
+  if (rand < foldP + callP) return 'call'
   return 'raise'
 }
 
-export function pickBotDelay(profile: TeenPattiBotProfile): number {
-  // ±30% jitter so bots don't all act on the same beat.
-  return Math.round(profile.avg_decision_delay_ms * (0.7 + Math.random() * 0.6))
+/**
+ * Cognitive Reaction Timing:
+ * Human players do not act with flat uniform delay. Obvious folds happen faster,
+ * simple calls have modest deliberation, while aggressive raises take longer
+ * as players evaluate bet size and risk.
+ */
+export function pickBotDelay(
+  profile: TeenPattiBotProfile,
+  action?: 'fold' | 'call' | 'raise'
+): number {
+  const base = profile.avg_decision_delay_ms || 2000
+  
+  // Natural variation: Box-Muller Gaussian approximation centered at 1.0 (std dev ~0.15)
+  const u1 = Math.max(0.0001, Math.random())
+  const u2 = Math.random()
+  const gaussianJitter = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2) * 0.15 + 1.0
+
+  let actionMultiplier = 1.0
+  if (action === 'fold') {
+    actionMultiplier = 0.75 // Quicker discard
+  } else if (action === 'raise') {
+    actionMultiplier = 1.35 // Contemplation before aggressive bet
+  } else if (action === 'call') {
+    actionMultiplier = 0.95 // Moderate pace
+  }
+
+  const delay = Math.round(base * gaussianJitter * actionMultiplier)
+  // Clamp between human floor (750ms) and ceiling (6000ms)
+  return Math.max(750, Math.min(6000, delay))
 }
+

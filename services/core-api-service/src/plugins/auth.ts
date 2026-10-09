@@ -39,9 +39,26 @@ function recordDeviceFingerprint(db: Pool, userId: string, fingerprint: unknown,
 export function authPlugin(db: Pool, redis: Redis) {
   return async function (app: FastifyInstance) {
     app.post('/auth/send-otp', async (req, reply) => {
-      const body = z.object({ phone: z.string().regex(/^\d{10}$/) }).parse(req.body)
-      const devOtp = await sendOtp(redis, body.phone)
-      return reply.send({ success: true, message: 'OTP sent', ...(devOtp ? { otp: devOtp } : {}) })
+      const body = z.object({
+        phone: z.string().regex(/^\d{10}$/),
+        reason: z.enum(['register', 'reset']).optional()
+      }).parse(req.body)
+      try {
+        const devOtp = await sendOtp(redis, body.phone, body.reason)
+        return reply.send({ success: true, message: 'OTP sent', ...(devOtp ? { otp: devOtp } : {}) })
+      } catch (err: any) {
+        return reply.code(400).send({ error: err.message || 'Failed to send OTP' })
+      }
+    })
+
+    app.post('/auth/verify-otp', async (req, reply) => {
+      const body = z.object({
+        phone: z.string().regex(/^\d{10}$/),
+        otp: z.string().length(6),
+      }).parse(req.body)
+      const otpValid = await verifyOtp(redis, body.phone, body.otp, false)
+      if (!otpValid) return reply.code(400).send({ error: 'Invalid or expired OTP' })
+      return reply.send({ success: true, message: 'OTP verified' })
     })
 
     app.post('/auth/register', async (req, reply) => {
@@ -74,12 +91,28 @@ export function authPlugin(db: Pool, redis: Redis) {
       // docs/superpowers/specs/2026-07-20-agent-commission-system-design.md
       let referredBy: string | null = null
       let referredByAgentId: string | null = null
-      if (body.referral_code) {
-        const ref = await db.query('SELECT id FROM users WHERE referral_code = $1', [body.referral_code])
+      
+      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null
+      let referralCodeToUse = body.referral_code?.trim() || null
+
+      if (!referralCodeToUse && ip) {
+        const lastClick = await db.query(
+          `SELECT ref_code FROM referral_clicks 
+           WHERE ip_address = $1 AND converted_user_id IS NULL AND clicked_at >= NOW() - INTERVAL '24 hours'
+           ORDER BY clicked_at DESC LIMIT 1`,
+          [ip]
+        )
+        if (lastClick.rows.length > 0) {
+          referralCodeToUse = lastClick.rows[0].ref_code
+        }
+      }
+
+      if (referralCodeToUse) {
+        const ref = await db.query('SELECT id FROM users WHERE UPPER(referral_code) = UPPER($1)', [referralCodeToUse])
         if (ref.rows.length > 0) {
           referredBy = ref.rows[0].id
         } else {
-          const agentRef = await db.query(`SELECT id FROM agents WHERE referral_code = $1 AND status = 'active'`, [body.referral_code])
+          const agentRef = await db.query(`SELECT id FROM agents WHERE UPPER(referral_code) = UPPER($1) AND status = 'active'`, [referralCodeToUse])
           if (agentRef.rows.length > 0) referredByAgentId = agentRef.rows[0].id
         }
       }
@@ -93,6 +126,34 @@ export function authPlugin(db: Pool, redis: Redis) {
         )
         const user = userRes.rows[0]
         await client.query('INSERT INTO wallets (user_id) VALUES ($1)', [user.id])
+
+        // Automatically attribute conversion in Lead Manager
+        const cleanRegPhone = body.phone.replace(/\D/g, '')
+        if (cleanRegPhone.length >= 10) {
+          const suffix = cleanRegPhone.slice(-10)
+          await client.query(
+            `UPDATE marketing_leads 
+             SET status = 'converted', updated_at = NOW() 
+             WHERE LENGTH(REGEXP_REPLACE(contact_phone, '\\D', '', 'g')) >= 10 
+               AND RIGHT(REGEXP_REPLACE(contact_phone, '\\D', '', 'g'), 10) = $1`,
+            [suffix]
+          )
+        }
+
+        // Link conversion attribution to referral_clicks
+        if (referralCodeToUse) {
+          await client.query(
+            `UPDATE referral_clicks SET converted_user_id = $1
+             WHERE id = (
+               SELECT id FROM referral_clicks
+               WHERE UPPER(ref_code) = UPPER($2) 
+                 AND converted_user_id IS NULL
+                 AND (ip_address = $3 OR $3 IS NULL)
+               ORDER BY clicked_at DESC LIMIT 1
+             )`,
+            [user.id, referralCodeToUse, ip]
+          )
+        }
         if (referredBy) {
           await client.query(
             `INSERT INTO referrals (referrer_id, referee_id, reward_amount) VALUES ($1, $2, $3)`,

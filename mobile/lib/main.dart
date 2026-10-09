@@ -9,6 +9,7 @@ import 'core/monitor/monitor_service.dart';
 import 'core/monitor/socket_monitor_wrapper.dart';
 import 'core/services/locale_service.dart';
 import 'core/services/config_reload_service.dart';
+import 'core/services/app_config_service.dart';
 import 'core/socket/socket_service.dart';
 import 'app.dart';
 
@@ -37,41 +38,63 @@ class _AppLifecycleMonitor extends WidgetsBindingObserver {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Hive.initFlutter();
-  await Hive.openBox('settings');
-  await Hive.openBox('wallet');
 
-  // Load saved language before first frame
-  await locale.load();
+  // 1. Hive local storage
+  try {
+    await Hive.initFlutter();
+    await Hive.openBox('settings');
+    await Hive.openBox('wallet');
+  } catch (e) {
+    if (kDebugMode) debugPrint('[main] Hive init error: $e');
+  }
 
-  // Lock to portrait mode
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
+  // 2. App Config Service
+  try {
+    await AppConfigService.init();
+    await AppConfigService.fetchRemoteConfig()
+        .timeout(const Duration(milliseconds: 1500));
+  } catch (e) {
+    if (kDebugMode) debugPrint('[main] AppConfigService init error: $e');
+  }
 
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.light,
-  ));
+  // 3. Locale Service
+  try {
+    await locale.load();
+  } catch (e) {
+    if (kDebugMode) debugPrint('[main] Locale load error: $e');
+  }
 
-  // Firebase — optional. If google-services.json isn't bundled, every
-  // Firebase call (including FirebaseMessaging.instance) throws, so guard all
-  // of it behind a single flag and never let it crash startup.
+  // 4. System orientations and UI overlay
+  try {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+    ));
+  } catch (_) {}
+
+  // 5. Firebase (Safe optional initialization)
   bool firebaseReady = false;
   try {
     await Firebase.initializeApp();
     firebaseReady = true;
-    
+
     FlutterError.onError = (errorDetails) {
-      FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
+      try {
+        FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
+      } catch (_) {}
     };
     PlatformDispatcher.instance.onError = (error, stack) {
-      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+      try {
+        FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+      } catch (_) {}
       return true;
     };
   } catch (_) {
-    // Firebase not configured — continue without push notifications/crashlytics.
+    // Firebase not configured or missing google-services.json
   }
 
   if (firebaseReady) {
@@ -79,62 +102,65 @@ void main() async {
       FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
       await FirebaseMessaging.instance
           .requestPermission(alert: true, badge: true, sound: true);
-    } catch (_) {
-      // Messaging unavailable — ignore.
-    }
+    } catch (_) {}
   }
 
-  // ── App Monitor SDK ──────────────────────────────────────────────────────
-  // Init MonitorService before runApp so the session_id exists from the first frame.
-  await MonitorService.instance.init();
+  // 6. Monitor & Analytics SDK
+  try {
+    await MonitorService.instance.init();
+    WidgetsBinding.instance.addObserver(_AppLifecycleMonitor());
 
-  // Register lifecycle observer to emit session end events
-  WidgetsBinding.instance.addObserver(_AppLifecycleMonitor());
+    final prevFlutterErrorHandler = FlutterError.onError;
+    FlutterError.onError = (FlutterErrorDetails details) {
+      try {
+        MonitorService.instance.enqueue({
+          'event_type': 'error',
+          'screen': MonitorService.instance.currentScreen,
+          'error_message': details.exceptionAsString().substring(
+              0, details.exceptionAsString().length.clamp(0, 500)),
+          'properties': {
+            'stack': details.stack?.toString().substring(
+                  0, details.stack.toString().length.clamp(0, 1000)) ?? '',
+            'source': 'flutter_error',
+          },
+        });
+      } catch (_) {}
 
-  // Override Flutter framework errors (widget build exceptions, layout errors, etc.)
-  final prevFlutterErrorHandler = FlutterError.onError;
-  FlutterError.onError = (FlutterErrorDetails details) {
-    MonitorService.instance.enqueue({
-      'event_type': 'error',
-      'screen': MonitorService.instance.currentScreen,
-      'error_message': details.exceptionAsString()
-          .substring(0, details.exceptionAsString().length.clamp(0, 500)),
-      'properties': {
-        'stack': details.stack?.toString().substring(
-              0, details.stack.toString().length.clamp(0, 1000)) ?? '',
-        'source': 'flutter_error',
-      },
-    });
-    if (kDebugMode) {
-      FlutterError.presentError(details);
-    } else {
-      prevFlutterErrorHandler?.call(details);
-    }
-  };
+      if (kDebugMode) {
+        FlutterError.presentError(details);
+      } else {
+        prevFlutterErrorHandler?.call(details);
+      }
+    };
 
-  // Override platform/isolate errors (async exceptions not caught by Flutter framework)
-  PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
-    MonitorService.instance.enqueue({
-      'event_type': 'error',
-      'screen': MonitorService.instance.currentScreen,
-      'error_message': error.toString()
-          .substring(0, error.toString().length.clamp(0, 500)),
-      'properties': {
-        'stack': stack.toString().substring(
-              0, stack.toString().length.clamp(0, 1000)),
-        'source': 'platform_dispatcher',
-      },
-    });
-    return true; // handled
-  };
+    PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+      try {
+        MonitorService.instance.enqueue({
+          'event_type': 'error',
+          'screen': MonitorService.instance.currentScreen,
+          'error_message': error.toString().substring(
+              0, error.toString().length.clamp(0, 500)),
+          'properties': {
+            'stack': stack.toString().substring(
+                  0, stack.toString().length.clamp(0, 1000)),
+            'source': 'platform_dispatcher',
+          },
+        });
+      } catch (_) {}
+      return true;
+    };
+  } catch (e) {
+    if (kDebugMode) debugPrint('[main] MonitorService init error: $e');
+  }
 
-  // Attach WebSocket event monitoring (no changes to SocketService required)
-  // ignore: unused_local_variable — listener is kept alive by ValueNotifier reference
-  final socketMonitorWrapper = SocketMonitorWrapper(SocketService());
+  // 7. Sockets and Realtime Reload Service
+  try {
+    SocketMonitorWrapper(SocketService());
+    ConfigReloadService().init();
+  } catch (e) {
+    if (kDebugMode) debugPrint('[main] Socket/Config services error: $e');
+  }
 
-  // Initialize config reload listener for game config updates from server
-  ConfigReloadService().init();
-  // ─────────────────────────────────────────────────────────────────────────
-
+  // 8. Always launch the app
   runApp(const MyOnlineJokerApp());
 }

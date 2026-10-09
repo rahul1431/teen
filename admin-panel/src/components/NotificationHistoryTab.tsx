@@ -18,6 +18,10 @@ interface Campaign {
   read_rate: number
   sent_by_username: string | null
   created_at: string
+  scheduled_for?: string
+  status: 'pending' | 'processing' | 'sent' | 'failed'
+  image_url?: string | null
+  segment_type?: string | null
 }
 
 export function NotificationHistoryTab() {
@@ -53,12 +57,43 @@ export function NotificationHistoryTab() {
   }
 
   const columns: ColumnsType<Campaign> = [
-    { title: 'Title', dataIndex: 'title' },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      render: (v) => {
+        let color = 'default'
+        if (v === 'pending') color = 'orange'
+        else if (v === 'processing') color = 'blue'
+        else if (v === 'sent') color = 'green'
+        else if (v === 'failed') color = 'red'
+        return <Tag color={color}>{(v || 'sent').toUpperCase()}</Tag>
+      }
+    },
+    {
+      title: 'Title',
+      dataIndex: 'title',
+      render: (v, row) => (
+        <span>
+          {v} {row.image_url && <span title={row.image_url} style={{ cursor: 'pointer' }}>🖼️</span>}
+        </span>
+      ),
+    },
     { title: 'Type', dataIndex: 'type', render: (v) => <Tag>{v}</Tag> },
     {
-      title: 'Target',
+      title: 'Target / Segment',
       dataIndex: 'target_type',
-      render: (v, row) => (v === 'all' ? 'All Users' : `User: ${row.target_user_id?.slice(0, 8)}…`),
+      render: (v, row) => {
+        if (v === 'all') {
+          const map: Record<string, string> = {
+            all: 'All Users',
+            active_7d: 'Active 7 Days',
+            inactive_7d: 'Inactive 7 Days',
+            low_balance: 'Balance < ₹100',
+          }
+          return map[row.segment_type || 'all'] || 'All Users'
+        }
+        return `User: ${row.target_user_id?.slice(0, 8)}…`
+      },
     },
     { title: 'Sent By', dataIndex: 'sent_by_username', render: (v) => v ?? '—' },
     { title: 'Recipients', dataIndex: 'total_recipients' },
@@ -68,7 +103,14 @@ export function NotificationHistoryTab() {
       dataIndex: 'read_rate',
       render: (v, row) => <Progress percent={Math.round(v * 100)} size="small" format={() => `${row.read_count}/${row.total_recipients}`} />,
     },
-    { title: 'Sent At', dataIndex: 'created_at', render: (v) => new Date(v).toLocaleString('en-IN') },
+    {
+      title: 'Sent/Scheduled At',
+      dataIndex: 'created_at',
+      render: (v, row) => {
+        const date = row.status === 'pending' && row.scheduled_for ? row.scheduled_for : v
+        return new Date(date).toLocaleString('en-IN')
+      }
+    },
   ]
 
   return (

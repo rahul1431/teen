@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
+import '../../../core/services/app_config_service.dart';
 import '../../../shared/theme/app_theme.dart';
 import 'history_page.dart';
 
@@ -27,6 +28,8 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   double? _balanceValue;
   double _feePercent = 5; // overwritten by the live game_configs value once loaded
   final _stakes = [10.0, 50.0, 100.0, 500.0, 1000.0];
+  Timer? _searchingTimer;
+  StateSetter? _dialogSetState;
 
   String get _variationLabel {
     switch (widget.variation) {
@@ -105,7 +108,9 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   @override
   void initState() {
     super.initState();
-    _socket.connect();
+    if (!AppConfigService.isSafeMode()) {
+      _socket.connect();
+    }
     _loadBalance();
     _loadFeePercent();
     _attachRoomJoinedListener();
@@ -114,18 +119,20 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       if (data is Map) {
         setState(() {
           if (data['seconds_remaining'] != null) {
-            _secondsRemaining = (data['seconds_remaining'] as num).toInt();
+            _secondsRemaining = int.tryParse(data['seconds_remaining'].toString()) ?? (data['seconds_remaining'] is num ? (data['seconds_remaining'] as num).toInt() : 10);
           }
           if (data['players'] != null && data['players'] is List) {
             _queuedPlayers = List<Map<String, dynamic>>.from(
                 (data['players'] as List).map((p) => Map<String, dynamic>.from(p)));
           }
         });
+        _dialogSetState?.call(() {});
       }
     });
     _errorSub = _socket.on(SocketEvents.errorEvent).listen((data) {
       if (!mounted) return;
       setState(() => _searching = false);
+      _dismissSearchingDialog();
       final msg = (data is Map ? data['message'] as String? : null) ??
           'Connection error. Please retry.';
       ScaffoldMessenger.of(context).showSnackBar(
@@ -153,12 +160,14 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       _roomJoinedSub?.cancel();
       _roomJoinedSub = null;
       setState(() => _searching = false);
+      _dismissSearchingDialog();
       context.push('/games/teen-patti/play/${data['room_id']}', extra: data);
     });
   }
 
   @override
   void dispose() {
+    _searchingTimer?.cancel();
     _roomJoinedSub?.cancel();
     _errorSub?.cancel();
     _statusSub?.cancel();
@@ -166,6 +175,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   }
 
   Future<void> _loadBalance() async {
+    if (AppConfigService.isSafeMode()) return;
     try {
       final res = await ApiClient().dio.get('/api/wallet/balance');
       if (!mounted) return;
@@ -188,6 +198,10 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
   }
 
   void _joinMatchmaking() {
+    if (AppConfigService.isSafeMode()) {
+      context.pushReplacement('/games/teen-patti/play/offline-practice');
+      return;
+    }
     if (!_socket.isConnected) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Not connected to server. Attempting to reconnect…'),
@@ -209,11 +223,132 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       _secondsRemaining = 60;
       _queuedPlayers = [{'username': 'You', 'isBot': false}];
     });
+    _showSearchingDialog();
+    
+    _searchingTimer?.cancel();
+    _searchingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || !_searching) {
+        timer.cancel();
+        return;
+      }
+      if (_secondsRemaining > 0) {
+        setState(() {
+          _secondsRemaining--;
+        });
+        _dialogSetState?.call(() {});
+      } else {
+        timer.cancel();
+      }
+    });
+
     _socket.emit(SocketEvents.joinMatchmaking, {
       'game_type': 'teen_patti',
       'stake': _selectedStake,
       'variation': widget.variation,
     });
+  }
+
+  void _showSearchingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        final accent = _variationGradient;
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            _dialogSetState = setDialogState;
+            return AlertDialog(
+              backgroundColor: AppColors.cardBg,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: BorderSide(color: accent.last.withValues(alpha: 0.5))),
+              contentPadding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(
+                        width: 22, height: 22,
+                        child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 2.5),
+                      ),
+                      const SizedBox(width: 10),
+                      Text('Finding players for $_variationLabel… (${_secondsRemaining}s)',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: List.generate(4, (index) {
+                      final hasPlayer = index < _queuedPlayers.length;
+                      final player = hasPlayer ? _queuedPlayers[index] : null;
+                      final isBot = player?['isBot'] == true;
+                      final name = player?['username'] ?? 'Waiting…';
+
+                      return Container(
+                        width: 64,
+                        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                        decoration: BoxDecoration(
+                          color: hasPlayer ? AppColors.gold.withValues(alpha: 0.15) : Colors.black26,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: hasPlayer ? AppColors.gold : Colors.white12,
+                            width: hasPlayer ? 1.5 : 1.0,
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              hasPlayer ? (isBot ? Icons.smart_toy_rounded : Icons.person_rounded) : Icons.hourglass_empty_rounded,
+                              size: 20,
+                              color: hasPlayer ? AppColors.gold : Colors.white30,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                                color: hasPlayer ? Colors.white : Colors.white38,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 22),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: () {
+                        _cancelSearch();
+                      },
+                      style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: AppColors.red)),
+                      child: const Text('Cancel',
+                          style: TextStyle(color: AppColors.red)),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    ).then((_) {
+      _dialogSetState = null;
+    });
+  }
+
+  void _dismissSearchingDialog() {
+    if (_dialogSetState != null) {
+      _dialogSetState = null;
+      Navigator.of(context, rootNavigator: true).pop();
+    }
   }
 
   void _showLowBalanceDialog() {
@@ -231,8 +366,10 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
           ],
         ),
         content: Text(
-          'You need ₹${_selectedStake.toInt()} to join this table.\n'
-          'Your balance is ₹${_balance ?? '0'}.\n\nAdd money to start playing.',
+          AppConfigService.isSafeMode()
+              ? 'You need ${_selectedStake.toInt()} 🪙 to join this table.\nYour balance is ${_balance ?? '10,000'} 🪙.\n\nCollect daily bonus coins to keep playing.'
+              : 'You need ₹${_selectedStake.toInt()} to join this table.\n'
+                'Your balance is ₹${_balance ?? '0'}.\n\nAdd money to start playing.',
           style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
         ),
         actions: [
@@ -241,24 +378,26 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
             child: const Text('Cancel',
                 style: TextStyle(color: AppColors.textSecondary)),
           ),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(ctx);
-              context.push('/wallet');
-            },
-            icon: const Icon(Icons.add_rounded, size: 18),
-            label: const Text('Add Money'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.gold,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          if (!AppConfigService.isSafeMode())
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                context.push('/wallet');
+              },
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Add Money'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.gold,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              ),
             ),
-          ),
         ],
       ),
     );
   }
 
   void _cancelSearch() {
+    _searchingTimer?.cancel();
     _socket.emit(SocketEvents.leaveMatchmaking, {
       'game_type': 'teen_patti',
       'stake': _selectedStake,
@@ -267,6 +406,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
     _roomJoinedSub?.cancel();
     _roomJoinedSub = null;
     setState(() => _searching = false);
+    _dismissSearchingDialog();
   }
 
   @override
@@ -276,7 +416,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text('Quick Match'),
+        title: const Text('Tap to Play'),
         actions: [
           IconButton(
             icon: const Icon(Icons.history_rounded, color: AppColors.gold),
@@ -286,26 +426,27 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                 MaterialPageRoute(
                     builder: (_) => const TeenPattiHistoryPage())),
           ),
-          Padding(
-            padding: const EdgeInsets.only(right: 14),
-            child: Center(
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.feltDark,
-                  borderRadius: BorderRadius.circular(20),
-                  border:
-                      Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
+          if (!AppConfigService.isSafeMode())
+            Padding(
+              padding: const EdgeInsets.only(right: 14),
+              child: Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.feltDark,
+                    borderRadius: BorderRadius.circular(20),
+                    border:
+                        Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
+                  ),
+                  child: Text(AppConfigService.getSafeBalanceText(_balance),
+                      style: const TextStyle(
+                          color: AppColors.gold,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13)),
                 ),
-                child: Text('₹${_balance ?? '—'}',
-                    style: const TextStyle(
-                        color: AppColors.gold,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13)),
               ),
             ),
-          ),
         ],
       ),
       body: ListView(
@@ -392,7 +533,10 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
               child: ElevatedButton.icon(
                 onPressed: _searching ? null : _joinMatchmaking,
                 icon: const Icon(Icons.flash_on_rounded, color: Colors.black, size: 22),
-                label: Text('Quick Match  ·  ₹${_selectedStake.toInt()}',
+                label: Text(
+                    AppConfigService.isSafeMode()
+                        ? 'Tap to Play  ·  ${_selectedStake.toInt()} 🪙'
+                        : 'Tap to Play  ·  ₹${_selectedStake.toInt()}',
                     style: const TextStyle(
                         fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 0.3)),
                 style: ElevatedButton.styleFrom(
@@ -487,7 +631,9 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        '₹${stake.toInt()}',
+                        AppConfigService.isSafeMode()
+                            ? '${stake.toInt()} 🪙'
+                            : '₹${stake.toInt()}',
                         style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w900,
@@ -498,7 +644,11 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        _isNoLimit ? 'no cap' : 'pot ₹${_potLimitFor(stake)}',
+                        _isNoLimit
+                            ? 'no cap'
+                            : (AppConfigService.isSafeMode()
+                                ? 'pot ${_potLimitFor(stake)} 🪙'
+                                : 'pot ₹${_potLimitFor(stake)}'),
                         style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.75),
                             fontSize: 9,
@@ -517,100 +667,23 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
               const SizedBox(width: 10),
               Expanded(
                   child: _statTile(Icons.account_balance_wallet_rounded, 'Entry',
-                      '₹${_selectedStake.toInt()}')),
+                      AppConfigService.isSafeMode() ? '${_selectedStake.toInt()} 🪙' : '₹${_selectedStake.toInt()}')),
               const SizedBox(width: 10),
               Expanded(
                   child: _statTile(
                       Icons.trending_up_rounded,
                       'Pot Limit',
-                      _isNoLimit ? 'No Limit' : '₹${_potLimitFor(_selectedStake)}')),
+                      _isNoLimit
+                          ? 'No Limit'
+                          : (AppConfigService.isSafeMode()
+                              ? '${_potLimitFor(_selectedStake)} 🪙'
+                              : '₹${_potLimitFor(_selectedStake)}'))),
               const SizedBox(width: 10),
               Expanded(child: _statTile(Icons.percent_rounded, 'Fee',
                   '${_feePercent == _feePercent.roundToDouble() ? _feePercent.toInt() : _feePercent}%')),
             ],
           ),
           _buildReconnectNotice(),
-          if (_searching) ...[
-            const SizedBox(height: 28),
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-              decoration: BoxDecoration(
-                color: AppColors.cardBg,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: accent.last.withValues(alpha: 0.5)),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const SizedBox(
-                        width: 22, height: 22,
-                        child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 2.5),
-                      ),
-                      const SizedBox(width: 10),
-                      Text('Finding players for $_variationLabel… (${_secondsRemaining}s)',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: List.generate(4, (index) {
-                      final hasPlayer = index < _queuedPlayers.length;
-                      final player = hasPlayer ? _queuedPlayers[index] : null;
-                      final isBot = player?['isBot'] == true;
-                      final name = player?['username'] ?? 'Waiting…';
-
-                      return Container(
-                        width: 72,
-                        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                        decoration: BoxDecoration(
-                          color: hasPlayer ? AppColors.gold.withValues(alpha: 0.15) : Colors.black25,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: hasPlayer ? AppColors.gold : Colors.white12,
-                            width: hasPlayer ? 1.5 : 1.0,
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            Icon(
-                              hasPlayer ? (isBot ? Icons.smart_toy_rounded : Icons.person_rounded) : Icons.hourglass_empty_rounded,
-                              size: 22,
-                              color: hasPlayer ? AppColors.gold : Colors.white30,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: hasPlayer ? Colors.white : Colors.white38,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                  ),
-                  const SizedBox(height: 18),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      onPressed: _cancelSearch,
-                      style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: AppColors.red)),
-                      child: const Text('Cancel',
-                          style: TextStyle(color: AppColors.red)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
         ],
       ),
     );

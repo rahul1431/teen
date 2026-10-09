@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { Pool } from 'pg'
 
-const ALLOWED_GAME_TYPES = ['teen_patti', 'ludo']
+const ALLOWED_GAME_TYPES = ['teen_patti', 'ludo', 'rummy']
 
 export function isValidPnlGameType(gameType: string): boolean {
   return ALLOWED_GAME_TYPES.includes(gameType)

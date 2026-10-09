@@ -28,6 +28,9 @@ export class WalletService {
   }
 
   async credit(opts: CreditDebitOptions, client?: PoolClient): Promise<void> {
+    if (typeof opts.amount !== 'number' || isNaN(opts.amount) || opts.amount <= 0) {
+      throw new Error('Transaction amount must be a positive number')
+    }
     const c = client || await this.db.connect()
     const shouldRelease = !client
     const ikey = opts.idempotencyKey || crypto.randomUUID()
@@ -106,6 +109,9 @@ export class WalletService {
   }
 
   async debit(opts: CreditDebitOptions, client?: PoolClient): Promise<void> {
+    if (typeof opts.amount !== 'number' || isNaN(opts.amount) || opts.amount <= 0) {
+      throw new Error('Transaction amount must be a positive number')
+    }
     const c = client || await this.db.connect()
     const shouldRelease = !client
     const ikey = opts.idempotencyKey || crypto.randomUUID()
@@ -165,6 +171,9 @@ export class WalletService {
   // This makes each lock idempotent on retry without blocking subsequent bets
   // in the same room (which would happen if key were lock:roomId:userId).
   async lockForGame(userId: string, amount: number, roomId: string, lockId: string): Promise<void> {
+    if (typeof amount !== 'number' || isNaN(amount) || amount <= 0) {
+      throw new Error('Lock amount must be a positive number')
+    }
     const ikey = `lock:${lockId}`
     const client = await this.db.connect()
     try {

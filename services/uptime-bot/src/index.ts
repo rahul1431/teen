@@ -139,14 +139,16 @@ async function testTcpPort(host: string, port: number): Promise<ServiceStatus> {
   })
 }
 
+const db = new Pool({ connectionString: process.env.DATABASE_URL!, max: 2, idleTimeoutMillis: 30000 })
+const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true, retryStrategy: (times) => Math.min(times * 100, 3000) })
+
 async function runHealthCheck(): Promise<UptimeStatus> {
   logger.info('Starting health check...')
 
-  const db = new Pool({ connectionString: process.env.DATABASE_URL!, idleTimeoutMillis: 5000 })
-  const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
-
   try {
-    if (redis.status === 'wait') await redis.connect()
+    if (redis.status === 'wait') {
+      await redis.connect().catch((err) => logger.error('Redis connect error', err))
+    }
 
     const [dbStatus, redisStatus, gatewayWs, aviatorWs] = await Promise.all([
       testPostgreSQL(db),
@@ -191,9 +193,16 @@ async function runHealthCheck(): Promise<UptimeStatus> {
 
     logger.info(`Health check complete: DB=${dbStatus.up ? '✓' : '✗'} Redis=${redisStatus.up ? '✓' : '✗'} Gateway=${gatewayWs.up ? '✓' : '✗'} Aviator=${aviatorWs.up ? '✓' : '✗'}`)
     return status
-  } finally {
-    await db.end()
-    await redis.quit()
+  } catch (err: any) {
+    logger.error('Health check exception:', err)
+    return {
+      timestamp: new Date().toISOString(),
+      database: { up: false, latency: 0 },
+      redis: { up: false, latency: 0 },
+      publicWebsockets: { gateway: { up: false, latency: 0 }, aviator: { up: false, latency: 0 } },
+      services: {},
+      checked_at: new Date().toISOString(),
+    }
   }
 }
 
@@ -227,7 +236,7 @@ async function start(): Promise<void> {
       const status = await runHealthCheck()
       await writeStatusFile(status)
     } catch (err) {
-      logger.error('Health check error', err)
+      logger.error('Health check interval error', err)
     }
   }, CHECK_INTERVAL_MS)
 }
@@ -237,7 +246,16 @@ start().catch((err) => {
   process.exit(1)
 })
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   logger.info('SIGTERM received, shutting down')
+  await db.end().catch(() => {})
+  await redis.quit().catch(() => {})
+  process.exit(0)
+})
+
+process.on('SIGINT', async () => {
+  logger.info('SIGINT received, shutting down')
+  await db.end().catch(() => {})
+  await redis.quit().catch(() => {})
   process.exit(0)
 })

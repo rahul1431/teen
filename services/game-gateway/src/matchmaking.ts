@@ -85,6 +85,62 @@ export function planTeenPattiSeats(
   return { start: true, reals, bots, requeue: false }
 }
 
+export interface RummySeatPlan {
+  start: boolean
+  reals: number
+  bots: number
+  requeue: boolean
+  targetTableSize: number
+}
+
+// Seat planner for Rummy tables:
+// Table sizes: Random 4 to 6 total seats (4, 5, or 6).
+// Stake rules:
+//   ₹100:  1 RP + Remaining Bots (Total random 4-6)
+//   ₹200:  2 RP + Remaining Bots (Total random 4-6)
+//   ₹500:  2 RP + Remaining Bots (Total random 4-6)
+//   ₹1000: 3 RP + Remaining Bots (Total random 4-6)
+//   ≥₹2000 (2000, 5000, 10000): Real Players Only (No Bots, needs at least requiredReals to start)
+export function planRummySeats(
+  realCount: number,
+  stake: number,
+  targetTableSize?: number
+): RummySeatPlan {
+  const target = targetTableSize || (Math.floor(Math.random() * 3) + 4) // 4, 5, or 6
+  const reals = Math.min(Math.max(0, realCount), target)
+  if (reals < 1) return { start: false, reals: 0, bots: 0, requeue: false, targetTableSize: target }
+
+  let requiredReals = 1
+  let allowBots = true
+
+  if (stake === 100) {
+    requiredReals = 1
+    allowBots = true
+  } else if (stake === 200 || stake === 500) {
+    requiredReals = 2
+    allowBots = true
+  } else if (stake === 1000) {
+    requiredReals = 3
+    allowBots = true
+  } else if (stake >= 2000) {
+    // 2000, 5000, 10000: Real players only, no bots
+    requiredReals = 2
+    allowBots = false
+  }
+
+  if (reals < requiredReals) {
+    return { start: false, reals: 0, bots: 0, requeue: true, targetTableSize: target }
+  }
+
+  if (!allowBots) {
+    // High stakes: Real players only, no bots
+    return { start: true, reals, bots: 0, requeue: false, targetTableSize: target }
+  }
+
+  const bots = Math.max(0, target - reals)
+  return { start: true, reals, bots, requeue: false, targetTableSize: target }
+}
+
 export class MatchmakingService {
   // Tracks each user's most recent join_matchmaking attempt so a dropped
   // connection can be dequeued without the client ever sending
@@ -116,7 +172,12 @@ export class MatchmakingService {
     if (this.timers.has(timerKey) || this.multiTimers.has(timerKey)) return
 
     const queueKey = this.queueKey(gameType, stake, variation)
-    const targetSize = config.bot_fill_table_size || (gameType === 'ludo' ? 4 : (gameType === 'teen_patti' ? 4 : config.min_players || 2))
+    if (gameType === 'rummy' && stake >= 2000) {
+      // High stakes Rummy (2000, 5000, 10000): Real players only, no bot fill
+      return
+    }
+    const rummyTargetSize = Math.floor(Math.random() * 3) + 4 // random 4, 5, or 6
+    const targetSize = config.bot_fill_table_size || (gameType === 'ludo' ? 4 : (gameType === 'teen_patti' ? 4 : (gameType === 'rummy' ? rummyTargetSize : config.min_players || 2)))
     const timeouts: NodeJS.Timeout[] = []
 
     const addBotIfNeeded = async (secondsRemaining: number, isLastBeforeStart = false) => {
@@ -299,9 +360,17 @@ export class MatchmakingService {
     )
     const config = configRes.rows[0] || { min_players: 2, max_players: 6, bot_fill_enabled: true, bot_fill_delay_seconds: 60, max_bot_ratio: 0.6, bot_fill_table_size: null }
 
-    if (gameType === 'teen_patti' || gameType === 'ludo' || gameType === 'rummy') {
+    if (gameType === 'teen_patti' || gameType === 'ludo') {
       config.bot_fill_enabled = true
       config.bot_fill_table_size = config.bot_fill_table_size || (gameType === 'ludo' ? 4 : TEEN_PATTI_BOT_FLOOR)
+    } else if (gameType === 'rummy') {
+      if (stake >= 2000) {
+        config.bot_fill_enabled = false
+        config.bot_fill_table_size = null
+      } else {
+        config.bot_fill_enabled = true
+        config.bot_fill_table_size = config.bot_fill_table_size || (Math.floor(Math.random() * 3) + 4)
+      }
     }
 
     await this.tryCreateRoom(gameType, stake, config, variation)
@@ -365,7 +434,7 @@ export class MatchmakingService {
   private async tryCreateRoom(gameType: string, stake: number, config: any, variation = 'classic'): Promise<void> {
     const key = this.queueKey(gameType, stake, variation)
 
-    const noBotThreshold = gameType === 'teen_patti'
+    const noBotThreshold = (gameType === 'teen_patti' || gameType === 'rummy')
       ? (config.max_players || 6)
       : config.bot_fill_enabled
         ? (config.bot_fill_table_size || config.min_players)
@@ -467,6 +536,54 @@ export class MatchmakingService {
       }
       if (overflow.length) await requeue(overflow, false)
       await this.startGame(gameType, stake, seated, bots, variation)
+      return
+    }
+
+    if (gameType === 'rummy') {
+      const plan = planRummySeats(realPlayers.length, stake)
+      const requeue = async (players: MatchmakingEntry[], notify: boolean) => {
+        for (const p of players) {
+          const alreadyNotified = p.waitNotified === true
+          if (notify && !alreadyNotified) p.waitNotified = true
+          await this.redis.zadd(key, Date.now(), JSON.stringify(p))
+          if (notify && !alreadyNotified) {
+            this.hub.sendToUser(p.userId, 'error', {
+              message: stake >= 2000
+                ? 'High stakes table requires real players. Waiting for opponents…'
+                : 'Players are in other games. Waiting for opponents…'
+            })
+          }
+        }
+        this.schedule60sBotFill(gameType, stake, config, variation)
+      }
+
+      if (!plan.start) {
+        console.log(`[matchmaking] botFillRoom: Rummy ${stake} needs more reals (${realPlayers.length} present) — re-queuing`)
+        await requeue(realPlayers, plan.requeue)
+        return
+      }
+
+      const seatedReals = realPlayers.slice(0, plan.reals)
+      const overflowReals = realPlayers.slice(plan.reals)
+
+      let bots: MatchmakingEntry[] = prefilledBots.slice(0, plan.bots)
+      if (bots.length < plan.bots) {
+        const extraNeeded = plan.bots - bots.length
+        const newBots = await this.getBots(gameType, extraNeeded, stake)
+        bots = [...bots, ...newBots]
+      }
+
+      if (seatedReals.length + bots.length < 2) {
+        await requeue([...seatedReals, ...overflowReals], true)
+        return
+      }
+
+      if (overflowReals.length) {
+        await requeue(overflowReals, false)
+      }
+
+      console.log(`[matchmaking] botFillRoom: starting Rummy table with ${seatedReals.length} reals + ${bots.length} bots (stake ₹${stake}, total ${seatedReals.length + bots.length})`)
+      await this.startGame(gameType, stake, seatedReals, bots, variation)
       return
     }
 

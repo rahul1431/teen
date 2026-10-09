@@ -63,8 +63,17 @@ class SoundService {
   set muted(bool v) {
     _muted = v;
     try {
-      Hive.box('settings').put('muted', v);
+      final box = Hive.box('settings');
+      box.put('muted', v);
     } catch (_) {}
+    if (v) {
+      stopAmbience();
+      for (final p in _pool) {
+        try {
+          p.stop();
+        } catch (_) {}
+      }
+    }
   }
 
   void toggleMute() {

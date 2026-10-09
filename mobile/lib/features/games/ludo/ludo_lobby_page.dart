@@ -5,6 +5,7 @@ import '../../../core/network/api_client.dart';
 import '../../../core/socket/socket_service.dart';
 import '../../../core/constants/socket_events.dart';
 import '../../../core/services/locale_service.dart';
+import '../../../core/services/app_config_service.dart';
 import '../../../shared/theme/app_theme.dart';
 
 /// Online Ludo matchmaking. Mirrors the Teen Patti lobby: pick a stake,
@@ -32,10 +33,18 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
   StreamSubscription? _statusSub;
   int _secondsRemaining = 60;
   List<Map<String, dynamic>> _queuedPlayers = [];
+  StateSetter? _dialogSetState;
+  Timer? _searchingTimer;
 
   @override
   void initState() {
     super.initState();
+    if (AppConfigService.isSafeMode()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) context.pushReplacement('/games/ludo/practice');
+      });
+      return;
+    }
     _socket.connect();
     _loadBalance();
     _statusSub = _socket.on('matchmaking:status').listen((data) {
@@ -43,24 +52,27 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
       if (data is Map) {
         setState(() {
           if (data['seconds_remaining'] != null) {
-            _secondsRemaining = (data['seconds_remaining'] as num).toInt();
+            _secondsRemaining = int.tryParse(data['seconds_remaining'].toString()) ?? (data['seconds_remaining'] is num ? (data['seconds_remaining'] as num).toInt() : 10);
           }
           if (data['players'] != null && data['players'] is List) {
             _queuedPlayers = List<Map<String, dynamic>>.from(
                 (data['players'] as List).map((p) => Map<String, dynamic>.from(p)));
           }
         });
+        _dialogSetState?.call(() {});
       }
     });
     _roomJoinedSub = _socket.on(SocketEvents.roomJoined).listen((data) {
       if (!mounted) return;
       if (data['game_type'] != null && data['game_type'] != 'ludo') return;
       setState(() => _searching = false);
+      _dismissSearchingDialog();
       context.push('/games/ludo/play/${data['room_id']}', extra: data);
     });
     _errorSub = _socket.on(SocketEvents.errorEvent).listen((data) {
       if (!mounted) return;
       setState(() => _searching = false);
+      _dismissSearchingDialog();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(data['message'] ?? 'Error'),
           backgroundColor: AppColors.red));
@@ -77,6 +89,7 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
 
   @override
   void dispose() {
+    _searchingTimer?.cancel();
     _roomJoinedSub?.cancel();
     _errorSub?.cancel();
     _statusSub?.cancel();
@@ -84,6 +97,7 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
   }
 
   Future<void> _loadBalance() async {
+    if (AppConfigService.isSafeMode()) return;
     try {
       final res = await ApiClient().dio.get('/api/wallet/balance');
       if (!mounted) return;
@@ -96,6 +110,10 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
   }
 
   void _joinMatchmaking() {
+    if (AppConfigService.isSafeMode()) {
+      context.pushReplacement('/games/ludo/practice');
+      return;
+    }
     if (!_socket.isConnected) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Not connected to server. Attempting to reconnect...'),
@@ -113,6 +131,24 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
       _secondsRemaining = 60;
       _queuedPlayers = [{'username': 'You', 'isBot': false}];
     });
+    _showSearchingDialog();
+
+    _searchingTimer?.cancel();
+    _searchingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || !_searching) {
+        timer.cancel();
+        return;
+      }
+      if (_secondsRemaining > 0) {
+        setState(() {
+          _secondsRemaining--;
+        });
+        _dialogSetState?.call(() {});
+      } else {
+        timer.cancel();
+      }
+    });
+
     _socket.emit(SocketEvents.joinMatchmaking, {
       'game_type': 'ludo',
       'stake': _selectedStake,
@@ -120,10 +156,112 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
     });
   }
 
+  void _showSearchingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            _dialogSetState = setDialogState;
+            return AlertDialog(
+              backgroundColor: AppColors.cardBg,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: BorderSide(color: AppColors.gold.withValues(alpha: 0.5))),
+              contentPadding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(
+                        width: 22, height: 22,
+                        child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 2.5),
+                      ),
+                      const SizedBox(width: 10),
+                      Text('Finding players… (${_secondsRemaining}s)',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: List.generate(4, (index) {
+                      final hasPlayer = index < _queuedPlayers.length;
+                      final player = hasPlayer ? _queuedPlayers[index] : null;
+                      final isBot = player?['isBot'] == true;
+                      final name = player?['username'] ?? 'Waiting…';
+
+                      return Container(
+                        width: 64,
+                        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                        decoration: BoxDecoration(
+                          color: hasPlayer ? AppColors.gold.withValues(alpha: 0.15) : Colors.black26,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: hasPlayer ? AppColors.gold : Colors.white12,
+                            width: hasPlayer ? 1.5 : 1.0,
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              hasPlayer ? (isBot ? Icons.smart_toy_rounded : Icons.person_rounded) : Icons.hourglass_empty_rounded,
+                              size: 20,
+                              color: hasPlayer ? AppColors.gold : Colors.white30,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                                color: hasPlayer ? Colors.white : Colors.white38,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 22),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: _cancelSearch,
+                      style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: AppColors.red)),
+                      child: const Text('Cancel',
+                          style: TextStyle(color: AppColors.red)),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    ).then((_) {
+      _dialogSetState = null;
+    });
+  }
+
+  void _dismissSearchingDialog() {
+    if (_dialogSetState != null) {
+      _dialogSetState = null;
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+  }
+
   void _cancelSearch() {
+    _searchingTimer?.cancel();
     _socket.emit(SocketEvents.leaveMatchmaking,
         {'game_type': 'ludo', 'stake': _selectedStake});
     setState(() => _searching = false);
+    _dismissSearchingDialog();
   }
 
   void _showLowBalanceDialog() {
@@ -139,8 +277,10 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
           Text(locale.t('low_balance'), style: const TextStyle(fontWeight: FontWeight.bold)),
         ]),
         content: Text(
-          'You need ₹${_selectedStake.toInt()} to join this table.\n'
-          'Your balance is ₹${_balance ?? '0'}.',
+          AppConfigService.isSafeMode()
+              ? 'You need ${_selectedStake.toInt()} 🪙 to play.\nYour balance is ${_balance ?? '10,000'} 🪙.\n\nCollect daily bonus coins to keep playing.'
+              : 'You need ₹${_selectedStake.toInt()} to join this table.\n'
+                'Your balance is ₹${_balance ?? '0'}.',
           style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
         ),
         actions: [
@@ -148,15 +288,16 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
               onPressed: () => Navigator.pop(ctx),
               child: Text(locale.t('cancel'),
                   style: const TextStyle(color: AppColors.textSecondary))),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(ctx);
-              context.push('/wallet');
-            },
-            icon: const Icon(Icons.add_rounded, size: 18),
-            label: Text(locale.t('add_money')),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold),
-          ),
+          if (!AppConfigService.isSafeMode())
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                context.push('/wallet');
+              },
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: Text(locale.t('add_money')),
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold),
+            ),
         ],
       ),
     );
@@ -173,26 +314,28 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
         elevation: 0,
         title: Text(locale.t('quick_match')),
         actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: Center(
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.feltDark,
-                  borderRadius: BorderRadius.circular(20),
-                  border:
-                      Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
+          if (!AppConfigService.isSafeMode())
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.feltDark,
+                    borderRadius: BorderRadius.circular(20),
+                    border:
+                        Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
+                  ),
+                  child: Text(
+                      AppConfigService.getSafeBalanceText(_balance),
+                      style: const TextStyle(
+                          color: AppColors.gold,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13)),
                 ),
-                child: Text('₹${_balance ?? '—'}',
-                    style: const TextStyle(
-                        color: AppColors.gold,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13)),
               ),
             ),
-          ),
         ],
       ),
       body: ListView(
@@ -281,9 +424,13 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
               child: ElevatedButton.icon(
                 onPressed: _searching ? null : _joinMatchmaking,
                 icon: const Icon(Icons.flash_on_rounded, color: Colors.black, size: 22),
-                label: Text('Quick Match  ·  ₹${_selectedStake.toInt()}',
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 0.3)),
+                label: Text(
+                  AppConfigService.isSafeMode()
+                      ? 'Tap to Play  ·  ${_selectedStake.toInt()} 🪙'
+                      : 'Tap to Play  ·  ₹${_selectedStake.toInt()}',
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 0.3),
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.gold,
                   foregroundColor: Colors.black,
@@ -295,8 +442,8 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
             ),
           ),
           const SizedBox(height: 26),
-          const Text('SELECT STAKE',
-              style: TextStyle(
+          Text(AppConfigService.isSafeMode() ? 'SELECT TABLE' : 'SELECT STAKE',
+              style: const TextStyle(
                   fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 1.2, color: AppColors.textSecondary)),
           const SizedBox(height: 12),
           Wrap(
@@ -339,17 +486,25 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('₹${stake.toInt()}',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 16)),
+                      Text(
+                        AppConfigService.isSafeMode()
+                            ? '${stake.toInt()} 🪙'
+                            : '₹${stake.toInt()}',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 16),
+                      ),
                       const SizedBox(height: 2),
-                      Text('pot ₹${(stake * 4).toInt()} max',
-                          style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.75),
-                              fontSize: 9,
-                              fontWeight: FontWeight.w600)),
+                      Text(
+                        AppConfigService.isSafeMode()
+                            ? 'Prize ${(stake * 4).toInt()} 🪙'
+                            : 'pot ₹${(stake * 4).toInt()} max',
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.75),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600),
+                      ),
                     ],
                   ),
                 ),
@@ -390,97 +545,20 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
               Expanded(child: _statTile(Icons.groups_rounded, 'Players', '2-4')),
               const SizedBox(width: 10),
               Expanded(
-                  child: _statTile(Icons.account_balance_wallet_rounded, locale.t('entry_fee'),
-                      '₹${_selectedStake.toInt()}')),
+                  child: _statTile(
+                      Icons.account_balance_wallet_rounded,
+                      AppConfigService.isSafeMode() ? 'Coins' : locale.t('entry_fee'),
+                      AppConfigService.isSafeMode() ? '${_selectedStake.toInt()} 🪙' : '₹${_selectedStake.toInt()}')),
               const SizedBox(width: 10),
               Expanded(
-                  child: _statTile(Icons.emoji_events_rounded, 'Pot Max',
-                      '₹${(_selectedStake * 4).toInt()}')),
+                  child: _statTile(
+                      Icons.emoji_events_rounded,
+                      AppConfigService.isSafeMode() ? 'Reward' : 'Pot Max',
+                      AppConfigService.isSafeMode() ? '${(_selectedStake * 4).toInt()} 🪙' : '₹${(_selectedStake * 4).toInt()}')),
               const SizedBox(width: 10),
-              Expanded(child: _statTile(Icons.percent_rounded, 'Fee', '5%')),
+              Expanded(child: _statTile(Icons.percent_rounded, 'Fee', AppConfigService.isSafeMode() ? 'Free' : '5%')),
             ],
           ),
-          if (_searching) ...[
-            const SizedBox(height: 28),
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-              decoration: BoxDecoration(
-                color: AppColors.cardBg,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: _ludoAccent.last.withValues(alpha: 0.5)),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const SizedBox(
-                        width: 22, height: 22,
-                        child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 2.5),
-                      ),
-                      const SizedBox(width: 10),
-                      Text('Finding players… (${_secondsRemaining}s)',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: List.generate(4, (index) {
-                      final hasPlayer = index < _queuedPlayers.length;
-                      final player = hasPlayer ? _queuedPlayers[index] : null;
-                      final isBot = player?['isBot'] == true;
-                      final name = player?['username'] ?? 'Waiting…';
-
-                      return Container(
-                        width: 72,
-                        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                        decoration: BoxDecoration(
-                          color: hasPlayer ? AppColors.gold.withValues(alpha: 0.15) : Colors.black25,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: hasPlayer ? AppColors.gold : Colors.white12,
-                            width: hasPlayer ? 1.5 : 1.0,
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            Icon(
-                              hasPlayer ? (isBot ? Icons.smart_toy_rounded : Icons.person_rounded) : Icons.hourglass_empty_rounded,
-                              size: 22,
-                              color: hasPlayer ? AppColors.gold : Colors.white30,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: hasPlayer ? Colors.white : Colors.white38,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                  ),
-                  const SizedBox(height: 18),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      onPressed: _cancelSearch,
-                      style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: AppColors.red)),
-                      child: const Text('Cancel',
-                          style: TextStyle(color: AppColors.red)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
         ],
       ),
     );

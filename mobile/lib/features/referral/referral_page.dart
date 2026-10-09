@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../core/network/api_client.dart';
+import '../../core/services/app_config_service.dart';
 import '../../shared/theme/app_theme.dart';
 
 class ReferralPage extends StatefulWidget {
@@ -72,8 +73,9 @@ class _ReferralPageState extends State<ReferralPage>
   }
 
   void _share() {
+    final bonusText = AppConfigService.isSafeMode() ? '50 🪙 bonus' : '₹50 bonus';
     Share.share(
-      '🎮 Join MyOnlineJoker & get ₹50 bonus!\n'
+      '🎮 Join MyOnlineJoker & get $bonusText!\n'
       'Use my referral code: $_code\n'
       'Download & register: $_link',
       subject: 'Play & Win with MyOnlineJoker!',
@@ -176,8 +178,11 @@ class _ReferralPageState extends State<ReferralPage>
                           const Text('Invite & Earn',
                               style: TextStyle(
                                   color: Colors.white70, fontSize: 13)),
-                          const Text('₹50 per Friend!',
-                              style: TextStyle(
+                          Text(
+                              AppConfigService.isSafeMode()
+                                  ? '50 🪙 per Friend!'
+                                  : '₹50 per Friend!',
+                              style: const TextStyle(
                                 color: AppColors.gold,
                                 fontSize: 22,
                                 fontWeight: FontWeight.w900,

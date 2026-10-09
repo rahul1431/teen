@@ -1,82 +1,119 @@
 import { Pool } from 'pg'
 import { creditPrize } from './wallet-client'
 
-export async function settleFantasyLeague(
-  db: Pool, matchId: string, playerPoints: Record<string, number>,
-): Promise<{ settledLeagues: number; entriesUpdated: number; totalPaid: number }> {
+export async function settleCricketOddsBets(
+  db: Pool,
+  matchId: string,
+  resultWinner: string | null,
+  isAbandoned: boolean = false
+): Promise<{ settledBets: number; totalPaid: number }> {
   const client = await db.connect()
-  let settledLeagues = 0, entriesUpdated = 0, totalPaid = 0
+  let settledBets = 0
+  let totalPaid = 0
+  const payouts: { userId: string; amount: number; betId: string; ikey: string; isWin: boolean }[] = []
 
   try {
     await client.query('BEGIN')
 
-    for (const [playerId, points] of Object.entries(playerPoints)) {
-      await client.query(
-        `INSERT INTO cricket_match_players (match_id, player_id, fantasy_points) VALUES ($1, $2, $3)
-         ON CONFLICT (match_id, player_id) DO UPDATE SET fantasy_points = $3`,
-        [matchId, playerId, points],
-      )
-    }
-
-    const teamsRes = await client.query(`SELECT * FROM user_fantasy_teams WHERE match_id = $1`, [matchId])
-    for (const team of teamsRes.rows) {
-      let teamPoints = 0
-      for (const pid of (team.player_ids as string[])) {
-        const base = playerPoints[pid] || 0
-        const mult = pid === team.captain_id ? 2.0 : pid === team.vice_captain_id ? 1.5 : 1.0
-        teamPoints += base * mult
-      }
-      await client.query(`UPDATE user_fantasy_teams SET points_total = $1 WHERE id = $2`, [teamPoints, team.id])
-    }
-
-    await client.query(
-      `UPDATE cricket_fantasy_entries e SET points = t.points_total FROM user_fantasy_teams t WHERE e.team_id = t.id AND t.match_id = $1`,
-      [matchId],
+    // Get all open markets for the match
+    const marketsRes = await client.query(
+      `SELECT * FROM cricket_markets WHERE match_id = $1 AND status = 'open' FOR UPDATE`,
+      [matchId]
     )
 
-    const leaguesRes = await client.query(
-      `SELECT * FROM cricket_fantasy_leagues WHERE match_id = $1 AND status = 'open' FOR UPDATE`, [matchId],
+    // Also get team names to map resultWinner to option keys
+    const matchRes = await client.query(
+      `SELECT team_a, team_b FROM cricket_matches WHERE id = $1`,
+      [matchId]
     )
+    const { team_a, team_b } = matchRes.rows[0]
 
-    for (const league of leaguesRes.rows) {
-      settledLeagues++
-      const entriesRes = await client.query(`SELECT * FROM cricket_fantasy_entries WHERE league_id = $1 ORDER BY points DESC`, [league.id])
-      const entries = entriesRes.rows
-      entriesUpdated += entries.length
+    for (const market of marketsRes.rows) {
+      let winningKey: string | null = null
 
-      let currentRank = 1
-      for (let i = 0; i < entries.length; i++) {
-        if (i > 0 && Number(entries[i].points) < Number(entries[i - 1].points)) currentRank = i + 1
-        entries[i].rank = currentRank
-      }
-
-      const dist: any[] = typeof league.prize_distribution === 'string'
-        ? JSON.parse(league.prize_distribution)
-        : league.prize_distribution || []
-
-      for (const entry of entries) {
-        let payout = 0
-        const tier = dist.find(t => entry.rank >= t.rank_start && entry.rank <= t.rank_end)
-        if (tier) payout = Number(tier.payout || 0)
-        await client.query(
-          `UPDATE cricket_fantasy_entries SET final_rank = $1, payout_received = $2, status = 'settled' WHERE id = $3`,
-          [entry.rank, payout, entry.id],
-        )
-        if (payout > 0) {
-          totalPaid += payout
-          await creditPrize({
-            userId: entry.user_id,
-            amount: payout,
-            referenceId: entry.id,
-            idempotencyKey: `cricket_fantasy_payout_${entry.id}`,
-            notification: {
-              title: 'Fantasy Cricket Win! 🏆',
-              body: `Congratulations! You won ₹${payout.toFixed(2)} in the fantasy league.`,
-            },
-          })
+      if (!isAbandoned && resultWinner) {
+        if (resultWinner.toLowerCase() === team_a.toLowerCase()) {
+          winningKey = 'team_a'
+        } else if (resultWinner.toLowerCase() === team_b.toLowerCase()) {
+          winningKey = 'team_b'
+        } else {
+          winningKey = 'draw'
         }
       }
-      await client.query(`UPDATE cricket_fantasy_leagues SET status = 'settled' WHERE id = $1`, [league.id])
+
+      // Update market status
+      await client.query(
+        `UPDATE cricket_markets 
+         SET status = 'settled', result_key = $1 
+         WHERE id = $2`,
+        [winningKey, market.id]
+      )
+
+      // Fetch all pending bets for this market
+      const betsRes = await client.query(
+        `SELECT * FROM cricket_bets WHERE market_id = $1 AND status = 'pending' FOR UPDATE`,
+        [market.id]
+      )
+
+      for (const bet of betsRes.rows) {
+        settledBets++
+        if (isAbandoned || !winningKey) {
+          // Void bet and refund stake
+          const refundAmount = Number(bet.amount)
+          await client.query(
+            `UPDATE cricket_bets SET status = 'void', payout = $1 WHERE id = $2`,
+            [refundAmount, bet.id]
+          )
+          payouts.push({
+            userId: bet.user_id,
+            amount: refundAmount,
+            betId: bet.id,
+            ikey: `cricket_odds_refund_${bet.id}`,
+            isWin: false,
+          })
+        } else if (bet.option_key === winningKey) {
+          // Bet won
+          const payoutAmount = Number(bet.potential_payout)
+          totalPaid += payoutAmount
+          await client.query(
+            `UPDATE cricket_bets SET status = 'won', payout = $1 WHERE id = $2`,
+            [payoutAmount, bet.id]
+          )
+          payouts.push({
+            userId: bet.user_id,
+            amount: payoutAmount,
+            betId: bet.id,
+            ikey: `cricket_odds_payout_${bet.id}`,
+            isWin: true,
+          })
+        } else {
+          // Bet lost
+          await client.query(
+            `UPDATE cricket_bets SET status = 'lost', payout = 0 WHERE id = $2`,
+            [bet.id]
+          )
+        }
+      }
+    }
+
+    // Auto-void any remaining unsettled sessions for this match
+    const openSessions = await client.query(
+      `SELECT id FROM cricket_sessions WHERE match_id = $1 AND status != 'settled' FOR UPDATE`,
+      [matchId]
+    )
+    for (const session of openSessions.rows) {
+      await client.query(`UPDATE cricket_sessions SET status = 'settled', result_runs = NULL WHERE id = $1`, [session.id])
+      const betsRes = await client.query(`SELECT * FROM cricket_session_bets WHERE session_id = $1 AND status = 'pending'`, [session.id])
+      for (const bet of betsRes.rows) {
+        await client.query(`UPDATE cricket_session_bets SET status = 'void', payout = $1 WHERE id = $2`, [Number(bet.amount), bet.id])
+        payouts.push({
+          userId: bet.user_id,
+          amount: Number(bet.amount),
+          betId: bet.id,
+          ikey: `cricket_session_refund_${bet.id}`,
+          isWin: false,
+        })
+      }
     }
 
     await client.query(`UPDATE cricket_matches SET status = 'settled' WHERE id = $1`, [matchId])
@@ -88,7 +125,26 @@ export async function settleFantasyLeague(
     client.release()
   }
 
-  return { settledLeagues, entriesUpdated, totalPaid }
+  // Process payouts and notifications asynchronously
+  for (const p of payouts) {
+    await creditPrize({
+      userId: p.userId,
+      amount: p.amount,
+      referenceId: p.betId,
+      idempotencyKey: p.ikey,
+      notification: p.isWin
+        ? {
+            title: 'Cricket Bet Won! 🏆',
+            body: `Congratulations! Your bet won. ₹${p.amount.toFixed(2)} has been credited.`,
+          }
+        : {
+            title: 'Cricket Bet Refunded 🏏',
+            body: `Your bet was voided/refunded. ₹${p.amount.toFixed(2)} has been credited back.`,
+          },
+    })
+  }
+
+  return { settledBets, totalPaid }
 }
 
 export async function settleCricketSession(

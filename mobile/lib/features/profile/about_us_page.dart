@@ -43,8 +43,8 @@ class _AboutUsPageState extends State<AboutUsPage> {
     setState(() => _status = _UpdateCheckStatus.checking);
     try {
       final res = await ApiClient().dio.get('/api/app/version');
-      final data = res.data as Map<String, dynamic>;
-      final serverCode = (data['version_code'] as num?)?.toInt() ?? 0;
+      final data = res.data is Map ? (res.data as Map<String, dynamic>) : <String, dynamic>{};
+      final serverCode = int.tryParse(data['version_code']?.toString() ?? '') ?? (data['version_code'] is num ? (data['version_code'] as num).toInt() : 0);
       if (!mounted) return;
       setState(() {
         _serverName = data['version_name']?.toString() ?? '';

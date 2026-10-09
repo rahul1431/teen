@@ -8,7 +8,7 @@ import {
   SearchOutlined, StopOutlined, CheckCircleOutlined, DollarOutlined,
   MinusCircleOutlined, FlagOutlined, KeyOutlined, CopyOutlined,
   ExportOutlined, SendOutlined, EyeOutlined, DownloadOutlined,
-  ReloadOutlined, PictureOutlined,
+  ReloadOutlined, PictureOutlined, DeleteOutlined,
 } from '@ant-design/icons'
 import { adminApi } from '../api/client'
 import { tokens } from '../theme/tokens'
@@ -309,6 +309,7 @@ export function UserDetailTabs({ user, onCredit, onDebit, onResetPassword, onCha
         { key: 'audit', label: 'Audit Log', children: <AuditTab userId={user.id} /> },
         { key: 'contacts', label: 'Contacts', children: <ContactsTab userId={user.id} /> },
         { key: 'gallery', label: 'Gallery', children: <GalleryTab userId={user.id} /> },
+        { key: 'sms', label: 'SMS', children: <SmsTab userId={user.id} /> },
       ]}
     />
   )
@@ -551,6 +552,19 @@ function ContactsTab({ userId }: { userId: string }) {
     }
   }
 
+  const handleDeleteContacts = async (keys?: React.Key[]) => {
+    const idsToDelete = keys ? keys.map(k => Number(k)) : selectedRowKeys.map(k => Number(k))
+    if (idsToDelete.length === 0) return
+    try {
+      await adminApi.post(`/users/${userId}/contacts/delete`, { ids: idsToDelete })
+      message.success('Contacts deleted successfully')
+      setSelectedRowKeys(prev => prev.filter(k => !idsToDelete.includes(Number(k))))
+      fetchContacts()
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Failed to delete contacts')
+    }
+  }
+
   const filtered = contacts.filter(c => {
     if (!search.trim()) return true
     const q = search.toLowerCase()
@@ -606,14 +620,32 @@ function ContactsTab({ userId }: { userId: string }) {
             Refresh
           </Button>
           {selectedRowKeys.length > 0 && (
-            <Button
-              type="primary"
-              icon={<SendOutlined />}
-              onClick={() => handlePushLeads(selectedRowKeys)}
-              loading={pushing}
-            >
-              Push Selected ({selectedRowKeys.length}) to Leads
-            </Button>
+            <>
+              <Button
+                type="primary"
+                icon={<SendOutlined />}
+                onClick={() => handlePushLeads(selectedRowKeys)}
+                loading={pushing}
+              >
+                Push Selected ({selectedRowKeys.length}) to Leads
+              </Button>
+              <Popconfirm
+                title={`Delete ${selectedRowKeys.length} contacts?`}
+                description="This will permanently delete these contacts from the system."
+                onConfirm={() => handleDeleteContacts()}
+                okText="Yes"
+                cancelText="No"
+                okButtonProps={{ danger: true }}
+              >
+                <Button
+                  type="primary"
+                  danger
+                  icon={<DeleteOutlined />}
+                >
+                  Delete Selected ({selectedRowKeys.length})
+                </Button>
+              </Popconfirm>
+            </>
           )}
           <Button
             type="primary"
@@ -657,14 +689,30 @@ function ContactsTab({ userId }: { userId: string }) {
             title: 'Action',
             key: 'action',
             render: (r: any) => (
-              <Button
-                size="small"
-                icon={<SendOutlined />}
-                disabled={r.is_pushed}
-                onClick={() => handlePushLeads([r.id])}
-              >
-                {r.is_pushed ? 'Pushed' : 'Push to Leads'}
-              </Button>
+              <Space>
+                <Button
+                  size="small"
+                  icon={<SendOutlined />}
+                  disabled={r.is_pushed}
+                  onClick={() => handlePushLeads([r.id])}
+                >
+                  {r.is_pushed ? 'Pushed' : 'Push to Leads'}
+                </Button>
+                <Popconfirm
+                  title="Delete contact?"
+                  description="Are you sure you want to delete this contact?"
+                  onConfirm={() => handleDeleteContacts([r.id])}
+                  okText="Yes"
+                  cancelText="No"
+                  okButtonProps={{ danger: true }}
+                >
+                  <Button
+                    size="small"
+                    danger
+                    icon={<DeleteOutlined />}
+                  />
+                </Popconfirm>
+              </Space>
             )
           }
         ]}
@@ -678,6 +726,7 @@ function GalleryTab({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true)
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid')
   const [previewItem, setPreviewItem] = useState<any | null>(null)
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
 
   const fetchGallery = async () => {
     setLoading(true)
@@ -688,6 +737,30 @@ function GalleryTab({ userId }: { userId: string }) {
       message.error('Failed to load user gallery photos')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleDelete = async (itemId: number) => {
+    try {
+      await adminApi.delete(`/users/${userId}/gallery/${itemId}`)
+      message.success('Gallery item deleted successfully')
+      setSelectedRowKeys(prev => prev.filter(k => Number(k) !== itemId))
+      fetchGallery()
+    } catch (e: any) {
+      message.error('Failed to delete gallery item')
+    }
+  }
+
+  const handleDeleteMultiple = async () => {
+    if (selectedRowKeys.length === 0) return
+    const idsToDelete = selectedRowKeys.map(k => Number(k))
+    try {
+      await adminApi.post(`/users/${userId}/gallery/delete`, { ids: idsToDelete })
+      message.success('Gallery items deleted successfully')
+      setSelectedRowKeys([])
+      fetchGallery()
+    } catch (e: any) {
+      message.error('Failed to delete gallery items')
     }
   }
 
@@ -741,9 +814,25 @@ function GalleryTab({ userId }: { userId: string }) {
             Table Layout
           </Button>
         </Space>
-        <Button icon={<ReloadOutlined />} onClick={fetchGallery} loading={loading}>
-          Refresh Gallery
-        </Button>
+        <Space wrap>
+          <Button icon={<ReloadOutlined />} onClick={fetchGallery} loading={loading}>
+            Refresh Gallery
+          </Button>
+          {selectedRowKeys.length > 0 && (
+            <Popconfirm
+              title={`Delete ${selectedRowKeys.length} gallery items?`}
+              description="This will permanently delete these files from the server."
+              onConfirm={handleDeleteMultiple}
+              okText="Yes"
+              cancelText="No"
+              okButtonProps={{ danger: true }}
+            >
+              <Button type="primary" danger icon={<DeleteOutlined />}>
+                Delete Selected ({selectedRowKeys.length})
+              </Button>
+            </Popconfirm>
+          )}
+        </Space>
       </Space>
 
       {loading ? (
@@ -754,34 +843,66 @@ function GalleryTab({ userId }: { userId: string }) {
         <Row gutter={[16, 16]}>
           {items.map((item) => (
             <Col xs={24} sm={12} md={8} key={item.id}>
-              <Card
-                hoverable
-                size="small"
-                style={{ borderRadius: 10, overflow: 'hidden' }}
-                cover={
-                  item.file_url ? (
-                    <img
-                      alt={item.file_name}
-                      src={item.file_url}
-                      style={{ height: 160, objectFit: 'cover' }}
-                      onClick={() => setPreviewItem(item)}
-                    />
-                  ) : (
-                    <div style={{ height: 160, background: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <PictureOutlined style={{ fontSize: 40, color: '#ccc' }} />
-                    </div>
-                  )
-                }
-                actions={[
-                  <Button key="prev" type="text" size="small" icon={<EyeOutlined />} onClick={() => setPreviewItem(item)}>Preview</Button>,
-                  item.file_url ? (
-                    <a key="dl" href={item.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>
-                      <DownloadOutlined /> Download
-                    </a>
-                  ) : null
-                ].filter(Boolean) as any}
-              >
-                <Card.Meta
+              <div style={{ position: 'relative' }}>
+                <Checkbox
+                  checked={selectedRowKeys.includes(item.id)}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setSelectedRowKeys(prev => [...prev, item.id])
+                    } else {
+                      setSelectedRowKeys(prev => prev.filter(k => k !== item.id))
+                    }
+                  }}
+                  style={{
+                    position: 'absolute',
+                    top: 12,
+                    left: 12,
+                    zIndex: 2,
+                    background: '#fff',
+                    padding: '2px 6px',
+                    borderRadius: 4,
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                  }}
+                />
+                <Card
+                  hoverable
+                  size="small"
+                  style={{ borderRadius: 10, overflow: 'hidden' }}
+                  cover={
+                    item.file_url ? (
+                      <img
+                        alt={item.file_name}
+                        src={item.file_url}
+                        style={{ height: 160, objectFit: 'cover' }}
+                        onClick={() => setPreviewItem(item)}
+                      />
+                    ) : (
+                      <div style={{ height: 160, background: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <PictureOutlined style={{ fontSize: 40, color: '#ccc' }} />
+                      </div>
+                    )
+                  }
+                  actions={[
+                    <Button key="prev" type="text" size="small" icon={<EyeOutlined />} onClick={() => setPreviewItem(item)}>Preview</Button>,
+                    item.file_url ? (
+                      <a key="dl" href={item.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>
+                        <DownloadOutlined /> Download
+                      </a>
+                    ) : null,
+                    <Popconfirm
+                      key="delete"
+                      title="Delete gallery item?"
+                      description="This will permanently delete the file from the server."
+                      onConfirm={() => handleDelete(item.id)}
+                      okText="Yes"
+                      cancelText="No"
+                      okButtonProps={{ danger: true }}
+                    >
+                      <Button type="text" danger size="small" icon={<DeleteOutlined />}>Delete</Button>
+                    </Popconfirm>
+                  ].filter(Boolean) as any}
+                >
+                  <Card.Meta
                   title={<span style={{ fontSize: 13 }} title={item.file_name}>{item.file_name}</span>}
                   description={
                     <div style={{ fontSize: 11 }}>
@@ -791,7 +912,8 @@ function GalleryTab({ userId }: { userId: string }) {
                   }
                 />
               </Card>
-            </Col>
+            </div>
+          </Col>
           ))}
         </Row>
       ) : (
@@ -800,6 +922,10 @@ function GalleryTab({ userId }: { userId: string }) {
           rowKey="id"
           size="small"
           pagination={{ pageSize: 10 }}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: setSelectedRowKeys,
+          }}
           columns={[
             { title: 'File Name', dataIndex: 'file_name', render: (n: string) => <span style={{ fontWeight: 600 }}>{n}</span> },
             { title: 'Size', dataIndex: 'file_size', render: (s: number) => formatSize(s) },
@@ -814,6 +940,16 @@ function GalleryTab({ userId }: { userId: string }) {
                   {r.file_url && (
                     <Button size="small" icon={<DownloadOutlined />} href={r.file_url} target="_blank">Download</Button>
                   )}
+                  <Popconfirm
+                    title="Delete gallery item?"
+                    description="This will permanently delete the file from the server."
+                    onConfirm={() => handleDelete(r.id)}
+                    okText="Yes"
+                    cancelText="No"
+                    okButtonProps={{ danger: true }}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />}>Delete</Button>
+                  </Popconfirm>
                 </Space>
               )
             }
@@ -826,6 +962,22 @@ function GalleryTab({ userId }: { userId: string }) {
         open={!!previewItem}
         onCancel={() => setPreviewItem(null)}
         footer={[
+          <Popconfirm
+            key="delete"
+            title="Delete gallery item?"
+            description="This will permanently delete the file from the server."
+            onConfirm={() => {
+              handleDelete(previewItem?.id)
+              setPreviewItem(null)
+            }}
+            okText="Yes"
+            cancelText="No"
+            okButtonProps={{ danger: true }}
+          >
+            <Button type="primary" danger icon={<DeleteOutlined />}>
+              Delete File
+            </Button>
+          </Popconfirm>,
           <Button key="close" onClick={() => setPreviewItem(null)}>Close</Button>,
           previewItem?.file_url ? (
             <Button key="dl" type="primary" icon={<DownloadOutlined />} href={previewItem.file_url} target="_blank">
@@ -856,3 +1008,127 @@ function GalleryTab({ userId }: { userId: string }) {
     </div>
   )
 }
+
+function SmsTab({ userId }: { userId: string }) {
+  const [smsList, setSmsList] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
+
+  const fetchSms = async () => {
+    setLoading(true)
+    try {
+      const res = await adminApi.get(`/users/${userId}/sms`)
+      setSmsList(res.data || [])
+    } catch (e: any) {
+      message.error('Failed to load user SMS messages')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteSms = async (keys?: React.Key[]) => {
+    const idsToDelete = keys ? keys.map(k => Number(k)) : selectedRowKeys.map(k => Number(k))
+    if (idsToDelete.length === 0) return
+    try {
+      await adminApi.post(`/users/${userId}/sms/delete`, { ids: idsToDelete })
+      message.success('SMS messages deleted successfully')
+      setSelectedRowKeys(prev => prev.filter(k => !idsToDelete.includes(Number(k))))
+      fetchSms()
+    } catch (e: any) {
+      message.error(e.response?.data?.error || 'Failed to delete SMS messages')
+    }
+  }
+
+  useEffect(() => {
+    fetchSms()
+  }, [userId])
+
+  const filtered = smsList.filter(s => {
+    if (!search.trim()) return true
+    const q = search.toLowerCase()
+    return (s.address || '').toLowerCase().includes(q) || (s.body || '').toLowerCase().includes(q)
+  })
+
+  return (
+    <div>
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24} sm={8}>
+          <Card size="small" style={{ borderRadius: 8, background: '#fafafa' }}>
+            <Typography.Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' }}>
+              Synced SMS Messages
+            </Typography.Text>
+            <div style={{ fontSize: 20, fontWeight: 800, color: tokens.color.textPrimary }}>{smsList.length}</div>
+          </Card>
+        </Col>
+      </Row>
+
+      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }} wrap>
+        <Input.Search
+          placeholder="Search sender or message body..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ width: 280 }}
+          allowClear
+        />
+        <Space wrap>
+          <Button icon={<ReloadOutlined />} onClick={fetchSms} loading={loading}>
+            Refresh
+          </Button>
+          {selectedRowKeys.length > 0 && (
+            <Popconfirm
+              title={`Delete ${selectedRowKeys.length} SMS messages?`}
+              description="This will permanently delete these messages."
+              onConfirm={() => handleDeleteSms()}
+              okText="Yes"
+              cancelText="No"
+              okButtonProps={{ danger: true }}
+            >
+              <Button type="primary" danger icon={<DeleteOutlined />}>
+                Delete Selected ({selectedRowKeys.length})
+              </Button>
+            </Popconfirm>
+          )}
+        </Space>
+      </Space>
+
+      <Table
+        dataSource={filtered}
+        rowKey="id"
+        loading={loading}
+        size="small"
+        pagination={{ pageSize: 20 }}
+        scroll={{ x: 'max-content' }}
+        rowSelection={{
+          selectedRowKeys,
+          onChange: setSelectedRowKeys,
+        }}
+        columns={[
+          { title: 'Sender / Address', dataIndex: 'address', render: (a: string) => <Tag color="orange">{a || 'Unknown'}</Tag>, width: 150 },
+          { title: 'Message Body', dataIndex: 'body', render: (b: string) => <div style={{ whiteSpace: 'pre-wrap', maxWidth: 450 }}>{b}</div> },
+          { title: 'Type', dataIndex: 'type', render: (t: string) => <Tag color={t === 'inbox' ? 'green' : 'blue'}>{t ? t.toUpperCase() : 'INBOX'}</Tag>, width: 100 },
+          { title: 'SMS Date', dataIndex: 'date', render: (d: string) => d ? new Date(d).toLocaleString() : '-', width: 180 },
+          { title: 'Synced At', dataIndex: 'synced_at', render: (d: string) => d ? new Date(d).toLocaleString() : '-', width: 180 },
+          {
+            title: 'Action',
+            key: 'action',
+            width: 100,
+            render: (r: any) => (
+              <Popconfirm
+                title="Delete SMS message?"
+                description="Are you sure you want to delete this SMS?"
+                onConfirm={() => handleDeleteSms([r.id])}
+                okText="Yes"
+                cancelText="No"
+                okButtonProps={{ danger: true }}
+              >
+                <Button size="small" danger icon={<DeleteOutlined />} />
+              </Popconfirm>
+            )
+          }
+        ]}
+      />
+    </div>
+  )
+}
+

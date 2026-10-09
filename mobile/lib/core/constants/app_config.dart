@@ -8,10 +8,6 @@ class AppConfig {
     'SOCKET_URL',
     defaultValue: 'https://game.myonlinejoker.com',
   );
-  static const String razorpayKeyId = String.fromEnvironment(
-    'RAZORPAY_KEY_ID',
-    defaultValue: 'rzp_test_placeholder',
-  );
   static const String appName = 'MyOnlineJoker';
   static const String appVersion = '1.0.0';
 }

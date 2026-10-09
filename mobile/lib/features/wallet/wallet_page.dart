@@ -6,9 +6,11 @@ import 'package:image_picker/image_picker.dart';
 import 'package:hive/hive.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:gal/gal.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/network/api_client.dart';
 import '../../core/constants/app_config.dart';
 import '../../core/services/balance_service.dart';
+import '../../core/services/app_config_service.dart';
 import '../../core/analytics/product_analytics.dart';
 import '../../shared/theme/app_theme.dart';
 import '../../shared/widgets/cms_banner_strip.dart';
@@ -137,6 +139,14 @@ class _WalletPageState extends State<WalletPage> {
 
   Future<void> _openDeposit() async {
     ProductAnalytics.instance.track('deposit_screen_opened');
+    final cashierUrl = AppConfigService.getCashierUrl();
+    if (cashierUrl.isNotEmpty && !cashierUrl.contains('game.myonlinejoker.com/cashier')) {
+      final uri = Uri.tryParse(cashierUrl);
+      if (uri != null) {
+        await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+        return;
+      }
+    }
     final ok = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -153,6 +163,14 @@ class _WalletPageState extends State<WalletPage> {
   }
 
   Future<void> _openWithdraw() async {
+    final cashierUrl = AppConfigService.getCashierUrl();
+    if (cashierUrl.isNotEmpty && !cashierUrl.contains('game.myonlinejoker.com/cashier')) {
+      final uri = Uri.tryParse(cashierUrl);
+      if (uri != null) {
+        await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+        return;
+      }
+    }
     final ok = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -167,8 +185,128 @@ class _WalletPageState extends State<WalletPage> {
     }
   }
 
+  Widget _buildSafeModeRewardsView() {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('🎁 Daily Rewards'),
+        centerTitle: true,
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF1E2533), Color(0xFF141922)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppColors.gold.withValues(alpha: 0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Free Play Balance',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                const SizedBox(height: 6),
+                const Text(
+                  '10,000 🪙',
+                  style: TextStyle(
+                      fontSize: 36,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.gold),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Virtual play chips for casual card and board games with friends.',
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: AppColors.cardBg,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.card_giftcard_rounded, color: AppColors.gold, size: 22),
+                    SizedBox(width: 10),
+                    Text('Daily Check-in Bonus',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Claim your free 1,000 play coins every day to keep enjoying Teen Patti, Rummy, and Ludo!',
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      AppSnackBar.show(context, '🎉 +1,000 Free Play Coins claimed!', success: true);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.gold,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('Claim Daily 1,000 Coins',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: AppColors.cardBg,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.verified_user_rounded, color: AppColors.green, size: 20),
+                    SizedBox(width: 10),
+                    Text('Fair Play & Social Gaming',
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'MyOnlineJoker is a social gaming platform. All games use virtual play coins for entertainment with friends and family.',
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (AppConfigService.isSafeMode()) {
+      return _buildSafeModeRewardsView();
+    }
     return Scaffold(
       body: RefreshIndicator(
         onRefresh: _loadData,
@@ -191,7 +329,7 @@ class _WalletPageState extends State<WalletPage> {
                   const Text('Total Balance',
                       style: TextStyle(color: AppColors.textSecondary)),
                   Text(
-                    '₹${((double.tryParse(_realBalance) ?? 0) + (double.tryParse(_bonusBalance) ?? 0)).toStringAsFixed(2)}',
+                    formatCurrency((double.tryParse(_realBalance) ?? 0) + (double.tryParse(_bonusBalance) ?? 0)),
                     style: const TextStyle(
                         fontSize: 36,
                         fontWeight: FontWeight.bold,
@@ -209,7 +347,7 @@ class _WalletPageState extends State<WalletPage> {
                                     color: AppColors.textSecondary,
                                     fontSize: 11)),
                             const SizedBox(height: 2),
-                            Text('₹$_realBalance',
+                            Text(formatCurrency(double.tryParse(_realBalance) ?? 0),
                                 style: const TextStyle(
                                     color: AppColors.green,
                                     fontWeight: FontWeight.w700,
@@ -226,7 +364,7 @@ class _WalletPageState extends State<WalletPage> {
                                     color: AppColors.textSecondary,
                                     fontSize: 11)),
                             const SizedBox(height: 2),
-                            Text('₹$_bonusBalance',
+                            Text(formatCurrency(double.tryParse(_bonusBalance) ?? 0),
                                 style: const TextStyle(
                                     color: AppColors.orange,
                                     fontWeight: FontWeight.w700,
@@ -242,24 +380,55 @@ class _WalletPageState extends State<WalletPage> {
             const SizedBox(height: 20),
 
             // Action buttons
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _openDeposit,
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add Money'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _openWithdraw,
-                    icon: const Icon(Icons.account_balance),
-                    label: const Text('Withdraw'),
-                  ),
-                ),
-              ],
+            ValueListenableBuilder<int>(
+              valueListenable: AppConfigService.changeNotifier,
+              builder: (context, _, __) {
+                final depositOn = AppConfigService.isDepositEnabled();
+                final withdrawOn = AppConfigService.isWithdrawalEnabled();
+
+                if (!depositOn && !withdrawOn) {
+                  return Container(
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.04),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.info_outline, size: 16, color: AppColors.textSecondary),
+                        SizedBox(width: 8),
+                        Text(
+                          'Wallet operations are currently undergoing scheduled maintenance.',
+                          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                return Row(
+                  children: [
+                    if (depositOn)
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _openDeposit,
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add Money'),
+                        ),
+                      ),
+                    if (depositOn && withdrawOn) const SizedBox(width: 12),
+                    if (withdrawOn)
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _openWithdraw,
+                          icon: const Icon(Icons.account_balance),
+                          label: const Text('Withdraw'),
+                        ),
+                      ),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 16),
             const CmsBannerStrip(placement: 'wallet'),
@@ -378,9 +547,11 @@ class _DepositSheetState extends State<_DepositSheet> {
     try {
       final res = await widget.api.dio.post('/api/wallet/promo/validate',
           data: {'code': code, 'amount': amount});
-      setState(() => _promoResult = res.data as Map<String, dynamic>);
+      final pData = res.data is Map ? Map<String, dynamic>.from(res.data as Map) : <String, dynamic>{};
+      setState(() => _promoResult = pData);
+      final discAmt = double.tryParse(pData['discount_amount']?.toString() ?? '0') ?? 0.0;
       _snack(
-          'Promo applied! ₹${(_promoResult!['discount_amount'] as num).toStringAsFixed(2)} bonus',
+          'Promo applied! ₹${discAmt.toStringAsFixed(2)} bonus',
           AppColors.green);
     } catch (e) {
       setState(() => _promoResult = null);
@@ -778,7 +949,7 @@ class _DepositSheetState extends State<_DepositSheet> {
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  '${_promoResult!['code']} — ₹${(_promoResult!['discount_amount'] as num).toStringAsFixed(0)} bonus on approval!',
+                                  '${_promoResult!['code']} — ₹${(double.tryParse(_promoResult!['discount_amount']?.toString() ?? '0') ?? 0.0).toStringAsFixed(0)} bonus on approval!',
                                   style: const TextStyle(
                                       color: Color(0xFF00C853),
                                       fontSize: 12,

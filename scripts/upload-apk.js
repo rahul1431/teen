@@ -6,7 +6,9 @@ const VPS_CONFIG = {
   host: process.env.VPS_HOST || '64.204.130.181',
   port: 22,
   username: process.env.VPS_USER || 'root',
-  password: process.env.VPS_PASSWORD || '4sXWo02f4WkNm8fM'
+  password: process.env.VPS_PASSWORD || '4sXWo02f4WkNm8fM',
+  keepaliveInterval: 0,
+  readyTimeout: 60000
 };
 
 let localApk = path.join(__dirname, '../mobile/build/app/outputs/flutter-apk/app-release.apk');
@@ -55,9 +57,23 @@ conn.on('ready', () => {
     }
     
     console.log('📤 Uploading APK to VPS downloads directory...');
-    const remoteApk = '/home/admin/web/game.myonlinejoker.com/public_html/downloads/app-release.apk';
+    const remoteApk = '/opt/teen-prod/downloads/app-release.apk';
     
-    sftp.fastPut(localApk, remoteApk, {}, (uploadErr) => {
+    const fastPutOptions = {
+      chunkSize: 32768,
+      concurrency: 16,
+      step: (total_transferred, chunk, total) => {
+        const percent = ((total_transferred / total) * 100).toFixed(1);
+        const curTen = Math.floor(total_transferred / total * 10);
+        if (curTen !== lastPercent) {
+          lastPercent = curTen;
+          console.log(`⏳ Upload Progress: ${percent}% (${(total_transferred / (1024 * 1024)).toFixed(1)} MB / ${(total / (1024 * 1024)).toFixed(1)} MB)`);
+        }
+      }
+    };
+    let lastPercent = -1;
+
+    sftp.fastPut(localApk, remoteApk, fastPutOptions, (uploadErr) => {
       if (uploadErr) {
         console.error('❌ Upload Error:', uploadErr);
         conn.end();
@@ -66,12 +82,13 @@ conn.on('ready', () => {
       
       console.log('✅ APK successfully uploaded to VPS downloads directory!');
       
-      // Ensure correct permissions and update database for force update
+      // Ensure correct permissions, create symlink, and update database for force update
       const remoteCmds = `
         chown admin:admin ${remoteApk} && \\
         chmod 644 ${remoteApk} && \\
+        ln -sf app-release.apk /opt/teen-prod/downloads/app-release-${versionCode}.apk && \\
         echo "Updating app_versions table to ${versionName} (${versionCode})..." && \\
-        docker exec teen_postgres psql -U teen -d teen_db -c "INSERT INTO app_versions (version_name, version_code, download_url, release_notes, force_update) VALUES ('${versionName}', ${versionCode}, 'https://game.myonlinejoker.com/downloads/app-release.apk', 'Rummy: Bot enhancements with humanized profiles, avatars, and realistic turn pacing', true) ON CONFLICT (version_code) DO UPDATE SET version_name = EXCLUDED.version_name, download_url = EXCLUDED.download_url, release_notes = EXCLUDED.release_notes, force_update = EXCLUDED.force_update;" && \\
+        (PGPASSWORD='teen_secret_2024' psql -U teen -h localhost -d teen_db -c "INSERT INTO app_versions (version_name, version_code, download_url, release_notes, force_update) VALUES ('${versionName}', ${versionCode}, 'https://game.myonlinejoker.com/downloads/app-release.apk', 'Satta Matka: New clean Date Chart & weekly Panel Matrix, Color Prediction live trends and bet history sync', true) ON CONFLICT (version_code) DO UPDATE SET version_name = EXCLUDED.version_name, download_url = EXCLUDED.download_url, release_notes = EXCLUDED.release_notes, force_update = EXCLUDED.force_update;" || docker exec teen_postgres psql -U teen -d teen_db -c "INSERT INTO app_versions (version_name, version_code, download_url, release_notes, force_update) VALUES ('${versionName}', ${versionCode}, 'https://game.myonlinejoker.com/downloads/app-release.apk', 'Satta Matka: New clean Date Chart & weekly Panel Matrix, Color Prediction live trends and bet history sync', true) ON CONFLICT (version_code) DO UPDATE SET version_name = EXCLUDED.version_name, download_url = EXCLUDED.download_url, release_notes = EXCLUDED.release_notes, force_update = EXCLUDED.force_update;") && \\
         echo "FORCE_UPDATE_DATABASE_SUCCESS"
       `;
 
