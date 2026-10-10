@@ -2,14 +2,14 @@ name: Oracle A1 VM Auto-Retry
 
 on:
   schedule:
-    # Runs every 5 minutes (GitHub Actions minimum interval)
-    - cron: '*/5 * * * *'
-  workflow_dispatch:  # Also allows manual trigger from GitHub UI
+    # Backup heartbeat: triggers every 15 min if chain is ever interrupted
+    - cron: '*/15 * * * *'
+  workflow_dispatch:  # Manual trigger from GitHub UI / API
 
 jobs:
   create-vm:
     runs-on: ubuntu-latest
-    timeout-minutes: 4   # Kill if stuck (stays under 5min cycle)
+    timeout-minutes: 5   # Kill if stuck
 
     steps:
       - name: Checkout repo
@@ -33,11 +33,9 @@ jobs:
           OCI_REGION:           ${{ secrets.OCI_REGION }}
         run: |
           mkdir -p ~/.oci
-          # Write the private key file
           echo "$OCI_PRIVATE_KEY" > ~/.oci/oci_api_key.pem
           chmod 600 ~/.oci/oci_api_key.pem
 
-          # Write the config file
           cat > ~/.oci/config << EOF
           [DEFAULT]
           user=$OCI_USER_OCID
@@ -49,6 +47,7 @@ jobs:
           chmod 600 ~/.oci/config
 
       - name: Run Oracle VM creation script
+        id: retry
         env:
           OCI_COMPARTMENT_ID:   ${{ secrets.OCI_COMPARTMENT_ID }}
           OCI_SUBNET_ID:        ${{ secrets.OCI_SUBNET_ID }}
@@ -56,3 +55,17 @@ jobs:
           OCI_SSH_PUBLIC_KEY:   ${{ secrets.OCI_SSH_PUBLIC_KEY }}
           OCI_REGION:           ${{ secrets.OCI_REGION }}
         run: python scripts/oracle_vm_retry.py
+
+      - name: Trigger Next Run (Continuous Loop)
+        if: steps.retry.outputs.vm_created != 'true'
+        env:
+          DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+        run: |
+          echo "VM not yet created. Self-triggering next run immediately..."
+          curl -s -X POST \
+            -H "Authorization: Bearer $DISPATCH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: Continuous-Runner" \
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/oracle-vm-retry.yml/dispatches \
+            -d "{\"ref\":\"${{ github.ref }}\"}"
+          echo "Next run dispatched successfully!"

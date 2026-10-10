@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Oracle Cloud A1.Flex Auto-Retry Script
-Runs via GitHub Actions.
-Loops for ~3.5 minutes per run (retrying every 15s) to maximize chance of claiming capacity.
-Exits immediately if VM already exists or is successfully created.
+Runs via GitHub Actions in a continuous loop.
+Tries both 2 OCPU (12 GB RAM) and 1 OCPU (6 GB RAM) to maximize acquisition chance.
+Outputs vm_created=true/false to GITHUB_OUTPUT so GitHub Actions can self-retrigger.
 """
 
 import oci
@@ -21,22 +21,35 @@ REGION          = os.environ.get("OCI_REGION", "ap-singapore-1")
 
 # VM Configuration (Always Free eligible)
 SHAPE           = "VM.Standard.A1.Flex"
-OCPUS           = 2
-MEMORY_GB       = 12
 BOOT_VOLUME_GB  = 100
 INSTANCE_NAME   = "teen-prod"
 
+# Shape configurations to attempt (2 OCPU preferred, 1 OCPU fallback)
+SHAPE_OPTIONS = [
+    {"ocpus": 2, "memory": 12},
+    {"ocpus": 1, "memory": 6},
+]
+
 # Max duration for this workflow run to loop (seconds)
-MAX_RUN_SECONDS = 210  # 3.5 minutes (leaves buffer before 4min timeout)
-RETRY_DELAY_SEC = 15   # Delay between retry attempts
+MAX_RUN_SECONDS = 210  # 3.5 minutes (leaves buffer before 4-5min timeout)
+RETRY_DELAY_SEC = 15   # Delay between retry cycles
 
 def ts():
     return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
+def set_gh_output(key, val):
+    gh_output = os.environ.get("GITHUB_OUTPUT")
+    if gh_output:
+        try:
+            with open(gh_output, "a") as f:
+                f.write(f"{key}={val}\n")
+        except Exception as e:
+            print(f"[{ts()}] ⚠️ Could not write GITHUB_OUTPUT: {e}")
+
 def main():
-    print(f"[{ts()}] 🚀 Oracle A1 Auto-Retry Script Starting")
+    print(f"[{ts()}] 🚀 Oracle A1 Continuous Auto-Retry Script Starting")
     print(f"[{ts()}] Region: {REGION}")
-    print(f"[{ts()}] Target Shape: {SHAPE} ({OCPUS} OCPUs, {MEMORY_GB} GB RAM)")
+    print(f"[{ts()}] Target: {SHAPE} (Trying 2 OCPU/12GB and 1 OCPU/6GB)")
     print("─" * 65)
 
     # 1. Initialize OCI clients
@@ -48,6 +61,7 @@ def main():
         print(f"[{ts()}] ✅ OCI authentication and clients initialized successfully")
     except Exception as e:
         print(f"[{ts()}] ❌ Failed to initialize OCI client: {e}")
+        set_gh_output("vm_created", "false")
         sys.exit(1)
 
     # 2. Check if instance ALREADY exists
@@ -64,6 +78,7 @@ def main():
             print(f"[{ts()}] 🎉 Instance ID: {inst.id}")
             print(f"[{ts()}] 🎉 Stopping retry loop.")
             print(f"[{ts()}] 🎉 ═══════════════════════════════════════════════════")
+            set_gh_output("vm_created", "true")
             sys.exit(0)
     except Exception as e:
         print(f"[{ts()}] ⚠️ Could not check existing instances: {e}")
@@ -120,21 +135,25 @@ def main():
         print(f"\n[{ts()}] [Attempt #{attempt} | Elapsed {elapsed}s] Requesting VM from Oracle...")
 
         for ad in availability_domains:
-            result, data = attempt_create(compute, ad)
+            for opt in SHAPE_OPTIONS:
+                ocpus = opt["ocpus"]
+                memory = opt["memory"]
+                result, data = attempt_create(compute, ad, ocpus, memory)
 
-            if result == "SUCCESS":
-                print(f"\n[{ts()}] 🎉 ═══════════════════════════════════════════════════")
-                print(f"[{ts()}] 🎉  VM CREATED SUCCESSFULLY ON ATTEMPT #{attempt}!")
-                print(f"[{ts()}] 🎉  Instance ID: {data.id}")
-                print(f"[{ts()}] 🎉  Check Oracle Console → Compute → Instances")
-                print(f"[{ts()}] 🎉 ═══════════════════════════════════════════════════")
-                sys.exit(0)
+                if result == "SUCCESS":
+                    print(f"\n[{ts()}] 🎉 ═══════════════════════════════════════════════════")
+                    print(f"[{ts()}] 🎉  VM CREATED SUCCESSFULLY ({ocpus} OCPU, {memory} GB RAM)!")
+                    print(f"[{ts()}] 🎉  Instance ID: {data.id}")
+                    print(f"[{ts()}] 🎉  Check Oracle Console → Compute → Instances")
+                    print(f"[{ts()}] 🎉 ═══════════════════════════════════════════════════")
+                    set_gh_output("vm_created", "true")
+                    sys.exit(0)
 
-            elif result == "CAPACITY_ERROR":
-                print(f"[{ts()}]   ⏳ {ad}: Out of host capacity (AD full).")
+                elif result == "CAPACITY_ERROR":
+                    print(f"[{ts()}]   ⏳ {ad} ({ocpus} OCPU/{memory}GB): Out of host capacity.")
 
-            else:
-                print(f"[{ts()}]   ⚠️ {ad}: {result}")
+                else:
+                    print(f"[{ts()}]   ⚠️ {ad} ({ocpus} OCPU/{memory}GB): {result}")
 
         attempt += 1
         remaining = int(MAX_RUN_SECONDS - (time.time() - start_time))
@@ -143,14 +162,15 @@ def main():
         else:
             break
 
-    print(f"\n[{ts()}] 💤 Run finished {attempt - 1} attempts. Host still busy in Singapore.")
-    print(f"[{ts()}] 🔁 Next GitHub Actions cycle will trigger and retry automatically.")
+    print(f"\n[{ts()}] 💤 Run finished {attempt - 1} cycles. Host still busy in Singapore.")
+    print(f"[{ts()}] 🔁 Self-triggering next run immediately via GitHub dispatch...")
+    set_gh_output("vm_created", "false")
     sys.exit(0)
 
 
-def attempt_create(compute: oci.core.ComputeClient, availability_domain: str):
+def attempt_create(compute: oci.core.ComputeClient, availability_domain: str, ocpus: int, memory: int):
     """
-    Attempts to launch the VM.Standard.A1.Flex instance.
+    Attempts to launch the VM.Standard.A1.Flex instance with specified OCPUs and Memory.
     """
     try:
         launch_details = oci.core.models.LaunchInstanceDetails(
@@ -159,8 +179,8 @@ def attempt_create(compute: oci.core.ComputeClient, availability_domain: str):
             display_name=INSTANCE_NAME,
             shape=SHAPE,
             shape_config=oci.core.models.LaunchInstanceShapeConfigDetails(
-                ocpus=OCPUS,
-                memory_in_gbs=MEMORY_GB
+                ocpus=ocpus,
+                memory_in_gbs=memory
             ),
             source_details=oci.core.models.InstanceSourceViaImageDetails(
                 source_type="image",
