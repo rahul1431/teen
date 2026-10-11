@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_config.dart';
 import '../../../core/services/sync_service.dart';
+import '../../../core/services/firebase_auth_service.dart';
 import '../../../shared/theme/app_theme.dart';
 
 /// Step 1 of password recovery: enter phone, receive OTP, enter OTP.
@@ -24,6 +25,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   int _resendIn = 0;
   Timer? _resendTimer;
   String? _errorMsg;
+  String? _verificationId;
+  String? _firebaseToken;
 
   @override
   void initState() {
@@ -50,20 +53,70 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   Future<void> _sendOtp() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() { _loading = true; _errorMsg = null; });
-    try {
-      await Dio().post('${AppConfig.apiBaseUrl}/api/auth/send-otp',
-          data: {'phone': _phoneCtrl.text.trim(), 'reason': 'reset'});
-      setState(() { _otpSent = true; _resendIn = 60; });
-      _resendTimer?.cancel();
-      _resendTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-        if (!mounted) { t.cancel(); return; }
-        setState(() { _resendIn--; if (_resendIn <= 0) t.cancel(); });
-      });
-    } on DioException catch (e) {
-      setState(() => _errorMsg = e.response?.data?['error'] ?? 'Could not send OTP. Please try again.');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+    final phone = _phoneCtrl.text.trim();
+
+    await FirebaseAuthService.sendPhoneOtp(
+      phone10Digit: phone,
+      onCodeSent: (verificationId) {
+        if (!mounted) return;
+        setState(() {
+          _verificationId = verificationId;
+          _otpSent = true;
+          _resendIn = 60;
+          _loading = false;
+        });
+        _startTimer();
+        AppSnackBar.show(context, 'Reset SMS OTP sent to +91$phone', success: true);
+      },
+      onAutoVerified: (idToken, smsCode) {
+        // ⭐️ ANDROID AUTO-DETECTION: Auto verified via Google Play Services!
+        if (!mounted) return;
+        setState(() {
+          _firebaseToken = idToken;
+          if (smsCode != null && smsCode.isNotEmpty) {
+            _otpCtrl.text = smsCode;
+          }
+          _otpSent = true;
+          _loading = false;
+        });
+        AppSnackBar.show(context, '✅ SMS auto-detected & verified!', success: true);
+        _submitResetVerification(phone, smsCode ?? '123456', idToken);
+      },
+      onError: (err) async {
+        // Fallback to server-side send-otp
+        try {
+          final res = await Dio().post('${AppConfig.apiBaseUrl}/api/auth/send-otp',
+              data: {'phone': phone, 'reason': 'reset'});
+          final devOtp = res.data?['otp'] as String?;
+          if (!mounted) return;
+          if (devOtp != null) {
+            _otpCtrl.text = devOtp;
+          }
+          setState(() { _otpSent = true; _resendIn = 60; _loading = false; });
+          _startTimer();
+          AppSnackBar.show(
+              context,
+              devOtp != null
+                  ? 'OTP: $devOtp (auto-filled for testing)'
+                  : 'OTP sent to +91$phone',
+              success: true);
+        } catch (_) {
+          if (!mounted) return;
+          setState(() {
+            _errorMsg = err;
+            _loading = false;
+          });
+        }
+      },
+    );
+  }
+
+  void _startTimer() {
+    _resendTimer?.cancel();
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) { t.cancel(); return; }
+      setState(() { _resendIn--; if (_resendIn <= 0) t.cancel(); });
+    });
   }
 
   Future<void> _continueToReset() async {
@@ -77,18 +130,44 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       _loading = true;
       _errorMsg = null;
     });
+
+    String? fbToken = _firebaseToken;
+    if (fbToken == null && _verificationId != null) {
+      try {
+        fbToken = await FirebaseAuthService.verifyManualOtp(
+          verificationId: _verificationId!,
+          smsCode: otp,
+        );
+      } catch (_) {}
+    }
+
+    await _submitResetVerification(phone, otp, fbToken);
+  }
+
+  Future<void> _submitResetVerification(String phone, String otp, String? fbToken) async {
     try {
       await Dio().post('${AppConfig.apiBaseUrl}/api/auth/verify-otp',
-          data: {'phone': phone, 'otp': otp});
+          data: {
+            'phone': phone,
+            if (otp.isNotEmpty) 'otp': otp,
+            if (fbToken != null) 'firebase_token': fbToken,
+          });
+      if (!mounted) return;
       setState(() {
         _loading = false;
       });
-      if (mounted) {
-        context.push('/auth/reset-password?phone=$phone&otp=$otp');
-      }
+      final tokenParam = fbToken != null ? '&firebase_token=${Uri.encodeComponent(fbToken)}' : '';
+      context.push('/auth/reset-password?phone=$phone&otp=$otp$tokenParam');
     } on DioException catch (e) {
+      if (!mounted) return;
       setState(() {
         _errorMsg = e.response?.data?['error'] ?? 'Invalid or expired OTP';
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMsg = 'Verification error: $e';
         _loading = false;
       });
     }

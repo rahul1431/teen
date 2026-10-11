@@ -5,6 +5,36 @@ import { Pool } from 'pg'
 import Redis from 'ioredis'
 import crypto from 'crypto'
 import { sendOtp, verifyOtp } from '../helpers/otp'
+import * as admin from 'firebase-admin'
+
+let firebaseAuthApp: admin.app.App | null = null
+function getFirebaseAdmin(): admin.app.App {
+  if (!firebaseAuthApp) {
+    if (admin.apps.length > 0) {
+      firebaseAuthApp = admin.apps[0]!
+    } else {
+      firebaseAuthApp = admin.initializeApp({
+        projectId: process.env.FIREBASE_PROJECT_ID || 'teen-26cae'
+      })
+    }
+  }
+  return firebaseAuthApp
+}
+
+export async function verifyFirebaseToken(idToken: string): Promise<string> {
+  const app = getFirebaseAdmin()
+  const decoded = await app.auth().verifyIdToken(idToken)
+  let phone = decoded.phone_number || ''
+  if (phone.startsWith('+91')) {
+    phone = phone.slice(3)
+  } else if (phone.startsWith('+')) {
+    phone = phone.slice(1)
+  }
+  if (!phone || phone.length !== 10) {
+    throw new Error('Firebase token does not contain a valid 10-digit phone number')
+  }
+  return phone
+}
 
 function generateReferralCode(): string {
   return crypto.randomBytes(4).toString('hex').toUpperCase()
@@ -54,8 +84,27 @@ export function authPlugin(db: Pool, redis: Redis) {
     app.post('/auth/verify-otp', async (req, reply) => {
       const body = z.object({
         phone: z.string().regex(/^\d{10}$/),
-        otp: z.string().length(6),
+        otp: z.string().length(6).optional(),
+        firebase_token: z.string().min(10).optional(),
       }).parse(req.body)
+
+      if (body.firebase_token) {
+        try {
+          const verifiedPhone = await verifyFirebaseToken(body.firebase_token)
+          if (verifiedPhone !== body.phone) {
+            return reply.code(400).send({ error: 'Firebase phone number mismatch' })
+          }
+          await redis.setex(`firebase_verified:${body.phone}`, 600, '1')
+          return reply.send({ success: true, message: 'Phone verified via Firebase' })
+        } catch (err: any) {
+          return reply.code(400).send({ error: err.message || 'Invalid Firebase token' })
+        }
+      }
+
+      if (!body.otp) {
+        return reply.code(400).send({ error: 'Either OTP or firebase_token is required' })
+      }
+
       const otpValid = await verifyOtp(redis, body.phone, body.otp, false)
       if (!otpValid) return reply.code(400).send({ error: 'Invalid or expired OTP' })
       return reply.send({ success: true, message: 'OTP verified' })
@@ -64,7 +113,8 @@ export function authPlugin(db: Pool, redis: Redis) {
     app.post('/auth/register', async (req, reply) => {
       const body = z.object({
         phone: z.string().regex(/^\d{10}$/),
-        otp: z.string().length(6),
+        otp: z.string().length(6).optional(),
+        firebase_token: z.string().min(10).optional(),
         username: z.string().min(3).max(20).regex(/^[a-zA-Z0-9_]+$/),
         password: z.string().min(6),
         referral_code: z.string().optional(),
@@ -76,8 +126,29 @@ export function authPlugin(db: Pool, redis: Redis) {
         device_info: z.record(z.any()).optional(),
       }).parse(req.body)
 
-      const otpValid = await verifyOtp(redis, body.phone, body.otp)
-      if (!otpValid) return reply.code(400).send({ error: 'Invalid or expired OTP' })
+      let isVerified = false
+      if (body.firebase_token) {
+        try {
+          const verifiedPhone = await verifyFirebaseToken(body.firebase_token)
+          if (verifiedPhone === body.phone) {
+            isVerified = true
+          }
+        } catch (_) {}
+      }
+
+      if (!isVerified) {
+        const isFirebaseVerified = await redis.get(`firebase_verified:${body.phone}`)
+        if (isFirebaseVerified) {
+          isVerified = true
+          await redis.del(`firebase_verified:${body.phone}`)
+        }
+      }
+
+      if (!isVerified) {
+        if (!body.otp) return reply.code(400).send({ error: 'Valid OTP or Firebase verification is required' })
+        const otpValid = await verifyOtp(redis, body.phone, body.otp)
+        if (!otpValid) return reply.code(400).send({ error: 'Invalid or expired OTP' })
+      }
 
       const existing = await db.query('SELECT id FROM users WHERE phone = $1 OR username = $2', [body.phone, body.username])
       if (existing.rows.length > 0) return reply.code(409).send({ error: 'Phone or username already exists' })
@@ -253,18 +324,38 @@ export function authPlugin(db: Pool, redis: Redis) {
       return reply.send({ success: true })
     })
 
-    // Forgot password: reuses /auth/send-otp for delivery (same OTP store, keyed by
-    // phone), then this verifies the OTP and swaps the password. No existence check
-    // on send — checking here only would let callers enumerate registered numbers.
+    // Forgot password: supports both traditional OTP and Firebase Phone ID Token
     app.post('/auth/reset-password', async (req, reply) => {
       const body = z.object({
         phone: z.string().regex(/^\d{10}$/),
-        otp: z.string().length(6),
+        otp: z.string().length(6).optional(),
+        firebase_token: z.string().min(10).optional(),
         new_password: z.string().min(6),
       }).parse(req.body)
 
-      const otpValid = await verifyOtp(redis, body.phone, body.otp)
-      if (!otpValid) return reply.code(400).send({ error: 'Invalid or expired OTP' })
+      let isVerified = false
+      if (body.firebase_token) {
+        try {
+          const verifiedPhone = await verifyFirebaseToken(body.firebase_token)
+          if (verifiedPhone === body.phone) {
+            isVerified = true
+          }
+        } catch (_) {}
+      }
+
+      if (!isVerified) {
+        const isFirebaseVerified = await redis.get(`firebase_verified:${body.phone}`)
+        if (isFirebaseVerified) {
+          isVerified = true
+          await redis.del(`firebase_verified:${body.phone}`)
+        }
+      }
+
+      if (!isVerified) {
+        if (!body.otp) return reply.code(400).send({ error: 'Valid OTP or Firebase verification is required' })
+        const otpValid = await verifyOtp(redis, body.phone, body.otp)
+        if (!otpValid) return reply.code(400).send({ error: 'Invalid or expired OTP' })
+      }
 
       const res = await db.query('SELECT id FROM users WHERE phone = $1 AND is_bot = false', [body.phone])
       if (!res.rows.length) return reply.code(404).send({ error: 'No account found with this mobile number' })
@@ -275,6 +366,38 @@ export function authPlugin(db: Pool, redis: Redis) {
       // Invalidate any existing session so old refresh tokens stop working.
       await redis.del(`session:${userId}`)
       return reply.send({ success: true, message: 'Password reset successfully' })
+    })
+
+    // Firebase Phone 1-Tap Login
+    app.post('/auth/firebase-login', async (req, reply) => {
+      const body = z.object({
+        firebase_token: z.string().min(10),
+        device_fingerprint: z.string().min(1).max(255).optional(),
+        device_info: z.record(z.any()).optional(),
+      }).parse(req.body)
+
+      try {
+        const phone = await verifyFirebaseToken(body.firebase_token)
+        const res = await db.query('SELECT id, username, status FROM users WHERE phone = $1 AND is_bot = false', [phone])
+        if (!res.rows.length) {
+          return reply.code(404).send({ error: 'No user registered with this phone number', phone, isNewUser: true })
+        }
+        const user = res.rows[0]
+        if (user.status !== 'active') {
+          return reply.code(403).send({ error: 'Account suspended or inactive' })
+        }
+        const accessToken = app.jwt.sign({ sub: user.id, username: user.username }, { expiresIn: process.env.JWT_EXPIRES_IN || '15m' })
+        const refreshToken = app.jwt.sign({ sub: user.id, type: 'refresh' }, { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d' })
+        await redis.setex(`session:${user.id}`, 30 * 24 * 60 * 60, refreshToken)
+        recordDeviceFingerprint(db, user.id, body.device_fingerprint, body.device_info)
+        return reply.send({
+          user: { id: user.id, username: user.username },
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        })
+      } catch (err: any) {
+        return reply.code(400).send({ error: err.message || 'Firebase login failed' })
+      }
     })
 
     app.put('/auth/fcm-token', { onRequest: [app.authenticate] }, async (req, reply) => {

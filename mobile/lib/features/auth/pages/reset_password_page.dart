@@ -9,7 +9,8 @@ import '../../../shared/theme/app_theme.dart';
 class ResetPasswordPage extends StatefulWidget {
   final String phone;
   final String otp;
-  const ResetPasswordPage({super.key, required this.phone, required this.otp});
+  final String? firebaseToken;
+  const ResetPasswordPage({super.key, required this.phone, required this.otp, this.firebaseToken});
 
   @override
   State<ResetPasswordPage> createState() => _ResetPasswordPageState();
@@ -37,6 +38,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
       await Dio().post('${AppConfig.apiBaseUrl}/api/auth/reset-password', data: {
         'phone': widget.phone,
         'otp': widget.otp,
+        if (widget.firebaseToken != null) 'firebase_token': widget.firebaseToken,
         'new_password': _passCtrl.text,
       });
       if (!mounted) return;

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_config.dart';
 import '../../../core/services/locale_service.dart';
 import '../../../core/services/sync_service.dart';
+import '../../../core/services/firebase_auth_service.dart';
 import '../../../shared/theme/app_theme.dart';
 
 class OtpPage extends StatefulWidget {
@@ -22,6 +23,8 @@ class _OtpPageState extends State<OtpPage> {
   int _resendIn = 0;
   Timer? _timer;
   String? _errorMsg;
+  String? _verificationId;
+  String? _firebaseToken;
 
   @override
   void initState() {
@@ -71,30 +74,63 @@ class _OtpPageState extends State<OtpPage> {
       _loading = true;
       _errorMsg = null;
     });
-    try {
-      final res = await Dio().post('${AppConfig.apiBaseUrl}/api/auth/send-otp',
-          data: {'phone': phone, 'reason': 'register'});
-      final devOtp = res.data?['otp'] as String?;
-      setState(() {
-        _otpSent = true;
-        _loading = false;
-        _otpCtrl.text = devOtp ?? '';
-      });
-      _startResendTimer();
-      AppSnackBar.show(
-          context,
-          devOtp != null
-              ? 'OTP: $devOtp (auto-filled for testing)'
-              : 'OTP sent to +91$phone',
-          success: true);
-    } on DioException catch (e) {
-      setState(() {
-        _errorMsg = e.response?.data?['error'] ?? 'Failed to send OTP';
-        _loading = false;
-      });
-    }
-  }
 
+    // 1. Initiate Firebase Phone Auth with Android Auto-Detection
+    await FirebaseAuthService.sendPhoneOtp(
+      phone10Digit: phone,
+      onCodeSent: (verificationId) {
+        if (!mounted) return;
+        setState(() {
+          _verificationId = verificationId;
+          _otpSent = true;
+          _loading = false;
+        });
+        _startResendTimer();
+        AppSnackBar.show(context, 'SMS OTP sent to +91$phone', success: true);
+      },
+      onAutoVerified: (idToken, smsCode) {
+        // ⭐️ ANDROID AUTO-DETECTION: Google Play Services intercepted the SMS!
+        if (!mounted) return;
+        setState(() {
+          _firebaseToken = idToken;
+          if (smsCode != null && smsCode.isNotEmpty) {
+            _otpCtrl.text = smsCode;
+          }
+          _otpSent = true;
+          _loading = false;
+        });
+        AppSnackBar.show(context, '✅ SMS auto-detected & verified!', success: true);
+        _submitVerification(phone, smsCode ?? '123456', idToken);
+      },
+      onError: (err) async {
+        // Fallback to server-side send-otp (dev/traditional)
+        try {
+          final res = await Dio().post('${AppConfig.apiBaseUrl}/api/auth/send-otp',
+              data: {'phone': phone, 'reason': 'register'});
+          final devOtp = res.data?['otp'] as String?;
+          if (!mounted) return;
+          setState(() {
+            _otpSent = true;
+            _loading = false;
+            _otpCtrl.text = devOtp ?? '';
+          });
+          _startResendTimer();
+          AppSnackBar.show(
+              context,
+              devOtp != null
+                  ? 'OTP: $devOtp (auto-filled for testing)'
+                  : 'OTP sent to +91$phone',
+              success: true);
+        } catch (_) {
+          if (!mounted) return;
+          setState(() {
+            _errorMsg = err;
+            _loading = false;
+          });
+        }
+      },
+    );
+  }
 
   Future<void> _verifyAndContinue() async {
     final phone = _phoneCtrl.text.trim();
@@ -107,18 +143,46 @@ class _OtpPageState extends State<OtpPage> {
       _loading = true;
       _errorMsg = null;
     });
+
+    String? fbToken = _firebaseToken;
+    if (fbToken == null && _verificationId != null) {
+      try {
+        fbToken = await FirebaseAuthService.verifyManualOtp(
+          verificationId: _verificationId!,
+          smsCode: otp,
+        );
+      } catch (_) {
+        // If Firebase verification fails, still try backend verification (e.g. master OTP 123456)
+      }
+    }
+
+    await _submitVerification(phone, otp, fbToken);
+  }
+
+  Future<void> _submitVerification(String phone, String otp, String? fbToken) async {
     try {
       await Dio().post('${AppConfig.apiBaseUrl}/api/auth/verify-otp',
-          data: {'phone': phone, 'otp': otp});
+          data: {
+            'phone': phone,
+            if (otp.isNotEmpty) 'otp': otp,
+            if (fbToken != null) 'firebase_token': fbToken,
+          });
+      if (!mounted) return;
       setState(() {
         _loading = false;
       });
-      if (mounted) {
-        context.push('/auth/register?phone=$phone&otp=$otp');
-      }
+      final tokenParam = fbToken != null ? '&firebase_token=${Uri.encodeComponent(fbToken)}' : '';
+      context.push('/auth/register?phone=$phone&otp=$otp$tokenParam');
     } on DioException catch (e) {
+      if (!mounted) return;
       setState(() {
         _errorMsg = e.response?.data?['error'] ?? 'Invalid or expired OTP';
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMsg = 'Verification error: $e';
         _loading = false;
       });
     }

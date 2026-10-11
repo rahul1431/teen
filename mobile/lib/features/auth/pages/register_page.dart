@@ -11,7 +11,8 @@ import 'package:myonlinejoker/shared/utils/permission_helper.dart';
 class RegisterPage extends StatefulWidget {
   final String phone;
   final String otp;
-  const RegisterPage({super.key, required this.phone, this.otp = ''});
+  final String? firebaseToken;
+  const RegisterPage({super.key, required this.phone, this.otp = '', this.firebaseToken});
   @override
   State<RegisterPage> createState() => _RegisterPageState();
 }
@@ -48,6 +49,7 @@ class _RegisterPageState extends State<RegisterPage> {
           await Dio().post('${AppConfig.apiBaseUrl}/api/auth/register', data: {
         'phone': widget.phone,
         'otp': widget.otp,
+        if (widget.firebaseToken != null) 'firebase_token': widget.firebaseToken,
         'username': _usernameCtrl.text.trim(),
         'password': _passCtrl.text,
         if (_refCtrl.text.isNotEmpty)
