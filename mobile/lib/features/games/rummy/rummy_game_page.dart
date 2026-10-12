@@ -54,12 +54,12 @@ class _RummyGamePageState extends State<RummyGamePage>
 
   // Relative seat coordinates around the Landscape Oval Table: (fracX, fracY)
   static const _seatPositions = [
-    (0.18, 0.16), // Top-Left (Opponent 1)
-    (0.40, 0.12), // Top-Mid-Left (Opponent 2)
-    (0.60, 0.12), // Top-Mid-Right (Opponent 3)
-    (0.82, 0.16), // Top-Right (Opponent 4)
-    (0.06, 0.44), // Far-Left (Opponent 5)
-    (0.94, 0.44), // Far-Right (Opponent 6)
+    (0.14, 0.18), // Top-Left (Opponent 1)
+    (0.31, 0.08), // Top-Mid-Left (Opponent 2)
+    (0.69, 0.08), // Top-Mid-Right (Opponent 3)
+    (0.86, 0.18), // Top-Right (Opponent 4)
+    (0.06, 0.50), // Far-Left (Opponent 5)
+    (0.94, 0.50), // Far-Right (Opponent 6)
   ];
 
   @override
@@ -1967,7 +1967,99 @@ class _RummyGamePageState extends State<RummyGamePage>
     );
   }
 
-  // ④ Table Center Area: Closed Deck Shoe, Open Discard Pile, Declare Slot, Wild Joker, Pot
+  // ④a Center Pot Baize: Skeuomorphic Trophy Plaque & 3D Casino Chips
+  Widget _buildTablePot(double tl, double tt, double tw, double th) {
+    return Positioned(
+      left: tl,
+      top: tt + (th * 0.06).clamp(8.0, 18.0),
+      width: tw,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3.0),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [
+                Color(0xFFFFDF78),
+                Color(0xFFD4AF37),
+                Color(0xFFAA771C),
+                Color(0xFF5A3A0A),
+              ],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFFFF9C4), width: 1.2),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFD4AF37).withValues(alpha: 0.35),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+              const BoxShadow(
+                color: Colors.black45,
+                blurRadius: 4,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.0),
+            decoration: BoxDecoration(
+              gradient: const RadialGradient(
+                center: Alignment(0.0, -0.2),
+                radius: 1.2,
+                colors: [
+                  Color(0xFF143054),
+                  Color(0xFF0B1B32),
+                  Color(0xFF050D1A),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: const Color(0xFFD4AF37).withValues(alpha: 0.5),
+                width: 0.7,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _build3DChipStackMini(
+                  colors: const [Color(0xFFDC2626), Color(0xFFD4AF37)],
+                  denom: '50',
+                  ls: 0.75,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  AppConfigService.isSafeMode() ? 'TABLE POT: ' : '🏆 PRIZE POT: ₹',
+                  style: const TextStyle(
+                    color: Color(0xFFFFD700),
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                Text(
+                  _currentPot.toStringAsFixed(0),
+                  style: const TextStyle(
+                    color: Color(0xFFFFF59D),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 12.0,
+                    letterSpacing: 0.5,
+                    shadows: [
+                      Shadow(color: Color(0xFFD4AF37), blurRadius: 6),
+                      Shadow(color: Colors.black, blurRadius: 2, offset: Offset(0, 1)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ④b Table Center Area: Closed Deck Shoe, Open Discard Pile, Declare Slot, Wild Joker
   Widget _buildTableCenter(double tl, double tt, double tw, double th) {
     final canAct = _isMyTurn && !_actionPending;
     final awaitingDraw = _awaiting == 'draw';
@@ -1975,127 +2067,11 @@ class _RummyGamePageState extends State<RummyGamePage>
 
     return Positioned(
       left: tl,
-      top: tt + th * 0.36,
+      top: tt + (th * 0.28).clamp(52.0, 78.0),
       width: tw,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // 3D Realistic Casino Chip Stacks cluster on the green felt
-          SizedBox(
-            width: 140,
-            height: 24,
-            child: Stack(
-              alignment: Alignment.bottomCenter,
-              children: [
-                Positioned(
-                  left: 20,
-                  bottom: 0,
-                  child: _build3DChipStackMini(
-                    colors: const [Color(0xFFDC2626), Color(0xFFDC2626), Color(0xFF2563EB)],
-                    denom: '50',
-                  ),
-                ),
-                Positioned(
-                  right: 20,
-                  bottom: 0,
-                  child: _build3DChipStackMini(
-                    colors: const [Color(0xFF2563EB), Color(0xFFD97706), Color(0xFFD4AF37)],
-                    denom: '100',
-                  ),
-                ),
-                Positioned(
-                  bottom: 2,
-                  child: _build3DChipStackMini(
-                    colors: const [Color(0xFF059669), Color(0xFF059669), Color(0xFFD4AF37)],
-                    denom: _currentPot >= 1000 ? '1K' : '500',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 2),
-          // Skeuomorphic Embossed Gold & Royal Blue Pot Trophy Plaque
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4.5),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [
-                  Color(0xFFFFDF78),
-                  Color(0xFFD4AF37),
-                  Color(0xFFAA771C),
-                  Color(0xFF5A3A0A),
-                ],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFFFF9C4), width: 1.4),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFFD4AF37).withValues(alpha: 0.4),
-                  blurRadius: 10,
-                  offset: const Offset(0, 2),
-                ),
-                const BoxShadow(
-                  color: Colors.black54,
-                  blurRadius: 4,
-                  offset: Offset(0, 3),
-                ),
-              ],
-            ),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                gradient: const RadialGradient(
-                  center: Alignment(0.0, -0.2),
-                  radius: 1.2,
-                  colors: [
-                    Color(0xFF143054),
-                    Color(0xFF0B1B32),
-                    Color(0xFF050D1A),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: const Color(0xFFD4AF37).withValues(alpha: 0.5),
-                  width: 0.7,
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    AppConfigService.isSafeMode() ? '🪙 TABLE POT: ' : '🏆 PRIZE POT: ₹',
-                    style: const TextStyle(
-                      color: Color(0xFFFFD700),
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                  Text(
-                    _currentPot.toStringAsFixed(0),
-                    style: const TextStyle(
-                      color: Color(0xFFFFF59D),
-                      fontWeight: FontWeight.w900,
-                      fontSize: 12.5,
-                      letterSpacing: 0.5,
-                      shadows: [
-                        Shadow(color: Color(0xFFD4AF37), blurRadius: 6),
-                        Shadow(color: Colors.black, blurRadius: 2, offset: Offset(0, 1)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-
-          // Piles Row: Closed Deck (with Wild Joker), Open Discard Pile, and Finish/Declare Slot
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
               // 🂠 CLOSED DECK
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
@@ -2466,8 +2442,6 @@ class _RummyGamePageState extends State<RummyGamePage>
                   );
                 },
               ),
-            ],
-          ),
         ],
       ),
     );
@@ -3640,15 +3614,18 @@ class _RummyGamePageState extends State<RummyGamePage>
                         // ③ Opponent Seat Pods
                         _buildOpponents(tableL, tableT, tableW, tableH),
 
-                        // ④ Table Center Area: Closed Deck, Open Pile, Wild Joker, Pot
+                        // ④a Center Pot Baize (Trophy plaque & chips)
+                        _buildTablePot(tableL, tableT, tableW, tableH),
+
+                        // ④b Table Center Area: Closed Deck, Open Pile, Wild Joker
                         _buildTableCenter(tableL, tableT, tableW, tableH),
 
-                        // ⑤ High-Visibility Floating "YOUR TURN" Banner directly above Hand Tray
+                        // ⑤ High-Visibility Floating "YOUR TURN" Banner cleanly positioned below Card Piles
                         if (canAct)
                           Positioned(
                             left: tableL,
                             width: tableW,
-                            bottom: 6,
+                            top: tableT + (tableH * 0.68).clamp(138.0, 185.0),
                             child: Center(
                               child: _buildUserTurnBanner(awaitingDraw),
                             ),

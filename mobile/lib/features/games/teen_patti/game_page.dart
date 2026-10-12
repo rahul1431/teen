@@ -2400,8 +2400,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   // ⑥ Pot chip — 3D Casino Chips Pile & Skeuomorphic Gold & Royal Blue Plaque
   Widget _buildPotChip(
       Map<String, dynamic>? gs, double w, double tt, double tw, double th) {
-    final chipW = (136 * _ls).clamp(100.0, 160.0);
-    final potY = th * 0.38; // centered in upper-middle of table felt
+    final chipW = (130 * _ls).clamp(95.0, 150.0);
+    final potY = (th * 0.12).clamp(32.0, 48.0); // positioned cleanly in upper center baize
     final potAmount = (gs?['pot'] as num?)?.toDouble() ?? 0;
 
     return Positioned(
@@ -2410,66 +2410,62 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 3D Realistic Casino Chip Stacks cluster on the green felt
+          // 3D Realistic Casino Chip Stacks cluster on the green felt (compact height)
           SizedBox(
             width: chipW,
-            height: (28 * _ls).clamp(22.0, 34.0),
+            height: (18 * _ls).clamp(14.0, 22.0),
             child: Stack(
               clipBehavior: Clip.none,
               alignment: Alignment.bottomCenter,
               children: [
                 // Left Chip Stack: Red (₹50) & Blue (₹100)
                 Positioned(
-                  left: chipW * 0.16,
-                  bottom: 2,
+                  left: chipW * 0.20,
+                  bottom: 0,
                   child: _build3DChipStackMini(
-                    colors: [
-                      const Color(0xFFDC2626), // Ruby Red
-                      const Color(0xFFDC2626),
-                      const Color(0xFF2563EB), // Royal Blue
+                    colors: const [
+                      Color(0xFFDC2626), // Ruby Red
+                      Color(0xFF2563EB), // Royal Blue
                     ],
                     denom: '50',
-                    ls: _ls,
+                    ls: _ls * 0.8,
                   ),
                 ),
                 // Right Chip Stack: Blue (₹100) & Gold (₹1K)
                 Positioned(
-                  right: chipW * 0.16,
-                  bottom: 2,
+                  right: chipW * 0.20,
+                  bottom: 0,
                   child: _build3DChipStackMini(
-                    colors: [
-                      const Color(0xFF2563EB), // Royal Blue
-                      const Color(0xFFD97706), // Burnished Amber
-                      const Color(0xFFD4AF37), // Metallic Gold
+                    colors: const [
+                      Color(0xFF2563EB), // Royal Blue
+                      Color(0xFFD4AF37), // Metallic Gold
                     ],
                     denom: '100',
-                    ls: _ls,
+                    ls: _ls * 0.8,
                   ),
                 ),
                 // Center Tall Chip Stack: Emerald Green (₹500) & Gold (₹1,000)
                 Positioned(
-                  bottom: 4,
+                  bottom: 1,
                   child: _build3DChipStackMini(
-                    colors: [
-                      const Color(0xFF059669), // Emerald Green
-                      const Color(0xFF059669),
-                      const Color(0xFFD4AF37), // Pure Gold
-                      const Color(0xFF1E293B), // Black chip
+                    colors: const [
+                      Color(0xFF059669), // Emerald Green
+                      Color(0xFFD4AF37), // Pure Gold
                     ],
                     denom: potAmount >= 1000 ? '1K' : '500',
-                    ls: _ls,
+                    ls: _ls * 0.85,
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 2),
           // Skeuomorphic Embossed Gold & Royal Blue Pot Plaque
           Container(
             width: chipW,
             padding: EdgeInsets.symmetric(
-              horizontal: (8 * _ls).clamp(6.0, 12.0),
-              vertical: (5 * _ls).clamp(4.0, 8.0),
+              horizontal: (6 * _ls).clamp(5.0, 10.0),
+              vertical: (3 * _ls).clamp(2.5, 5.0),
             ),
             decoration: BoxDecoration(
               // Heavy Gold Bevel Frame
@@ -2483,26 +2479,26 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
               ),
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: const Color(0xFFFFF9C4), // Top shine rim
-                width: 1.6,
+                width: 1.4,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFFD4AF37).withValues(alpha: 0.45),
-                  blurRadius: 18,
-                  spreadRadius: 2,
+                  color: const Color(0xFFD4AF37).withValues(alpha: 0.40),
+                  blurRadius: 12,
+                  spreadRadius: 1,
                 ),
                 BoxShadow(
                   color: Colors.black.withValues(alpha: 0.65),
-                  blurRadius: 8,
-                  offset: const Offset(0, 4),
+                  blurRadius: 6,
+                  offset: const Offset(0, 3),
                 ),
               ],
             ),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
               decoration: BoxDecoration(
                 // Deep Royal Blue / Sapphire Velvet Core
                 gradient: const RadialGradient(
@@ -2514,7 +2510,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     Color(0xFF050D1A), // Core black-blue
                   ],
                 ),
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(8),
                 border: Border.all(
                   color: const Color(0xFFD4AF37).withValues(alpha: 0.5),
                   width: 0.8,
@@ -2528,9 +2524,9 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     'TOTAL POT',
                     style: TextStyle(
                       color: const Color(0xFFFFD700),
-                      fontSize: (7.5 * _ls).clamp(6.5, 9.5),
+                      fontSize: (7.0 * _ls).clamp(6.0, 8.5),
                       fontWeight: FontWeight.w900,
-                      letterSpacing: 2.0,
+                      letterSpacing: 1.5,
                       shadows: const [
                         Shadow(color: Colors.black87, blurRadius: 2, offset: Offset(0, 1))
                       ],
@@ -2543,7 +2539,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                     children: [
                       Text(
                         '🪙',
-                        style: TextStyle(fontSize: (11 * _ls).clamp(9.5, 14.0)),
+                        style: TextStyle(fontSize: (10 * _ls).clamp(8.5, 12.0)),
                       ),
                       const SizedBox(width: 3),
                       Text(
@@ -2553,17 +2549,17 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                         style: TextStyle(
                           color: const Color(0xFFFFF59D),
                           fontWeight: FontWeight.w900,
-                          fontSize: (13.5 * _ls).clamp(11.0, 17.0),
+                          fontSize: (12.0 * _ls).clamp(10.0, 15.0),
                           letterSpacing: 0.5,
                           shadows: [
                             Shadow(
                               color: const Color(0xFFD4AF37).withValues(alpha: 0.8),
-                              blurRadius: 8,
+                              blurRadius: 6,
                             ),
                             const Shadow(
                               color: Colors.black,
-                              blurRadius: 3,
-                              offset: Offset(0, 1.5),
+                              blurRadius: 2,
+                              offset: Offset(0, 1),
                             ),
                           ],
                         ),
@@ -2578,7 +2574,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                           : 'Limit ₹${_fmtAmount(_potLimitOf(gs))}',
                       style: TextStyle(
                         color: const Color(0xFFFFD54F),
-                        fontSize: (7.5 * _ls).clamp(6.5, 9.0),
+                        fontSize: (6.5 * _ls).clamp(5.5, 8.0),
                         fontWeight: FontWeight.w800,
                       ),
                     ),
