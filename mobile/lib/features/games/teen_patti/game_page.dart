@@ -1431,39 +1431,42 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
   // ═══════════════════════════════════════════════════════════════════════════
 
   // ① Background
+  // ① Background — VIP Casino Room with warm overhead pendant lamp spotlight
   Widget _buildBackground(double w, double h) => Positioned.fill(
         child: RepaintBoundary(
           child: Stack(
             children: [
+              // Deep VIP casino dark atmosphere
               Container(
                 decoration: const BoxDecoration(
                   gradient: RadialGradient(
                     center: Alignment(0.0, -0.3),
-                    radius: 1.3,
+                    radius: 1.35,
                     colors: [
-                      Color(0xFF16223F), // Luminous navy-blue
-                      Color(0xFF0C1324), // Rich space blue
-                      Color(0xFF05080F), // Deep black-blue
+                      Color(0xFF072415), // Deep emerald room glow
+                      Color(0xFF04140C), // Dark casino velvet
+                      Color(0xFF020704), // Pure black room perimeter
                     ],
-                    stops: [0.0, 0.5, 1.0],
+                    stops: [0.0, 0.55, 1.0],
                   ),
                 ),
               ),
-              // Soft gold/purple ambient glow from top/center
+              // Overhead warm poker lamp spotlight beaming onto the felt table
               Positioned(
-                top: -h * 0.2,
-                left: w * 0.15,
-                right: w * 0.15,
-                height: h * 0.45,
+                top: -h * 0.25,
+                left: w * 0.12,
+                right: w * 0.12,
+                height: h * 0.70,
                 child: Container(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     gradient: RadialGradient(
                       colors: [
-                        const Color(0xFFD4AF37)
-                            .withValues(alpha: 0.08), // soft gold aura
+                        const Color(0xFFFFD700).withValues(alpha: 0.14), // Warm golden chandelier beam
+                        const Color(0xFF10B981).withValues(alpha: 0.05), // Soft felt reflection
                         Colors.transparent,
                       ],
+                      stops: const [0.0, 0.45, 1.0],
                     ),
                   ),
                 ),
@@ -1473,7 +1476,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         ),
       );
 
-  // ② Oval poker table — uses th*0.44 radius so side-seat area stays wide
+  // ② Oval poker table — Skeuomorphic Padded Leather Armrest, Brass Molded Rail & Deep Green Felt
   Widget _buildTableOval(double tl, double tt, double tw, double th) {
     final r = math.min(th * 0.44, tw * 0.22);
     final radius = BorderRadius.circular(r);
@@ -1484,70 +1487,122 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       height: th,
       child: RepaintBoundary(
         child: Container(
+          // Outer Padded Armrest Bumper (Dark Hand-Stitched Mahogany Leather)
           decoration: BoxDecoration(
             borderRadius: radius,
             gradient: const LinearGradient(
               colors: [
-                Color(0xFF4A2525), // Polished mahogany
-                Color(0xFF261010), // Shadowed wood
-                Color(0xFF120505), // Deep grain shadow
-                Color(0xFF261010),
-                Color(0xFF4A2525),
+                Color(0xFF3B1A1A), // Polished mahogany top highlight
+                Color(0xFF220D0D), // Shadowed leather bumper
+                Color(0xFF130606), // Deep undercut shadow
+                Color(0xFF220D0D),
+                Color(0xFF3B1A1A),
               ],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            border: Border.all(color: const Color(0xFFD4AF37), width: 2.5),
+            border: Border.all(
+              color: const Color(0xFFD4AF37), // Burnished Brass / Gold Molding
+              width: 3.0,
+            ),
             boxShadow: [
               BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.8),
-                  blurRadius: 36,
-                  spreadRadius: 8,
-                  offset: const Offset(0, 12)),
+                color: Colors.black.withValues(alpha: 0.90),
+                blurRadius: 38,
+                spreadRadius: 8,
+                offset: const Offset(0, 14),
+              ),
+              BoxShadow(
+                color: const Color(0xFFD4AF37).withValues(alpha: 0.20),
+                blurRadius: 12,
+                spreadRadius: 1,
+              ),
             ],
           ),
           child: Container(
-            margin: const EdgeInsets.all(8),
+            margin: const EdgeInsets.all(7.5),
+            // Inner Inlay: Golden Bevel Separator + Deep Green Casino Felt Baize
             decoration: BoxDecoration(
-              borderRadius: radius - BorderRadius.circular(8),
-              image: const DecorationImage(
-                image: AssetImage('assets/images/table_felt_green.png'),
-                fit: BoxFit.cover,
+              borderRadius: radius - BorderRadius.circular(7.5),
+              border: Border.all(
+                color: const Color(0xFFFFDF78).withValues(alpha: 0.75), // Inner gold trim
+                width: 1.5,
+              ),
+              gradient: const RadialGradient(
+                center: Alignment(0.0, -0.15),
+                radius: 1.15,
+                colors: [
+                  Color(0xFF0F522A), // Vibrant emerald felt under the chandelier
+                  Color(0xFF0A3C1E), // Classic British casino wool baize
+                  Color(0xFF052111), // Shadowed felt near the armrest rail
+                ],
+                stops: [0.0, 0.55, 1.0],
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.6),
-                  blurRadius: 14,
+                  color: Colors.black.withValues(alpha: 0.70),
+                  blurRadius: 16,
                   spreadRadius: 3,
-                  offset: const Offset(0, 2),
+                  offset: const Offset(0, 3),
                 )
               ],
             ),
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: radius - BorderRadius.circular(8),
-                border: Border.all(
-                    color: const Color(0xFFFFD700).withValues(alpha: 0.4),
-                    width: 1.5),
-              ),
-              child: Center(
-                child: Text(
-                  'TEEN PATTI',
-                  style: TextStyle(
-                    color: const Color(0xFF7E1825).withValues(alpha: 0.35),
-                    fontSize: tw * 0.08,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 8,
-                    shadows: [
-                      Shadow(
-                        color: Colors.black.withValues(alpha: 0.3),
-                        offset: const Offset(1, 2),
-                        blurRadius: 2,
-                      )
+            child: Stack(
+              children: [
+                // Golden Racetrack Betting Line printed on the felt
+                Container(
+                  margin: EdgeInsets.all((14 * _ls).clamp(10.0, 18.0)),
+                  decoration: BoxDecoration(
+                    borderRadius: radius - BorderRadius.circular(22),
+                    border: Border.all(
+                      color: const Color(0xFFD4AF37).withValues(alpha: 0.32),
+                      width: 1.8,
+                    ),
+                  ),
+                ),
+                // Table Watermark — Embossed Gold Foil Lettering
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'TEEN PATTI',
+                        style: TextStyle(
+                          color: const Color(0xFFD4AF37).withValues(alpha: 0.22),
+                          fontSize: tw * 0.065,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 8,
+                          fontFamily: 'serif',
+                          shadows: [
+                            Shadow(
+                              color: Colors.black.withValues(alpha: 0.45),
+                              offset: const Offset(1, 2),
+                              blurRadius: 3,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'CASINO ROYALE • VIP TABLE',
+                        style: TextStyle(
+                          color: const Color(0xFFD4AF37).withValues(alpha: 0.28),
+                          fontSize: tw * 0.022,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 4.5,
+                          shadows: [
+                            Shadow(
+                              color: Colors.black.withValues(alpha: 0.4),
+                              offset: const Offset(1, 1),
+                              blurRadius: 2,
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ),
-              ),
+              ],
             ),
           ),
         ),
@@ -1734,51 +1789,105 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
           alignment: Alignment.center,
           clipBehavior: Clip.none,
           children: [
-            // Glow outline
-            Container(
-              width: avatarD + 6,
-              height: avatarD + 6,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: isMe
-                      ? const Color(0xFF2ECC71)
-                      : (isTurn
-                          ? const Color(0xFF2ECC71)
-                          : const Color(0xFFD4AF37).withValues(alpha: 0.45)),
-                  width: (isMe || isTurn) ? 2.5 : 1.5,
-                ),
-                boxShadow: (isMe || isTurn)
-                    ? [
-                        BoxShadow(
-                          color:
-                              const Color(0xFF2ECC71).withValues(alpha: 0.45),
-                          blurRadius: 12,
-                          spreadRadius: 2,
+            // Skeuomorphic Turn Timer Bezel with High-Contrast Dual Glow
+            ValueListenableBuilder<int>(
+              valueListenable: _timerNotifier,
+              builder: (_, secs, __) {
+                final isUrgent = secs <= 8;
+                return Container(
+                  width: avatarD + 8,
+                  height: avatarD + 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isTurn
+                          ? (isUrgent ? const Color(0xFFEF4444) : const Color(0xFFFFD700))
+                          : (isMe
+                              ? const Color(0xFF3B82F6) // Royal Blue for user
+                              : const Color(0xFFD4AF37).withValues(alpha: 0.45)),
+                      width: isTurn ? 2.8 : 1.5,
+                    ),
+                    boxShadow: isTurn
+                        ? [
+                            BoxShadow(
+                              color: isUrgent
+                                  ? const Color(0xFFEF4444).withValues(alpha: 0.8)
+                                  : const Color(0xFF2563EB).withValues(alpha: 0.7),
+                              blurRadius: isUrgent ? 18 : 12,
+                              spreadRadius: isUrgent ? 3 : 2,
+                            ),
+                            BoxShadow(
+                              color: const Color(0xFFFFD700).withValues(alpha: 0.45),
+                              blurRadius: 6,
+                            ),
+                          ]
+                        : [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.5),
+                              blurRadius: 5,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                  ),
+                  child: isTurn
+                      ? CircularProgressIndicator(
+                          value: (secs / 30).clamp(0.0, 1.0),
+                          strokeWidth: 3.5,
+                          backgroundColor: const Color(0xFF0A192F).withValues(alpha: 0.6),
+                          valueColor: AlwaysStoppedAnimation(
+                            isUrgent ? const Color(0xFFEF4444) : const Color(0xFFFFD700),
+                          ),
                         )
-                      ]
-                    : [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.3),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        )
-                      ],
-              ),
-              child: isTurn
-                  ? ValueListenableBuilder<int>(
-                      valueListenable: _timerNotifier,
-                      builder: (_, secs, __) => CircularProgressIndicator(
-                        value: (secs / 30).clamp(0.0, 1.0),
-                        strokeWidth: 3.0,
-                        backgroundColor: Colors.transparent,
-                        valueColor: AlwaysStoppedAnimation(secs <= 5
-                            ? const Color(0xFFE53935)
-                            : const Color(0xFF2ECC71)),
-                      ),
-                    )
-                  : null,
+                      : null,
+                );
+              },
             ),
+
+            // Prominent Digital Countdown Seconds Badge (floating top-right of avatar)
+            if (isTurn)
+              Positioned(
+                top: -6,
+                right: -6,
+                child: ValueListenableBuilder<int>(
+                  valueListenable: _timerNotifier,
+                  builder: (_, secs, __) {
+                    final isUrgent = secs <= 8;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: isUrgent
+                              ? [const Color(0xFFDC2626), const Color(0xFF7F1D1D)]
+                              : [const Color(0xFF1E40AF), const Color(0xFF0F172A)],
+                        ),
+                        borderRadius: BorderRadius.circular(9),
+                        border: Border.all(
+                          color: isUrgent ? const Color(0xFFFCA5A5) : const Color(0xFFFFD700),
+                          width: 1.2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: isUrgent
+                                ? const Color(0xFFDC2626).withValues(alpha: 0.8)
+                                : const Color(0xFF1E40AF).withValues(alpha: 0.7),
+                            blurRadius: 6,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        '${secs}s',
+                        style: TextStyle(
+                          color: isUrgent ? Colors.white : const Color(0xFFFFD700),
+                          fontSize: 9.0,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
 
             // Avatar Image / Circle
             ValueListenableBuilder<List<_Reaction>>(
@@ -2122,6 +2231,66 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         child: Stack(
           clipBehavior: Clip.none,
           children: [
+            // High-visibility "YOUR TURN" glowing turn timer ribbon
+            if (isMyTurn)
+              Positioned(
+                top: -24,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: _timerNotifier,
+                    builder: (_, secs, __) {
+                      final isUrgent = secs <= 8;
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: isUrgent
+                                ? [const Color(0xFFDC2626), const Color(0xFF7F1D1D)]
+                                : [const Color(0xFF1E40AF), const Color(0xFF0F172A)],
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isUrgent ? const Color(0xFFFCA5A5) : const Color(0xFFFFD700),
+                            width: 1.4,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: isUrgent
+                                  ? const Color(0xFFDC2626).withValues(alpha: 0.75)
+                                  : const Color(0xFF2563EB).withValues(alpha: 0.65),
+                              blurRadius: 10,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.timer_rounded,
+                              size: 11,
+                              color: isUrgent ? Colors.white : const Color(0xFFFFD700),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'YOUR TURN: ${secs}s',
+                              style: TextStyle(
+                                color: isUrgent ? Colors.white : const Color(0xFFFFD700),
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -2228,67 +2397,274 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
     );
   }
 
-  // ⑥ Pot chip — Black & Gold capsule in the middle
+  // ⑥ Pot chip — 3D Casino Chips Pile & Skeuomorphic Gold & Royal Blue Plaque
   Widget _buildPotChip(
       Map<String, dynamic>? gs, double w, double tt, double tw, double th) {
-    final chipW = (118 * _ls).clamp(84.0, 138.0);
-    final chipH = (36 * _ls).clamp(30.0, 48.0);
-    final potY = th * 0.45 - chipH / 2; // positioned centered vertically
+    final chipW = (136 * _ls).clamp(100.0, 160.0);
+    final potY = th * 0.38; // centered in upper-middle of table felt
+    final potAmount = (gs?['pot'] as num?)?.toDouble() ?? 0;
+
     return Positioned(
       left: (w - _rightPanelW) / 2 - chipW / 2,
       top: tt + potY,
-      child: Container(
-        width: chipW,
-        padding: EdgeInsets.symmetric(
-            horizontal: (10 * _ls).clamp(8, 14),
-            vertical: (6 * _ls).clamp(4, 10)),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF0F1B35), Color(0xFF070D1A)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 3D Realistic Casino Chip Stacks cluster on the green felt
+          SizedBox(
+            width: chipW,
+            height: (28 * _ls).clamp(22.0, 34.0),
+            child: Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.bottomCenter,
+              children: [
+                // Left Chip Stack: Red (₹50) & Blue (₹100)
+                Positioned(
+                  left: chipW * 0.16,
+                  bottom: 2,
+                  child: _build3DChipStackMini(
+                    colors: [
+                      const Color(0xFFDC2626), // Ruby Red
+                      const Color(0xFFDC2626),
+                      const Color(0xFF2563EB), // Royal Blue
+                    ],
+                    denom: '50',
+                    ls: _ls,
+                  ),
+                ),
+                // Right Chip Stack: Blue (₹100) & Gold (₹1K)
+                Positioned(
+                  right: chipW * 0.16,
+                  bottom: 2,
+                  child: _build3DChipStackMini(
+                    colors: [
+                      const Color(0xFF2563EB), // Royal Blue
+                      const Color(0xFFD97706), // Burnished Amber
+                      const Color(0xFFD4AF37), // Metallic Gold
+                    ],
+                    denom: '100',
+                    ls: _ls,
+                  ),
+                ),
+                // Center Tall Chip Stack: Emerald Green (₹500) & Gold (₹1,000)
+                Positioned(
+                  bottom: 4,
+                  child: _build3DChipStackMini(
+                    colors: [
+                      const Color(0xFF059669), // Emerald Green
+                      const Color(0xFF059669),
+                      const Color(0xFFD4AF37), // Pure Gold
+                      const Color(0xFF1E293B), // Black chip
+                    ],
+                    denom: potAmount >= 1000 ? '1K' : '500',
+                    ls: _ls,
+                  ),
+                ),
+              ],
+            ),
           ),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFD4AF37), width: 1.5),
-          boxShadow: [
-            BoxShadow(
-                color: const Color(0xFFD4AF37).withValues(alpha: 0.35),
-                blurRadius: 16,
-                spreadRadius: 1),
-            BoxShadow(
-                color: Colors.black.withValues(alpha: 0.4),
-                blurRadius: 4,
-                offset: const Offset(0, 4)),
-          ],
-        ),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Text('🪙', style: TextStyle(fontSize: (13 * _ls).clamp(11, 16))),
-            const SizedBox(width: 4),
-            Text(
-                AppConfigService.isSafeMode()
-                    ? '${gs?['pot'] ?? 0}'
-                    : '₹${gs?['pot'] ?? 0}',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    fontSize: (13 * _ls).clamp(11, 16),
-                    shadows: const [
-                      Shadow(color: Colors.black54, blurRadius: 2)
-                    ])),
-          ]),
-          if (_potLimitOf(gs) > 0) ...[
-            const SizedBox(height: 2),
-            Text(
-                AppConfigService.isSafeMode()
-                    ? 'Limit ${_fmtAmount(_potLimitOf(gs))} 🪙'
-                    : 'Limit ₹${_fmtAmount(_potLimitOf(gs))}',
-                style: TextStyle(
-                    color: const Color(0xFFFFD54F),
-                    fontSize: (8.0 * _ls).clamp(7.0, 10.0),
-                    fontWeight: FontWeight.w800)),
-          ]
-        ]),
+          const SizedBox(height: 3),
+          // Skeuomorphic Embossed Gold & Royal Blue Pot Plaque
+          Container(
+            width: chipW,
+            padding: EdgeInsets.symmetric(
+              horizontal: (8 * _ls).clamp(6.0, 12.0),
+              vertical: (5 * _ls).clamp(4.0, 8.0),
+            ),
+            decoration: BoxDecoration(
+              // Heavy Gold Bevel Frame
+              gradient: const LinearGradient(
+                colors: [
+                  Color(0xFFFFDF78), // Specular gold highlight
+                  Color(0xFFD4AF37), // Rich polished gold
+                  Color(0xFFAA771C), // Deep bronze shadow
+                  Color(0xFF5A3A0A), // Inset shadow
+                ],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: const Color(0xFFFFF9C4), // Top shine rim
+                width: 1.6,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFD4AF37).withValues(alpha: 0.45),
+                  blurRadius: 18,
+                  spreadRadius: 2,
+                ),
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.65),
+                  blurRadius: 8,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              decoration: BoxDecoration(
+                // Deep Royal Blue / Sapphire Velvet Core
+                gradient: const RadialGradient(
+                  center: Alignment(0.0, -0.2),
+                  radius: 1.2,
+                  colors: [
+                    Color(0xFF143054), // Royal Sapphire highlight
+                    Color(0xFF0B1B32), // Deep navy
+                    Color(0xFF050D1A), // Core black-blue
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: const Color(0xFFD4AF37).withValues(alpha: 0.5),
+                  width: 0.8,
+                ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Gold uppercase tracker
+                  Text(
+                    'TOTAL POT',
+                    style: TextStyle(
+                      color: const Color(0xFFFFD700),
+                      fontSize: (7.5 * _ls).clamp(6.5, 9.5),
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 2.0,
+                      shadows: const [
+                        Shadow(color: Colors.black87, blurRadius: 2, offset: Offset(0, 1))
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  // Sparkling Gold Digits
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        '🪙',
+                        style: TextStyle(fontSize: (11 * _ls).clamp(9.5, 14.0)),
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        AppConfigService.isSafeMode()
+                            ? '${gs?['pot'] ?? 0}'
+                            : '₹${gs?['pot'] ?? 0}',
+                        style: TextStyle(
+                          color: const Color(0xFFFFF59D),
+                          fontWeight: FontWeight.w900,
+                          fontSize: (13.5 * _ls).clamp(11.0, 17.0),
+                          letterSpacing: 0.5,
+                          shadows: [
+                            Shadow(
+                              color: const Color(0xFFD4AF37).withValues(alpha: 0.8),
+                              blurRadius: 8,
+                            ),
+                            const Shadow(
+                              color: Colors.black,
+                              blurRadius: 3,
+                              offset: Offset(0, 1.5),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_potLimitOf(gs) > 0) ...[
+                    const SizedBox(height: 1),
+                    Text(
+                      AppConfigService.isSafeMode()
+                          ? 'Limit ${_fmtAmount(_potLimitOf(gs))} 🪙'
+                          : 'Limit ₹${_fmtAmount(_potLimitOf(gs))}',
+                      style: TextStyle(
+                        color: const Color(0xFFFFD54F),
+                        fontSize: (7.5 * _ls).clamp(6.5, 9.0),
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Realistic 3D Stack of Casino Chips with perspective bevel and side rim notches
+  Widget _build3DChipStackMini({
+    required List<Color> colors,
+    required String denom,
+    required double ls,
+  }) {
+    final chipW = (26 * ls).clamp(20.0, 32.0);
+    final chipH = (12 * ls).clamp(9.0, 15.0);
+    final stepY = (3.2 * ls).clamp(2.5, 4.0);
+
+    return SizedBox(
+      width: chipW,
+      height: chipH + (colors.length - 1) * stepY,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          for (int i = 0; i < colors.length; i++)
+            Positioned(
+              left: (i % 2 == 0 ? 0.0 : 1.0),
+              bottom: i * stepY,
+              child: Container(
+                width: chipW,
+                height: chipH,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.all(Radius.elliptical(chipW / 2, chipH / 2)),
+                  gradient: LinearGradient(
+                    colors: [
+                      Color.lerp(colors[i], Colors.white, 0.25)!,
+                      colors[i],
+                      Color.lerp(colors[i], Colors.black, 0.40)!,
+                    ],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
+                  border: Border.all(
+                    color: const Color(0xFFFFDF78).withValues(alpha: 0.85),
+                    width: 0.8,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      blurRadius: 2.5,
+                      offset: const Offset(0, 1.5),
+                    ),
+                  ],
+                ),
+                child: Center(
+                  child: Container(
+                    width: chipW * 0.58,
+                    height: chipH * 0.65,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.7),
+                        width: 0.6,
+                      ),
+                    ),
+                    child: Center(
+                      child: Text(
+                        denom,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: (6.5 * ls).clamp(5.0, 8.0),
+                          fontWeight: FontWeight.w900,
+                          height: 0.9,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -3268,10 +3644,11 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
 
   Widget _actionBtn(String label, Color color, VoidCallback onTap,
       {double width = 100}) {
-    final hasCoin = label.contains('Chaal') || label.contains('Raise');
+    final isChaal = label.contains('Chaal') || label.contains('Raise');
+    final isSideShow = label.contains('Side Show') || label.contains('Show');
     String cleanLabel = label;
     String? amountText;
-    if (hasCoin) {
+    if (isChaal) {
       final parts = label.split(' ');
       if (parts.length >= 2) {
         cleanLabel = parts[0];
@@ -3279,20 +3656,34 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
       }
     }
 
-    // Premium color gradients
+    // Authentic Skeuomorphic Casino Gradients
     final List<Color> btnColors;
-    if (color == AppColors.red) {
-      btnColors = [
-        const Color(0xFFFF4D4D), // brighter red
-        const Color(0xFFD32F2F), // mid red
-        const Color(0xFF7B0000), // deep ruby shadow
+    final Color borderColor;
+    if (isChaal) {
+      // Burnished Gold 3D button
+      btnColors = const [
+        Color(0xFFFFE082), // Specular gold highlight
+        Color(0xFFD4AF37), // Metallic gold
+        Color(0xFFAA771C), // Deep bronze
+        Color(0xFF6B4808), // Bottom bevel shadow
       ];
+      borderColor = const Color(0xFFFFF9C4);
+    } else if (isSideShow) {
+      // Royal Sapphire Blue 3D button
+      btnColors = const [
+        Color(0xFF3B82F6), // Top bright blue
+        Color(0xFF1D4ED8), // Deep royal blue
+        Color(0xFF172554), // Shadowed navy
+      ];
+      borderColor = const Color(0xFFFFD700); // Gold trim
     } else {
-      btnColors = [
-        Color.lerp(color, Colors.white, 0.2)!,
-        color,
-        Color.lerp(color, Colors.black, 0.3)!,
+      // Crimson Ruby 3D button (Pack / Fold)
+      btnColors = const [
+        Color(0xFFEF4444), // Top crimson
+        Color(0xFFB91C1C), // Deep ruby
+        Color(0xFF660E0E), // Shadowed velvet
       ];
+      borderColor = const Color(0xFFFCA5A5);
     }
 
     return GestureDetector(
@@ -3308,65 +3699,78 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
             colors: btnColors,
           ),
           borderRadius: BorderRadius.circular((12 * _ls).clamp(9, 16)),
-          border: Border.all(color: const Color(0xFFFFD54F), width: 1.5),
+          border: Border.all(color: borderColor, width: 1.6),
           boxShadow: [
             BoxShadow(
-                color: btnColors[1].withValues(alpha: 0.45),
-                blurRadius: 10,
-                spreadRadius: 1),
+              color: btnColors[1].withValues(alpha: 0.50),
+              blurRadius: 10,
+              spreadRadius: 1,
+            ),
             const BoxShadow(
-                color: Colors.black45, blurRadius: 4, offset: Offset(0, 3)),
+              color: Colors.black54,
+              blurRadius: 5,
+              offset: Offset(0, 3.5),
+            ),
           ],
         ),
         child: amountText != null
             ? Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(cleanLabel,
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w900,
-                          fontSize: (11.5 * _ls).clamp(9.5, 13.5),
-                          shadows: const [
-                            Shadow(
-                                color: Colors.black54,
-                                blurRadius: 2,
-                                offset: Offset(0, 1))
-                          ])),
+                  Text(
+                    cleanLabel,
+                    style: TextStyle(
+                      color: isChaal ? const Color(0xFF1F0D00) : Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: (11.5 * _ls).clamp(9.5, 13.5),
+                      shadows: isChaal
+                          ? const [
+                              Shadow(color: Color(0x66FFFFFF), blurRadius: 1, offset: Offset(0, 1))
+                            ]
+                          : const [
+                              Shadow(color: Colors.black54, blurRadius: 2, offset: Offset(0, 1))
+                            ],
+                    ),
+                  ),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('🪙',
-                          style: TextStyle(
-                              fontSize: (10.5 * _ls).clamp(8.5, 12.5))),
+                      Text(
+                        '🪙',
+                        style: TextStyle(fontSize: (10.5 * _ls).clamp(8.5, 12.5)),
+                      ),
                       const SizedBox(width: 2),
-                      Text(amountText,
-                          style: TextStyle(
-                              color: const Color(0xFFFFD700),
-                              fontWeight: FontWeight.w900,
-                              fontSize: (11.5 * _ls).clamp(9.5, 13.5),
-                              shadows: const [
-                                Shadow(
-                                    color: Colors.black54,
-                                    blurRadius: 2,
-                                    offset: Offset(0, 1))
-                              ])),
+                      Text(
+                        amountText,
+                        style: TextStyle(
+                          color: isChaal ? const Color(0xFF381400) : const Color(0xFFFFD700),
+                          fontWeight: FontWeight.w900,
+                          fontSize: (11.5 * _ls).clamp(9.5, 13.5),
+                          shadows: isChaal
+                              ? const [
+                                  Shadow(color: Color(0x55FFFFFF), blurRadius: 1, offset: Offset(0, 0.5))
+                                ]
+                              : const [
+                                  Shadow(color: Colors.black54, blurRadius: 2, offset: Offset(0, 1))
+                                ],
+                        ),
+                      ),
                     ],
                   )
                 ],
               )
-            : Text(label,
+            : Text(
+                label,
                 style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    fontSize: (12.5 * _ls).clamp(10.0, 16.0),
-                    letterSpacing: 0.5,
-                    shadows: const [
-                      Shadow(
-                          color: Colors.black54,
-                          blurRadius: 3,
-                          offset: Offset(0, 1.5))
-                    ])),
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                  fontSize: (12.5 * _ls).clamp(10.0, 16.0),
+                  letterSpacing: 0.5,
+                  shadows: const [
+                    Shadow(color: Colors.black54, blurRadius: 3, offset: Offset(0, 1.5))
+                  ],
+                ),
+              ),
       ),
     );
   }
@@ -3380,31 +3784,42 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         height: d,
         alignment: Alignment.center,
         decoration: BoxDecoration(
+          // Royal Sapphire Blue 3D Stepper
           gradient: const LinearGradient(
-            begin: Alignment.topCenter, end: Alignment.bottomCenter,
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF00E5FF),
-              Color(0xFF00838F)
-            ], // Sleek cyan gradient
+              Color(0xFF2563EB),
+              Color(0xFF1D4ED8),
+              Color(0xFF0F172A),
+            ],
           ),
-          border: Border.all(color: const Color(0xFFE0F7FA), width: 1.5),
+          border: Border.all(color: const Color(0xFFFFD700), width: 1.4),
           borderRadius: BorderRadius.circular(10),
           boxShadow: [
             BoxShadow(
-              color: const Color(0xFF00E5FF).withValues(alpha: 0.35),
+              color: const Color(0xFF2563EB).withValues(alpha: 0.45),
               blurRadius: 8,
               spreadRadius: 1,
             ),
             const BoxShadow(
-                color: Colors.black54, blurRadius: 4, offset: Offset(0, 2)),
+              color: Colors.black54,
+              blurRadius: 4,
+              offset: Offset(0, 2),
+            ),
           ],
         ),
-        child: Text(label,
-            style: TextStyle(
-                color: Colors.white,
-                fontSize: (21 * _ls).clamp(16.0, 26.0),
-                fontWeight: FontWeight.w900,
-                height: 1.1)),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: const Color(0xFFFFD700),
+            fontSize: (18 * _ls).clamp(14.0, 22.0),
+            fontWeight: FontWeight.w900,
+            shadows: const [
+              Shadow(color: Colors.black54, blurRadius: 2, offset: Offset(0, 1))
+            ],
+          ),
+        ),
       ),
     );
   }

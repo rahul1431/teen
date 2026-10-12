@@ -1494,39 +1494,42 @@ class _RummyGamePageState extends State<RummyGamePage>
   //  UI WIDGETS & TEEN PATTI LANDSCAPE CASINO BOARD
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // ① Luxury Casino Ambient Background
+  // ① Luxury Casino Ambient Background — VIP Room with warm overhead chandelier glow
   Widget _buildAmbientBackground(double w, double h) {
     return Positioned.fill(
       child: Stack(
         children: [
+          // Deep VIP casino room atmosphere
           Container(
             decoration: const BoxDecoration(
               gradient: RadialGradient(
-                center: Alignment(0.0, -0.2),
-                radius: 1.4,
+                center: Alignment(0.0, -0.3),
+                radius: 1.35,
                 colors: [
-                  Color(0xFF16223F), // Luminous space navy
-                  Color(0xFF0C1324), // Rich casino blue
-                  Color(0xFF05080F), // Deep black-blue
+                  Color(0xFF072415), // Deep emerald room glow
+                  Color(0xFF04140C), // Dark casino velvet
+                  Color(0xFF020704), // Pure black perimeter
                 ],
                 stops: [0.0, 0.55, 1.0],
               ),
             ),
           ),
-          // Ambient golden light spotlight from top center
+          // Overhead warm poker lamp spotlight beaming onto the felt table
           Positioned(
             top: -h * 0.25,
-            left: w * 0.15,
-            right: w * 0.15,
-            height: h * 0.55,
+            left: w * 0.12,
+            right: w * 0.12,
+            height: h * 0.70,
             child: Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: RadialGradient(
                   colors: [
-                    const Color(0xFFD4AF37).withValues(alpha: 0.12),
+                    const Color(0xFFFFD700).withValues(alpha: 0.14), // Warm golden chandelier beam
+                    const Color(0xFF10B981).withValues(alpha: 0.05), // Soft felt reflection
                     Colors.transparent,
                   ],
+                  stops: const [0.0, 0.45, 1.0],
                 ),
               ),
             ),
@@ -1536,7 +1539,7 @@ class _RummyGamePageState extends State<RummyGamePage>
     );
   }
 
-  // ② Teen Patti Landscape Oval Poker Felt Table
+  // ② Indian Rummy Landscape Oval Table — Skeuomorphic Padded Leather Armrest, Brass Molded Rail & Deep Green Felt
   Widget _buildOvalTable(double tl, double tt, double tw, double th) {
     final r = math.min(th * 0.44, tw * 0.22);
     final radius = BorderRadius.circular(r);
@@ -1547,87 +1550,108 @@ class _RummyGamePageState extends State<RummyGamePage>
       width: tw,
       height: th,
       child: Container(
+        // Outer Padded Armrest Bumper (Dark Hand-Stitched Mahogany Leather)
         decoration: BoxDecoration(
           borderRadius: radius,
           gradient: const LinearGradient(
             colors: [
-              Color(0xFF4A2525), // Polished mahogany wood rail
-              Color(0xFF261010),
-              Color(0xFF120505),
-              Color(0xFF261010),
-              Color(0xFF4A2525),
+              Color(0xFF3B1A1A), // Polished mahogany top highlight
+              Color(0xFF220D0D), // Shadowed leather bumper
+              Color(0xFF130606), // Deep undercut shadow
+              Color(0xFF220D0D),
+              Color(0xFF3B1A1A),
             ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
-          border: Border.all(color: const Color(0xFFD4AF37), width: 3.0),
+          border: Border.all(
+            color: const Color(0xFFD4AF37), // Burnished Brass / Gold Molding
+            width: 3.0,
+          ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.85),
-              blurRadius: 36,
+              color: Colors.black.withValues(alpha: 0.90),
+              blurRadius: 38,
               spreadRadius: 8,
-              offset: const Offset(0, 10),
+              offset: const Offset(0, 14),
+            ),
+            BoxShadow(
+              color: const Color(0xFFD4AF37).withValues(alpha: 0.20),
+              blurRadius: 12,
+              spreadRadius: 1,
             ),
           ],
         ),
         child: Container(
-          margin: const EdgeInsets.all(7),
+          margin: const EdgeInsets.all(7.5),
+          // Inner Inlay: Golden Bevel Separator + Deep Green Casino Felt Baize
           decoration: BoxDecoration(
-            borderRadius: radius - BorderRadius.circular(7),
-            image: const DecorationImage(
-              image: AssetImage('assets/images/table_felt_green.png'),
-              fit: BoxFit.cover,
+            borderRadius: radius - BorderRadius.circular(7.5),
+            border: Border.all(
+              color: const Color(0xFFFFDF78).withValues(alpha: 0.75), // Inner gold trim
+              width: 1.5,
+            ),
+            gradient: const RadialGradient(
+              center: Alignment(0.0, -0.15),
+              radius: 1.15,
+              colors: [
+                Color(0xFF0F522A), // Vibrant emerald felt under the chandelier
+                Color(0xFF0A3C1E), // Classic British casino wool baize
+                Color(0xFF052111), // Shadowed felt near the armrest rail
+              ],
+              stops: [0.0, 0.55, 1.0],
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.65),
-                blurRadius: 14,
+                color: Colors.black.withValues(alpha: 0.70),
+                blurRadius: 16,
                 spreadRadius: 3,
-                offset: const Offset(0, 2),
+                offset: const Offset(0, 3),
               )
             ],
           ),
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: radius - BorderRadius.circular(7),
-              border: Border.all(
-                color: const Color(0xFFFFD700).withValues(alpha: 0.4),
-                width: 1.5,
-              ),
-            ),
-            child: Stack(
-              children: [
-                // Table watermark
-                Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'MYONLINEJOKER',
-                        style: TextStyle(
-                          color:
-                              const Color(0xFFD4AF37).withValues(alpha: 0.12),
-                          fontSize: tw * 0.038,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 6,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'INDIAN RUMMY • 13 CARDS',
-                        style: TextStyle(
-                          color:
-                              const Color(0xFFD4AF37).withValues(alpha: 0.18),
-                          fontSize: tw * 0.022,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 4,
-                        ),
-                      ),
-                    ],
+          child: Stack(
+            children: [
+              // Golden Racetrack Betting Line printed on the felt
+              Container(
+                margin: const EdgeInsets.all(14.0),
+                decoration: BoxDecoration(
+                  borderRadius: radius - BorderRadius.circular(22),
+                  border: Border.all(
+                    color: const Color(0xFFD4AF37).withValues(alpha: 0.32),
+                    width: 1.8,
                   ),
                 ),
-              ],
-            ),
+              ),
+              // Table watermark — Embossed Gold Foil Lettering
+              Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'MYONLINEJOKER',
+                      style: TextStyle(
+                        color: const Color(0xFFD4AF37).withValues(alpha: 0.16),
+                        fontSize: tw * 0.038,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 6,
+                        fontFamily: 'serif',
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'INDIAN RUMMY • 13 CARDS • CASINO ROYALE',
+                      style: TextStyle(
+                        color: const Color(0xFFD4AF37).withValues(alpha: 0.22),
+                        fontSize: tw * 0.022,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1660,6 +1684,7 @@ class _RummyGamePageState extends State<RummyGamePage>
     final isTurn = _currentTurnIndex == seatIdx;
     final hasDropped = player['has_dropped'] == true;
     final isEliminated = player['is_eliminated'] == true;
+    final isUrgent = _turnSecondsLeft <= 8;
 
     return Positioned(
       left: cx - 38,
@@ -1669,20 +1694,21 @@ class _RummyGamePageState extends State<RummyGamePage>
         children: [
           Stack(
             alignment: Alignment.center,
+            clipBehavior: Clip.none,
             children: [
               // Active turn animated glowing sweep timer
               if (isTurn)
                 SizedBox(
-                  width: 48,
-                  height: 48,
+                  width: 50,
+                  height: 50,
                   child: CircularProgressIndicator(
-                    value: _turnSecondsLeft / _turnTimerSeconds,
-                    strokeWidth: 3.0,
-                    backgroundColor: Colors.white12,
+                    value: (_turnSecondsLeft / _turnTimerSeconds).clamp(0.0, 1.0),
+                    strokeWidth: 3.5,
+                    backgroundColor: const Color(0xFF0F172A).withValues(alpha: 0.6),
                     valueColor: AlwaysStoppedAnimation<Color>(
-                      _turnSecondsLeft > 8
-                          ? const Color(0xFF10B981)
-                          : const Color(0xFFEF4444),
+                      isUrgent
+                          ? const Color(0xFFEF4444)
+                          : const Color(0xFFFFD700),
                     ),
                   ),
                 ),
@@ -1693,18 +1719,20 @@ class _RummyGamePageState extends State<RummyGamePage>
                   builder: (context, child) {
                     final value = _pulseController.value;
                     return Container(
-                      width: 42 + (value * 8),
-                      height: 42 + (value * 8),
+                      width: 44 + (value * 8),
+                      height: 44 + (value * 8),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: const Color(0xFFFFD700).withValues(alpha: 0.8 - (value * 0.4)),
+                          color: (isUrgent ? const Color(0xFFEF4444) : const Color(0xFFFFD700))
+                              .withValues(alpha: 0.8 - (value * 0.4)),
                           width: 2.0,
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFFFFD700).withValues(alpha: 0.6 - (value * 0.4)),
-                            blurRadius: 8 + (value * 12),
+                            color: (isUrgent ? const Color(0xFFEF4444) : const Color(0xFF2563EB))
+                                .withValues(alpha: 0.7 - (value * 0.4)),
+                            blurRadius: 10 + (value * 12),
                             spreadRadius: 1 + (value * 5),
                           )
                         ],
@@ -1712,7 +1740,7 @@ class _RummyGamePageState extends State<RummyGamePage>
                     );
                   },
                 ),
-              // Golden Avatar Rim
+              // Royal Blue & Gold Avatar Rim
               Container(
                 width: 40,
                 height: 40,
@@ -1720,25 +1748,33 @@ class _RummyGamePageState extends State<RummyGamePage>
                   shape: BoxShape.circle,
                   border: Border.all(
                     color: isTurn
-                        ? const Color(0xFFFFD700)
-                        : const Color(0xFF94A3B8).withValues(alpha: 0.5),
-                    width: isTurn ? 2.0 : 1.2,
+                        ? (isUrgent ? const Color(0xFFEF4444) : const Color(0xFFFFD700))
+                        : const Color(0xFF3B82F6).withValues(alpha: 0.6),
+                    width: isTurn ? 2.5 : 1.4,
                   ),
                   boxShadow: isTurn
                       ? [
-                          const BoxShadow(
-                            color: Color(0x66FFD700),
-                            blurRadius: 10,
+                          BoxShadow(
+                            color: isUrgent
+                                ? const Color(0xFFEF4444).withValues(alpha: 0.7)
+                                : const Color(0xFFFFD700).withValues(alpha: 0.5),
+                            blurRadius: 12,
                             spreadRadius: 2,
                           )
                         ]
-                      : null,
+                      : [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.5),
+                            blurRadius: 5,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                 ),
                 child: GestureDetector(
                   onTap: () => _showEmojiThrowModal(player),
                   child: CircleAvatar(
                     radius: 18,
-                    backgroundColor: const Color(0xFF1E293B),
+                    backgroundColor: const Color(0xFF0C2140),
                     child: Text(
                       (player['username']?[0]?.toUpperCase() ?? 'P'),
                       style: const TextStyle(
@@ -1750,6 +1786,45 @@ class _RummyGamePageState extends State<RummyGamePage>
                   ),
                 ),
               ),
+              // Prominent Digital Countdown Seconds Badge (floating top-right of avatar)
+              if (isTurn)
+                Positioned(
+                  top: -6,
+                  right: -6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: isUrgent
+                            ? const [Color(0xFFDC2626), Color(0xFF7F1D1D)]
+                            : const [Color(0xFF1E40AF), const Color(0xFF0F172A)],
+                      ),
+                      borderRadius: BorderRadius.circular(9),
+                      border: Border.all(
+                        color: isUrgent ? const Color(0xFFFCA5A5) : const Color(0xFFFFD700),
+                        width: 1.2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: isUrgent
+                              ? const Color(0xFFDC2626).withValues(alpha: 0.8)
+                              : const Color(0xFF1E40AF).withValues(alpha: 0.7),
+                          blurRadius: 6,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                    child: Text(
+                      '${_turnSecondsLeft}s',
+                      style: TextStyle(
+                        color: isUrgent ? Colors.white : const Color(0xFFFFD700),
+                        fontSize: 9.0,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 2),
@@ -1757,16 +1832,23 @@ class _RummyGamePageState extends State<RummyGamePage>
           GestureDetector(
             onTap: () => _showEmojiThrowModal(player),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.8),
+                color: const Color(0xFF081528).withValues(alpha: 0.9),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
                   color: isTurn
                       ? const Color(0xFFFFD700)
-                      : Colors.white.withValues(alpha: 0.15),
-                  width: 0.8,
+                      : const Color(0xFF1E3A8A).withValues(alpha: 0.6),
+                  width: 0.9,
                 ),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black45,
+                    blurRadius: 4,
+                    offset: Offset(0, 1.5),
+                  ),
+                ],
               ),
               child: Column(
                 children: [
@@ -1808,6 +1890,83 @@ class _RummyGamePageState extends State<RummyGamePage>
   );
 }
 
+  // 3D Realistic Casino Chip Stack for Center Pot Baize
+  Widget _build3DChipStackMini({
+    required List<Color> colors,
+    required String denom,
+    double ls = 1.0,
+  }) {
+    final chipW = (26 * ls).clamp(20.0, 32.0);
+    final chipH = (12 * ls).clamp(9.0, 15.0);
+    final stepY = (3.2 * ls).clamp(2.5, 4.0);
+
+    return SizedBox(
+      width: chipW,
+      height: chipH + (colors.length - 1) * stepY,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          for (int i = 0; i < colors.length; i++)
+            Positioned(
+              left: (i % 2 == 0 ? 0.0 : 1.0),
+              bottom: i * stepY,
+              child: Container(
+                width: chipW,
+                height: chipH,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.all(Radius.elliptical(chipW / 2, chipH / 2)),
+                  gradient: LinearGradient(
+                    colors: [
+                      Color.lerp(colors[i], Colors.white, 0.25)!,
+                      colors[i],
+                      Color.lerp(colors[i], Colors.black, 0.40)!,
+                    ],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
+                  border: Border.all(
+                    color: const Color(0xFFFFDF78).withValues(alpha: 0.85),
+                    width: 0.8,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      blurRadius: 2.5,
+                      offset: const Offset(0, 1.5),
+                    ),
+                  ],
+                ),
+                child: Center(
+                  child: Container(
+                    width: chipW * 0.58,
+                    height: chipH * 0.65,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.7),
+                        width: 0.6,
+                      ),
+                    ),
+                    child: Center(
+                      child: Text(
+                        denom,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: (6.5 * ls).clamp(5.0, 8.0),
+                          fontWeight: FontWeight.w900,
+                          height: 0.9,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   // ④ Table Center Area: Closed Deck Shoe, Open Discard Pile, Declare Slot, Wild Joker, Pot
   Widget _buildTableCenter(double tl, double tt, double tw, double th) {
     final canAct = _isMyTurn && !_actionPending;
@@ -1821,40 +1980,114 @@ class _RummyGamePageState extends State<RummyGamePage>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Center Pot Badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFFFFD700), Color(0xFFB45309)],
-              ),
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFFFFD700).withValues(alpha: 0.4),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
+          // 3D Realistic Casino Chip Stacks cluster on the green felt
+          SizedBox(
+            width: 140,
+            height: 24,
+            child: Stack(
+              alignment: Alignment.bottomCenter,
               children: [
-                Text(AppConfigService.isSafeMode() ? '🪙 ' : '💰 ₹ ',
-                    style: const TextStyle(
-                        color: Colors.black87,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 10)),
-                Text(
-                  _currentPot.toStringAsFixed(0),
-                  style: const TextStyle(
-                    color: Colors.black,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 12,
-                    letterSpacing: 0.5,
+                Positioned(
+                  left: 20,
+                  bottom: 0,
+                  child: _build3DChipStackMini(
+                    colors: const [Color(0xFFDC2626), Color(0xFFDC2626), Color(0xFF2563EB)],
+                    denom: '50',
+                  ),
+                ),
+                Positioned(
+                  right: 20,
+                  bottom: 0,
+                  child: _build3DChipStackMini(
+                    colors: const [Color(0xFF2563EB), Color(0xFFD97706), Color(0xFFD4AF37)],
+                    denom: '100',
+                  ),
+                ),
+                Positioned(
+                  bottom: 2,
+                  child: _build3DChipStackMini(
+                    colors: const [Color(0xFF059669), Color(0xFF059669), Color(0xFFD4AF37)],
+                    denom: _currentPot >= 1000 ? '1K' : '500',
                   ),
                 ),
               ],
+            ),
+          ),
+          const SizedBox(height: 2),
+          // Skeuomorphic Embossed Gold & Royal Blue Pot Trophy Plaque
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4.5),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [
+                  Color(0xFFFFDF78),
+                  Color(0xFFD4AF37),
+                  Color(0xFFAA771C),
+                  Color(0xFF5A3A0A),
+                ],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFFFF9C4), width: 1.4),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFD4AF37).withValues(alpha: 0.4),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+                const BoxShadow(
+                  color: Colors.black54,
+                  blurRadius: 4,
+                  offset: Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                gradient: const RadialGradient(
+                  center: Alignment(0.0, -0.2),
+                  radius: 1.2,
+                  colors: [
+                    Color(0xFF143054),
+                    Color(0xFF0B1B32),
+                    Color(0xFF050D1A),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: const Color(0xFFD4AF37).withValues(alpha: 0.5),
+                  width: 0.7,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    AppConfigService.isSafeMode() ? '🪙 TABLE POT: ' : '🏆 PRIZE POT: ₹',
+                    style: const TextStyle(
+                      color: Color(0xFFFFD700),
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  Text(
+                    _currentPot.toStringAsFixed(0),
+                    style: const TextStyle(
+                      color: Color(0xFFFFF59D),
+                      fontWeight: FontWeight.w900,
+                      fontSize: 12.5,
+                      letterSpacing: 0.5,
+                      shadows: [
+                        Shadow(color: Color(0xFFD4AF37), blurRadius: 6),
+                        Shadow(color: Colors.black, blurRadius: 2, offset: Offset(0, 1)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 6),
@@ -2261,28 +2494,37 @@ class _RummyGamePageState extends State<RummyGamePage>
     final cardVisual = AnimatedContainer(
       duration: const Duration(milliseconds: 140),
       curve: Curves.easeOutCubic,
-      transform: Matrix4.translationValues(0, selected ? -10 : 0, 0),
+      transform: Matrix4.translationValues(0, selected ? -12 : 0, 0),
       width: cardW,
       height: cardH,
       margin: const EdgeInsets.symmetric(horizontal: 1.5),
       decoration: BoxDecoration(
-        color: Colors.white,
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFFFFFFFF),
+            Color(0xFFFBFBFC),
+            Color(0xFFF1F5F9),
+          ],
+        ),
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
           color: selected
               ? const Color(0xFFFFD700)
               : (isJoker
                   ? const Color(0xFF8B5CF6)
-                  : Colors.black.withValues(alpha: 0.15)),
-          width: selected ? 2.0 : (isJoker ? 1.5 : 0.8),
+                  : const Color(0xFFCBD5E1)),
+          width: selected ? 2.2 : (isJoker ? 1.5 : 0.8),
         ),
         boxShadow: [
           BoxShadow(
             color: selected
-                ? const Color(0x88FFD700)
+                ? const Color(0xAAFFD700)
                 : Colors.black.withValues(alpha: 0.35),
-            blurRadius: selected ? 10 : 3,
-            offset: Offset(0, selected ? 3 : 1.5),
+            blurRadius: selected ? 12 : 3.5,
+            spreadRadius: selected ? 1.5 : 0,
+            offset: Offset(0, selected ? 4 : 1.5),
           ),
         ],
       ),
@@ -2377,9 +2619,33 @@ class _RummyGamePageState extends State<RummyGamePage>
       data: cardId,
       feedback: Material(
         color: Colors.transparent,
-        child: Opacity(opacity: 0.85, child: cardVisual),
+        elevation: 14,
+        shadowColor: Colors.black87,
+        child: Transform.rotate(
+          angle: 0.08,
+          child: Transform.scale(
+            scale: 1.08,
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(6),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.70),
+                    blurRadius: 18,
+                    offset: const Offset(4, 10),
+                  ),
+                  BoxShadow(
+                    color: const Color(0xFFFFD700).withValues(alpha: 0.55),
+                    blurRadius: 10,
+                  ),
+                ],
+              ),
+              child: cardVisual,
+            ),
+          ),
+        ),
       ),
-      childWhenDragging: Opacity(opacity: 0.3, child: cardVisual),
+      childWhenDragging: Opacity(opacity: 0.25, child: cardVisual),
       child: GestureDetector(
         onTap: () {
           SoundService.instance.play(Sfx.buttonTap, volume: 0.4);
@@ -2406,21 +2672,34 @@ class _RummyGamePageState extends State<RummyGamePage>
     }
 
     return Container(
-      height: 106,
+      height: 108,
       width: double.infinity,
       decoration: BoxDecoration(
-        color: const Color(0xFF070B14).withValues(alpha: 0.98),
-        border: Border(
+        gradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFF0F1E38), // Royal sapphire / midnight blue casino console
+            Color(0xFF0A1426),
+            Color(0xFF040810),
+          ],
+        ),
+        border: const Border(
           top: BorderSide(
-            color: const Color(0xFFFFD700).withValues(alpha: 0.4),
-            width: 1.5,
+            color: Color(0xFFD4AF37), // Burnished gold inlay trim
+            width: 2.0,
           ),
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.7),
-            blurRadius: 12,
-            offset: const Offset(0, -3),
+            color: Colors.black.withValues(alpha: 0.8),
+            blurRadius: 16,
+            offset: const Offset(0, -4),
+          ),
+          BoxShadow(
+            color: const Color(0xFFD4AF37).withValues(alpha: 0.25),
+            blurRadius: 6,
+            offset: const Offset(0, -1),
           ),
         ],
       ),
@@ -2432,13 +2711,26 @@ class _RummyGamePageState extends State<RummyGamePage>
           for (var gIdx = 0; gIdx < _customGroups.length; gIdx++) ...[
             if (gIdx > 0)
               Container(
-                width: 1,
-                height: 70,
+                width: 1.2,
+                height: 72,
                 margin: const EdgeInsets.symmetric(horizontal: 4),
-                color: Colors.white12,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      const Color(0xFFD4AF37).withValues(alpha: 0.4),
+                      Colors.white12,
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
               ),
             _buildMeldGroupItem(gIdx, hand),
           ],
+          // Dedicated DragTarget & Button for creating a new meld group instantly
+          const SizedBox(width: 5),
+          _buildNewGroupSlot(),
         ],
       ),
     );
@@ -2466,15 +2758,24 @@ class _RummyGamePageState extends State<RummyGamePage>
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
           decoration: BoxDecoration(
             color: isHovered
-                ? const Color(0xFF2563EB).withValues(alpha: 0.25)
-                : status.color.withValues(alpha: 0.06),
+                ? const Color(0xFF1D4ED8).withValues(alpha: 0.28)
+                : status.color.withValues(alpha: 0.08),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color: isHovered
                   ? const Color(0xFF60A5FA)
-                  : status.color.withValues(alpha: 0.5),
-              width: isHovered ? 1.8 : 1.1,
+                  : status.color.withValues(alpha: 0.6),
+              width: isHovered ? 2.0 : 1.1,
             ),
+            boxShadow: isHovered
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFF3B82F6).withValues(alpha: 0.5),
+                      blurRadius: 10,
+                      spreadRadius: 1,
+                    ),
+                  ]
+                : null,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -2484,22 +2785,28 @@ class _RummyGamePageState extends State<RummyGamePage>
                 padding:
                     const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
                 decoration: BoxDecoration(
-                  color: status.color.withValues(alpha: 0.18),
+                  color: isHovered
+                      ? const Color(0xFF1D4ED8)
+                      : status.color.withValues(alpha: 0.22),
                   borderRadius: BorderRadius.circular(4),
                   border: Border.all(
-                    color: status.color.withValues(alpha: 0.7),
+                    color: isHovered
+                        ? const Color(0xFF93C5FD)
+                        : status.color.withValues(alpha: 0.8),
                     width: 0.8,
                   ),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(status.icon, size: 9.5, color: status.color),
+                    Icon(isHovered ? Icons.add_circle_outline_rounded : status.icon,
+                        size: 9.5,
+                        color: isHovered ? Colors.white : status.color),
                     const SizedBox(width: 3),
                     Text(
-                      status.label,
+                      isHovered ? 'DROP HERE' : status.label,
                       style: TextStyle(
-                        color: status.color,
+                        color: isHovered ? Colors.white : status.color,
                         fontSize: 8.5,
                         fontWeight: FontWeight.w900,
                         letterSpacing: 0.3,
@@ -2541,6 +2848,86 @@ class _RummyGamePageState extends State<RummyGamePage>
     );
   }
 
+  // Dedicated DragTarget & Button for creating a new meld group instantly
+  Widget _buildNewGroupSlot() {
+    return DragTarget<String>(
+      onWillAcceptWithDetails: (details) => true,
+      onAcceptWithDetails: (details) {
+        SoundService.instance.play(Sfx.buttonTap);
+        final cardId = details.data;
+        for (final g in _customGroups) {
+          g.remove(cardId);
+        }
+        _customGroups.add([cardId]);
+        _customGroups.removeWhere((g) => g.isEmpty);
+        setState(() {
+          _selectedCardIds.remove(cardId);
+        });
+      },
+      builder: (context, candidateData, rejectedData) {
+        final isHovered = candidateData.isNotEmpty;
+        final hasSelection = _selectedCardIds.isNotEmpty;
+        return GestureDetector(
+          onTap: hasSelection ? _createNewGroupWithSelected : null,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            height: 72,
+            padding: const EdgeInsets.symmetric(horizontal: 7),
+            decoration: BoxDecoration(
+              color: isHovered
+                  ? const Color(0xFF10B981).withValues(alpha: 0.25)
+                  : (hasSelection
+                      ? const Color(0xFF1D4ED8).withValues(alpha: 0.20)
+                      : Colors.white.withValues(alpha: 0.04)),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isHovered
+                    ? const Color(0xFF34D399)
+                    : (hasSelection
+                        ? const Color(0xFFFFD700).withValues(alpha: 0.8)
+                        : Colors.white24),
+                width: isHovered ? 1.8 : 1.0,
+              ),
+              boxShadow: isHovered
+                  ? [
+                      BoxShadow(
+                        color: const Color(0x8810B981),
+                        blurRadius: 8,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  isHovered ? Icons.add_circle_rounded : Icons.add_rounded,
+                  color: isHovered
+                      ? const Color(0xFF34D399)
+                      : (hasSelection ? const Color(0xFFFFD700) : Colors.white38),
+                  size: 16,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  isHovered ? 'DROP TO\nCREATE' : (hasSelection ? '+ NEW\nGROUP' : 'NEW\nGROUP'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: isHovered
+                        ? const Color(0xFF34D399)
+                        : (hasSelection ? const Color(0xFFFFD700) : Colors.white38),
+                    fontSize: 7.5,
+                    fontWeight: FontWeight.w900,
+                    height: 1.1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
 
   // ⑥ Right Side Board Control Panel (Score, Auto, Sort, Group, Drop, Discard, Declare)
   Widget _buildRightSideControls(bool canAct, bool awaitingDraw) {
@@ -2551,17 +2938,29 @@ class _RummyGamePageState extends State<RummyGamePage>
       width: 156,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
       decoration: BoxDecoration(
-        color: const Color(0xFF090D18).withValues(alpha: 0.94),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF0F1B33),
+            Color(0xFF0A1224),
+            Color(0xFF050914),
+          ],
+        ),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: const Color(0xFFFFD700).withValues(alpha: 0.45),
-          width: 1.4,
+          color: const Color(0xFFD4AF37),
+          width: 1.5,
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.7),
+            color: Colors.black.withValues(alpha: 0.75),
             blurRadius: 14,
             offset: const Offset(-3, 3),
+          ),
+          BoxShadow(
+            color: const Color(0xFFD4AF37).withValues(alpha: 0.25),
+            blurRadius: 6,
           ),
         ],
       ),
@@ -2638,17 +3037,20 @@ class _RummyGamePageState extends State<RummyGamePage>
                     _smartAutoGroup();
                   },
                   child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    padding: const EdgeInsets.symmetric(vertical: 5.5),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
-                        colors: [Color(0xFF8B5CF6), Color(0xFF6D28D9)],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0xFF9333EA), Color(0xFF7E22CE), Color(0xFF581C87)],
                       ),
                       borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: const Color(0xFFD8B4FE), width: 0.8),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF8B5CF6).withValues(alpha: 0.3),
-                          blurRadius: 4,
-                          offset: const Offset(0, 1),
+                          color: const Color(0xFF9333EA).withValues(alpha: 0.4),
+                          blurRadius: 5,
+                          offset: const Offset(0, 1.5),
                         ),
                       ],
                     ),
@@ -2657,7 +3059,8 @@ class _RummyGamePageState extends State<RummyGamePage>
                         style: TextStyle(
                             color: Colors.white,
                             fontSize: 10.5,
-                            fontWeight: FontWeight.w900)),
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.3)),
                   ),
                 ),
               ),
@@ -2669,26 +3072,34 @@ class _RummyGamePageState extends State<RummyGamePage>
                     _smartSortHand();
                   },
                   child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    padding: const EdgeInsets.symmetric(vertical: 5.5),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
-                        colors: [Color(0xFFFFD700), Color(0xFFB45309)],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0xFFFFDF78),
+                          Color(0xFFD4AF37),
+                          Color(0xFFAA771C),
+                        ],
                       ),
                       borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: const Color(0xFFFFF9C4), width: 0.8),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFFFFD700).withValues(alpha: 0.3),
-                          blurRadius: 4,
-                          offset: const Offset(0, 1),
+                          color: const Color(0xFFD4AF37).withValues(alpha: 0.45),
+                          blurRadius: 6,
+                          offset: const Offset(0, 1.5),
                         ),
                       ],
                     ),
                     alignment: Alignment.center,
                     child: const Text('SORT',
                         style: TextStyle(
-                            color: Colors.black,
+                            color: Color(0xFF1E1000),
                             fontSize: 10.5,
-                            fontWeight: FontWeight.w900)),
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5)),
                   ),
                 ),
               ),
@@ -2710,21 +3121,33 @@ class _RummyGamePageState extends State<RummyGamePage>
                     : null),
             child: Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 4.5),
+              padding: const EdgeInsets.symmetric(vertical: 5.5),
               decoration: BoxDecoration(
                 gradient: _selectedCardIds.isNotEmpty
                     ? const LinearGradient(
-                        colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0xFF3B82F6),
+                          Color(0xFF2563EB),
+                          Color(0xFF1D4ED8),
+                        ],
                       )
                     : null,
-                color: _selectedCardIds.isEmpty ? Colors.white12 : null,
+                color: _selectedCardIds.isEmpty ? Colors.white10 : null,
                 borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: _selectedCardIds.isNotEmpty
+                      ? const Color(0xFFFFD700)
+                      : Colors.white12,
+                  width: _selectedCardIds.isNotEmpty ? 1.2 : 0.8,
+                ),
                 boxShadow: _selectedCardIds.isNotEmpty
                     ? [
                         BoxShadow(
-                          color: const Color(0xFF2563EB).withValues(alpha: 0.4),
-                          blurRadius: 5,
-                          offset: const Offset(0, 1),
+                          color: const Color(0xFF2563EB).withValues(alpha: 0.5),
+                          blurRadius: 6,
+                          offset: const Offset(0, 1.5),
                         ),
                       ]
                     : null,
@@ -2808,16 +3231,24 @@ class _RummyGamePageState extends State<RummyGamePage>
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 6),
                     decoration: BoxDecoration(
-                      color: canAct && awaitingDraw
-                          ? const Color(0xFFEF4444)
-                          : Colors.white10,
+                      gradient: canAct && awaitingDraw
+                          ? const LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Color(0xFFF87171), Color(0xFFEF4444), Color(0xFFB91C1C)],
+                            )
+                          : null,
+                      color: canAct && awaitingDraw ? null : Colors.white10,
                       borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: canAct && awaitingDraw ? const Color(0xFFFECACA) : Colors.white12,
+                        width: 0.8,
+                      ),
                       boxShadow: canAct && awaitingDraw
                           ? [
                               BoxShadow(
-                                color: const Color(0xFFEF4444)
-                                    .withValues(alpha: 0.4),
-                                blurRadius: 4,
+                                color: const Color(0xFFEF4444).withValues(alpha: 0.45),
+                                blurRadius: 5,
                                 offset: const Offset(0, 1),
                               ),
                             ]
@@ -2852,31 +3283,41 @@ class _RummyGamePageState extends State<RummyGamePage>
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     decoration: BoxDecoration(
-                      color: canAct && !awaitingDraw && singleCardSelected
-                          ? const Color(0xFFF59E0B)
-                          : Colors.white10,
+                      gradient: canAct && !awaitingDraw && singleCardSelected
+                          ? const LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Color(0xFFFBBF24), Color(0xFFF59E0B), Color(0xFFD97706)],
+                            )
+                          : null,
+                      color: canAct && !awaitingDraw && singleCardSelected ? null : Colors.white10,
                       borderRadius: BorderRadius.circular(6),
-                      boxShadow:
-                          canAct && !awaitingDraw && singleCardSelected
-                              ? [
-                                  BoxShadow(
-                                    color: const Color(0xFFF59E0B)
-                                        .withValues(alpha: 0.4),
-                                    blurRadius: 4,
-                                    offset: const Offset(0, 1),
-                                  ),
-                                ]
-                              : null,
+                      border: Border.all(
+                        color: canAct && !awaitingDraw && singleCardSelected
+                            ? const Color(0xFFFEF08A)
+                            : Colors.white12,
+                        width: canAct && !awaitingDraw && singleCardSelected ? 1.0 : 0.8,
+                      ),
+                      boxShadow: canAct && !awaitingDraw && singleCardSelected
+                          ? [
+                              BoxShadow(
+                                color: const Color(0xFFF59E0B).withValues(alpha: 0.45),
+                                blurRadius: 6,
+                                offset: const Offset(0, 1.5),
+                              ),
+                            ]
+                          : null,
                     ),
                     alignment: Alignment.center,
                     child: Text(
                       'DISCARD',
                       style: TextStyle(
                         color: canAct && !awaitingDraw && singleCardSelected
-                            ? Colors.black
+                            ? const Color(0xFF1E1000)
                             : Colors.white24,
                         fontWeight: FontWeight.w900,
                         fontSize: 9.5,
+                        letterSpacing: 0.3,
                       ),
                     ),
                   ),
@@ -2890,22 +3331,34 @@ class _RummyGamePageState extends State<RummyGamePage>
             onTap: canAct && !awaitingDraw ? () => _triggerDeclare() : null,
             child: Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 7),
+              padding: const EdgeInsets.symmetric(vertical: 7.5),
               decoration: BoxDecoration(
                 gradient: canAct && !awaitingDraw
                     ? const LinearGradient(
-                        colors: [Color(0xFF10B981), Color(0xFF059669)],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0xFF34D399), Color(0xFF10B981), Color(0xFF047857)],
                       )
                     : null,
                 color: canAct && !awaitingDraw ? null : Colors.white10,
                 borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: canAct && !awaitingDraw
+                      ? const Color(0xFFFFD700)
+                      : Colors.white12,
+                  width: canAct && !awaitingDraw ? 1.4 : 0.8,
+                ),
                 boxShadow: canAct && !awaitingDraw
                     ? [
                         BoxShadow(
-                          color: const Color(0xFF10B981).withValues(alpha: 0.5),
-                          blurRadius: 8,
+                          color: const Color(0xFF10B981).withValues(alpha: 0.6),
+                          blurRadius: 10,
                           offset: const Offset(0, 2),
-                        )
+                        ),
+                        BoxShadow(
+                          color: const Color(0xFFFFD700).withValues(alpha: 0.35),
+                          blurRadius: 4,
+                        ),
                       ]
                     : null,
               ),
@@ -2917,7 +3370,7 @@ class _RummyGamePageState extends State<RummyGamePage>
                     Icons.emoji_events_rounded,
                     size: 14,
                     color: canAct && !awaitingDraw
-                        ? Colors.white
+                        ? const Color(0xFFFFD700)
                         : Colors.white24,
                   ),
                   const SizedBox(width: 4),
@@ -2934,6 +3387,72 @@ class _RummyGamePageState extends State<RummyGamePage>
                   ),
                 ],
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Floating glowing casino turn ribbon directly above the player's cards
+  Widget _buildUserTurnBanner(bool awaitingDraw) {
+    final isUrgent = _turnSecondsLeft <= 7;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isUrgent
+              ? const [Color(0xFFDC2626), Color(0xFF991B1B)]
+              : const [
+                  Color(0xFF1E3A8A),
+                  Color(0xFF1E40AF),
+                  Color(0xFF0F172A),
+                ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isUrgent ? const Color(0xFFFCA5A5) : const Color(0xFFFFD700),
+          width: 1.3,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isUrgent
+                ? const Color(0xFFDC2626).withValues(alpha: 0.75)
+                : const Color(0xFF1E40AF).withValues(alpha: 0.65),
+            blurRadius: 10,
+            spreadRadius: 1,
+          ),
+          BoxShadow(
+            color: const Color(0xFFFFD700).withValues(alpha: 0.35),
+            blurRadius: 6,
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isUrgent ? Icons.warning_amber_rounded : Icons.timer_rounded,
+            size: 13,
+            color: isUrgent ? Colors.white : const Color(0xFFFFD700),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            'YOUR TURN: ${_turnSecondsLeft}s',
+            style: TextStyle(
+              color: isUrgent ? Colors.white : const Color(0xFFFFD700),
+              fontSize: 10.5,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            awaitingDraw ? '• Draw a Card' : '• Discard or Declare',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
@@ -3124,7 +3643,18 @@ class _RummyGamePageState extends State<RummyGamePage>
                         // ④ Table Center Area: Closed Deck, Open Pile, Wild Joker, Pot
                         _buildTableCenter(tableL, tableT, tableW, tableH),
 
-                        // ⑤ Right-Side Board Control HUD (Score, Auto, Sort, Group, Drop, Discard, Declare)
+                        // ⑤ High-Visibility Floating "YOUR TURN" Banner directly above Hand Tray
+                        if (canAct)
+                          Positioned(
+                            left: tableL,
+                            width: tableW,
+                            bottom: 6,
+                            child: Center(
+                              child: _buildUserTurnBanner(awaitingDraw),
+                            ),
+                          ),
+
+                        // ⑥ Right-Side Board Control HUD (Score, Auto, Sort, Group, Drop, Discard, Declare)
                         Positioned(
                           right: 8,
                           top: 10,
