@@ -62,19 +62,22 @@ export function planTeenPattiSeats(
   realCount: number,
   stake: number,
   maxPlayers = 6,
+  allowSoloBots = true,
 ): TeenPattiSeatPlan {
   const reals = Math.min(Math.max(0, realCount), maxPlayers)
   if (reals < 1) return { start: false, reals: 0, bots: 0, requeue: false }
 
   let requiredReals = 1
-  if (stake === 50) {
-    requiredReals = 2
-  } else if (stake === 100) {
-    requiredReals = 3
-  } else if (stake === 500) {
-    requiredReals = 4
-  } else if (stake === 1000) {
-    requiredReals = 4
+  if (!allowSoloBots) {
+    if (stake === 50) {
+      requiredReals = 2
+    } else if (stake === 100) {
+      requiredReals = 3
+    } else if (stake === 500) {
+      requiredReals = 4
+    } else if (stake === 1000) {
+      requiredReals = 4
+    }
   }
 
   if (reals < requiredReals) {
@@ -104,7 +107,8 @@ export interface RummySeatPlan {
 export function planRummySeats(
   realCount: number,
   stake: number,
-  targetTableSize?: number
+  targetTableSize?: number,
+  allowSoloBots = true,
 ): RummySeatPlan {
   const target = targetTableSize || (Math.floor(Math.random() * 3) + 4) // 4, 5, or 6
   const reals = Math.min(Math.max(0, realCount), target)
@@ -113,19 +117,21 @@ export function planRummySeats(
   let requiredReals = 1
   let allowBots = true
 
-  if (stake === 100) {
-    requiredReals = 1
-    allowBots = true
-  } else if (stake === 200 || stake === 500) {
-    requiredReals = 2
-    allowBots = true
-  } else if (stake === 1000) {
-    requiredReals = 3
-    allowBots = true
-  } else if (stake >= 2000) {
-    // 2000, 5000, 10000: Real players only, no bots
-    requiredReals = 2
-    allowBots = false
+  if (!allowSoloBots) {
+    if (stake === 100) {
+      requiredReals = 1
+      allowBots = true
+    } else if (stake === 200 || stake === 500) {
+      requiredReals = 2
+      allowBots = true
+    } else if (stake === 1000) {
+      requiredReals = 3
+      allowBots = true
+    } else if (stake >= 2000) {
+      // 2000, 5000, 10000: Real players only, no bots
+      requiredReals = 2
+      allowBots = false
+    }
   }
 
   if (reals < requiredReals) {
@@ -589,12 +595,14 @@ export class MatchmakingService {
 
     if (gameType === 'ludo') {
       let requiredReals = 1
-      if (stake === 50) {
-        requiredReals = 1
-      } else if (stake === 100) {
-        requiredReals = 2
-      } else if (stake === 500) {
-        requiredReals = 3
+      if (!config.bot_fill_enabled) {
+        if (stake === 50) {
+          requiredReals = 1
+        } else if (stake === 100) {
+          requiredReals = 2
+        } else if (stake === 500) {
+          requiredReals = 3
+        }
       }
 
       if (realPlayers.length < requiredReals) {
@@ -1188,7 +1196,7 @@ export class MatchmakingService {
     // Ludo runs on its own engine (roll/move turns, no cards). It uses a
     // different state shape, so it gets a dedicated cache + room:joined branch.
     if (gameType === 'ludo') {
-      const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
+      const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3006'
       const callLudoStart = () => fetch(`${engineUrl}/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1285,7 +1293,7 @@ export class MatchmakingService {
     // Rummy runs on its own engine too (draw/discard/declare turns, no
     // dice/cards-in-common-pot shape) — same dedicated-engine pattern as Ludo.
     if (gameType === 'rummy') {
-      const engineUrl = process.env.RUMMY_ENGINE_URL || 'http://127.0.0.1:3012'
+      const engineUrl = process.env.RUMMY_ENGINE_URL || 'http://127.0.0.1:3009'
       const rummyConfigRes = await this.db.query(
         `SELECT rake_percent, special_rules FROM game_configs WHERE game_type = 'rummy'`,
       )

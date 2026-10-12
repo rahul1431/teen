@@ -70,7 +70,7 @@ async function start() {
   await app.register(cors, { origin: true })
   await app.register(rateLimit, { max: 200, timeWindow: '1 minute' })
   await app.register(jwt, { secret: process.env.JWT_SECRET! })
-  await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } })
+  await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024, files: 10 } })
 
   app.decorate('authenticate', async function (req: any, reply: any) {
     try { await req.jwtVerify() } catch { reply.code(401).send({ error: 'Unauthorized' }) }

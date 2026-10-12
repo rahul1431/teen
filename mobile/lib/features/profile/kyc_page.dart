@@ -77,7 +77,7 @@ class _KycPageState extends State<KycPage> {
     );
     if (src == null || !mounted) return;
     final picked =
-        await _picker.pickImage(source: src, maxWidth: 1600, imageQuality: 85);
+        await _picker.pickImage(source: src, maxWidth: 1280, imageQuality: 75);
     if (picked == null || !mounted) return;
     setState(() {
       if (slot == 'front') _frontFile = File(picked.path);
@@ -108,7 +108,11 @@ class _KycPageState extends State<KycPage> {
       await _loadStatus();
     } catch (e) {
       if (!mounted) return;
-      AppSnackBar.show(context, 'Upload failed — please try again');
+      String msg = 'Upload failed — please try again';
+      if (e is DioException && e.response?.data is Map && e.response?.data['error'] != null) {
+        msg = e.response!.data['error'].toString();
+      }
+      AppSnackBar.show(context, msg);
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

@@ -189,28 +189,34 @@ export function usersPlugin(db: Pool) {
 
     app.post('/users/kyc/submit', { onRequest: [app.authenticate] }, async (req, reply) => {
       const user = req.user as any
-      const userDir = path.join(KYC_UPLOAD_DIR, user.sub)
-      fs.mkdirSync(userDir, { recursive: true })
-      const files: Record<string, string> = {}
-      const parts = (req as any).parts()
-      for await (const part of parts) {
-        if (part.type !== 'file') continue
-        const key = part.fieldname
-        if (!['aadhaar_front', 'aadhaar_back', 'selfie'].includes(key)) continue
-        const ext = path.extname(part.filename || '.jpg').toLowerCase()
-        await pipeline(part.file, fs.createWriteStream(path.join(userDir, `${key}${ext}`)))
-        files[key] = `${APP_URL}/uploads/kyc/${user.sub}/${key}${ext}`
+      try {
+        const userDir = path.join(KYC_UPLOAD_DIR, user.sub)
+        fs.mkdirSync(userDir, { recursive: true })
+        const files: Record<string, string> = {}
+        const parts = (req as any).parts()
+        for await (const part of parts) {
+          if (part.type !== 'file') continue
+          const key = part.fieldname
+          if (!['aadhaar_front', 'aadhaar_back', 'selfie'].includes(key)) continue
+          const ext = path.extname(part.filename || '.jpg').toLowerCase()
+          await pipeline(part.file, fs.createWriteStream(path.join(userDir, `${key}${ext}`)))
+          files[key] = `${APP_URL}/uploads/kyc/${user.sub}/${key}${ext}`
+        }
+        if (!files['aadhaar_front'] || !files['aadhaar_back'] || !files['selfie']) {
+          const missing = ['aadhaar_front', 'aadhaar_back', 'selfie'].filter(k => !files[k])
+          return reply.code(400).send({ error: `Please upload all 3 documents (missing: ${missing.join(', ')})` })
+        }
+        await db.query(
+          `INSERT INTO kyc_documents (user_id, doc_type, s3_front_key, s3_back_key, selfie_path, status, submitted_at) VALUES ($1, 'aadhaar', $2, $3, $4, 'under_review', NOW())
+           ON CONFLICT (user_id) DO UPDATE SET s3_front_key = EXCLUDED.s3_front_key, s3_back_key = EXCLUDED.s3_back_key, selfie_path = EXCLUDED.selfie_path, status = 'under_review', submitted_at = NOW(), rejection_reason = NULL`,
+          [user.sub, files['aadhaar_front'], files['aadhaar_back'], files['selfie']],
+        )
+        await db.query(`UPDATE users SET kyc_status = 'under_review' WHERE id = $1`, [user.sub])
+        return reply.send({ success: true, status: 'under_review' })
+      } catch (err: any) {
+        req.log.error(err, 'Failed to process KYC upload')
+        return reply.code(500).send({ error: err.message || 'KYC upload processing failed' })
       }
-      if (!files['aadhaar_front'] || !files['aadhaar_back'] || !files['selfie']) {
-        return reply.code(400).send({ error: 'Please upload aadhaar_front, aadhaar_back, and selfie' })
-      }
-      await db.query(
-        `INSERT INTO kyc_documents (user_id, doc_type, s3_front_key, s3_back_key, selfie_path, status, submitted_at) VALUES ($1, 'aadhaar', $2, $3, $4, 'under_review', NOW())
-         ON CONFLICT (user_id) DO UPDATE SET s3_front_key = EXCLUDED.s3_front_key, s3_back_key = EXCLUDED.s3_back_key, selfie_path = EXCLUDED.selfie_path, status = 'under_review', submitted_at = NOW(), rejection_reason = NULL`,
-        [user.sub, files['aadhaar_front'], files['aadhaar_back'], files['selfie']],
-      )
-      await db.query(`UPDATE users SET kyc_status = 'under_review' WHERE id = $1`, [user.sub])
-      return reply.send({ success: true, status: 'under_review' })
     })
 
     app.get('/users/kyc/status', { onRequest: [app.authenticate] }, async (req, reply) => {
