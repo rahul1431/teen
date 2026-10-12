@@ -5,6 +5,7 @@ on:
     branches: [main, claude/confident-archimedes-e2dd1k]
     paths:
       - 'mobile/**'
+      - '.github/workflows/build-apk.yml'
   workflow_dispatch:
 
 jobs:
@@ -40,6 +41,22 @@ jobs:
             && echo "Bundled google-services.json is valid JSON." \
             || { echo "ERROR: bundled google-services.json is invalid"; exit 1; }
           ls -la google-services.json
+
+      - name: Configure Keystore Signing
+        working-directory: mobile/android
+        run: |
+          cat > key.properties << 'EOF'
+          storePassword=myonlinejoker2026
+          keyPassword=myonlinejoker2026
+          keyAlias=upload
+          storeFile=upload-keystore.jks
+          EOF
+          if [ -n "${{ secrets.UPLOAD_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.UPLOAD_KEYSTORE_BASE64 }}" | tr -d '\r\n ' | base64 -d > app/upload-keystore.jks
+          elif [ -f upload-keystore.b64 ]; then
+            cat upload-keystore.b64 | tr -d '\r\n ' | base64 -d > app/upload-keystore.jks
+          fi
+          ls -la key.properties app/upload-keystore.jks
 
       - name: Write app config
         working-directory: mobile
