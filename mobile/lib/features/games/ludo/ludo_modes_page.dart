@@ -207,7 +207,7 @@ class _LudoModesPageState extends State<LudoModesPage> {
               _modeCard(
                 title: 'Practice',
                 rule: 'VS BOTS · FREE',
-                icon: Icons.smart_toy_rounded,
+                icon: Icons.sports_esports_rounded,
                 gradient: const [Color(0xFF00C853), Color(0xFF064E3B)],
                 onTap: () {
                   SoundService.instance.play(Sfx.ludoTap);
@@ -270,7 +270,7 @@ class _LudoModesPageState extends State<LudoModesPage> {
             ElevatedButton.icon(
               onPressed: () {
                 Navigator.pop(ctx);
-                context.push('/games/ludo/friends?mode=create&stake=50');
+                context.push('/games/ludo/friends?mode=create&stake=100');
               },
               icon: const Icon(Icons.add_circle_outline_rounded),
               label: const Text('Create Private Room'),

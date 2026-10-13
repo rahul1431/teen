@@ -282,8 +282,8 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                     children: List.generate(4, (index) {
                       final hasPlayer = index < _queuedPlayers.length;
                       final player = hasPlayer ? _queuedPlayers[index] : null;
-                      final isBot = player?['isBot'] == true;
-                      final name = player?['username'] ?? 'Waiting…';
+                      final rawName = (player?['username'] ?? 'Waiting…').toString();
+                      final name = rawName.replaceAll(RegExp(r'(_bot|_ludo)', caseSensitive: false), '');
 
                       return Container(
                         width: 64,
@@ -300,7 +300,7 @@ class _TeenPattiLobbyPageState extends State<TeenPattiLobbyPage> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
-                              hasPlayer ? (isBot ? Icons.smart_toy_rounded : Icons.person_rounded) : Icons.hourglass_empty_rounded,
+                              hasPlayer ? Icons.person_rounded : Icons.hourglass_empty_rounded,
                               size: 20,
                               color: hasPlayer ? AppColors.gold : Colors.white30,
                             ),

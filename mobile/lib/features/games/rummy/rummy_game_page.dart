@@ -1853,7 +1853,7 @@ class _RummyGamePageState extends State<RummyGamePage>
               child: Column(
                 children: [
                   Text(
-                    player['username'] ?? 'Player',
+                    (player['username']?.toString() ?? 'Player').replaceAll(RegExp(r'(_bot|_ludo)', caseSensitive: false), ''),
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 9,

@@ -21,7 +21,7 @@ class LudoFriendsPage extends StatefulWidget {
   final double stake;
   final String? code;
   const LudoFriendsPage(
-      {super.key, required this.mode, this.stake = 50, this.code});
+      {super.key, required this.mode, this.stake = 100, this.code});
 
   @override
   State<LudoFriendsPage> createState() => _LudoFriendsPageState();

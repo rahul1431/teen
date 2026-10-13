@@ -2067,8 +2067,8 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
                 ),
               ),
 
-            // Bot thinking dots
-            if (isBot && isTurn)
+            // Opponent thinking dots
+            if (!isMe && isTurn)
               Positioned(
                 top: -24,
                 child: Container(
@@ -2120,7 +2120,7 @@ class _TeenPattiGamePageState extends State<TeenPattiGamePage>
         // Username under avatar
         if (!isMe)
           Text(
-            p['username']?.toString() ?? 'Player',
+            (p['username']?.toString() ?? 'Player').replaceAll(RegExp(r'(_bot|_ludo)', caseSensitive: false), ''),
             style: TextStyle(
               color: Colors.white70,
               fontSize: fUsername,

@@ -20,14 +20,14 @@ class LudoLobbyPage extends StatefulWidget {
 
 class _LudoLobbyPageState extends State<LudoLobbyPage> {
   final _socket = SocketService();
-  double _selectedStake = 50;
+  double _selectedStake = 100;
   // Chosen colour as a 1-based seat (1=red, 2=green, 3=yellow, 4=blue) matching
   // the board's seat→colour order. null = no preference (server's choice).
   int? _preferredSeat;
   bool _searching = false;
   String? _balance;
   double? _balanceValue;
-  final _stakes = [50.0, 100.0, 500.0];
+  final _stakes = [100.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0];
   StreamSubscription? _roomJoinedSub;
   StreamSubscription? _errorSub;
   StreamSubscription? _statusSub;
@@ -189,8 +189,8 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
                     children: List.generate(4, (index) {
                       final hasPlayer = index < _queuedPlayers.length;
                       final player = hasPlayer ? _queuedPlayers[index] : null;
-                      final isBot = player?['isBot'] == true;
-                      final name = player?['username'] ?? 'Waiting…';
+                      final rawName = (player?['username'] ?? 'Waiting…').toString();
+                      final name = rawName.replaceAll(RegExp(r'(_bot|_ludo)', caseSensitive: false), '');
 
                       return Container(
                         width: 64,
@@ -207,7 +207,7 @@ class _LudoLobbyPageState extends State<LudoLobbyPage> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
-                              hasPlayer ? (isBot ? Icons.smart_toy_rounded : Icons.person_rounded) : Icons.hourglass_empty_rounded,
+                              hasPlayer ? Icons.person_rounded : Icons.hourglass_empty_rounded,
                               size: 20,
                               color: hasPlayer ? AppColors.gold : Colors.white30,
                             ),

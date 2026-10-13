@@ -1317,7 +1317,7 @@ class _LudoGamePageState extends State<LudoGamePage>
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          p.username,
+          p.username.replaceAll(RegExp(r'(_bot|_ludo)', caseSensitive: false), ''),
           style: TextStyle(
             color: active ? Colors.white : Colors.white70,
             fontWeight: active ? FontWeight.bold : FontWeight.w500,
