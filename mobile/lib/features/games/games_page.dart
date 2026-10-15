@@ -57,12 +57,12 @@ class GamesPage extends StatelessWidget {
                       '/games/rummy',
                       typeKey: 'rummy'),
                   _Game(
-                      locale.t('cricket'),
-                      '🏏',
-                      'Bet on live matches',
+                      locale.t('sports'),
+                      '🏆',
+                      'Cricket, Football & All Sports',
                       AppColors.cricketGrad,
                       const Color(0xFF86EFAC),
-                      '/games/cricket',
+                      '/games/sports',
                       typeKey: 'cricket'),
                   _Game(
                       locale.t('matka'),

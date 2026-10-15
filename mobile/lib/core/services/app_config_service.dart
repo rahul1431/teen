@@ -56,6 +56,9 @@ class AppConfigService {
     if (isSafeMode()) {
       return gameType == 'ludo';
     }
+    if (gameType == 'sports' || gameType == 'cricket') {
+      return _games['sports'] ?? _games['cricket'] ?? true;
+    }
     return _games[gameType] ?? true;
   }
 

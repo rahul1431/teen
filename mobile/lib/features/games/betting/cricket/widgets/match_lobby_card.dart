@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../../../shared/theme/app_theme.dart';
 import '../data/cricket_models.dart';
+import 'sport_helper.dart';
 
 class MatchLobbyCard extends StatefulWidget {
   final CricketMatch match;
@@ -184,11 +185,13 @@ class _MatchLobbyCardState extends State<MatchLobbyCard> {
                   Expanded(
                     child: Row(
                       children: [
-                        Icon(isLive ? Icons.live_tv_rounded : Icons.sports_cricket_rounded, size: 14, color: AppColors.textSecondary),
+                        isLive
+                            ? const Icon(Icons.live_tv_rounded, size: 14, color: AppColors.red)
+                            : Text(SportHelper.getIcon(SportHelper.getCategory(match.format)), style: const TextStyle(fontSize: 13)),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
-                            isLive ? 'Live Center & Sessions' : 'Match Winner Odds available',
+                            isLive ? 'Live Center & Real-time Odds' : '${SportHelper.getCategory(match.format)} Match Odds Available',
                             style: const TextStyle(color: Colors.white70, fontSize: 11),
                             overflow: TextOverflow.ellipsis,
                           ),

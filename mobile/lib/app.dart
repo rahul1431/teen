@@ -106,6 +106,7 @@ final GoRouter _router = GoRouter(
     GoRoute(path: '/games/matka', builder: (_, __) => const MatkaPage()),
     GoRoute(path: '/games/lottery', builder: (_, __) => const LotteryPage()),
     GoRoute(path: '/games/cricket', builder: (_, __) => const CricketPage()),
+    GoRoute(path: '/games/sports', builder: (_, __) => const CricketPage()),
     GoRoute(path: '/games/teen-patti/lobby', builder: (_, s) => TeenPattiLobbyPage(variation: s.uri.queryParameters['variation'] ?? 'classic')),
     GoRoute(path: '/games/teen-patti/friends', builder: (_, s) => TeenPattiFriendsPage(
       mode: s.uri.queryParameters['mode'] ?? 'join',

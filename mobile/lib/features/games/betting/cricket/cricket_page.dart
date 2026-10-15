@@ -77,3 +77,5 @@ class _CricketPageState extends State<CricketPage> with SingleTickerProviderStat
     );
   }
 }
+
+typedef SportsPage = CricketPage;

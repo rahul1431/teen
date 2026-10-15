@@ -6,6 +6,7 @@ import '../widgets/section_header.dart';
 import '../widgets/bet_slip_helper.dart';
 import '../widgets/sport_helper.dart';
 import 'live_match_center_screen.dart';
+import 'match_details_screen.dart';
 
 class SportMatchesScreen extends StatelessWidget {
   final String sportName;
@@ -21,7 +22,10 @@ class SportMatchesScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final sportMatches = matches.where((m) => SportHelper.getCategory(m.format) == sportName).toList();
+    List<CricketMatch> sportMatches = matches.where((m) => SportHelper.getCategory(m.format) == sportName).toList();
+    if (sportMatches.isEmpty) {
+      sportMatches = SportHelper.getFallbackMatches(sportName);
+    }
     final live = sportMatches.where((m) => m.status == 'live').toList();
     final upcoming = sportMatches.where((m) => m.status == 'upcoming').toList();
 
@@ -105,7 +109,7 @@ class SportMatchesScreen extends StatelessWidget {
                     match: m,
                     onTap: () => Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => LiveMatchCenterScreen(match: m)),
+                      MaterialPageRoute(builder: (_) => MatchDetailsScreen(match: m)),
                     ),
                   )),
               const SizedBox(height: 16),
@@ -125,7 +129,10 @@ class SportMatchesScreen extends StatelessWidget {
             else
               ...upcoming.map((m) => MatchLobbyCard(
                     match: m,
-                    onTap: () => BetSlipHelper.showOddsBottomSheet(context, m),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => MatchDetailsScreen(match: m)),
+                    ),
                   )),
           ],
         ),

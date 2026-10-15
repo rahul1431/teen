@@ -11,7 +11,27 @@ class LiveScore {
 
   const LiveScore({this.runs, this.wickets, this.overs, this.description, this.raw = const {}});
 
-  bool get hasScore => runs != null;
+  bool get hasScore => runs != null || goalsA != null || pointsA != null || sets != null || round != null;
+
+  // Football / Soccer getters
+  int? get goalsA => raw['goals_a'] != null ? _asInt(raw['goals_a']) : (raw['score_a'] != null ? _asInt(raw['score_a']) : null);
+  int? get goalsB => raw['goals_b'] != null ? _asInt(raw['goals_b']) : (raw['score_b'] != null ? _asInt(raw['score_b']) : null);
+  String? get matchTime => raw['match_time']?.toString();
+
+  // Basketball getters
+  int? get pointsA => raw['points_a'] != null ? _asInt(raw['points_a']) : null;
+  int? get pointsB => raw['points_b'] != null ? _asInt(raw['points_b']) : null;
+  String? get quarter => raw['quarter']?.toString();
+
+  // Tennis getters
+  String? get sets => raw['sets']?.toString();
+  String? get gamePoint => (raw['game'] ?? raw['current_game'])?.toString();
+
+  // Combat / UFC getters
+  String? get round => raw['round']?.toString();
+
+  // Streaming
+  String? get liveTvUrl => raw['live_tv_url']?.toString();
 
   factory LiveScore.fromJson(Map<String, dynamic>? json) {
     if (json == null) return const LiveScore();
@@ -83,6 +103,7 @@ class CricketMatch {
   final String startTime;
   final LiveScore liveScore;
   final List<OddsMarket> markets;
+  final String? liveTvUrl;
 
   const CricketMatch({
     required this.id,
@@ -98,6 +119,7 @@ class CricketMatch {
     required this.startTime,
     required this.liveScore,
     required this.markets,
+    this.liveTvUrl,
   });
 
   bool get isLive => status == 'live';
@@ -116,6 +138,7 @@ class CricketMatch {
         startTime: _asString(json['start_time']),
         liveScore: LiveScore.fromJson(json['live_score'] as Map<String, dynamic>?),
         markets: ((json['markets'] as List?) ?? []).cast<Map<String, dynamic>>().map(OddsMarket.fromJson).toList(),
+        liveTvUrl: json['live_tv_url']?.toString() ?? (json['live_score'] is Map ? (json['live_score'] as Map)['live_tv_url']?.toString() : null),
       );
 
   Map<String, dynamic> toJson() => {
@@ -131,6 +154,7 @@ class CricketMatch {
         'status': status,
         'start_time': startTime,
         'live_score': liveScore.raw,
+        'live_tv_url': liveTvUrl,
       };
 }
 

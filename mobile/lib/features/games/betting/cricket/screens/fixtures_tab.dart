@@ -7,44 +7,66 @@ import '../widgets/bet_slip_helper.dart';
 import '../widgets/sport_helper.dart';
 import 'live_match_center_screen.dart';
 import 'sport_matches_screen.dart';
+import 'match_details_screen.dart';
 
-class FixturesTab extends StatelessWidget {
+class FixturesTab extends StatefulWidget {
   final List<CricketMatch> matches;
   final Future<void> Function() onRefresh;
-  const FixturesTab({super.key, required this.matches, required this.onRefresh});
+
+  const FixturesTab({
+    super.key,
+    required this.matches,
+    required this.onRefresh,
+  });
+
+  @override
+  State<FixturesTab> createState() => _FixturesTabState();
+}
+
+class _FixturesTabState extends State<FixturesTab> {
+  String _selectedSport = 'All';
 
   @override
   Widget build(BuildContext context) {
-    // 1. Get unique sports categories dynamically from the matches list
-    final categories = matches.map((m) => SportHelper.getCategory(m.format)).toSet().toList();
-    categories.sort((a, b) => a == 'Cricket' ? -1 : b == 'Cricket' ? 1 : a.compareTo(b));
+    // 1. Gather all active sports categories
+    final availableCategories = widget.matches.map((m) => SportHelper.getCategory(m.format)).toSet().toList();
+    availableCategories.sort((a, b) => a == 'Cricket' ? -1 : b == 'Cricket' ? 1 : a.compareTo(b));
 
-    // 2. Filter live matches across all sports for the "Featured Live" section
-    final liveMatches = matches.where((m) => m.status == 'live').toList();
+    // 2. Filter matches by selected sport, fallback to mock fixtures if empty for that specific sport
+    List<CricketMatch> effectiveMatches = widget.matches;
+    if (_selectedSport != 'All') {
+      effectiveMatches = widget.matches.where((m) => SportHelper.getCategory(m.format) == _selectedSport).toList();
+      if (effectiveMatches.isEmpty) {
+        effectiveMatches = SportHelper.getFallbackMatches(_selectedSport);
+      }
+    }
+
+    final liveMatches = effectiveMatches.where((m) => m.status == 'live').toList();
+    final upcomingMatches = effectiveMatches.where((m) => m.status == 'upcoming').toList();
 
     return RefreshIndicator(
-      onRefresh: onRefresh,
+      onRefresh: widget.onRefresh,
       color: AppColors.gold,
       child: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         children: [
-          // Banner Card
+          // ── Hero Sports Hub Banner ──
           Container(
             padding: const EdgeInsets.all(18),
-            margin: const EdgeInsets.only(bottom: 18),
+            margin: const EdgeInsets.only(bottom: 16),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+                colors: [Color(0xFF0F172A), Color(0xFF1E293B), Color(0xFF0F2027)],
               ),
               borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.1), width: 1.5),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.12), width: 1.5),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.3),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
+                  color: Colors.black.withValues(alpha: 0.35),
+                  blurRadius: 12,
+                  offset: const Offset(0, 5),
                 ),
               ],
             ),
@@ -56,9 +78,9 @@ class FixturesTab extends StatelessWidget {
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     gradient: RadialGradient(
-                      colors: [Colors.white.withValues(alpha: 0.22), Colors.white.withValues(alpha: 0.06)],
+                      colors: [AppColors.gold.withValues(alpha: 0.3), Colors.transparent],
                     ),
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.35), width: 1.2),
+                    border: Border.all(color: AppColors.gold.withValues(alpha: 0.5), width: 1.5),
                   ),
                   child: const Center(child: Text('🏆', style: TextStyle(fontSize: 26))),
                 ),
@@ -70,22 +92,22 @@ class FixturesTab extends StatelessWidget {
                     children: [
                       const Text(
                         'Sports Betting Hub',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.white),
+                        style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900, color: Colors.white),
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 5),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.28),
-                          borderRadius: BorderRadius.circular(20),
+                          color: Colors.black.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(16),
                           border: Border.all(color: AppColors.gold.withValues(alpha: 0.3)),
                         ),
                         child: const Text(
-                          'DYNAMIC ODDS · ALL SPORTS INSTANT PAYOUTS',
+                          'CRICKET · FOOTBALL · TENNIS · BASKETBALL & MORE',
                           style: TextStyle(
-                            fontSize: 9.5,
+                            fontSize: 9,
                             fontWeight: FontWeight.w800,
-                            letterSpacing: 0.6,
+                            letterSpacing: 0.5,
                             color: AppColors.gold,
                           ),
                         ),
@@ -97,115 +119,221 @@ class FixturesTab extends StatelessWidget {
             ),
           ),
 
-          // Sport Categories Header
+          // ── Featured Sports Games Section ──
           const SectionHeader(
-            icon: Icons.sports_football_rounded,
+            icon: Icons.sports_rounded,
             iconColor: AppColors.gold,
-            title: 'Sports Categories',
+            title: 'Sports Games',
           ),
           const SizedBox(height: 10),
 
-          // Sports Grid / List
-          if (categories.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 40),
-              child: Center(
-                child: Text(
-                  'No sports events available right now.',
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
-              ),
-            )
-          else
-            ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: categories.length,
+          // Horizontal scroll of sports cards
+          SizedBox(
+            height: 110,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: SportHelper.popularSports.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
               itemBuilder: (context, idx) {
-                final cat = categories[idx];
-                final count = matches.where((m) => SportHelper.getCategory(m.format) == cat).length;
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: SportHelper.getGradient(cat),
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                    ),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.1), width: 1),
-                  ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    leading: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.15),
-                        shape: BoxShape.circle,
+                final sport = SportHelper.popularSports[idx];
+                final count = widget.matches.where((m) => SportHelper.getCategory(m.format) == sport.name).length;
+                final isSelected = _selectedSport == sport.name;
+
+                return GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _selectedSport = isSelected ? 'All' : sport.name;
+                    });
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 135,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: sport.gradient,
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
                       ),
-                      child: Center(
-                        child: Text(
-                          SportHelper.getIcon(cat),
-                          style: const TextStyle(fontSize: 22),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: isSelected ? AppColors.gold : Colors.white.withValues(alpha: 0.15),
+                        width: isSelected ? 2.0 : 1.0,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: sport.gradient.first.withValues(alpha: 0.4),
+                          blurRadius: isSelected ? 12 : 6,
+                          offset: const Offset(0, 3),
                         ),
-                      ),
+                      ],
                     ),
-                    title: Text(
-                      cat,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
-                    subtitle: Text(
-                      '$count matches active',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.7),
-                        fontSize: 12,
-                      ),
-                    ),
-                    trailing: const Icon(
-                      Icons.arrow_forward_ios_rounded,
-                      color: Colors.white70,
-                      size: 16,
-                    ),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => SportMatchesScreen(
-                            sportName: cat,
-                            matches: matches,
-                            onRefresh: onRefresh,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(sport.icon, style: const TextStyle(fontSize: 24)),
+                            if (count > 0)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.withValues(alpha: 0.8),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  '$count',
+                                  style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const Spacer(),
+                        Text(
+                          sport.name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w900,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          count > 0 ? '$count matches' : 'Explore',
+                          style: TextStyle(
+                            color: sport.accent,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                      );
-                    },
+                      ],
+                    ),
                   ),
                 );
               },
             ),
-          const SizedBox(height: 16),
+          ),
+          const SizedBox(height: 18),
 
-          // Featured Live Section
+          // ── Sport Filter Pills ──
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _filterPill('All', '🏆'),
+                const SizedBox(width: 8),
+                ...SportHelper.popularSports.map((s) {
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: _filterPill(s.name, s.icon),
+                  );
+                }),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // ── LIVE In-Play Section ──
           if (liveMatches.isNotEmpty) ...[
-            const SectionHeader(
+            SectionHeader(
               icon: Icons.live_tv_rounded,
               iconColor: AppColors.red,
-              title: 'Featured LIVE Matches',
+              title: _selectedSport == 'All' ? 'LIVE Matches (${liveMatches.length})' : 'LIVE $_selectedSport (${liveMatches.length})',
             ),
             const SizedBox(height: 8),
-            ...liveMatches.take(5).map((m) => MatchLobbyCard(
+            ...liveMatches.map((m) => MatchLobbyCard(
                   match: m,
                   onTap: () => Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => LiveMatchCenterScreen(match: m)),
+                    MaterialPageRoute(builder: (_) => MatchDetailsScreen(match: m)),
                   ),
                 )),
+            const SizedBox(height: 16),
           ],
+
+          // ── Upcoming Matches Section ──
+          SectionHeader(
+            icon: Icons.schedule_rounded,
+            iconColor: AppColors.pitchGreenLight,
+            title: _selectedSport == 'All' ? 'Upcoming Fixtures' : 'Upcoming $_selectedSport Fixtures',
+          ),
+          const SizedBox(height: 8),
+
+          if (upcomingMatches.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 16),
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: AppColors.cardBg,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    SportHelper.getIcon(_selectedSport),
+                    style: const TextStyle(fontSize: 36),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'No $_selectedSport fixtures currently live',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Check back soon or explore other sports games above.',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            )
+          else
+            ...upcomingMatches.map((m) => MatchLobbyCard(
+                  match: m,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => MatchDetailsScreen(match: m)),
+                  ),
+                )),
         ],
+      ),
+    );
+  }
+
+  Widget _filterPill(String title, String icon) {
+    final isSelected = _selectedSport == title;
+    return GestureDetector(
+      onTap: () => setState(() => _selectedSport = title),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.gold.withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? AppColors.gold : Colors.white12,
+            width: isSelected ? 1.5 : 1.0,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(icon, style: const TextStyle(fontSize: 13)),
+            const SizedBox(width: 6),
+            Text(
+              title,
+              style: TextStyle(
+                color: isSelected ? AppColors.gold : Colors.white70,
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

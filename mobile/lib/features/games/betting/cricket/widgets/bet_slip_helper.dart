@@ -92,7 +92,7 @@ class BetSlipHelper {
     );
   }
 
-  static void _showPlaceBetDialog(BuildContext context, CricketMatch match, OddsMarket market, OddsMarketOption option) {
+  static void showPlaceBetDialog(BuildContext context, CricketMatch match, OddsMarket market, OddsMarketOption option) {
     final txt = TextEditingController(text: '100');
     double currentStake = 100.0;
 

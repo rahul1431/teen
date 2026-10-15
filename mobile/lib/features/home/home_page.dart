@@ -936,14 +936,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
     if (cricketOn) {
       cardList.add(_richGameCard(
-        title: locale.t('cricket'),
-        emoji: '🏏',
-        subtitle: '${_formatOnline(_liveCounts['cricket'] ?? 0)} ${locale.t('online')}',
+        title: locale.t('sports'),
+        emoji: '🏆',
+        subtitle: '${_formatOnline(_liveCounts['sports'] ?? _liveCounts['cricket'] ?? 0)} ${locale.t('online')}',
         ctaLabel: locale.t('bet_now'),
-        gradient: const [Color(0xFF15803D), Color(0xFF0A4521), Color(0xFF062B14)],
+        gradient: const [Color(0xFF0F3025), Color(0xFF1E5631), Color(0xFF143B22)],
         accentColor: const Color(0xFF86EFAC),
         badge: 'LIVE',
-        route: '/games/cricket',
+        route: '/games/sports',
       ));
     }
 
