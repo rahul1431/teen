@@ -721,7 +721,7 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> with SingleTick
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: InkWell(
                     onTap: () {
-                      SoundService.instance.play(Sfx.buttonClick);
+                      SoundService.instance.play(Sfx.buttonTap);
                       BetSlipHelper.showPlaceBetDialog(context, _match, market, opt);
                     },
                     borderRadius: BorderRadius.circular(12),

@@ -62,7 +62,7 @@ class BetSlipHelper {
                         child: ElevatedButton(
                           onPressed: () {
                             Navigator.pop(ctx);
-                            _showPlaceBetDialog(context, match, market, opt);
+                            showPlaceBetDialog(context, match, market, opt);
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.gold.withValues(alpha: 0.12),
