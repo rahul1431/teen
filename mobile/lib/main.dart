@@ -51,10 +51,12 @@ void main() async {
   // 2. App Config Service
   try {
     await AppConfigService.init();
-    // Allow up to 5s for remote config on cold start; if slower, it continues in background
+    // Allow remote config to run in background
     AppConfigService.fetchRemoteConfig().catchError((e) {
       if (kDebugMode) debugPrint('[main] AppConfigService background fetch error: $e');
     });
+  } catch (e) {
+    if (kDebugMode) debugPrint('[main] AppConfigService init error: $e');
   }
 
   // 3. Locale Service
