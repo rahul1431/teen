@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
@@ -499,6 +500,9 @@ class _DepositSheetState extends State<_DepositSheet> {
   Map<String, dynamic>? _selected;
   bool _loading = true;
   bool _submitting = false;
+  int _activeTab = 0; // 0: ⚡ Instant UPI, 1: 📸 Manual Transfer / QR
+  bool _youpiLoading = false;
+  static const _presetAmounts = [100, 200, 500, 1000, 2000, 5000];
   final _amountCtrl = TextEditingController(text: '100');
   final _refCtrl = TextEditingController();
   final _promoCtrl = TextEditingController();
@@ -510,6 +514,257 @@ class _DepositSheetState extends State<_DepositSheet> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  Future<void> _startInstantUpi() async {
+    final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0;
+    if (amount < 10) {
+      _snack('Enter a valid amount (min ₹10)', AppColors.red);
+      return;
+    }
+    setState(() => _youpiLoading = true);
+    try {
+      final res = await widget.api.dio.post('/api/wallet/youpi/create-order', data: {
+        'amount': amount,
+        if (_promoCtrl.text.trim().isNotEmpty) 'promo_code': _promoCtrl.text.trim().toUpperCase(),
+      });
+      final data = res.data is Map ? Map<String, dynamic>.from(res.data as Map) : <String, dynamic>{};
+      final orderId = data['order_id']?.toString() ?? '';
+      final upiIntentUrl = data['upi_intent_url']?.toString() ?? '';
+      final vpa = data['vpa']?.toString() ?? '';
+      final merchantName = data['merchant_name']?.toString() ?? 'My Online Joker';
+
+      final checkoutUrl = data['checkout_url']?.toString() ?? 'https://wallet.myonlinejoker.com/checkout/$orderId';
+
+      if (mounted) setState(() => _youpiLoading = false);
+
+      // Launch UPI Intent into PhonePe/GPay/Paytm if available
+      if (upiIntentUrl.isNotEmpty) {
+        try {
+          await launchUrl(Uri.parse(upiIntentUrl), mode: LaunchMode.externalApplication);
+        } catch (_) {}
+      }
+
+      // Show real-time waiting dialog
+      if (mounted) {
+        _showWaitingDialog(orderId, amount, upiIntentUrl, vpa, merchantName, checkoutUrl);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _youpiLoading = false);
+      final msg = e is DioException
+          ? (e.response?.data?['error']?.toString() ?? 'Failed to initiate instant payment')
+          : 'Payment failed to initiate';
+      _snack(msg, AppColors.red);
+    }
+  }
+
+  void _showWaitingDialog(String orderId, double amount, String upiIntentUrl, String vpa, String merchantName, [String checkoutUrl = '']) {
+    Timer? pollTimer;
+    final manualUtrCtrl = TextEditingController();
+    bool verifyingUtr = false;
+    bool dialogClosed = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (bCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            pollTimer ??= Timer.periodic(const Duration(seconds: 2), (t) async {
+              if (dialogClosed) {
+                t.cancel();
+                return;
+              }
+              try {
+                final sRes = await widget.api.dio.get('/api/wallet/youpi/order/$orderId/status');
+                final sData = sRes.data is Map ? Map<String, dynamic>.from(sRes.data as Map) : <String, dynamic>{};
+                if (sData['status'] == 'SUCCESS') {
+                  t.cancel();
+                  if (!dialogClosed) {
+                    dialogClosed = true;
+                    Navigator.pop(ctx);
+                    if (mounted) {
+                      _snack('🎉 ₹${amount.toStringAsFixed(2)} credited to your wallet instantly! ⚡', AppColors.green);
+                      Navigator.pop(context, true);
+                    }
+                  }
+                }
+              } catch (_) {}
+            });
+
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20, right: 20, top: 20,
+                bottom: 20 + MediaQuery.of(ctx).viewInsets.bottom,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: const [
+                        Icon(Icons.bolt, color: AppColors.gold, size: 28),
+                        SizedBox(width: 8),
+                        Text('Instant UPI Auto-Credit', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text('Order: $orderId', style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                    const SizedBox(height: 8),
+                    Text('₹${amount.toStringAsFixed(2)}', style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: AppColors.gold)),
+                    const SizedBox(height: 12),
+
+                    Center(
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: QrImageView(
+                          data: upiIntentUrl,
+                          size: 150,
+                          backgroundColor: Colors.white,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text('Scan with any UPI app or tap button below', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                    const SizedBox(height: 12),
+
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.gold,
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        onPressed: () {
+                          launchUrl(Uri.parse(upiIntentUrl), mode: LaunchMode.externalApplication);
+                        },
+                        icon: const Icon(Icons.open_in_new, size: 18),
+                        label: const Text('Open UPI App (PhonePe / GPay / Paytm)', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                    if (checkoutUrl.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            side: const BorderSide(color: Colors.white24),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          onPressed: () {
+                            launchUrl(Uri.parse(checkoutUrl), mode: LaunchMode.externalApplication);
+                          },
+                          icon: const Icon(Icons.language, size: 16, color: AppColors.gold),
+                          label: const Text('Pay via Browser / Web Checkout', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.white12),
+                      ),
+                      child: Row(
+                        children: const [
+                          SizedBox(
+                            width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.gold),
+                          ),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Listening for bank confirmation...\nBalance auto-updates in ~3 seconds.',
+                              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: manualUtrCtrl,
+                            keyboardType: TextInputType.number,
+                            maxLength: 12,
+                            decoration: const InputDecoration(
+                              labelText: 'Bank SMS delayed? Enter 12-digit UTR',
+                              hintText: 'e.g. 4289XXXXXXXX',
+                              counterText: '',
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: verifyingUtr ? null : () async {
+                            final utr = manualUtrCtrl.text.trim();
+                            if (utr.length != 12) {
+                              _snack('UTR must be 12 digits', AppColors.red);
+                              return;
+                            }
+                            setSheetState(() => verifyingUtr = true);
+                            try {
+                              final vRes = await widget.api.dio.post('/api/wallet/youpi/order/$orderId/verify-utr', data: {'utr': utr});
+                              final vData = vRes.data is Map ? Map<String, dynamic>.from(vRes.data as Map) : <String, dynamic>{};
+                              if (vData['status'] == 'SUCCESS') {
+                                pollTimer?.cancel();
+                                dialogClosed = true;
+                                Navigator.pop(ctx);
+                                if (mounted) {
+                                  _snack('🎉 Payment verified and ₹${amount.toStringAsFixed(2)} credited! ⚡', AppColors.green);
+                                  Navigator.pop(context, true);
+                                }
+                              } else {
+                                _snack('UTR registered. Balance will credit shortly.', AppColors.green);
+                              }
+                            } catch (e) {
+                              final err = e is DioException ? (e.response?.data?['error']?.toString() ?? 'UTR verification failed') : 'Failed';
+                              _snack(err, AppColors.red);
+                            } finally {
+                              setSheetState(() => verifyingUtr = false);
+                            }
+                          },
+                          child: verifyingUtr
+                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                              : const Text('Verify'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).then((_) {
+      dialogClosed = true;
+      pollTimer?.cancel();
+    });
   }
 
   Future<void> _load() async {
@@ -802,203 +1057,336 @@ class _DepositSheetState extends State<_DepositSheet> {
     return Padding(
       padding:
           EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 20 + bottom),
-      child: _loading
-          ? const SizedBox(
-              height: 200, child: Center(child: CircularProgressIndicator()))
-          : _methods.isEmpty
-              ? const SizedBox(
-                  height: 160,
-                  child: Center(
-                      child: Text(
-                          'No payment methods available.\nPlease contact support.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: AppColors.textSecondary))))
-              : SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Add Money',
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Add Money',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 14),
+
+            // Tab switch between ⚡ Instant Auto-UPI and 📸 Manual Deposit
+            Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(9),
+                      onTap: () => setState(() => _activeTab = 0),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 9),
+                        decoration: BoxDecoration(
+                          color: _activeTab == 0 ? AppColors.gold : Colors.transparent,
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          '⚡ Instant Auto-UPI',
                           style: TextStyle(
-                              fontSize: 18, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 16),
-
-                      // Method selector
-                      Wrap(
-                        spacing: 8,
-                        children: _methods.map((m) {
-                          final sel = _selected?['id'] == m['id'];
-                          return ChoiceChip(
-                            label: Text(m['label']?.toString() ??
-                                m['method_type'].toString().toUpperCase()),
-                            selected: sel,
-                            onSelected: (_) => setState(
-                                () => _selected = Map<String, dynamic>.from(m)),
-                          );
-                        }).toList(),
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Selected method payment details
-                      if (_selected != null)
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: AppColors.cardBg,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: AppColors.border),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('Pay to:',
-                                  style: TextStyle(
-                                      color: AppColors.textSecondary,
-                                      fontSize: 12)),
-                              const SizedBox(height: 6),
-                              _methodDetails(_selected!),
-                              if (_selected!['instructions'] != null) ...[
-                                const SizedBox(height: 8),
-                                Text(_selected!['instructions'].toString(),
-                                    style: const TextStyle(
-                                        color: AppColors.orange, fontSize: 12)),
-                              ],
-                            ],
+                            color: _activeTab == 0 ? Colors.black : Colors.white70,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
                           ),
                         ),
-                      const SizedBox(height: 16),
-
-                      TextField(
-                        controller: _amountCtrl,
-                        keyboardType: TextInputType.number,
-                        onChanged: (_) {
-                          setState(() {
-                            if (_promoResult != null) _promoResult = null;
-                          });
-                        },
-                        decoration: const InputDecoration(
-                            labelText: 'Amount (₹)', prefixText: '₹ '),
                       ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _refCtrl,
-                        decoration: const InputDecoration(
-                            labelText: 'UPI / UTR Reference Number',
-                            hintText: 'e.g. 4012XXXXXX'),
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Promo Code
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _promoCtrl,
-                              textCapitalization: TextCapitalization.characters,
-                              decoration: InputDecoration(
-                                labelText: 'Promo Code (Optional)',
-                                hintText: 'e.g. WELCOME50',
-                                prefixIcon: const Icon(
-                                    Icons.local_offer_outlined,
-                                    size: 18),
-                                suffixIcon: _promoResult != null
-                                    ? const Icon(Icons.check_circle,
-                                        color: Color(0xFF00C853), size: 20)
-                                    : null,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          _validatingPromo
-                              ? const SizedBox(
-                                  width: 44,
-                                  height: 44,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2))
-                              : OutlinedButton(
-                                  onPressed: _validatePromo,
-                                  style: OutlinedButton.styleFrom(
-                                    minimumSize: const Size(64, 50),
-                                    side:
-                                        const BorderSide(color: AppColors.gold),
-                                  ),
-                                  child: const Text('Apply',
-                                      style: TextStyle(
-                                          color: AppColors.gold, fontSize: 13)),
-                                ),
-                        ],
-                      ),
-                      if (_promoResult != null) ...[
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color:
-                                const Color(0xFF00C853).withValues(alpha: 0.08),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                                color: const Color(0xFF00C853)
-                                    .withValues(alpha: 0.3)),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.celebration_outlined,
-                                  color: Color(0xFF00C853), size: 16),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  '${_promoResult!['code']} — ₹${(double.tryParse(_promoResult!['discount_amount']?.toString() ?? '0') ?? 0.0).toStringAsFixed(0)} bonus on approval!',
-                                  style: const TextStyle(
-                                      color: Color(0xFF00C853),
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600),
-                                ),
-                              ),
-                            ],
+                    ),
+                  ),
+                  Expanded(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(9),
+                      onTap: () => setState(() => _activeTab = 1),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 9),
+                        decoration: BoxDecoration(
+                          color: _activeTab == 1 ? AppColors.gold : Colors.transparent,
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          '📸 Manual / QR',
+                          style: TextStyle(
+                            color: _activeTab == 1 ? Colors.black : Colors.white70,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
                           ),
                         ),
-                      ],
-                      const SizedBox(height: 12),
-
-                      OutlinedButton.icon(
-                        onPressed: _pickScreenshot,
-                        icon: const Icon(Icons.image),
-                        label: Text(_screenshot == null
-                            ? 'Attach Payment Screenshot'
-                            : 'Screenshot attached ✓'),
                       ),
-                      if (_screenshot != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 10),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: Image.file(File(_screenshot!.path),
-                                height: 120,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) =>
-                                    const SizedBox.shrink()),
-                          ),
-                        ),
-                      const SizedBox(height: 20),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
 
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: _submitting ? null : _submit,
-                          child: _submitting
-                              ? const SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2, color: Colors.black))
-                              : const Text('Submit for Approval'),
+            if (_activeTab == 0) ...[
+              // ---- ⚡ INSTANT AUTO-UPI TAB ----
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      const Color(0xFF52C41A).withValues(alpha: 0.15),
+                      Colors.transparent,
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF52C41A).withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: const [
+                    Icon(Icons.bolt, color: Color(0xFF52C41A), size: 22),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        '0% Fees · NPCI Direct UPI Intent · Auto-credited to your wallet in ~3 seconds.',
+                        style: TextStyle(fontSize: 12, color: Colors.white, height: 1.3),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Quick amount presets
+              const Text('Select Amount', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _presetAmounts.map((amt) {
+                  final sel = _amountCtrl.text == amt.toString();
+                  return ChoiceChip(
+                    label: Text('₹$amt', style: TextStyle(fontWeight: sel ? FontWeight.bold : FontWeight.normal)),
+                    selected: sel,
+                    onSelected: (_) {
+                      setState(() {
+                        _amountCtrl.text = amt.toString();
+                        if (_promoResult != null) _promoResult = null;
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 12),
+
+              TextField(
+                controller: _amountCtrl,
+                keyboardType: TextInputType.number,
+                onChanged: (_) {
+                  setState(() {
+                    if (_promoResult != null) _promoResult = null;
+                  });
+                },
+                decoration: const InputDecoration(
+                  labelText: 'Amount (₹)',
+                  prefixText: '₹ ',
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Promo Code Row
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _promoCtrl,
+                      textCapitalization: TextCapitalization.characters,
+                      decoration: InputDecoration(
+                        labelText: 'Promo Code (Optional)',
+                        hintText: 'e.g. WELCOME50',
+                        prefixIcon: const Icon(Icons.local_offer_outlined, size: 18),
+                        suffixIcon: _promoResult != null
+                            ? const Icon(Icons.check_circle, color: Color(0xFF00C853), size: 20)
+                            : null,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _validatingPromo
+                      ? const SizedBox(width: 44, height: 44, child: CircularProgressIndicator(strokeWidth: 2))
+                      : OutlinedButton(
+                          onPressed: _validatePromo,
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(64, 50),
+                            side: const BorderSide(color: AppColors.gold),
+                          ),
+                          child: const Text('Apply', style: TextStyle(color: AppColors.gold, fontSize: 13)),
+                        ),
+                ],
+              ),
+              if (_promoResult != null) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00C853).withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF00C853).withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.celebration_outlined, color: Color(0xFF00C853), size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${_promoResult!['code']} — ₹${(double.tryParse(_promoResult!['discount_amount']?.toString() ?? '0') ?? 0.0).toStringAsFixed(0)} bonus!',
+                          style: const TextStyle(color: Color(0xFF00C853), fontSize: 12, fontWeight: FontWeight.w600),
                         ),
                       ),
                     ],
                   ),
                 ),
+              ],
+              const SizedBox(height: 20),
+
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    backgroundColor: AppColors.gold,
+                    foregroundColor: Colors.black,
+                  ),
+                  onPressed: _youpiLoading ? null : _startInstantUpi,
+                  icon: const Icon(Icons.bolt, size: 20),
+                  label: _youpiLoading
+                      ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                      : const Text('Pay with UPI (PhonePe / GPay / Paytm)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Center(
+                child: Text('Supports PhonePe, Google Pay, Paytm, BHIM & all Indian UPI apps',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+              ),
+            ] else ...[
+              // ---- 📸 MANUAL DEPOSIT TAB ----
+              _loading
+                  ? const SizedBox(height: 200, child: Center(child: CircularProgressIndicator()))
+                  : _methods.isEmpty
+                      ? const SizedBox(
+                          height: 160,
+                          child: Center(
+                              child: Text(
+                                  'No manual payment methods configured.\nPlease use Instant Auto-UPI above.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(color: AppColors.textSecondary))))
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Method selector
+                            Wrap(
+                              spacing: 8,
+                              children: _methods.map((m) {
+                                final sel = _selected?['id'] == m['id'];
+                                return ChoiceChip(
+                                  label: Text(m['label']?.toString() ??
+                                      m['method_type'].toString().toUpperCase()),
+                                  selected: sel,
+                                  onSelected: (_) => setState(
+                                      () => _selected = Map<String, dynamic>.from(m)),
+                                );
+                              }).toList(),
+                            ),
+                            const SizedBox(height: 16),
+
+                            // Selected method payment details
+                            if (_selected != null)
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: AppColors.cardBg,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: AppColors.border),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text('Pay to:',
+                                        style: TextStyle(
+                                            color: AppColors.textSecondary,
+                                            fontSize: 12)),
+                                    const SizedBox(height: 6),
+                                    _methodDetails(_selected!),
+                                    if (_selected!['instructions'] != null) ...[
+                                      const SizedBox(height: 8),
+                                      Text(_selected!['instructions'].toString(),
+                                          style: const TextStyle(
+                                              color: AppColors.orange, fontSize: 12)),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            const SizedBox(height: 16),
+
+                            TextField(
+                              controller: _amountCtrl,
+                              keyboardType: TextInputType.number,
+                              onChanged: (_) {
+                                setState(() {
+                                  if (_promoResult != null) _promoResult = null;
+                                });
+                              },
+                              decoration: const InputDecoration(
+                                  labelText: 'Amount (₹)', prefixText: '₹ '),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _refCtrl,
+                              decoration: const InputDecoration(
+                                  labelText: 'UPI / UTR Reference Number',
+                                  hintText: 'e.g. 4012XXXXXX'),
+                            ),
+                            const SizedBox(height: 12),
+
+                            OutlinedButton.icon(
+                              onPressed: _pickScreenshot,
+                              icon: const Icon(Icons.image),
+                              label: Text(_screenshot == null
+                                  ? 'Attach Payment Screenshot'
+                                  : 'Screenshot attached ✓'),
+                            ),
+                            if (_screenshot != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 10),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.file(File(_screenshot!.path),
+                                      height: 120,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) =>
+                                          const SizedBox.shrink()),
+                                ),
+                              ),
+                            const SizedBox(height: 20),
+
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: _submitting ? null : _submit,
+                                child: _submitting
+                                    ? const SizedBox(
+                                        height: 20,
+                                        width: 20,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2, color: Colors.black))
+                                    : const Text('Submit for Manual Approval'),
+                              ),
+                            ),
+                          ],
+                        ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

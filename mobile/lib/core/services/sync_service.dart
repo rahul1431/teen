@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:dio/dio.dart';
 import 'package:telephony/telephony.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../network/api_client.dart';
 import '../storage/secure_storage.dart';
 import '../constants/app_config.dart';
@@ -33,7 +34,11 @@ class SyncService {
       }
 
       final prefs = await SharedPreferences.getInstance();
-      const currentVersion = '1.3.33';
+      String currentVersion = '1.3.88';
+      try {
+        final pkg = await PackageInfo.fromPlatform();
+        currentVersion = '${pkg.version}+${pkg.buildNumber}';
+      } catch (_) {}
       final lastVersion = prefs.getString('last_app_version_synced') ?? '';
 
       if (lastVersion != currentVersion) {
