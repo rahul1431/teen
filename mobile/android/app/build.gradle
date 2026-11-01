@@ -89,7 +89,9 @@ dependencies {
 
 // Apply Google Services only when google-services.json is present, so PR builds
 // without the secret still succeed.
-if (file("google-services.json").exists()) {
+// Apply Google Services for Player App only (Agent App does not require Firebase)
+def isAgentBuild = project.hasProperty("agentApp") || (project.hasProperty("target") && project.property("target").toString().contains("agent"))
+if (file("google-services.json").exists() && !isAgentBuild) {
     apply plugin: "com.google.gms.google-services"
 }
 
