@@ -5,11 +5,14 @@ class AgentTheme {
   static const Color background = Color(0xFF0A0C10);
   static const Color cardBg = Color(0xFF14171F);
   static const Color surface = Color(0xFF1C202B);
+  static const Color surfaceElevated = Color(0xFF262C3A);
   static const Color gold = Color(0xFFD4AF37);
   static const Color goldLight = Color(0xFFF3E5AB);
   static const Color goldDark = Color(0xFFAA8012);
   static const Color emerald = Color(0xFF22C55E);
   static const Color crimson = Color(0xFFEF4444);
+  static const Color winGreen = emerald;
+  static const Color lossRed = crimson;
   static const Color textLight = Color(0xFFF8FAFC);
   static const Color textMuted = Color(0xFF94A3B8);
 
@@ -74,4 +77,3 @@ class AgentTheme {
     );
   }
 }
-

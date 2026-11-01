@@ -387,7 +387,7 @@ class _AgentSupportScreenState extends State<AgentSupportScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: AgentTheme.gold,
                 padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: BorderRadius.circular(10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
             ),
           ),
@@ -468,3 +468,4 @@ class _AgentSupportScreenState extends State<AgentSupportScreen> {
     );
   }
 }
+

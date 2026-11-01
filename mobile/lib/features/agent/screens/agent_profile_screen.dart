@@ -115,7 +115,7 @@ class _AgentProfileScreenState extends State<AgentProfileScreen> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AgentTheme.gold,
                   padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: BorderRadius.circular(10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
                 child: const Text('Save Changes', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
               ),
@@ -200,7 +200,7 @@ class _AgentProfileScreenState extends State<AgentProfileScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AgentTheme.gold,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: BorderRadius.circular(10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
                   child: const Text('Save Bank Details', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
                 ),
@@ -309,7 +309,7 @@ class _AgentProfileScreenState extends State<AgentProfileScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AgentTheme.gold,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: BorderRadius.circular(10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
                   child: const Text('Submit KYC Verification', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
                 ),
@@ -724,7 +724,7 @@ class _AgentProfileScreenState extends State<AgentProfileScreen> {
                 label: const Text('Submit KYC Documents', style: TextStyle(color: AgentTheme.gold)),
                 style: OutlinedButton.styleFrom(
                   side: const BorderSide(color: AgentTheme.gold),
-                  shape: BorderRadius.circular(8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
               ),
             ),
@@ -850,9 +850,10 @@ class _AgentProfileScreenState extends State<AgentProfileScreen> {
         style: ElevatedButton.styleFrom(
           backgroundColor: AgentTheme.lossRed.withOpacity(0.85),
           padding: const EdgeInsets.symmetric(vertical: 14),
-          shape: BorderRadius.circular(12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
     );
   }
 }
+

@@ -604,3 +604,4 @@ class _AgentAnalyticsScreenState extends State<AgentAnalyticsScreen> {
     );
   }
 }
+
