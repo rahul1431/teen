@@ -98,7 +98,7 @@ jobs:
       - name: Build Agent Partner release APK
         working-directory: mobile
         run: |
-          flutter build apk --release -t lib/main_agent.dart
+          flutter build apk --release -t lib/main_agent.dart -PagentApp=true
           cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/agent-partner-release.apk
 
       - name: Upload APK artifacts

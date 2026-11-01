@@ -12,6 +12,9 @@ import 'agent_players_screen.dart';
 import 'agent_network_screen.dart';
 import 'agent_payouts_screen.dart';
 import 'agent_notifications_screen.dart';
+import 'agent_analytics_screen.dart';
+import 'agent_support_screen.dart';
+import 'agent_profile_screen.dart';
 
 class AgentHomeScreen extends StatefulWidget {
   const AgentHomeScreen({super.key});
@@ -227,8 +230,12 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
     final pages = [
       _buildHomeTab(),
       const AgentPlayersScreen(),
+      const AgentAnalyticsScreen(),
       AgentNetworkScreen(subAgents: _profile?.subAgents ?? []),
-      const AgentPayoutsScreen(),
+      AgentProfileScreen(
+        initialProfile: _profile,
+        onProfileUpdated: _loadDashboardData,
+      ),
     ];
 
     return Scaffold(
@@ -284,8 +291,17 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
             },
           ),
           IconButton(
-            icon: const Icon(Icons.logout, color: AgentTheme.textMuted),
-            onPressed: _handleLogout,
+            icon: const Icon(Icons.support_agent, color: AgentTheme.gold, size: 26),
+            tooltip: 'Support Desk',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => AgentSupportScreen(profile: _profile)),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.person_outline, color: AgentTheme.gold, size: 26),
+            tooltip: 'Profile & Settings',
+            onPressed: () => setState(() => _currentIndex = 4),
           ),
         ],
       ),
@@ -312,14 +328,19 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
             label: 'Players',
           ),
           NavigationDestination(
+            icon: Icon(Icons.insights_outlined, color: AgentTheme.textMuted),
+            selectedIcon: Icon(Icons.insights, color: AgentTheme.gold),
+            label: 'Analytics',
+          ),
+          NavigationDestination(
             icon: Icon(Icons.account_tree_outlined, color: AgentTheme.textMuted),
             selectedIcon: Icon(Icons.account_tree, color: AgentTheme.gold),
             label: 'Network',
           ),
           NavigationDestination(
-            icon: Icon(Icons.account_balance_wallet_outlined, color: AgentTheme.textMuted),
-            selectedIcon: Icon(Icons.account_balance_wallet, color: AgentTheme.gold),
-            label: 'Payouts',
+            icon: Icon(Icons.person_outline, color: AgentTheme.textMuted),
+            selectedIcon: Icon(Icons.person, color: AgentTheme.gold),
+            label: 'Profile',
           ),
         ],
       ),
@@ -500,7 +521,39 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
                   title: 'Withdraw Payout',
                   subtitle: 'UPI & Bank Transfer',
                   color: Colors.orangeAccent,
-                  onTap: () => setState(() => _currentIndex = 3),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AgentPayoutsScreen()),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              // Link Analytics Button
+              Expanded(
+                child: _buildActionCard(
+                  icon: Icons.insights,
+                  title: 'Funnel Analytics',
+                  subtitle: 'Clicks, FTDs & Sources',
+                  color: Colors.purpleAccent,
+                  onTap: () => setState(() => _currentIndex = 2),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Support Helpdesk Button
+              Expanded(
+                child: _buildActionCard(
+                  icon: Icons.support_agent,
+                  title: 'Admin Support',
+                  subtitle: 'WhatsApp & Tickets',
+                  color: const Color(0xFF25D366),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => AgentSupportScreen(profile: _profile)),
+                  ),
                 ),
               ),
             ],

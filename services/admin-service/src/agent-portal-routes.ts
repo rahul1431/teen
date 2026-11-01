@@ -136,9 +136,13 @@ export async function registerAgentPortalRoutes(
     const agentId = (req.user as any).sub
     const [agentRes, walletRes, subAgentsRes, playersCountRes] = await Promise.all([
       db.query(
-        `SELECT id, username, display_name, phone, commission_rate::float,
+        `SELECT id, username, display_name, phone, email, avatar_url,
+                commission_rate::float,
                 COALESCE(game_commissions, '{}'::jsonb) AS game_commissions,
-                referral_code, parent_agent_id, created_at
+                referral_code, parent_agent_id, created_at,
+                COALESCE(bank_details, '{}'::jsonb) AS bank_details,
+                COALESCE(kyc_status, 'pending') AS kyc_status,
+                COALESCE(kyc_data, '{}'::jsonb) AS kyc_data
          FROM agents WHERE id = $1`,
         [agentId]
       ),
@@ -169,6 +173,138 @@ export async function registerAgentPortalRoutes(
       wallet: walletRes.rows[0] || { balance: 0, locked_balance: 0, total_earned: 0, total_paid_out: 0 },
       sub_agents: subAgentsRes.rows,
       player_count: playersCountRes.rows[0]?.count || 0,
+    })
+  })
+
+  // PATCH /api/admin/agent-portal/profile
+  app.patch('/api/admin/agent-portal/profile', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+    const body = z.object({
+      display_name: z.string().min(2).max(100).optional(),
+      phone: z.string().min(5).max(20).optional(),
+      email: z.string().email().optional().or(z.literal('')),
+      avatar_url: z.string().max(500000).optional(), // support URL or base64 data-uri
+    }).parse(req.body)
+
+    const sets: string[] = []
+    const values: any[] = []
+    let idx = 1
+
+    if (body.display_name !== undefined) {
+      sets.push(`display_name = ${idx}`)
+      values.push(body.display_name)
+      idx++
+    }
+    if (body.phone !== undefined) {
+      sets.push(`phone = ${idx}`)
+      values.push(body.phone)
+      idx++
+    }
+    if (body.email !== undefined) {
+      sets.push(`email = ${idx}`)
+      values.push(body.email)
+      idx++
+    }
+    if (body.avatar_url !== undefined) {
+      sets.push(`avatar_url = ${idx}`)
+      values.push(body.avatar_url)
+      idx++
+    }
+
+    if (sets.length === 0) {
+      return reply.code(400).send({ error: 'No fields to update' })
+    }
+
+    values.push(agentId)
+    const res = await db.query(
+      `UPDATE agents SET ${sets.join(', ')} WHERE id = ${idx} 
+       RETURNING id, username, display_name, phone, email, avatar_url, kyc_status, bank_details`,
+      values
+    )
+    return reply.send({ success: true, agent: res.rows[0] })
+  })
+
+  // PATCH /api/admin/agent-portal/bank-details
+  app.patch('/api/admin/agent-portal/bank-details', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+    const body = z.object({
+      account_number: z.string().max(40).optional(),
+      ifsc_code: z.string().max(20).optional(),
+      account_holder: z.string().max(100).optional(),
+      bank_name: z.string().max(100).optional(),
+      upi_id: z.string().max(100).optional(),
+    }).parse(req.body)
+
+    const currentRes = await db.query('SELECT bank_details FROM agents WHERE id = $1', [agentId])
+    const current = currentRes.rows[0]?.bank_details || {}
+    const updated = { ...current, ...body, updated_at: new Date().toISOString() }
+
+    const res = await db.query(
+      'UPDATE agents SET bank_details = $1 WHERE id = $2 RETURNING bank_details',
+      [JSON.stringify(updated), agentId]
+    )
+    return reply.send({ success: true, bank_details: res.rows[0]?.bank_details })
+  })
+
+  // POST /api/admin/agent-portal/kyc
+  app.post('/api/admin/agent-portal/kyc', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+    const body = z.object({
+      document_type: z.enum(['pan', 'aadhaar', 'voter_id', 'passport']),
+      document_number: z.string().min(4).max(50),
+      front_url: z.string().min(5),
+      back_url: z.string().optional(),
+    }).parse(req.body)
+
+    const kycPayload = {
+      ...body,
+      submitted_at: new Date().toISOString(),
+      status: 'submitted',
+    }
+
+    const res = await db.query(
+      `UPDATE agents 
+       SET kyc_status = 'submitted', kyc_data = $1 
+       WHERE id = $2 
+       RETURNING id, username, kyc_status, kyc_data`,
+      [JSON.stringify(kycPayload), agentId]
+    )
+
+    // Notify agent that KYC was submitted
+    await db.query(
+      `INSERT INTO agent_notifications (agent_id, title, message, type)
+       VALUES ($1, 'KYC Submitted', 'Your KYC documents have been submitted and are under review by compliance.', 'system')`,
+      [agentId]
+    )
+
+    return reply.send({ success: true, agent: res.rows[0] })
+  })
+
+  // POST /api/admin/agent-portal/support-ticket
+  app.post('/api/admin/agent-portal/support-ticket', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+    const body = z.object({
+      subject: z.string().min(3).max(100),
+      category: z.string().default('General'),
+      message: z.string().min(5).max(2000),
+    }).parse(req.body)
+
+    const ticketId = 'TK-' + Date.now().toString().slice(-6)
+
+    await db.query(
+      `INSERT INTO agent_notifications (agent_id, title, message, type)
+       VALUES ($1, $2, $3, 'system')`,
+      [
+        agentId,
+        `Support Ticket Raised: ${body.subject} (#${ticketId})`,
+        `Category: ${body.category}\nMessage: ${body.message}\n\nOur support team will contact you via WhatsApp / Call shortly.`,
+      ]
+    )
+
+    return reply.send({
+      success: true,
+      ticket_id: ticketId,
+      message: 'Support ticket submitted successfully. Support will respond shortly.',
     })
   })
 

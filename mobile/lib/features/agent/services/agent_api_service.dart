@@ -203,6 +203,96 @@ class AgentApiService {
     } catch (_) {}
   }
 
+  // 10. Funnel & Link Analytics
+  Future<ReferralAnalytics> getReferralAnalytics({int days = 30}) async {
+    try {
+      final res = await _dio.get('/referrals', queryParameters: {'days': days});
+      return ReferralAnalytics.fromJson(res.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw Exception(e.response?.data?['error'] ?? 'Failed to load referral analytics');
+    }
+  }
+
+  // 11. Profile Management
+  Future<Map<String, dynamic>> updateProfile({
+    String? displayName,
+    String? phone,
+    String? email,
+    String? avatarUrl,
+  }) async {
+    try {
+      final res = await _dio.patch('/profile', data: {
+        if (displayName != null) 'display_name': displayName.trim(),
+        if (phone != null) 'phone': phone.trim(),
+        if (email != null) 'email': email.trim(),
+        if (avatarUrl != null) 'avatar_url': avatarUrl.trim(),
+      });
+      return res.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw Exception(e.response?.data?['error'] ?? 'Failed to update profile');
+    }
+  }
+
+  // 12. Bank Details & UPI
+  Future<Map<String, dynamic>> updateBankDetails({
+    String? accountNumber,
+    String? ifscCode,
+    String? accountHolder,
+    String? bankName,
+    String? upiId,
+  }) async {
+    try {
+      final res = await _dio.patch('/bank-details', data: {
+        if (accountNumber != null) 'account_number': accountNumber.trim(),
+        if (ifscCode != null) 'ifsc_code': ifscCode.trim(),
+        if (accountHolder != null) 'account_holder': accountHolder.trim(),
+        if (bankName != null) 'bank_name': bankName.trim(),
+        if (upiId != null) 'upi_id': upiId.trim(),
+      });
+      return res.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw Exception(e.response?.data?['error'] ?? 'Failed to save bank details');
+    }
+  }
+
+  // 13. KYC Submission
+  Future<Map<String, dynamic>> submitKyc({
+    required String documentType,
+    required String documentNumber,
+    required String frontUrl,
+    String? backUrl,
+  }) async {
+    try {
+      final res = await _dio.post('/kyc', data: {
+        'document_type': documentType,
+        'document_number': documentNumber.trim(),
+        'front_url': frontUrl.trim(),
+        if (backUrl != null && backUrl.isNotEmpty) 'back_url': backUrl.trim(),
+      });
+      return res.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw Exception(e.response?.data?['error'] ?? 'KYC submission failed');
+    }
+  }
+
+  // 14. Support Tickets
+  Future<Map<String, dynamic>> submitSupportTicket({
+    required String subject,
+    required String category,
+    required String message,
+  }) async {
+    try {
+      final res = await _dio.post('/support-ticket', data: {
+        'subject': subject.trim(),
+        'category': category.trim(),
+        'message': message.trim(),
+      });
+      return res.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw Exception(e.response?.data?['error'] ?? 'Failed to submit support ticket');
+    }
+  }
+
   // 10. Change Password
   Future<void> changePassword(String currentPassword, String newPassword) async {
     try {

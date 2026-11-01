@@ -13,10 +13,11 @@ import {
 import { adminApi } from '../api/client'
 import { tokens } from '../theme/tokens'
 
-type User = {
+export type User = {
   id: string; username: string; phone: string; email?: string;
   real_balance?: string; bonus_balance?: string; status: string; kyc_status: string;
   referral_code?: string; created_at: string;
+  agent_id?: string; agent_username?: string; agent_display_name?: string;
 }
 
 export default function Users() {
@@ -33,6 +34,44 @@ export default function Users() {
   const [walletNote, setWalletNote] = useState('')
   const [resetPwOpen, setResetPwOpen] = useState(false)
   const [resetPwValue, setResetPwValue] = useState('')
+  const [assignAgentModalUser, setAssignAgentModalUser] = useState<User | null>(null)
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+  const [agentsList, setAgentsList] = useState<any[]>([])
+  const [assignLoading, setAssignLoading] = useState(false)
+
+  const fetchAgentsList = async () => {
+    try {
+      const res = await adminApi.get('/agents')
+      setAgentsList(res.data.agents ?? res.data ?? [])
+    } catch {
+      message.error('Failed to load agents list')
+    }
+  }
+
+  const handleAssignAgentSubmit = async () => {
+    if (!assignAgentModalUser) return
+    setAssignLoading(true)
+    try {
+      await adminApi.patch(`/users/${assignAgentModalUser.id}/assign-agent`, {
+        agent_id: selectedAgentId || null,
+      })
+      message.success('Agent assigned successfully')
+      setAssignAgentModalUser(null)
+      fetchUsers()
+      if (selectedUser?.id === assignAgentModalUser.id) {
+        setSelectedUser(prev => prev ? {
+          ...prev,
+          agent_id: selectedAgentId || undefined,
+          agent_username: agentsList.find(a => a.id === selectedAgentId)?.username,
+          agent_display_name: agentsList.find(a => a.id === selectedAgentId)?.display_name,
+        } : null)
+      }
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Failed to assign agent')
+    } finally {
+      setAssignLoading(false)
+    }
+  }
 
   const fetchUsers = async (p = page) => {
     setLoading(true)
@@ -330,6 +369,13 @@ function ProfileTab({ user, onCredit, onDebit, onResetPassword }: {
         <Descriptions.Item label="KYC">{user.kyc_status}</Descriptions.Item>
         <Descriptions.Item label="Status">{user.status}</Descriptions.Item>
         <Descriptions.Item label="Referral Code">{user.referral_code || '-'}</Descriptions.Item>
+        <Descriptions.Item label="Assigned Agent">
+          {user.agent_username ? (
+            <Tag color="cyan">{user.agent_display_name || user.agent_username} (@{user.agent_username})</Tag>
+          ) : (
+            <Tag color="default">Direct (No Agent)</Tag>
+          )}
+        </Descriptions.Item>
         <Descriptions.Item label="Joined">{new Date(user.created_at).toLocaleString()}</Descriptions.Item>
       </Descriptions>
       <Space style={{ marginTop: 16 }}>

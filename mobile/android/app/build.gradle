@@ -47,10 +47,12 @@ android {
         main.java.srcDirs += "src/main/kotlin"
     }
 
+    def isAgentApp = project.hasProperty("agentApp") || (project.hasProperty("target") && project.property("target").contains("agent"))
+
     defaultConfig {
-        // Must match the package registered in the Firebase project
-        // (google-services.json) so FCM push registration works.
-        applicationId = "com.teenpatti.game"
+        // Player App: com.teenpatti.game | Agent App: com.myonlinejoker.agent (enables side-by-side install)
+        applicationId = isAgentApp ? "com.myonlinejoker.agent" : "com.teenpatti.game"
+        resValue "string", "app_name", isAgentApp ? "Joker Agent" : "MyOnlineJoker"
         minSdkVersion = flutter.minSdkVersion
         targetSdk = 36
         versionCode = flutterVersionCode.toInteger()
