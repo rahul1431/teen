@@ -330,7 +330,7 @@ export async function registerAgentRoutes(
       where = 'WHERE p.status = $1'
     }
     const res = await db.query(
-      `SELECT p.id, p.agent_id, a.display_name, a.username, a.phone, p.amount::float, p.metadata, p.status, p.reference, p.requested_at, p.processed_at
+      `SELECT p.id, p.agent_id, a.display_name, a.username, a.phone, p.amount::float, p.metadata, p.status, p.reference, p.requested_at, p.processed_at, COALESCE(p.risk_score, 0) AS risk_score, COALESCE(p.risk_flags, '[]'::jsonb) AS risk_flags, p.compliance_notes
        FROM agent_payouts p JOIN agents a ON a.id = p.agent_id
        ${where}
        ORDER BY p.requested_at DESC`,
@@ -443,5 +443,75 @@ export async function registerAgentRoutes(
     } finally {
       client.release()
     }
+  })
+
+  // GET /api/admin/agents/:id/fraud-audit — Argus AI Risk & Anti-Fraud Inspection
+  app.get('/api/admin/agents/:id/fraud-audit', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+    const { id } = req.params as any
+
+    const [agentRes, turnoverRes, phoneCollisionRes, payoutsRes] = await Promise.all([
+      db.query('SELECT id, username, display_name, phone, commission_rate, status, created_at FROM agents WHERE id = $1', [id]),
+      db.query(
+        `SELECT 
+           COUNT(DISTINCT u.id)::int AS player_count,
+           COALESCE(SUM(CASE WHEN wt.type = 'deposit' THEN wt.amount ELSE 0 END), 0)::float AS total_deposits,
+           COALESCE(SUM(CASE WHEN wt.type = 'game_debit' THEN wt.amount ELSE 0 END), 0)::float AS total_gameplay,
+           COALESCE(SUM(CASE WHEN wt.type = 'game_credit' THEN wt.amount ELSE 0 END), 0)::float AS total_player_wins
+         FROM users u
+         LEFT JOIN wallet_transactions wt ON wt.user_id = u.id AND wt.status = 'completed'
+         WHERE u.agent_id = $1`,
+        [id]
+      ),
+      db.query(
+        `SELECT phone, count(*)::int as count 
+         FROM users 
+         WHERE agent_id = $1 AND phone IS NOT NULL 
+         GROUP BY phone HAVING count(*) > 1`,
+        [id]
+      ),
+      db.query(
+        `SELECT id, amount::float, risk_score, risk_flags, status, requested_at 
+         FROM agent_payouts WHERE agent_id = $1 ORDER BY requested_at DESC LIMIT 10`,
+        [id]
+      )
+    ])
+
+    if (!agentRes.rows.length) return reply.code(404).send({ error: 'Agent not found' })
+
+    const agent = agentRes.rows[0]
+    const turnover = turnoverRes.rows[0]
+    const deposits = turnover.total_deposits || 0
+    const gameplay = turnover.total_gameplay || 0
+    const turnoverRatio = deposits > 0 ? (gameplay / deposits) : 1
+
+    let fraudScore = 0
+    const riskFlags: string[] = []
+
+    if (deposits > 500 && turnoverRatio < 0.3) {
+      fraudScore += 35
+      riskFlags.push(`Low turnover ratio: ${(turnoverRatio * 100).toFixed(1)}% (< 30% threshold)`)
+    }
+    if (phoneCollisionRes.rows.length > 0) {
+      fraudScore += 30
+      riskFlags.push(`Duplicate phone numbers detected among referred players`)
+    }
+
+    return reply.send({
+      agent,
+      metrics: {
+        player_count: turnover.player_count,
+        total_deposits: deposits,
+        total_gameplay: gameplay,
+        total_player_wins: turnover.total_player_wins,
+        turnover_ratio: Number(turnoverRatio.toFixed(2))
+      },
+      fraud_analysis: {
+        risk_score: fraudScore,
+        risk_level: fraudScore >= 60 ? 'HIGH' : fraudScore >= 30 ? 'MEDIUM' : 'LOW',
+        flags: riskFlags,
+        assessed_by: 'Argus AI Anti-Fraud Sentinel'
+      },
+      recent_payouts: payoutsRes.rows
+    })
   })
 }

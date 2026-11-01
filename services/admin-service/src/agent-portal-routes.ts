@@ -8,6 +8,86 @@ import { validateChannelUrl } from './channel-validation'
 import { calculateDailySettlement, AgentNode, PlayerNetLoss } from './agent-settlement'
 import { validateRateAssignment, validateNewAgentParent } from './agent-hierarchy'
 
+
+// Argus AI Anti-Fraud Risk Engine for Agents
+async function calculateAgentRiskScore(
+  db: any,
+  agentId: string,
+  requestedAmount: number
+): Promise<{ score: number; flags: string[]; notes: string }> {
+  let score = 0
+  const flags: string[] = []
+
+  // Check 1: Turnover vs Deposits for referred players
+  const turnoverRes = await db.query(
+    `SELECT 
+       COALESCE(SUM(CASE WHEN wt.type = 'deposit' THEN wt.amount ELSE 0 END), 0)::float AS total_deposits,
+       COALESCE(SUM(CASE WHEN wt.type = 'game_debit' THEN wt.amount ELSE 0 END), 0)::float AS total_gameplay
+     FROM users u
+     JOIN wallet_transactions wt ON wt.user_id = u.id
+     WHERE u.agent_id = $1 AND wt.status = 'completed'`,
+    [agentId]
+  )
+  const deposits = turnoverRes.rows[0]?.total_deposits || 0
+  const gameplay = turnoverRes.rows[0]?.total_gameplay || 0
+
+  if (deposits > 500 && gameplay < 0.3 * deposits) {
+    score += 35
+    flags.push(`Low player gameplay turnover: ₹${gameplay.toFixed(0)} wagered vs ₹${deposits.toFixed(0)} deposited (<30% turnover)`)
+  }
+
+  // Check 2: Phone prefix clustering / self-referral
+  const agentInfo = await db.query('SELECT phone FROM agents WHERE id = $1', [agentId])
+  const agentPhone = agentInfo.rows[0]?.phone
+  if (agentPhone && agentPhone.length >= 6) {
+    const phonePrefix = agentPhone.slice(-6)
+    const phoneCollision = await db.query(
+      `SELECT count(*)::int AS count FROM users WHERE agent_id = $1 AND phone LIKE '%' || $2`,
+      [agentId, phonePrefix]
+    )
+    if (phoneCollision.rows[0]?.count > 2) {
+      score += 25
+      flags.push(`Potential self-referral clustering: ${phoneCollision.rows[0].count} referred players share similar phone sequences`)
+    }
+  }
+
+  // Check 3: Large cashout velocity spike
+  const walletRes = await db.query(
+    `SELECT balance::float, total_earned::float FROM agent_wallets WHERE agent_id = $1`,
+    [agentId]
+  )
+  const totalEarned = walletRes.rows[0]?.total_earned || 0
+  if (totalEarned > 0 && requestedAmount > 0.85 * totalEarned && requestedAmount > 5000) {
+    score += 20
+    flags.push(`Velocity warning: Single payout request is ${((requestedAmount / totalEarned) * 100).toFixed(0)}% of total lifetime earnings`)
+  }
+
+  const notes = flags.length > 0 
+    ? `Argus AI Risk Assessment: Score ${score}/100. Flags: ${flags.join('; ')}`
+    : `Argus AI Risk Assessment: Clean profile (0/100 risk points). Safe for automated processing.`
+
+  return { score, flags, notes }
+}
+
+async function createAgentNotification(
+  clientOrDb: any,
+  agentId: string,
+  title: string,
+  body: string,
+  type: string = 'info',
+  metadata: any = {}
+) {
+  try {
+    await clientOrDb.query(
+      `INSERT INTO agent_notifications (agent_id, title, body, type, metadata)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [agentId, title, body, type, JSON.stringify(metadata)]
+    )
+  } catch (err: any) {
+    console.warn('[agent-notification] Failed to record notification:', err.message)
+  }
+}
+
 // Self-service routes for agents themselves (not admin staff).
 export async function registerAgentPortalRoutes(
   app: FastifyInstance,
@@ -448,12 +528,41 @@ export async function registerAgentPortalRoutes(
         'UPDATE agent_wallets SET balance = balance - $1, locked_balance = locked_balance + $1, updated_at = NOW() WHERE agent_id = $2',
         [body.amount, agentId]
       )
+      // Argus AI Anti-Fraud Assessment
+      const risk = await calculateAgentRiskScore(client, agentId, body.amount)
+
       const payoutRes = await client.query(
-        `INSERT INTO agent_payouts (agent_id, amount, metadata) VALUES ($1, $2, $3) RETURNING id`,
-        [agentId, body.amount, JSON.stringify({ bank_account: body.bank_account, ifsc: body.ifsc, account_holder: body.account_holder, upi_id: body.upi_id })]
+        `INSERT INTO agent_payouts (agent_id, amount, metadata, risk_score, risk_flags, compliance_notes) 
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [
+          agentId, 
+          body.amount, 
+          JSON.stringify({ bank_account: body.bank_account, ifsc: body.ifsc, account_holder: body.account_holder, upi_id: body.upi_id }),
+          risk.score,
+          JSON.stringify(risk.flags),
+          risk.notes
+        ]
       )
+
+      await createAgentNotification(
+        client,
+        agentId,
+        'Payout Requested',
+        `Your withdrawal request of ₹${body.amount.toFixed(2)} has been submitted. Status: Processing.`,
+        'payout',
+        { payout_id: payoutRes.rows[0].id, amount: body.amount, risk_score: risk.score }
+      )
+
       await client.query('COMMIT')
-      return reply.send({ success: true, payout_id: payoutRes.rows[0].id, message: 'Payout request submitted successfully. Processed within 24 hours.' })
+      return reply.send({ 
+        success: true, 
+        payout_id: payoutRes.rows[0].id, 
+        risk_score: risk.score,
+        risk_flags: risk.flags,
+        message: risk.score >= 50 
+          ? 'Payout request submitted. Under standard compliance verification.' 
+          : 'Payout request submitted successfully. Processed within 24 hours.' 
+      })
     } catch (err) {
       await client.query('ROLLBACK')
       throw err
@@ -573,5 +682,195 @@ export async function registerAgentPortalRoutes(
         net_house_win: parseFloat(r.net_house_win),
       })),
     })
+  })
+
+  // GET /api/admin/agent-portal/player-search — Instant player lookup for Direct Chip Top-up
+  app.get('/api/admin/agent-portal/player-search', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const { query } = z.object({ query: z.string().min(2) }).parse(req.query)
+    const q = query.trim()
+    const agentId = (req.user as any).sub
+    const res = await db.query(
+      `SELECT u.id, u.username, u.phone, 
+              COALESCE(w.real_balance, 0)::float as real_balance,
+              u.created_at,
+              (u.agent_id = $2) as is_my_referral
+       FROM users u
+       LEFT JOIN wallets w ON w.user_id = u.id
+       WHERE u.status = 'active' AND (LOWER(u.username) LIKE LOWER($1) OR u.phone LIKE $1)
+       LIMIT 10`,
+      [`%${q}%`, agentId]
+    )
+    return reply.send(res.rows)
+  })
+
+  // POST /api/admin/agent-portal/player-topup — Direct Chip Transfer from Agent Wallet to Player
+  app.post('/api/admin/agent-portal/player-topup', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+    const body = z.object({
+      player_identifier: z.string().min(2),
+      amount: z.number().min(10).max(100000),
+      notes: z.string().optional()
+    }).parse(req.body)
+
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
+
+      // 1. Lock agent wallet
+      const agentWallet = await client.query(
+        `SELECT aw.balance::float, a.username, a.display_name
+         FROM agent_wallets aw
+         JOIN agents a ON a.id = aw.agent_id
+         WHERE aw.agent_id = $1 FOR UPDATE`,
+        [agentId]
+      )
+      if (!agentWallet.rows.length) {
+        await client.query('ROLLBACK')
+        return reply.code(404).send({ error: 'Agent wallet not found' })
+      }
+      const currentAgentBalance = agentWallet.rows[0].balance
+      if (currentAgentBalance < body.amount) {
+        await client.query('ROLLBACK')
+        return reply.code(400).send({ 
+          error: `Insufficient balance. Available: ₹${currentAgentBalance.toFixed(2)}, Required: ₹${body.amount.toFixed(2)}` 
+        })
+      }
+
+      // 2. Locate player
+      const playerRes = await client.query(
+        `SELECT id, username, phone FROM users 
+         WHERE (LOWER(username) = LOWER($1) OR phone = $1) AND status = 'active'`,
+        [body.player_identifier.trim()]
+      )
+      if (!playerRes.rows.length) {
+        await client.query('ROLLBACK')
+        return reply.code(404).send({ error: `Player '${body.player_identifier}' not found or inactive` })
+      }
+      const player = playerRes.rows[0]
+
+      // 3. Deduct from agent wallet
+      const newAgentBalance = currentAgentBalance - body.amount
+      await client.query(
+        `UPDATE agent_wallets SET balance = balance - $1, updated_at = NOW() WHERE agent_id = $2`,
+        [body.amount, agentId]
+      )
+      await client.query(
+        `INSERT INTO agent_wallet_adjustments (agent_id, amount, previous_balance, new_balance, reason)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [agentId, -body.amount, currentAgentBalance, newAgentBalance, `Direct chip transfer to player ${player.username}`]
+      )
+
+      // 4. Lock and credit player wallet
+      const pWallet = await client.query(
+        `SELECT real_balance::float FROM wallets WHERE user_id = $1 FOR UPDATE`,
+        [player.id]
+      )
+      const prevPlayerBalance = pWallet.rows.length ? pWallet.rows[0].real_balance : 0
+      const newPlayerBalance = prevPlayerBalance + body.amount
+
+      if (pWallet.rows.length > 0) {
+        await client.query(
+          `UPDATE wallets 
+           SET real_balance = real_balance + $1, total_deposited = total_deposited + $1, updated_at = NOW()
+           WHERE user_id = $2`,
+          [body.amount, player.id]
+        )
+      } else {
+        await client.query(
+          `INSERT INTO wallets (user_id, real_balance, total_deposited)
+           VALUES ($1, $2, $2)`,
+          [player.id, body.amount]
+        )
+      }
+
+      // 5. Audit in player wallet_transactions
+      const txnRes = await client.query(
+        `INSERT INTO wallet_transactions (user_id, type, wallet_type, amount, balance_before, balance_after, status, description, agent_id)
+         VALUES ($1, 'deposit', 'real', $2, $3, $4, 'completed', $5, $6) RETURNING id, created_at`,
+        [
+          player.id, 
+          body.amount, 
+          prevPlayerBalance, 
+          newPlayerBalance, 
+          `Agent Top-Up from ${agentWallet.rows[0].display_name || agentWallet.rows[0].username}`,
+          agentId
+        ]
+      )
+
+      // 6. Record notifications
+      await client.query(
+        `INSERT INTO agent_notifications (agent_id, title, body, type, metadata)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          agentId,
+          'Top-Up Successful',
+          `Successfully transferred ₹${body.amount.toFixed(2)} chips to ${player.username}.`,
+          'transfer',
+          JSON.stringify({ player_id: player.id, player_username: player.username, amount: body.amount, txn_id: txnRes.rows[0].id })
+        ]
+      )
+
+      // Player in-app notification
+      await client.query(
+        `INSERT INTO notifications (user_id, title, body, type)
+         VALUES ($1, $2, $3, 'wallet')`,
+        [
+          player.id,
+          'Chips Credited!',
+          `₹${body.amount.toFixed(2)} chips added to your wallet via Agent ${agentWallet.rows[0].display_name || agentWallet.rows[0].username}.`
+        ]
+      ).catch(() => {})
+
+      await client.query('COMMIT')
+
+      return reply.send({
+        success: true,
+        message: `Successfully transferred ₹${body.amount.toFixed(2)} to ${player.username}`,
+        transaction_id: txnRes.rows[0].id,
+        timestamp: txnRes.rows[0].created_at,
+        player: {
+          id: player.id,
+          username: player.username,
+          phone: player.phone,
+          new_balance: newPlayerBalance
+        },
+        amount: body.amount,
+        agent_remaining_balance: newAgentBalance
+      })
+    } catch (err: any) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
+  })
+
+  // GET /api/admin/agent-portal/notifications — Real-time agent notification feed
+  app.get('/api/admin/agent-portal/notifications', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+    const [listRes, countRes] = await Promise.all([
+      db.query(
+        `SELECT id, title, body, type, is_read, metadata, created_at
+         FROM agent_notifications WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 50`,
+        [agentId]
+      ),
+      db.query(`SELECT COUNT(*)::int as unread_count FROM agent_notifications WHERE agent_id = $1 AND is_read = false`, [agentId])
+    ])
+    return reply.send({
+      notifications: listRes.rows,
+      unread_count: countRes.rows[0]?.unread_count || 0
+    })
+  })
+
+  // POST /api/admin/agent-portal/notifications/mark-read
+  app.post('/api/admin/agent-portal/notifications/mark-read', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+    const { id } = z.object({ id: z.string().optional() }).parse(req.body || {})
+    if (id) {
+      await db.query(`UPDATE agent_notifications SET is_read = true WHERE id = $1 AND agent_id = $2`, [id, agentId])
+    } else {
+      await db.query(`UPDATE agent_notifications SET is_read = true WHERE agent_id = $1`, [agentId])
+    }
+    return reply.send({ success: true })
   })
 }
