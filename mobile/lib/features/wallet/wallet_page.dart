@@ -538,14 +538,7 @@ class _DepositSheetState extends State<_DepositSheet> {
 
       if (mounted) setState(() => _youpiLoading = false);
 
-      // Launch UPI Intent into PhonePe/GPay/Paytm if available
-      if (upiIntentUrl.isNotEmpty) {
-        try {
-          await launchUrl(Uri.parse(upiIntentUrl), mode: LaunchMode.externalApplication);
-        } catch (_) {}
-      }
-
-      // Show real-time waiting dialog
+      // Show real-time QR Scan & Pay waiting dialog
       if (mounted) {
         _showWaitingDialog(orderId, amount, upiIntentUrl, vpa, merchantName, checkoutUrl);
       }
@@ -555,6 +548,41 @@ class _DepositSheetState extends State<_DepositSheet> {
           ? (e.response?.data?['error']?.toString() ?? 'Failed to initiate instant payment')
           : 'Payment failed to initiate';
       _snack(msg, AppColors.red);
+    }
+  }
+
+  Future<void> _launchUpiApp(String appScheme, String fallbackUrl) async {
+    try {
+      final uri = Uri.parse(appScheme);
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (ok) return;
+    } catch (_) {}
+    try {
+      await launchUrl(Uri.parse(fallbackUrl), mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+
+  Future<void> _saveDynamicQr(String qrData) async {
+    try {
+      final hasAccess = await Gal.hasAccess();
+      if (!hasAccess) {
+        final granted = await Gal.requestAccess();
+        if (!granted) {
+          _snack('Gallery permission denied', AppColors.red);
+          return;
+        }
+      }
+      final painter = QrPainter(
+        data: qrData,
+        version: QrVersions.auto,
+        gapless: true,
+      );
+      final imageData = await painter.toImageData(600);
+      if (imageData == null) throw Exception('No image data');
+      await Gal.putImageBytes(imageData.buffer.asUint8List(), album: 'MyOnlineJoker');
+      _snack('QR code saved to Gallery! Open PhonePe/GPay and scan from Photos.', AppColors.green);
+    } catch (e) {
+      _snack('Could not save QR code to gallery', AppColors.red);
     }
   }
 
@@ -642,6 +670,60 @@ class _DepositSheetState extends State<_DepositSheet> {
                     const Text('Scan with any UPI app or tap button below', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
                     const SizedBox(height: 12),
 
+                    // 1-Tap Direct UPI App Buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF5F259F), // PhonePe Purple
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            onPressed: () {
+                              final pUrl = upiIntentUrl.replaceFirst('upi://pay', 'phonepe://pay');
+                              _launchUpiApp(pUrl, upiIntentUrl);
+                            },
+                            child: const Text('PhonePe', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF1A73E8), // GPay Blue
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            onPressed: () {
+                              final gUrl = upiIntentUrl.replaceFirst('upi://pay', 'gpay://upi/pay');
+                              _launchUpiApp(gUrl, upiIntentUrl);
+                            },
+                            child: const Text('GPay', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF00B9F5), // Paytm Cyan
+                              foregroundColor: Colors.black,
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            onPressed: () {
+                              final ptUrl = upiIntentUrl.replaceFirst('upi://pay', 'paytmmp://pay');
+                              _launchUpiApp(ptUrl, upiIntentUrl);
+                            },
+                            child: const Text('Paytm', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
@@ -649,29 +731,39 @@ class _DepositSheetState extends State<_DepositSheet> {
                           backgroundColor: AppColors.gold,
                           foregroundColor: Colors.black,
                           padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         ),
                         onPressed: () {
                           launchUrl(Uri.parse(upiIntentUrl), mode: LaunchMode.externalApplication);
                         },
-                        icon: const Icon(Icons.open_in_new, size: 18),
-                        label: const Text('Open UPI App (PhonePe / GPay / Paytm)', style: TextStyle(fontWeight: FontWeight.bold)),
+                        icon: const Icon(Icons.bolt, size: 18),
+                        label: const Text('Pay with Any UPI App', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Center(
+                      child: TextButton.icon(
+                        onPressed: () => _saveDynamicQr(upiIntentUrl),
+                        icon: const Icon(Icons.download_rounded, size: 16, color: AppColors.gold),
+                        label: const Text('Save QR Code to Gallery / Photos', style: TextStyle(color: AppColors.gold, fontSize: 12)),
                       ),
                     ),
                     if (checkoutUrl.isNotEmpty) ...[
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 4),
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.white,
                             side: const BorderSide(color: Colors.white24),
-                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                           ),
                           onPressed: () {
                             launchUrl(Uri.parse(checkoutUrl), mode: LaunchMode.externalApplication);
                           },
-                          icon: const Icon(Icons.language, size: 16, color: AppColors.gold),
-                          label: const Text('Pay via Browser / Web Checkout', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                          icon: const Icon(Icons.language, size: 15, color: AppColors.gold),
+                          label: const Text('Pay via Browser / Web Checkout', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
                         ),
                       ),
                     ],
