@@ -71,7 +71,7 @@ class _AgentAnalyticsScreenState extends State<AgentAnalyticsScreen> {
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            child: [
+            children: [
               _buildPeriodSelector(),
               const SizedBox(height: 16),
               if (_isLoading)
@@ -399,12 +399,11 @@ class _AgentAnalyticsScreenState extends State<AgentAnalyticsScreen> {
             ...sources.map((s) {
               final name = s['source'] ?? 'Direct';
               final clicks = (s['clicks'] as num?)?.toInt() ?? 0;
-              final maxClicks = sources.fold<int>(
-                1,
-                (prev, e) => (e['clicks'] as num?)?.toInt() ?? 1 > prev
-                    ? (e['clicks'] as num?)?.toInt() ?? 1
-                    : prev,
-              );
+              int maxClicks = 1;
+              for (final e in sources) {
+                final c = (e['clicks'] as num?)?.toInt() ?? 0;
+                if (c > maxClicks) maxClicks = c;
+              }
               final progress = (clicks / maxClicks).clamp(0.05, 1.0);
 
               return Padding(

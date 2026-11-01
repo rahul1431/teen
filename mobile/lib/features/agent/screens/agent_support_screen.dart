@@ -139,7 +139,7 @@ class _AgentSupportScreenState extends State<AgentSupportScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          child: [
+          children: [
             _buildContactChannels(),
             const SizedBox(height: 20),
             _buildTicketForm(),
