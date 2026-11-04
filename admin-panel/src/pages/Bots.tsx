@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  Card, Form, Button, Row, Col, Switch, Select, InputNumber, Badge, Tag, Typography, message, Space
+  Card, Form, Button, Row, Col, Switch, Select, InputNumber, Badge, Tag, Typography, message, Space, Alert
 } from 'antd'
 import { ReloadOutlined, RobotOutlined } from '@ant-design/icons'
 import { adminApi } from '../api/client'
@@ -69,6 +69,18 @@ export default function Bots() {
           </Space>
         </Col>
       </Row>
+
+      <Alert
+        type="info"
+        showIcon
+        message="Bot Player Accounts & Simulation Rules"
+        description={
+          <span>
+            This section manages <strong>simulated player accounts</strong> (usernames, chips, avatars) and table auto-fill timing. For real-time decision brains, opponent modeling, and DDAS win-rate steering, go to <a href="/admin/ai-control"><strong>Platform &gt; AI Control Center</strong></a> or the <strong>AI &amp; Bot Intelligence</strong> tab inside each game page.
+          </span>
+        }
+        style={{ marginBottom: 20, borderRadius: 8 }}
+      />
 
       {/* Bot Wallet Statistics Row */}
       <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>

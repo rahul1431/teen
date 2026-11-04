@@ -18,24 +18,55 @@ export async function registerAgentRoutes(
     return 'AG' + crypto.randomBytes(4).toString('hex').toUpperCase()
   }
 
-  // GET /api/admin/agents — full hierarchy, flat list with parent ids, balances, and per-game rates
-  app.get('/api/admin/agents', { onRequest: [authenticate, requireRole('superadmin')] }, async (_req, reply) => {
+  // GET /api/admin/agents — full hierarchy, flat list with parent ids, balances, KYC, bank details, and per-game rates
+  app.get('/api/admin/agents', { onRequest: [authenticate, requireRole('support')] }, async (_req, reply) => {
     const res = await db.query(
-      `SELECT a.id, a.username, a.display_name, a.phone, a.status, a.parent_agent_id,
+      `SELECT a.id, a.username, a.display_name, a.phone, a.email, a.avatar_url, a.status, a.parent_agent_id,
               a.commission_rate::float AS commission_rate,
               COALESCE(a.game_commissions, '{}'::jsonb) AS game_commissions,
               a.referral_code, a.created_at,
+              COALESCE(a.bank_details, '{}'::jsonb) AS bank_details,
+              COALESCE(a.kyc_status, 'pending') AS kyc_status,
+              COALESCE(a.kyc_data, '{}'::jsonb) AS kyc_data,
               COALESCE(w.balance, 0)::float AS balance,
               COALESCE(w.locked_balance, 0)::float AS locked_balance,
               COALESCE(w.total_earned, 0)::float AS total_earned,
               COALESCE(w.total_paid_out, 0)::float AS total_paid_out,
               (SELECT COUNT(*) FROM users u WHERE u.agent_id = a.id)::int AS player_count,
-              (SELECT COUNT(*) FROM agents sub WHERE sub.parent_agent_id = a.id)::int AS sub_agent_count
+              (SELECT COUNT(*) FROM agents sub WHERE sub.parent_agent_id = a.id)::int AS sub_agent_count,
+              (SELECT COUNT(*) FROM referral_clicks rc WHERE rc.ref_code = a.referral_code)::int AS click_count
        FROM agents a
        LEFT JOIN agent_wallets w ON w.agent_id = a.id
        ORDER BY a.created_at DESC`
     )
     return reply.send(res.rows)
+  })
+
+  // GET /api/admin/agents/:id — single agent complete profile
+  app.get('/api/admin/agents/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT a.id, a.username, a.display_name, a.phone, a.email, a.avatar_url, a.status, a.parent_agent_id,
+              a.commission_rate::float AS commission_rate,
+              COALESCE(a.game_commissions, '{}'::jsonb) AS game_commissions,
+              a.referral_code, a.created_at,
+              COALESCE(a.bank_details, '{}'::jsonb) AS bank_details,
+              COALESCE(a.kyc_status, 'pending') AS kyc_status,
+              COALESCE(a.kyc_data, '{}'::jsonb) AS kyc_data,
+              COALESCE(w.balance, 0)::float AS balance,
+              COALESCE(w.locked_balance, 0)::float AS locked_balance,
+              COALESCE(w.total_earned, 0)::float AS total_earned,
+              COALESCE(w.total_paid_out, 0)::float AS total_paid_out,
+              (SELECT COUNT(*) FROM users u WHERE u.agent_id = a.id)::int AS player_count,
+              (SELECT COUNT(*) FROM agents sub WHERE sub.parent_agent_id = a.id)::int AS sub_agent_count,
+              (SELECT COUNT(*) FROM referral_clicks rc WHERE rc.ref_code = a.referral_code)::int AS click_count
+       FROM agents a
+       LEFT JOIN agent_wallets w ON w.agent_id = a.id
+       WHERE a.id = $1`,
+      [id]
+    )
+    if (!res.rows.length) return reply.code(404).send({ error: 'Agent not found' })
+    return reply.send(res.rows[0])
   })
 
   // POST /api/admin/agents — create agent with per-game commissions
@@ -105,16 +136,20 @@ export async function registerAgentRoutes(
     }
   })
 
-  // PATCH /api/admin/agents/:id — edit rate/status/display_name/phone/game_commissions
+  // PATCH /api/admin/agents/:id — edit rate/status/display_name/phone/email/bank/kyc/game_commissions
   app.patch('/api/admin/agents/:id', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
     const admin = req.user as any
     const { id } = req.params as any
     const body = z.object({
       display_name: z.string().min(1).max(100).optional(),
       phone: z.string().optional(),
+      email: z.string().optional(),
       status: z.enum(['active', 'suspended']).optional(),
       commission_rate: z.number().min(0).max(100).optional(),
       game_commissions: z.record(z.string(), z.number().min(0).max(100)).optional(),
+      bank_details: z.record(z.string(), z.any()).optional(),
+      kyc_status: z.enum(['pending', 'submitted', 'verified', 'rejected']).optional(),
+      kyc_data: z.record(z.string(), z.any()).optional(),
     }).parse(req.body)
 
     const existingRes = await db.query('SELECT id, parent_agent_id FROM agents WHERE id = $1', [id])
@@ -135,8 +170,12 @@ export async function registerAgentRoutes(
       const params: any[] = []
       if (body.display_name !== undefined) { params.push(body.display_name); sets.push(`display_name = $${params.length}`) }
       if (body.phone !== undefined) { params.push(body.phone); sets.push(`phone = $${params.length}`) }
+      if (body.email !== undefined) { params.push(body.email); sets.push(`email = $${params.length}`) }
       if (body.status !== undefined) { params.push(body.status); sets.push(`status = $${params.length}`) }
       if (body.commission_rate !== undefined) { params.push(body.commission_rate); sets.push(`commission_rate = $${params.length}`) }
+      if (body.bank_details !== undefined) { params.push(JSON.stringify(body.bank_details)); sets.push(`bank_details = $${params.length}`) }
+      if (body.kyc_status !== undefined) { params.push(body.kyc_status); sets.push(`kyc_status = $${params.length}`) }
+      if (body.kyc_data !== undefined) { params.push(JSON.stringify(body.kyc_data)); sets.push(`kyc_data = $${params.length}`) }
       if (body.game_commissions !== undefined) {
         params.push(JSON.stringify(body.game_commissions))
         sets.push(`game_commissions = $${params.length}`)
@@ -167,6 +206,211 @@ export async function registerAgentRoutes(
     } finally {
       client.release()
     }
+  })
+
+  // POST /api/admin/agents/:id/assign-player — Admin manually assigns a player to this agent
+  app.post('/api/admin/agents/:id/assign-player', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as any
+    const body = z.object({
+      player_identifier: z.string().min(1),
+    }).parse(req.body)
+
+    const agentRes = await db.query('SELECT id, username, display_name, referral_code FROM agents WHERE id = $1', [id])
+    if (!agentRes.rows.length) return reply.code(404).send({ error: 'Agent not found' })
+    const agent = agentRes.rows[0]
+
+    const cleanInput = body.player_identifier.trim().replace(/^@/, '')
+    const digitsOnly = cleanInput.replace(/\D/g, '')
+
+    const playerRes = await db.query(
+      `SELECT id, username, phone, agent_id FROM users 
+       WHERE LOWER(username) = LOWER($1) 
+          OR phone = $1 
+          OR ($2 <> '' AND (phone = $2 OR phone LIKE '%' || $2))
+          OR id::text = $1 
+       LIMIT 1`,
+      [cleanInput, digitsOnly]
+    )
+    if (!playerRes.rows.length) {
+      return reply.code(404).send({ error: `Player not found matching "${body.player_identifier}"` })
+    }
+    const player = playerRes.rows[0]
+
+    // Assign player to agent. Note: referred_by is a UUID foreign key to users.id for player-to-player referrals,
+    // whereas agent link is strictly tracked via users.agent_id.
+    await db.query(
+      `UPDATE users SET agent_id = $1 WHERE id = $2`,
+      [id, player.id]
+    )
+
+    try {
+      const adminId = admin?.sub || admin?.id || null
+      await db.query(
+        `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'assign_player_to_agent', 'user', $2, $3)`,
+        [adminId, player.id, JSON.stringify({ agent_id: id, agent_username: agent.username, previous_agent_id: player.agent_id })]
+      )
+    } catch (auditErr: any) {
+      req.log.warn({ err: auditErr }, 'Failed to insert into admin_audit_log')
+    }
+
+    // Also notify agent of new player attribution
+    try {
+      await db.query(
+        `INSERT INTO agent_notifications (agent_id, title, body, type, metadata)
+         VALUES ($1, 'New Player Assigned', $2, 'player_assigned', $3)`,
+        [
+          id,
+          `Player @${player.username || player.phone} was attributed to your account by administration.`,
+          JSON.stringify({ player_id: player.id, player_username: player.username }),
+        ]
+      )
+    } catch (_) {}
+
+    return reply.send({
+      success: true,
+      message: `Player @${player.username || player.phone} assigned to Agent ${agent.display_name}`,
+      player: { id: player.id, username: player.username, phone: player.phone }
+    })
+  })
+
+  // POST /api/admin/agents/:id/kyc-decision — Admin approves or rejects agent KYC
+  app.post('/api/admin/agents/:id/kyc-decision', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const admin = req.user as any
+    const { id } = req.params as any
+    const body = z.object({
+      status: z.enum(['verified', 'rejected']),
+      notes: z.string().optional(),
+    }).parse(req.body)
+
+    const agentRes = await db.query('SELECT id, display_name, kyc_data FROM agents WHERE id = $1', [id])
+    if (!agentRes.rows.length) return reply.code(404).send({ error: 'Agent not found' })
+
+    const existingKyc = agentRes.rows[0].kyc_data || {}
+    const updatedKyc = {
+      ...existingKyc,
+      reviewed_by: admin?.sub || admin?.id,
+      reviewed_at: new Date().toISOString(),
+      admin_notes: body.notes || null,
+    }
+
+    await db.query(
+      `UPDATE agents SET kyc_status = $1, kyc_data = $2 WHERE id = $3`,
+      [body.status, JSON.stringify(updatedKyc), id]
+    )
+
+    try {
+      await db.query(
+        `INSERT INTO agent_notifications (agent_id, title, body, type)
+         VALUES ($1, $2, $3, 'kyc_update')`,
+        [
+          id,
+          body.status === 'verified' ? 'KYC Verification Approved ✅' : 'KYC Submission Rejected ❌',
+          body.status === 'verified'
+            ? 'Your KYC documents have been verified by administration. Higher limits and instant settlements are now active.'
+            : `Your KYC documents were rejected. Reason: ${body.notes || 'Incomplete or unreadable documents'}. Please resubmit in your profile.`,
+        ]
+      )
+    } catch (_) {}
+
+    try {
+      const adminId = admin?.sub || admin?.id || null
+      await db.query(
+        `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, 'agent_kyc_decision', 'agent', $2, $3)`,
+        [adminId, id, JSON.stringify(body)]
+      )
+    } catch (_) {}
+
+    return reply.send({ success: true, status: body.status })
+  })
+
+  // GET /api/admin/agents/:id/analytics — Complete traffic, clicks, conversion and revenue analytics
+  app.get('/api/admin/agents/:id/analytics', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const agentRes = await db.query('SELECT id, referral_code, commission_rate FROM agents WHERE id = $1', [id])
+    if (!agentRes.rows.length) return reply.code(404).send({ error: 'Agent not found' })
+    const refCode = agentRes.rows[0].referral_code
+
+    // 1. Clicks & Conversion Overview
+    const clicksOverview = await db.query(
+      `SELECT COUNT(*)::int AS total_clicks,
+              COUNT(DISTINCT ip_address)::int AS unique_ips,
+              COUNT(converted_user_id)::int AS converted_clicks
+       FROM referral_clicks WHERE ref_code = $1`,
+      [refCode]
+    )
+
+    // 2. Daily Clicks (Last 30 Days)
+    const dailyClicks = await db.query(
+      `SELECT DATE(clicked_at)::text AS date, COUNT(*)::int AS clicks, COUNT(converted_user_id)::int AS conversions
+       FROM referral_clicks
+       WHERE ref_code = $1 AND clicked_at >= NOW() - INTERVAL '30 days'
+       GROUP BY DATE(clicked_at)
+       ORDER BY date ASC`,
+      [refCode]
+    )
+
+    // 3. Device Breakdown
+    const devices = await db.query(
+      `SELECT COALESCE(device_type, 'unknown') AS device, COUNT(*)::int AS count
+       FROM referral_clicks
+       WHERE ref_code = $1
+       GROUP BY device_type ORDER BY count DESC`,
+      [refCode]
+    )
+
+    // 4. Traffic Sources / UTM
+    const sources = await db.query(
+      `SELECT COALESCE(utm_source, referrer_url, 'direct') AS source, COUNT(*)::int AS count
+       FROM referral_clicks
+       WHERE ref_code = $1
+       GROUP BY COALESCE(utm_source, referrer_url, 'direct') ORDER BY count DESC LIMIT 10`,
+      [refCode]
+    )
+
+    // 5. Player & Revenue Totals
+    const playerStats = await db.query(
+      `SELECT COUNT(u.id)::int AS total_players,
+              COUNT(CASE WHEN (SELECT COUNT(*) FROM wallet_transactions wt WHERE wt.user_id = u.id AND wt.type = 'deposit' AND wt.status = 'completed') > 0 THEN 1 END)::int AS depositing_players,
+              COALESCE(SUM((SELECT SUM(amount) FROM wallet_transactions wt WHERE wt.user_id = u.id AND wt.type = 'game_debit' AND wt.status = 'completed')), 0)::float AS total_turnover,
+              COALESCE(SUM((SELECT SUM(CASE WHEN type = 'game_debit' THEN amount ELSE -amount END) FROM wallet_transactions wt WHERE wt.user_id = u.id AND wt.type IN ('game_debit', 'game_credit') AND wt.status = 'completed')), 0)::float AS net_ggr
+       FROM users u WHERE u.agent_id = $1`,
+      [id]
+    )
+
+    // 6. Sub-Agents Performance
+    const subAgents = await db.query(
+      `SELECT a.id, a.username, a.display_name, a.commission_rate::float AS commission_rate,
+              COALESCE(w.balance, 0)::float AS balance,
+              COALESCE(w.total_earned, 0)::float AS total_earned,
+              (SELECT COUNT(*) FROM users u WHERE u.agent_id = a.id)::int AS player_count,
+              (SELECT COALESCE(SUM(override_commission), 0)::float FROM agent_commission_ledger WHERE agent_id = $1) AS override_earned
+       FROM agents a
+       LEFT JOIN agent_wallets w ON w.agent_id = a.id
+       WHERE a.parent_agent_id = $1
+       ORDER BY a.created_at DESC`,
+      [id]
+    )
+
+    const cOverview = clicksOverview.rows[0] || { total_clicks: 0, unique_ips: 0, converted_clicks: 0 }
+    const pStats = playerStats.rows[0] || { total_players: 0, depositing_players: 0, total_turnover: 0, net_ggr: 0 }
+    const conversionRate = cOverview.total_clicks > 0 ? ((pStats.total_players / cOverview.total_clicks) * 100) : 0
+
+    return reply.send({
+      summary: {
+        total_clicks: cOverview.total_clicks,
+        unique_ips: cOverview.unique_ips,
+        total_players: pStats.total_players,
+        depositing_players: pStats.depositing_players,
+        conversion_rate: parseFloat(conversionRate.toFixed(2)),
+        total_turnover: pStats.total_turnover,
+        net_ggr: pStats.net_ggr,
+      },
+      daily_clicks: dailyClicks.rows,
+      devices: devices.rows,
+      sources: sources.rows,
+      sub_agents: subAgents.rows,
+    })
   })
 
   // POST /api/admin/agents/:id/reset-password — Reset agent password
@@ -228,7 +472,7 @@ export async function registerAgentRoutes(
   })
 
   // GET /api/admin/agents/:id/players — referred players with game turnovers
-  app.get('/api/admin/agents/:id/players', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+  app.get('/api/admin/agents/:id/players', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const { id } = req.params as any
     const res = await db.query(
       `SELECT u.id, u.username, u.phone, u.status, u.created_at,
@@ -246,7 +490,7 @@ export async function registerAgentRoutes(
   })
 
   // GET /api/admin/agents/:id/performance — Detailed Game-wise breakdown
-  app.get('/api/admin/agents/:id/performance', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+  app.get('/api/admin/agents/:id/performance', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const { id } = req.params as any
     const gameStats = await db.query(
       `SELECT CASE WHEN wt.description ILIKE '%color%' THEN 'color_prediction' WHEN wt.description ILIKE '%matka%' THEN 'matka' WHEN wt.description ILIKE '%cricket%' THEN 'cricket' WHEN wt.description ILIKE '%aviator%' THEN 'aviator' ELSE COALESCE(gr.game_type::text, 'general') END AS game_type,
@@ -266,7 +510,7 @@ export async function registerAgentRoutes(
   })
 
   // GET /api/admin/agents/:id/ledger — Daily commission history with game breakdown
-  app.get('/api/admin/agents/:id/ledger', { onRequest: [authenticate, requireRole('superadmin')] }, async (req, reply) => {
+  app.get('/api/admin/agents/:id/ledger', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
     const { id } = req.params as any
     const res = await db.query(
       `SELECT id, date, direct_commission::float, override_commission::float, total_commission::float,

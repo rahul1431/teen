@@ -5,7 +5,7 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS experiment_assignments (
   id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  player_id                   UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  player_id                   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   experiment_id               UUID NOT NULL REFERENCES a_b_experiments(id) ON DELETE CASCADE,
   variant                     VARCHAR(20) NOT NULL CHECK (variant IN ('control', 'experimental')),
   assigned_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),

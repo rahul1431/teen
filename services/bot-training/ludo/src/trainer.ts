@@ -1,6 +1,8 @@
 import { Pool } from 'pg'
 import Redis from 'ioredis'
 import { Logger } from 'pino'
+import { runLudoSelfPlay, LudoSimulationResult } from './self-play'
+import { cloneEliteLudoPlayers, LudoBehavioralCloneResult } from './behavioral-cloning'
 
 /**
  * Ludo bot trainer.
@@ -237,9 +239,10 @@ export class LudoTrainer {
     if (players.length < cfg.min_sample_size) {
       this.logger.warn(
         { found: players.length, need: cfg.min_sample_size },
-        'Insufficient Ludo data — skipping rebuild, retaining existing profiles'
+        'Insufficient human data for Ludo — running autonomous self-play retraining (50 games)'
       )
-      return 0
+      await this.runSelfPlayTraining(50, true, 'insufficient_human_data')
+      return 3
     }
 
     const total = players.length
@@ -307,6 +310,150 @@ export class LudoTrainer {
       captureRate: row?.capture_rate != null ? parseFloat(row.capture_rate) : null,
       safePlayRate: row?.safe_play_rate != null ? parseFloat(row.safe_play_rate) : null,
     }
+  }
+
+  /**
+   * Run Monte Carlo autonomous self-play simulation batch for Ludo.
+   * Calibrates capture_probability, safe_play_probability,
+   * updates ludo_bot_profiles, invalidates Redis caches, and records audit telemetry.
+   */
+  async runSelfPlayTraining(
+    totalGames: number = 50,
+    applyUpdates: boolean = true,
+    triggerSource: string = 'admin_api'
+  ): Promise<LudoSimulationResult> {
+    this.logger.info({ totalGames, applyUpdates, triggerSource }, 'Starting Ludo self-play simulation training...')
+    const result = runLudoSelfPlay(totalGames)
+
+    if (applyUpdates) {
+      for (const difficulty of DIFFICULTIES) {
+        const calibrated = result.calibratedProfiles[difficulty]
+        if (!calibrated) continue
+
+        await this.upsertProfile({
+          difficulty,
+          win_rate_target: calibrated.win_rate_target,
+          capture_probability: calibrated.capture_probability,
+          safe_play_probability: calibrated.safe_play_probability,
+          avg_decision_delay_ms: calibrated.avg_decision_delay_ms,
+          avg_stake_preference: 10,
+          sample_size: totalGames,
+        })
+
+        await this.redis.del(cacheKey(difficulty)).catch(() => {})
+      }
+
+      await this.redis
+        .publish('bot:profiles:rebuilt', JSON.stringify({
+          game_type: GAME_TYPE,
+          mode: 'self_play',
+          gamesSimulated: totalGames,
+          timestamp: new Date().toISOString()
+        }))
+        .catch(() => {})
+
+      // Audit and telemetry in bot_self_play_runs
+      await this.pool.query(
+        `INSERT INTO bot_self_play_runs
+           (game_type, games_simulated, duration_ms, trigger_source, results_summary, calibrated_profiles, applied)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          GAME_TYPE,
+          totalGames,
+          result.durationMs,
+          triggerSource,
+          JSON.stringify({
+            winDistribution: result.winDistribution,
+            totalRolls: result.totalRolls,
+            avgRollsPerGame: result.avgRollsPerGame,
+            totalCaptures: result.totalCaptures,
+            avgCapturesPerGame: result.avgCapturesPerGame,
+          }),
+          JSON.stringify(result.calibratedProfiles),
+          true,
+        ]
+      ).catch(err => this.logger.warn({ err }, 'Could not record bot_self_play_runs log'))
+    }
+
+    this.logger.info(
+      { games: totalGames, durationMs: result.durationMs, captures: result.totalCaptures },
+      'Ludo self-play simulation training complete'
+    )
+    return result
+  }
+
+  /**
+   * Run Behavioral Cloning (Imitation Learning from Top 5% Human Winners).
+   * Extracts real decisions and action distributions of top profitable human players,
+   * updates policy profiles, invalidates Redis caches, and writes audit record to bot_behavioral_clones.
+   */
+  async runBehavioralCloning(
+    topPercentile: number = 5,
+    applyUpdates: boolean = true
+  ): Promise<LudoBehavioralCloneResult> {
+    this.logger.info({ topPercentile, applyUpdates }, 'Starting Ludo Behavioral Cloning from elite human players...')
+    const result = await cloneEliteLudoPlayers(this.pool, this.logger, topPercentile)
+
+    if (applyUpdates) {
+      // Apply to hard tier
+      const hardClone = result.clonedProfiles.hard
+      await this.upsertProfile({
+        difficulty: 'hard',
+        win_rate_target: hardClone.win_rate_target,
+        capture_probability: hardClone.capture_probability,
+        safe_play_probability: hardClone.safe_play_probability,
+        avg_decision_delay_ms: hardClone.avg_decision_delay_ms,
+        avg_stake_preference: 20,
+        sample_size: result.decisionsExtracted,
+      })
+
+      // Apply to medium tier
+      const medClone = result.clonedProfiles.medium
+      await this.upsertProfile({
+        difficulty: 'medium',
+        win_rate_target: medClone.win_rate_target,
+        capture_probability: medClone.capture_probability,
+        safe_play_probability: medClone.safe_play_probability,
+        avg_decision_delay_ms: medClone.avg_decision_delay_ms,
+        avg_stake_preference: 10,
+        sample_size: result.decisionsExtracted,
+      })
+
+      await this.redis.del(cacheKey('hard')).catch(() => {})
+      await this.redis.del(cacheKey('medium')).catch(() => {})
+
+      await this.redis
+        .publish('bot:profiles:rebuilt', JSON.stringify({
+          game_type: GAME_TYPE,
+          mode: 'behavioral_cloning',
+          elitePlayers: result.elitePlayerCount,
+          timestamp: new Date().toISOString()
+        }))
+        .catch(() => {})
+
+      // Persist in bot_behavioral_clones
+      await this.pool.query(
+        `INSERT INTO bot_behavioral_clones
+           (game_type, tier, top_percentile_cutoff, players_analyzed, elite_player_ids, decisions_extracted, extracted_action_distribution, cloned_weights, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)`,
+        [
+          GAME_TYPE,
+          'hard',
+          topPercentile,
+          result.playersAnalyzed,
+          JSON.stringify(result.elitePlayerIds),
+          result.decisionsExtracted,
+          JSON.stringify(result.extractedDistribution),
+          JSON.stringify(result.clonedProfiles),
+        ]
+      ).catch(err => this.logger.warn({ err }, 'Could not record bot_behavioral_clones row'))
+    }
+
+    this.logger.info(
+      { eliteCount: result.elitePlayerCount, decisions: result.decisionsExtracted },
+      'Ludo Behavioral Cloning complete'
+    )
+    return result
   }
 
   private async upsertProfile(p: Omit<LudoBotProfile, 'last_rebuilt_at'>): Promise<void> {

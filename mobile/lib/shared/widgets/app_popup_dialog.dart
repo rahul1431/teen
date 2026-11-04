@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:go_router/go_router.dart';
@@ -8,22 +9,43 @@ class AppPopupHelper {
   static final Set<String> _dismissedPopupIds = {};
 
   /// Checks for active announcement popups for [target] ('player' | 'agent' | 'all')
-  /// and displays the highest-priority active popup if not yet dismissed.
+  /// filtered by optional [page] ('home', 'wallet', 'games', 'agent_dashboard', etc.)
+  /// Automatically waits for the popup's configured [delay_seconds] before rendering.
   static Future<void> checkAndShowPopup(
     BuildContext context, {
     required String target,
+    String page = 'all',
   }) async {
     try {
+      // Use public /api/popups/active or /api/users/popups which are verified on Nginx
       final res = await ApiClient().dio.get(
-        '/users/popups',
-        queryParameters: {'target': target},
+        '/api/users/popups',
+        queryParameters: {
+          'target': target,
+        },
       );
 
       if (res.statusCode == 200 && res.data is List && (res.data as List).isNotEmpty) {
         final List popups = res.data as List;
-        for (final p in popups) {
+        for (final item in popups) {
+          if (item is! Map) continue;
+          final p = Map<String, dynamic>.from(item);
           final id = p['id']?.toString() ?? '';
           if (id.isEmpty || _dismissedPopupIds.contains(id)) continue;
+
+          // Check target_page filter: match 'all' or exact screen name
+          final targetPage = (p['target_page']?.toString() ?? 'all').toLowerCase();
+          if (targetPage != 'all' && page != 'all' && targetPage != page.toLowerCase()) {
+            continue;
+          }
+
+          if (!context.mounted) return;
+
+          // Get configured delay_seconds (default 2s)
+          final delaySec = int.tryParse(p['delay_seconds']?.toString() ?? '') ?? 2;
+          if (delaySec > 0) {
+            await Future.delayed(Duration(seconds: delaySec));
+          }
 
           if (!context.mounted) return;
 
@@ -34,10 +56,10 @@ class AppPopupHelper {
             context: context,
             barrierDismissible: true,
             barrierColor: Colors.black.withOpacity(0.8),
-            builder: (ctx) => _AppPopupDialog(popup: p as Map<String, dynamic>),
+            builder: (ctx) => _AppPopupDialog(popup: p),
           );
 
-          break; // Show at most one popup per check
+          break; // Show at most one popup per screen load
         }
       }
     } catch (e) {
@@ -59,12 +81,15 @@ class _AppPopupDialog extends StatelessWidget {
     return '$base$path';
   }
 
-  void _handleButtonAction(BuildContext context, String? link) async {
+  void _handleButtonAction(BuildContext context, String? link, String? actionType) async {
     Navigator.of(context, rootNavigator: true).pop();
-    if (link == null || link.trim().isEmpty) return;
 
+    if (actionType == 'close') return;
+
+    if (link == null || link.trim().isEmpty) return;
     final trimmed = link.trim();
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+
+    if (actionType == 'external_link' || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
       final uri = Uri.tryParse(trimmed);
       if (uri != null) {
         try {
@@ -73,15 +98,16 @@ class _AppPopupDialog extends StatelessWidget {
           debugPrint('[AppPopup] Failed to launch url: $e');
         }
       }
-    } else {
-      // In-app navigation route
-      try {
-        if (context.mounted) {
-          GoRouter.of(context).push(trimmed);
-        }
-      } catch (e) {
-        debugPrint('[AppPopup] Route navigation error: $e');
+      return;
+    }
+
+    // In-app navigation route (e.g. /deposit, /games/teen-patti, /missions, etc.)
+    try {
+      if (context.mounted) {
+        GoRouter.of(context).push(trimmed);
       }
+    } catch (e) {
+      debugPrint('[AppPopup] Route navigation error: $e');
     }
   }
 
@@ -92,6 +118,7 @@ class _AppPopupDialog extends StatelessWidget {
     final imageUrl = _resolveImageUrl(popup['image_url']?.toString());
     final buttonText = popup['button_text']?.toString() ?? '';
     final buttonLink = popup['button_link']?.toString() ?? '';
+    final actionType = popup['action_type']?.toString() ?? 'navigate';
 
     return Dialog(
       backgroundColor: Colors.transparent,
@@ -198,7 +225,7 @@ class _AppPopupDialog extends StatelessWidget {
                             color: Colors.transparent,
                             child: InkWell(
                               borderRadius: BorderRadius.circular(12),
-                              onTap: () => _handleButtonAction(context, buttonLink),
+                              onTap: () => _handleButtonAction(context, buttonLink, actionType),
                               child: Center(
                                 child: Text(
                                   buttonText,
@@ -257,4 +284,3 @@ class _AppPopupDialog extends StatelessWidget {
     );
   }
 }
-

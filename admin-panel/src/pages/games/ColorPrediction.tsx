@@ -8,10 +8,19 @@ import {
   ReloadOutlined, SaveOutlined, PlayCircleOutlined, ThunderboltOutlined,
   StopOutlined, CheckCircleOutlined, SettingOutlined, TrophyOutlined,
   DollarOutlined, LineChartOutlined, BgColorsOutlined, FireOutlined,
-  ClockCircleOutlined, UserOutlined
+  ClockCircleOutlined, UserOutlined, RobotOutlined, ExperimentOutlined
 } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 import { tokens } from '../../theme/tokens'
+
+// AI & Bot Training Components
+import BotManagementPanel from '../../components/BotManagementPanel'
+import { BotTrainingConfigPanel } from '../../components/BotTrainingConfigPanel'
+import { BotMetricsTable } from '../../components/BotMetricsTable'
+import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
+import { BotTrainingTrendChart } from '../../components/BotTrainingTrendChart'
+import { MLTrainingPanel } from '../../components/MLTrainingPanel'
+import { BotLearningSection } from '../../components/AI/BotLearningSection'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -635,6 +644,35 @@ export default function ColorPrediction() {
               </Card>
             </div>
           )
+        },
+        {
+          key: 'bots',
+          label: <span><RobotOutlined /> Bots</span>,
+          children: <BotManagementPanel gameType="color_prediction" />
+        },
+        {
+          key: 'bot-training',
+          label: <span><TrophyOutlined /> Bot Training</span>,
+          children: (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <Alert
+                type="info"
+                showIcon
+                message="Color Prediction Bot Simulation & Activity Profile Training"
+                description="Color Prediction bots simulate realistic player bets across red, green, violet, and number predictions to maintain game volume and table liquidity."
+              />
+              <BotTrainingConfigPanel gameType="color_prediction" />
+              <BotTrainingTrendChart gameType="color_prediction" />
+              <BotMetricsTable gameType="color_prediction" />
+              <BotTrainingAuditTrail gameType="color_prediction" />
+              <BotLearningSection gameType="color_prediction" />
+            </div>
+          )
+        },
+        {
+          key: 'ml-training',
+          label: <span><ExperimentOutlined /> ML Training</span>,
+          children: <MLTrainingPanel gameType="color_prediction" />
         }
       ]} />
     </div>

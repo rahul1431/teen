@@ -1,6 +1,8 @@
 import { Pool } from 'pg'
 import Redis from 'ioredis'
 import { Logger } from 'pino'
+import { runTeenPattiSelfPlay, TeenPattiSimulationResult } from './self-play'
+import { cloneEliteTeenPattiPlayers, BehavioralCloneResult } from './behavioral-cloning'
 
 /**
  * Teen Patti bot trainer.
@@ -245,13 +247,12 @@ export class TeenPattiTrainer {
 
     const players = playersRes.rows
     if (players.length < cfg.min_sample_size) {
-      // Retain the existing profiles rather than overwriting trained values
-      // with a small, noisy sample.
       this.logger.warn(
         { found: players.length, need: cfg.min_sample_size },
-        'Insufficient Teen Patti data — skipping rebuild, retaining existing profiles'
+        'Insufficient human data for Teen Patti — running autonomous self-play retraining (200 games)'
       )
-      return 0
+      await this.runSelfPlayTraining(200, true, 'insufficient_human_data')
+      return 3
     }
 
     const total = players.length
@@ -325,6 +326,157 @@ export class TeenPattiTrainer {
       foldRate: row?.fold_rate != null ? parseFloat(row.fold_rate) : null,
       callRate: row?.call_rate != null ? parseFloat(row.call_rate) : null,
     }
+  }
+
+  /**
+   * Run Monte Carlo autonomous self-play simulation batch (100-1000+ games).
+   * Calibrates policy weights (fold, call, raise probabilities and aggression scores)
+   * and optionally updates teen_patti_bot_profiles, invalidating Redis caches.
+   */
+  async runSelfPlayTraining(
+    totalGames: number = 200,
+    applyUpdates: boolean = true,
+    triggerSource: string = 'admin_api'
+  ): Promise<TeenPattiSimulationResult> {
+    this.logger.info({ totalGames, applyUpdates, triggerSource }, 'Starting Teen Patti self-play simulation training...')
+    const result = runTeenPattiSelfPlay(totalGames)
+
+    if (applyUpdates) {
+      for (const difficulty of DIFFICULTIES) {
+        const calibrated = result.calibratedProfiles[difficulty]
+        if (!calibrated) continue
+
+        await this.upsertProfile({
+          difficulty,
+          win_rate_target: calibrated.win_rate_target,
+          fold_probability: calibrated.fold_probability,
+          call_probability: calibrated.call_probability,
+          raise_probability: calibrated.raise_probability,
+          avg_decision_delay_ms: calibrated.avg_decision_delay_ms,
+          avg_stake_preference: 20,
+          aggression_score: calibrated.aggression_score,
+          sample_size: totalGames,
+        })
+
+        await this.redis.del(cacheKey(difficulty)).catch(() => {})
+      }
+
+      await this.redis
+        .publish('bot:profiles:rebuilt', JSON.stringify({
+          game_type: GAME_TYPE,
+          mode: 'self_play',
+          gamesSimulated: totalGames,
+          timestamp: new Date().toISOString()
+        }))
+        .catch(() => {})
+
+      // Audit and telemetry in bot_self_play_runs
+      await this.pool.query(
+        `INSERT INTO bot_self_play_runs
+           (game_type, games_simulated, duration_ms, trigger_source, results_summary, calibrated_profiles, applied)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          GAME_TYPE,
+          totalGames,
+          result.durationMs,
+          triggerSource,
+          JSON.stringify({
+            winDistribution: result.winDistribution,
+            bluffsAttempted: result.bluffsAttempted,
+            bluffsSucceeded: result.bluffsSucceeded,
+            bluffSuccessRate: result.bluffSuccessRate,
+            avgPotPerHand: result.avgPotPerHand,
+            handDistribution: result.handDistribution,
+          }),
+          JSON.stringify(result.calibratedProfiles),
+          true,
+        ]
+      ).catch(err => this.logger.warn({ err }, 'Could not record bot_self_play_runs log'))
+    }
+
+    this.logger.info(
+      { games: totalGames, durationMs: result.durationMs, bluffs: result.bluffSuccessRate },
+      'Teen Patti self-play simulation training complete'
+    )
+    return result
+  }
+
+  /**
+   * Run Behavioral Cloning (Imitation Learning from Top 5% Human Winners).
+   * Extracts real decisions and action distributions of top profitable human players,
+   * updates policy profiles, invalidates Redis caches, and writes audit record to bot_behavioral_clones.
+   */
+  async runBehavioralCloning(
+    topPercentile: number = 5,
+    applyUpdates: boolean = true
+  ): Promise<BehavioralCloneResult> {
+    this.logger.info({ topPercentile, applyUpdates }, 'Starting Teen Patti Behavioral Cloning from elite human players...')
+    const result = await cloneEliteTeenPattiPlayers(this.pool, this.logger, topPercentile)
+
+    if (applyUpdates) {
+      // Apply cloned weights to hard tier
+      const hardClone = result.clonedProfiles.hard
+      await this.upsertProfile({
+        difficulty: 'hard',
+        win_rate_target: hardClone.win_rate_target,
+        fold_probability: hardClone.fold_probability,
+        call_probability: hardClone.call_probability,
+        raise_probability: hardClone.raise_probability,
+        avg_decision_delay_ms: hardClone.avg_decision_delay_ms,
+        avg_stake_preference: 50,
+        aggression_score: hardClone.aggression_score,
+        sample_size: result.decisionsExtracted,
+      })
+
+      // Apply cloned weights to medium tier
+      const medClone = result.clonedProfiles.medium
+      await this.upsertProfile({
+        difficulty: 'medium',
+        win_rate_target: medClone.win_rate_target,
+        fold_probability: medClone.fold_probability,
+        call_probability: medClone.call_probability,
+        raise_probability: medClone.raise_probability,
+        avg_decision_delay_ms: medClone.avg_decision_delay_ms,
+        avg_stake_preference: 20,
+        aggression_score: medClone.aggression_score,
+        sample_size: result.decisionsExtracted,
+      })
+
+      await this.redis.del(cacheKey('hard')).catch(() => {})
+      await this.redis.del(cacheKey('medium')).catch(() => {})
+
+      await this.redis
+        .publish('bot:profiles:rebuilt', JSON.stringify({
+          game_type: GAME_TYPE,
+          mode: 'behavioral_cloning',
+          elitePlayers: result.elitePlayerCount,
+          timestamp: new Date().toISOString()
+        }))
+        .catch(() => {})
+
+      // Persist in bot_behavioral_clones
+      await this.pool.query(
+        `INSERT INTO bot_behavioral_clones
+           (game_type, tier, top_percentile_cutoff, players_analyzed, elite_player_ids, decisions_extracted, extracted_action_distribution, cloned_weights, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)`,
+        [
+          GAME_TYPE,
+          'hard',
+          topPercentile,
+          result.playersAnalyzed,
+          JSON.stringify(result.elitePlayerIds),
+          result.decisionsExtracted,
+          JSON.stringify(result.extractedDistribution),
+          JSON.stringify(result.clonedProfiles),
+        ]
+      ).catch(err => this.logger.warn({ err }, 'Could not record bot_behavioral_clones row'))
+    }
+
+    this.logger.info(
+      { eliteCount: result.elitePlayerCount, decisions: result.decisionsExtracted },
+      'Teen Patti Behavioral Cloning complete'
+    )
+    return result
   }
 
   private async upsertProfile(p: Omit<TeenPattiBotProfile, 'last_rebuilt_at'>): Promise<void> {

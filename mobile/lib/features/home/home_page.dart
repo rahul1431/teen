@@ -130,9 +130,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted) UpdateService.instance.checkAndPrompt(context);
-      Future.delayed(const Duration(seconds: 3), () {
-        if (mounted) AppPopupHelper.checkAndShowPopup(context, target: 'player');
-      });
+        if (mounted) AppPopupHelper.checkAndShowPopup(context, target: 'player', page: 'home');
       });
     });
     // Tag telemetry with the logged-in user and (if not yet decided) prompt

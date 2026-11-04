@@ -24,7 +24,7 @@ MODEL_PATH = os.path.join(os.path.dirname(__file__), "difficulty_model.pkl")
 SCALER_PATH = os.path.join(os.path.dirname(__file__), "scaler.pkl")
 
 DIFFICULTY_LEVELS = ['easy', 'medium', 'hard']
-GAME_TYPES = ['teen_patti', 'ludo', 'aviator', 'matka']
+GAME_TYPES = ['teen_patti', 'ludo', 'rummy', 'aviator', 'color_prediction', 'matka', 'lottery']
 
 # game_participants.final_rank was never written for Ludo before this fix
 # (services/game-gateway/src/matchmaking.ts handleLudoEnd) — every pre-fix
@@ -109,11 +109,20 @@ class DifficultyPredictor:
                   SELECT id FROM game_rooms WHERE game_type = 'ludo'
                 ) THEN 'ludo'
                 WHEN room_id IN (
+                  SELECT id FROM game_rooms WHERE game_type = 'rummy'
+                ) THEN 'rummy'
+                WHEN room_id IN (
                   SELECT id FROM game_rooms WHERE game_type = 'aviator'
                 ) THEN 'aviator'
                 WHEN room_id IN (
+                  SELECT id FROM game_rooms WHERE game_type = 'color_prediction'
+                ) THEN 'color_prediction'
+                WHEN room_id IN (
                   SELECT id FROM game_rooms WHERE game_type = 'matka'
                 ) THEN 'matka'
+                WHEN room_id IN (
+                  SELECT id FROM game_rooms WHERE game_type = 'lottery'
+                ) THEN 'lottery'
                 ELSE 'teen_patti'
                 END as game_type,
                 COUNT(*) as games_played,

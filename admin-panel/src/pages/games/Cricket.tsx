@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert, Avatar, Upload, Statistic
+  Space, Modal, Input, Typography, Divider, Popconfirm, message, Row, Col, DatePicker, Tabs, Alert, Avatar, Upload, Statistic, Segmented
 } from 'antd'
 import {
   ReloadOutlined, PlusOutlined, SyncOutlined, CloudDownloadOutlined, DeleteOutlined,
@@ -64,6 +64,36 @@ export default function Cricket() {
   const [oddsBets, setOddsBets] = useState<any[]>([])
   const [sessionBets, setSessionBets] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [sportFilter, setSportFilter] = useState('all')
+  const [addMatchSport, setAddMatchSport] = useState('cricket')
+
+  const getSportCategory = (format: string = '', series: string = '') => {
+    const f = (format || '').toLowerCase()
+    const s = (series || '').toLowerCase()
+    if (f.includes('cricket') || ['t20', 'odi', 'test', 'ipl', 't10'].includes(f) || s.includes('ipl') || s.includes('cricket')) return 'cricket'
+    if (f.includes('soccer') || f.includes('football') || f.includes('epl') || f.includes('la_liga') || f.includes('isl') || s.includes('premier') || s.includes('champions league')) return 'football'
+    if (f.includes('tennis') || f.includes('atp') || f.includes('wta') || s.includes('wimbledon')) return 'tennis'
+    if (f.includes('basketball') || f.includes('nba')) return 'basketball'
+    if (f.includes('mma') || f.includes('ufc') || f.includes('boxing')) return 'combat'
+    if (f.includes('americanfootball') || f.includes('nfl')) return 'americanfootball'
+    return 'other'
+  }
+
+  const getSportIcon = (cat: string) => {
+    switch (cat) {
+      case 'cricket': return '🏏'
+      case 'football': return '⚽'
+      case 'tennis': return '🎾'
+      case 'basketball': return '🏀'
+      case 'combat': return '🥊'
+      case 'americanfootball': return '🏈'
+      default: return '🏆'
+    }
+  }
+
+  const displayedMatches = sportFilter === 'all'
+    ? matches
+    : matches.filter(m => getSportCategory(m.format, m.series) === sportFilter)
 
   // Modals state
   const [addMatchModal, setAddMatchModal] = useState(false)
@@ -176,12 +206,43 @@ export default function Cricket() {
   const handleUpdateScore = async (values: any) => {
     if (!selectedMatch) return
     try {
-      const liveScore = {
-        runs: values.runs ?? 0,
-        wickets: values.wickets ?? 0,
-        overs: values.overs ? String(values.overs) : '0.0',
-        target: values.target ? Number(values.target) : undefined,
+      const cat = getSportCategory(selectedMatch.format, selectedMatch.series)
+      let liveScore: any = {
         description: values.description || undefined,
+      }
+      if (cat === 'football') {
+        liveScore = {
+          ...liveScore,
+          goals_a: values.goals_a !== undefined ? Number(values.goals_a) : 0,
+          goals_b: values.goals_b !== undefined ? Number(values.goals_b) : 0,
+          match_time: values.match_time || undefined,
+        }
+      } else if (cat === 'basketball') {
+        liveScore = {
+          ...liveScore,
+          points_a: values.points_a !== undefined ? Number(values.points_a) : 0,
+          points_b: values.points_b !== undefined ? Number(values.points_b) : 0,
+          quarter: values.quarter || undefined,
+        }
+      } else if (cat === 'tennis') {
+        liveScore = {
+          ...liveScore,
+          sets: values.sets || undefined,
+          game: values.game || undefined,
+        }
+      } else if (cat === 'combat') {
+        liveScore = {
+          ...liveScore,
+          round: values.round || undefined,
+        }
+      } else {
+        liveScore = {
+          ...liveScore,
+          runs: values.runs !== undefined ? Number(values.runs) : 0,
+          wickets: values.wickets !== undefined ? Number(values.wickets) : 0,
+          overs: values.overs ? String(values.overs) : '0.0',
+          target: values.target ? Number(values.target) : undefined,
+        }
       }
       await adminApi.post('/betting/cricket/scores/update', {
         match_id: selectedMatch.id,
@@ -409,8 +470,8 @@ export default function Cricket() {
       {/* Header Bar */}
       <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
         <Col>
-          <Title level={4} style={{ margin: 0 }}>🏏 Cricket Odds & Session Betting Management</Title>
-          <Text type="secondary">Manage live fixtures, decimal odds markets, over session brackets, and bets in ₹ (Rupees)</Text>
+          <Title level={4} style={{ margin: 0 }}>🏆 Sports Betting Management (Cricket, Football, Tennis & All Sports)</Title>
+          <Text type="secondary">Manage live fixtures, decimal odds markets, over session brackets, and bets across all sports in ₹ (Rupees)</Text>
         </Col>
         <Col>
           <Space>
@@ -463,14 +524,29 @@ export default function Cricket() {
             children: (
               <div>
                 <Row justify="space-between" align="middle" style={{ marginBottom: 12 }}>
-                  <Text strong>Active & Scheduled Cricket Fixtures</Text>
+                  <Space align="center" wrap>
+                    <Text strong>Active & Scheduled Sports Fixtures</Text>
+                    <Segmented
+                      value={sportFilter}
+                      onChange={(val) => setSportFilter(val as string)}
+                      options={[
+                        { label: `All (${matches.length})`, value: 'all', icon: <TrophyOutlined /> },
+                        { label: `🏏 Cricket (${matches.filter(m => getSportCategory(m.format, m.series) === 'cricket').length})`, value: 'cricket' },
+                        { label: `⚽ Football (${matches.filter(m => getSportCategory(m.format, m.series) === 'football').length})`, value: 'football' },
+                        { label: `🎾 Tennis (${matches.filter(m => getSportCategory(m.format, m.series) === 'tennis').length})`, value: 'tennis' },
+                        { label: `🏀 Basketball (${matches.filter(m => getSportCategory(m.format, m.series) === 'basketball').length})`, value: 'basketball' },
+                        { label: `🥊 Combat (${matches.filter(m => getSportCategory(m.format, m.series) === 'combat').length})`, value: 'combat' },
+                        { label: `🏈 NFL (${matches.filter(m => getSportCategory(m.format, m.series) === 'americanfootball').length})`, value: 'americanfootball' },
+                      ]}
+                    />
+                  </Space>
                   <Space>
-                    <Button icon={<CloudDownloadOutlined />} onClick={handleSyncApi} loading={syncingApi}>Sync CricAPI Live Matches</Button>
+                    <Button icon={<CloudDownloadOutlined />} onClick={handleSyncApi} loading={syncingApi}>Sync Live Odds</Button>
                     <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddMatchModal(true)}>Add Match</Button>
                   </Space>
                 </Row>
                 <Table
-                  dataSource={matches}
+                  dataSource={displayedMatches}
                   rowKey="id"
                   loading={loading}
                   pagination={{ pageSize: 15 }}
@@ -487,14 +563,18 @@ export default function Cricket() {
                       }
                     },
                     {
-                      title: 'Series / Tournament',
+                      title: 'Sport & Tournament',
                       dataIndex: 'series',
-                      render: (series: string, r: any) => (
-                        <div>
-                          <Text strong>{series || 'Bilateral Series'}</Text>
-                          <div><Tag color="cyan">{r.format?.toUpperCase() || 'T20'}</Tag></div>
-                        </div>
-                      )
+                      render: (series: string, r: any) => {
+                        const cat = getSportCategory(r.format, r.series)
+                        const icon = getSportIcon(cat)
+                        return (
+                          <div>
+                            <Text strong>{series || 'Tournament'}</Text>
+                            <div><Tag color="cyan">{icon} {r.format?.toUpperCase() || 'STANDARD'}</Tag></div>
+                          </div>
+                        )
+                      }
                     },
                     {
                       title: 'Teams & Fixture',
@@ -511,15 +591,60 @@ export default function Cricket() {
                     {
                       title: 'Live Score',
                       dataIndex: 'live_score',
-                      render: (sc: any) => {
-                        if (!sc || (!sc.runs && !sc.overs)) return <Text type="secondary">-</Text>
-                        return (
-                          <div>
-                            <Text strong style={{ color: '#faad14' }}>{sc.runs || 0}/{sc.wickets || 0}</Text>
-                            <Text type="secondary"> ({sc.overs || 0} ov)</Text>
-                            {sc.target && <div><Text type="secondary" style={{ fontSize: 11 }}>Target: {sc.target}</Text></div>}
-                          </div>
-                        )
+                      render: (sc: any, r: any) => {
+                        if (!sc) return <Text type="secondary">-</Text>
+                        const cat = getSportCategory(r.format, r.series)
+                        if (cat === 'cricket') {
+                          if (!sc.runs && !sc.overs && !sc.description) return <Text type="secondary">-</Text>
+                          return (
+                            <div>
+                              <Text strong style={{ color: '#faad14' }}>{sc.runs || 0}/{sc.wickets || 0}</Text>
+                              <Text type="secondary"> ({sc.overs || 0} ov)</Text>
+                              {sc.target && <div><Text type="secondary" style={{ fontSize: 11 }}>Target: {sc.target}</Text></div>}
+                              {sc.description && <div><Text style={{ fontSize: 11, color: '#aaa' }}>{sc.description}</Text></div>}
+                            </div>
+                          )
+                        }
+                        if (cat === 'football') {
+                          const gA = sc.goals_a !== undefined ? sc.goals_a : (sc.score_a ?? null)
+                          const gB = sc.goals_b !== undefined ? sc.goals_b : (sc.score_b ?? null)
+                          return (
+                            <div>
+                              {gA !== null && gB !== null ? (
+                                <Text strong style={{ color: '#52c41a', fontSize: 13 }}>{gA} - {gB}</Text>
+                              ) : null}
+                              {sc.match_time && <Tag color="orange" style={{ marginLeft: 6 }}>{sc.match_time}</Tag>}
+                              {sc.description && <div><Text type="secondary" style={{ fontSize: 11 }}>{sc.description}</Text></div>}
+                              {!sc.description && gA === null && <Text type="secondary">-</Text>}
+                            </div>
+                          )
+                        }
+                        if (cat === 'basketball') {
+                          const pA = sc.points_a ?? null
+                          const pB = sc.points_b ?? null
+                          return (
+                            <div>
+                              {pA !== null && pB !== null ? (
+                                <Text strong style={{ color: '#1890ff', fontSize: 13 }}>{pA} - {pB}</Text>
+                              ) : null}
+                              {sc.quarter && <Tag color="blue" style={{ marginLeft: 6 }}>{sc.quarter}</Tag>}
+                              {sc.description && <div><Text type="secondary" style={{ fontSize: 11 }}>{sc.description}</Text></div>}
+                              {!sc.description && pA === null && <Text type="secondary">-</Text>}
+                            </div>
+                          )
+                        }
+                        if (sc.sets || sc.round || sc.description) {
+                          return (
+                            <div>
+                              <Text strong style={{ color: '#faad14' }}>{sc.sets || sc.round || sc.description}</Text>
+                              {sc.game && <Tag color="cyan" style={{ marginLeft: 6 }}>{sc.game}</Tag>}
+                              {sc.description && sc.description !== (sc.sets || sc.round) && (
+                                <div><Text type="secondary" style={{ fontSize: 11 }}>{sc.description}</Text></div>
+                              )}
+                            </div>
+                          )
+                        }
+                        return <Text type="secondary">-</Text>
                       }
                     },
                     {
@@ -548,11 +673,34 @@ export default function Cricket() {
                               wickets: r.live_score?.wickets,
                               overs: r.live_score?.overs,
                               target: r.live_score?.target,
+                              goals_a: r.live_score?.goals_a ?? r.live_score?.score_a,
+                              goals_b: r.live_score?.goals_b ?? r.live_score?.score_b,
+                              match_time: r.live_score?.match_time,
+                              points_a: r.live_score?.points_a,
+                              points_b: r.live_score?.points_b,
+                              quarter: r.live_score?.quarter,
+                              sets: r.live_score?.sets,
+                              game: r.live_score?.game,
+                              round: r.live_score?.round,
                               description: r.live_score?.description,
                               live_tv_url: r.live_tv_url,
                             })
                             setScoreModal(true)
                           }}>Score & TV</Button>
+                          <Button size="small" icon={<PlusOutlined />} onClick={() => {
+                            marketForm.resetFields()
+                            const cat = getSportCategory(r.format, r.series)
+                            marketForm.setFieldsValue({
+                              match_id: r.id,
+                              label: cat === 'football' ? 'Full Time Result (1X2)' : 'Match Winner',
+                              option_a_label: r.team_a,
+                              option_b_label: r.team_b,
+                              option_a_odds: 1.85,
+                              option_b_odds: 1.95,
+                              ...(cat === 'football' ? { option_draw_label: 'Draw', option_draw_odds: 3.20 } : {})
+                            })
+                            setMarketModal(true)
+                          }}>+ Market</Button>
                           <Button size="small" onClick={() => {
                             setSelectedMatch(r)
                             finalizeForm.resetFields()
@@ -1026,42 +1174,107 @@ export default function Cricket() {
       </Card>
 
       {/* Modal: Add Match */}
-      <Modal title="Add Cricket Match" open={addMatchModal} onCancel={() => setAddMatchModal(false)} footer={null}>
-        <Form form={matchForm} layout="vertical" onFinish={handleCreateMatch}>
-          <Form.Item name="series" label="Tournament / Series" rules={[{ required: true }]}>
-            <Select placeholder="Select series" showSearch>
-              {seriesCatalog.map(s => <Select.Option key={s.name} value={s.name}>{s.name}</Select.Option>)}
+      <Modal title="Add Sports Fixture" open={addMatchModal} onCancel={() => setAddMatchModal(false)} footer={null}>
+        <Form form={matchForm} layout="vertical" onFinish={handleCreateMatch} initialValues={{ sport: 'cricket', format: 'cricket_t20' }}>
+          <Form.Item name="sport" label="Sport Category" rules={[{ required: true }]}>
+            <Select onChange={(val) => {
+              setAddMatchSport(val)
+              const defaultFmt = val === 'cricket' ? 'cricket_t20'
+                : val === 'football' ? 'soccer_epl'
+                : val === 'tennis' ? 'tennis_atp'
+                : val === 'basketball' ? 'basketball_nba'
+                : val === 'combat' ? 'mma_ufc'
+                : val === 'americanfootball' ? 'americanfootball_nfl'
+                : 'sports_other'
+              matchForm.setFieldsValue({ format: defaultFmt })
+            }}>
+              <Select.Option value="cricket">🏏 Cricket</Select.Option>
+              <Select.Option value="football">⚽ Football / Soccer</Select.Option>
+              <Select.Option value="tennis">🎾 Tennis</Select.Option>
+              <Select.Option value="basketball">🏀 Basketball</Select.Option>
+              <Select.Option value="combat">🥊 Combat Sports (UFC / Boxing)</Select.Option>
+              <Select.Option value="americanfootball">🏈 American Football (NFL)</Select.Option>
+              <Select.Option value="other">🏆 Other Sports</Select.Option>
             </Select>
           </Form.Item>
-          <Form.Item name="format" label="Match Format" initialValue="t20" rules={[{ required: true }]}>
+          <Form.Item name="series" label="Tournament / League" rules={[{ required: true }]}>
+            <Input placeholder={
+              addMatchSport === 'football' ? 'e.g. English Premier League or UEFA Champions League'
+              : addMatchSport === 'tennis' ? 'e.g. Wimbledon Championships'
+              : addMatchSport === 'basketball' ? 'e.g. NBA Championship'
+              : addMatchSport === 'combat' ? 'e.g. UFC Main Event'
+              : addMatchSport === 'americanfootball' ? 'e.g. NFL Championship'
+              : 'e.g. IPL 2026 or ICC T20 World Cup'
+            } />
+          </Form.Item>
+          <Form.Item name="format" label="Match Format / League Code" rules={[{ required: true }]}>
             <Select>
-              <Select.Option value="t20">T20</Select.Option>
-              <Select.Option value="odi">ODI (One Day)</Select.Option>
-              <Select.Option value="test">Test Match</Select.Option>
-              <Select.Option value="t10">T10</Select.Option>
+              {addMatchSport === 'cricket' && (
+                <>
+                  <Select.Option value="cricket_t20">T20 International</Select.Option>
+                  <Select.Option value="cricket_ipl">IPL (Indian Premier League)</Select.Option>
+                  <Select.Option value="cricket_odi">ODI (One Day International)</Select.Option>
+                  <Select.Option value="cricket_test">Test Match</Select.Option>
+                  <Select.Option value="cricket_t10">T10</Select.Option>
+                </>
+              )}
+              {addMatchSport === 'football' && (
+                <>
+                  <Select.Option value="soccer_epl">English Premier League</Select.Option>
+                  <Select.Option value="soccer_uefa">UEFA Champions League</Select.Option>
+                  <Select.Option value="soccer_la_liga">La Liga (Spain)</Select.Option>
+                  <Select.Option value="soccer_isl">Indian Super League (ISL)</Select.Option>
+                  <Select.Option value="soccer_fifa">FIFA World Cup</Select.Option>
+                </>
+              )}
+              {addMatchSport === 'tennis' && (
+                <>
+                  <Select.Option value="tennis_atp">ATP Tour</Select.Option>
+                  <Select.Option value="tennis_wta">WTA Tour</Select.Option>
+                  <Select.Option value="tennis_grand_slam">Grand Slam</Select.Option>
+                </>
+              )}
+              {addMatchSport === 'basketball' && (
+                <>
+                  <Select.Option value="basketball_nba">NBA</Select.Option>
+                  <Select.Option value="basketball_euroleague">EuroLeague</Select.Option>
+                </>
+              )}
+              {addMatchSport === 'combat' && (
+                <>
+                  <Select.Option value="mma_ufc">UFC Championship</Select.Option>
+                  <Select.Option value="boxing_title">World Boxing Title</Select.Option>
+                </>
+              )}
+              {addMatchSport === 'americanfootball' && (
+                <Select.Option value="americanfootball_nfl">NFL Championship</Select.Option>
+              )}
+              {addMatchSport === 'other' && (
+                <Select.Option value="sports_other">General Sports</Select.Option>
+              )}
             </Select>
           </Form.Item>
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="team_a" label="Team A" rules={[{ required: true }]}>
-                <Input placeholder="e.g. India" />
+              <Form.Item name="team_a" label={addMatchSport === 'tennis' || addMatchSport === 'combat' ? 'Player / Fighter A' : 'Team A'} rules={[{ required: true }]}>
+                <Input placeholder={addMatchSport === 'tennis' ? 'e.g. Carlos Alcaraz' : addMatchSport === 'football' ? 'e.g. Arsenal' : 'e.g. India'} />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="team_a_short" label="Team A Short Code" initialValue="IND">
-                <Input placeholder="e.g. IND" />
+              <Form.Item name="team_a_short" label="Short Code" initialValue="T1">
+                <Input placeholder="e.g. ARS or IND" />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="team_b" label="Team B" rules={[{ required: true }]}>
-                <Input placeholder="e.g. Australia" />
+              <Form.Item name="team_b" label={addMatchSport === 'tennis' || addMatchSport === 'combat' ? 'Player / Fighter B' : 'Team B'} rules={[{ required: true }]}>
+                <Input placeholder={addMatchSport === 'tennis' ? 'e.g. Jannik Sinner' : addMatchSport === 'football' ? 'e.g. Chelsea' : 'e.g. Australia'} />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="team_b_short" label="Team B Short Code" initialValue="AUS">
-                <Input placeholder="e.g. AUS" />
+              <Form.Item name="team_b_short" label="Short Code" initialValue="T2">
+                <Input placeholder="e.g. CHE or AUS" />
               </Form.Item>
             </Col>
           </Row>
@@ -1083,28 +1296,105 @@ export default function Cricket() {
               <Select.Option value="settled">Settled / Completed</Select.Option>
             </Select>
           </Form.Item>
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item name="runs" label="Runs">
-                <InputNumber min={0} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="wickets" label="Wickets">
-                <InputNumber min={0} max={10} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="overs" label="Overs (e.g. 14.2)">
-                <Input placeholder="14.2" />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item name="target" label="Target Runs (if chasing)">
-            <InputNumber min={1} style={{ width: '100%' }} placeholder="e.g. 185" />
-          </Form.Item>
+
+          {(() => {
+            const cat = getSportCategory(selectedMatch?.format, selectedMatch?.series)
+            if (cat === 'football') {
+              return (
+                <>
+                  <Row gutter={16}>
+                    <Col span={10}>
+                      <Form.Item name="goals_a" label={`Goals (${selectedMatch?.team_a || 'Team A'})`}>
+                        <InputNumber min={0} style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={10}>
+                      <Form.Item name="goals_b" label={`Goals (${selectedMatch?.team_b || 'Team B'})`}>
+                        <InputNumber min={0} style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={4}>
+                      <Form.Item name="match_time" label="Time">
+                        <Input placeholder="68'" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                </>
+              )
+            }
+            if (cat === 'basketball') {
+              return (
+                <Row gutter={16}>
+                  <Col span={9}>
+                    <Form.Item name="points_a" label={`Points (${selectedMatch?.team_a || 'Team A'})`}>
+                      <InputNumber min={0} style={{ width: '100%' }} />
+                    </Form.Item>
+                  </Col>
+                  <Col span={9}>
+                    <Form.Item name="points_b" label={`Points (${selectedMatch?.team_b || 'Team B'})`}>
+                      <InputNumber min={0} style={{ width: '100%' }} />
+                    </Form.Item>
+                  </Col>
+                  <Col span={6}>
+                    <Form.Item name="quarter" label="Quarter">
+                      <Input placeholder="Q4 02:45" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              )
+            }
+            if (cat === 'tennis') {
+              return (
+                <Row gutter={16}>
+                  <Col span={14}>
+                    <Form.Item name="sets" label="Sets Score (e.g. 6-4, 5-7, 3-2)">
+                      <Input placeholder="6-4, 5-7, 3-2" />
+                    </Form.Item>
+                  </Col>
+                  <Col span={10}>
+                    <Form.Item name="game" label="Current Game">
+                      <Input placeholder="30-15" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              )
+            }
+            if (cat === 'combat') {
+              return (
+                <Form.Item name="round" label="Current Round & Time">
+                  <Input placeholder="Round 3 / 5 (01:45)" />
+                </Form.Item>
+              )
+            }
+            // Cricket or standard
+            return (
+              <>
+                <Row gutter={16}>
+                  <Col span={8}>
+                    <Form.Item name="runs" label="Runs">
+                      <InputNumber min={0} style={{ width: '100%' }} />
+                    </Form.Item>
+                  </Col>
+                  <Col span={8}>
+                    <Form.Item name="wickets" label="Wickets">
+                      <InputNumber min={0} max={10} style={{ width: '100%' }} />
+                    </Form.Item>
+                  </Col>
+                  <Col span={8}>
+                    <Form.Item name="overs" label="Overs (e.g. 14.2)">
+                      <Input placeholder="14.2" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+                <Form.Item name="target" label="Target Runs (if chasing)">
+                  <InputNumber min={1} style={{ width: '100%' }} placeholder="e.g. 185" />
+                </Form.Item>
+              </>
+            )
+          })()}
+
           <Form.Item name="description" label="Score Ticker Description">
-            <Input placeholder="e.g. IND need 24 runs in 18 balls" />
+            <Input placeholder="e.g. IND need 24 runs in 18 balls / Saka scored 62'" />
           </Form.Item>
           <Form.Item name="live_tv_url" label="Live TV Stream Link (m3u8 / embed)">
             <Input placeholder="https://stream.example.com/live.m3u8" />
@@ -1133,7 +1423,25 @@ export default function Cricket() {
       <Modal title="Create Decimal Odds Market" open={marketModal} onCancel={() => setMarketModal(false)} footer={null}>
         <Form form={marketForm} layout="vertical" onFinish={handleCreateMarket}>
           <Form.Item name="match_id" label="Select Match" rules={[{ required: true }]}>
-            <Select placeholder="Pick match" showSearch filterOption={(input, opt: any) => (opt?.children as string)?.toLowerCase().includes(input.toLowerCase())}>
+            <Select
+              placeholder="Pick match"
+              showSearch
+              filterOption={(input, opt: any) => (opt?.children as string)?.toLowerCase().includes(input.toLowerCase())}
+              onChange={(mId) => {
+                const m = matches.find(match => match.id === mId)
+                if (m) {
+                  const cat = getSportCategory(m.format, m.series)
+                  marketForm.setFieldsValue({
+                    label: cat === 'football' ? 'Full Time Result (1X2)' : 'Match Winner',
+                    option_a_label: m.team_a,
+                    option_b_label: m.team_b,
+                    option_a_odds: 1.85,
+                    option_b_odds: 1.95,
+                    ...(cat === 'football' ? { option_draw_label: 'Draw', option_draw_odds: 3.20 } : { option_draw_label: undefined, option_draw_odds: undefined })
+                  })
+                }
+              }}
+            >
               {matches.map(m => <Select.Option key={m.id} value={m.id}>{matchLabel(m)}</Select.Option>)}
             </Select>
           </Form.Item>

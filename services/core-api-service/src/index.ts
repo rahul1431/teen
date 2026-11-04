@@ -66,11 +66,48 @@ async function start() {
     trustProxy: true,
   })
 
-  await app.register(helmet, { contentSecurityPolicy: false })
-  await app.register(cors, { origin: true })
-  await app.register(rateLimit, { max: 200, timeWindow: '1 minute' })
-  await app.register(jwt, { secret: process.env.JWT_SECRET! })
-  await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024, files: 10 } })
+  const ALLOWED_ORIGINS = new Set([
+    'https://game.myonlinejoker.com',
+    'https://myonlinejoker.com',
+    'https://dev.myonlinejoker.com',
+  ])
+
+  function isAllowedOrigin(origin?: string): boolean {
+    if (!origin) return true
+    if (ALLOWED_ORIGINS.has(origin)) return true
+    if (process.env.NODE_ENV !== 'production') {
+      if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) return true
+    }
+    return false
+  }
+
+  await app.register(helmet as any, { contentSecurityPolicy: false })
+  await app.register(cors as any, {
+    origin: (origin: string | undefined, cb: any) => {
+      if (isAllowedOrigin(origin)) {
+        cb(null, true)
+      } else {
+        cb(new Error('CORS policy: origin not allowed'), false)
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-internal-key', 'X-Requested-With', 'Accept'],
+  })
+  await app.register(rateLimit as any, { max: 200, timeWindow: '1 minute' })
+  await app.register(jwt as any, { secret: process.env.JWT_SECRET! })
+  await app.register(multipart as any, { limits: { fileSize: 50 * 1024 * 1024, files: 10 } })
+
+  // Production-safe error handler
+  app.setErrorHandler((error: any, req, reply) => {
+    req.log.error(error)
+    if (error.validation) {
+      return reply.code(400).send({ error: 'Validation failed', message: error.message })
+    }
+    const statusCode = error.statusCode && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500
+    const clientMessage = statusCode === 500 ? 'An internal error occurred. Please try again.' : error.message
+    return reply.code(statusCode).send({ error: clientMessage })
+  })
 
   app.decorate('authenticate', async function (req: any, reply: any) {
     try { await req.jwtVerify() } catch { reply.code(401).send({ error: 'Unauthorized' }) }

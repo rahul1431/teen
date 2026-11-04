@@ -291,8 +291,33 @@ export function bettingPlugin(db: Pool) {
     // ══ CRICKET (Dream11-style fantasy contests, plus session/fancy
     // betting — match-odds betting stays archived; see archived_cricket_{
     // bets,markets}) ══
-    app.get('/cricket/matches', { onRequest: [auth] }, async () => {
-      const matches = await db.query(`SELECT * FROM cricket_matches WHERE status IN ('upcoming','live') ORDER BY start_time ASC`)
+    const getMatchesHandler = async (req: any) => {
+      const { sport } = (req.query || {}) as { sport?: string }
+      let query = `SELECT * FROM cricket_matches WHERE status IN ('upcoming','live')`
+      const params: any[] = []
+
+      if (sport && sport !== 'all') {
+        const s = sport.toLowerCase().trim()
+        if (s === 'cricket') {
+          query += ` AND (LOWER(format) LIKE '%cricket%' OR LOWER(format) IN ('t20','odi','test','ipl','t10'))`
+        } else if (s === 'football' || s === 'soccer') {
+          query += ` AND (LOWER(format) LIKE '%soccer%' OR LOWER(format) LIKE '%football%' OR LOWER(format) LIKE '%epl%' OR LOWER(format) LIKE '%la_liga%' OR LOWER(format) LIKE '%isl%' OR LOWER(series) LIKE '%premier%' OR LOWER(series) LIKE '%champions league%')`
+        } else if (s === 'tennis') {
+          query += ` AND (LOWER(format) LIKE '%tennis%' OR LOWER(format) LIKE '%atp%' OR LOWER(format) LIKE '%wta%' OR LOWER(series) LIKE '%wimbledon%')`
+        } else if (s === 'basketball') {
+          query += ` AND (LOWER(format) LIKE '%basketball%' OR LOWER(format) LIKE '%nba%')`
+        } else if (s === 'americanfootball' || s === 'nfl') {
+          query += ` AND (LOWER(format) LIKE '%americanfootball%' OR LOWER(format) LIKE '%nfl%')`
+        } else if (s === 'combat' || s === 'mma' || s === 'boxing') {
+          query += ` AND (LOWER(format) LIKE '%mma%' OR LOWER(format) LIKE '%ufc%' OR LOWER(format) LIKE '%boxing%')`
+        } else {
+          query += ` AND (LOWER(format) LIKE $1 OR LOWER(series) LIKE $1)`
+          params.push(`%${s}%`)
+        }
+      }
+
+      query += ` ORDER BY CASE WHEN status = 'live' THEN 0 ELSE 1 END, start_time ASC`
+      const matches = await db.query(query, params)
       const out = []
       for (const m of matches.rows) {
         const sessions = await db.query(`SELECT id, label, min_runs, max_runs, odds_yes, odds_no, status, result_runs FROM cricket_sessions WHERE match_id = $1 AND status = 'open'`, [m.id])
@@ -300,9 +325,25 @@ export function bettingPlugin(db: Pool) {
         out.push({ ...m, sessions: sessions.rows, markets: markets.rows })
       }
       return { matches: out }
-    })
+    }
 
-    app.post('/cricket/session/bet', { onRequest: [auth] }, async (req, reply) => {
+    app.get('/cricket/matches', { onRequest: [auth] }, getMatchesHandler)
+    app.get('/sports/matches', { onRequest: [auth] }, getMatchesHandler)
+
+    const getMatchLiveHandler = async (req: any, reply: any) => {
+      const { id } = req.params as { id: string }
+      const mRes = await db.query(`SELECT * FROM cricket_matches WHERE id = $1`, [id])
+      if (!mRes.rows.length) return reply.code(404).send({ error: 'Match not found' })
+      const match = mRes.rows[0]
+      const sessions = await db.query(`SELECT id, label, min_runs, max_runs, odds_yes, odds_no, status, result_runs FROM cricket_sessions WHERE match_id = $1 AND status = 'open'`, [id])
+      const markets = await db.query(`SELECT id, market_type, label, options, status FROM cricket_markets WHERE match_id = $1 AND status = 'open'`, [id])
+      return { match, sessions: sessions.rows, markets: markets.rows }
+    }
+
+    app.get('/cricket/matches/:id/live', { onRequest: [auth] }, getMatchLiveHandler)
+    app.get('/sports/matches/:id/live', { onRequest: [auth] }, getMatchLiveHandler)
+
+    const sessionBetHandler = async (req: any, reply: any) => {
       const body = z.object({ session_id: z.string().uuid(), selection: z.enum(['yes', 'no']), amount: z.number().positive() }).parse(req.body)
       const sRes = await db.query(`SELECT s.*, mt.status AS match_status FROM cricket_sessions s JOIN cricket_matches mt ON mt.id = s.match_id WHERE s.id = $1`, [body.session_id])
       if (!sRes.rows.length) return reply.code(404).send({ error: 'Session not found' })
@@ -312,18 +353,22 @@ export function bettingPlugin(db: Pool) {
       const bracket = body.selection === 'yes' ? session.max_runs : session.min_runs
       const potential = Math.round(body.amount * odds * 100) / 100
       const betId = crypto.randomUUID()
-      const debit = await debitStake({ userId: uid(req), amount: body.amount, referenceId: betId, idempotencyKey: `cricket_session_stake_${betId}`, description: 'Cricket session bet' })
+      const debit = await debitStake({ userId: uid(req), amount: body.amount, referenceId: betId, idempotencyKey: `cricket_session_stake_${betId}`, description: 'Sports session bet' })
       if (!debit.ok) return reply.code(400).send({ error: debit.error })
       await db.query(`INSERT INTO cricket_session_bets (id, user_id, match_id, session_id, selection, runs_bracket, amount, potential_payout) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [betId, uid(req), session.match_id, session.id, body.selection, bracket, body.amount, potential])
       return { success: true, bet_id: betId, potential_payout: potential }
-    })
+    }
+    app.post('/cricket/session/bet', { onRequest: [auth] }, sessionBetHandler)
+    app.post('/sports/session/bet', { onRequest: [auth] }, sessionBetHandler)
 
-    app.get('/cricket/session/my-bets', { onRequest: [auth] }, async (req) => {
+    const sessionMyBetsHandler = async (req: any) => {
       const rows = await db.query(`SELECT b.*, mt.team_a, mt.team_b, mt.series, s.label AS session_label FROM cricket_session_bets b JOIN cricket_matches mt ON mt.id = b.match_id JOIN cricket_sessions s ON s.id = b.session_id WHERE b.user_id = $1 ORDER BY b.created_at DESC LIMIT 100`, [uid(req)])
       return { bets: rows.rows }
-    })
+    }
+    app.get('/cricket/session/my-bets', { onRequest: [auth] }, sessionMyBetsHandler)
+    app.get('/sports/session/my-bets', { onRequest: [auth] }, sessionMyBetsHandler)
 
-    app.get('/cricket/odds/markets', { onRequest: [auth] }, async (req) => {
+    const oddsMarketsHandler = async (req: any) => {
       const { match_id } = req.query as { match_id?: string }
       let query = "SELECT m.*, mt.team_a, mt.team_b, mt.series, mt.start_time FROM cricket_markets m JOIN cricket_matches mt ON mt.id = m.match_id WHERE m.status = 'open'"
       const params: any[] = []
@@ -333,9 +378,11 @@ export function bettingPlugin(db: Pool) {
       }
       const res = await db.query(query, params)
       return { markets: res.rows }
-    })
+    }
+    app.get('/cricket/odds/markets', { onRequest: [auth] }, oddsMarketsHandler)
+    app.get('/sports/odds/markets', { onRequest: [auth] }, oddsMarketsHandler)
 
-    app.post('/cricket/odds/bet', { onRequest: [auth] }, async (req, reply) => {
+    const oddsBetHandler = async (req: any, reply: any) => {
       const body = z.object({
         market_id: z.string().uuid(),
         option_key: z.string(),
@@ -373,7 +420,7 @@ export function bettingPlugin(db: Pool) {
         amount: body.amount,
         referenceId: betId,
         idempotencyKey: `cricket_odds_stake_${betId}`,
-        description: `Cricket odds bet: ${option.label}`
+        description: `Sports odds bet: ${option.label}`
       })
       if (!debit.ok) return reply.code(400).send({ error: debit.error })
 
@@ -384,9 +431,11 @@ export function bettingPlugin(db: Pool) {
       )
 
       return { success: true, bet_id: betId, potential_payout: potential }
-    })
+    }
+    app.post('/cricket/odds/bet', { onRequest: [auth] }, oddsBetHandler)
+    app.post('/sports/odds/bet', { onRequest: [auth] }, oddsBetHandler)
 
-    app.get('/cricket/odds/my-bets', { onRequest: [auth] }, async (req) => {
+    const oddsMyBetsHandler = async (req: any) => {
       const rows = await db.query(
         `SELECT b.*, mt.team_a, mt.team_b, mt.series, m.label AS market_label 
          FROM cricket_bets b 
@@ -397,7 +446,9 @@ export function bettingPlugin(db: Pool) {
         [uid(req)]
       )
       return { bets: rows.rows }
-    })
+    }
+    app.get('/cricket/odds/my-bets', { onRequest: [auth] }, oddsMyBetsHandler)
+    app.get('/sports/odds/my-bets', { onRequest: [auth] }, oddsMyBetsHandler)
 
     // ══ INTERNAL ══
     app.post('/internal/matka/declare', { onRequest: [internal] }, async (req, reply) => {

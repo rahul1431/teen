@@ -38,7 +38,7 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
     _loadDashboardData();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(seconds: 2), () {
-        if (mounted) AppPopupHelper.checkAndShowPopup(context, target: 'agent');
+        if (mounted) AppPopupHelper.checkAndShowPopup(context, target: 'agent', page: 'agent_dashboard');
       });
     });
   }

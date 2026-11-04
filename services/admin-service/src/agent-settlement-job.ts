@@ -1,5 +1,112 @@
 import { Pool } from 'pg'
-import { calculateDailySettlement, AgentNode, PlayerNetLoss } from './agent-settlement'
+import { calculateDailySettlement, AgentNode, PlayerNetLoss, AgentSettlementResult } from './agent-settlement'
+
+// Synchronizes commission for a specific date (default: today IST).
+// Idempotent: checks existing total_commission in agent_commission_ledger and
+// credits only the newly earned delta into agent_wallets (balance & total_earned).
+export async function syncRealtimeCommissionForDate(
+  db: Pool,
+  dateStr?: string,
+  log: (msg: string) => void = console.log
+): Promise<AgentSettlementResult[]> {
+  const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000)
+  const targetDate = dateStr || nowIst.toISOString().slice(0, 10)
+
+  const agentsRes = await db.query('SELECT id, parent_agent_id, commission_rate, game_commissions, status FROM agents')
+  const agents: AgentNode[] = agentsRes.rows.map(r => {
+    let gameCommissions: Record<string, number> = {}
+    try {
+      if (typeof r.game_commissions === 'string') {
+        gameCommissions = JSON.parse(r.game_commissions)
+      } else if (r.game_commissions && typeof r.game_commissions === 'object') {
+        gameCommissions = r.game_commissions
+      }
+    } catch (_) {}
+    return {
+      id: r.id,
+      parentAgentId: r.parent_agent_id,
+      commissionRate: parseFloat(r.commission_rate),
+      gameCommissions,
+      status: r.status,
+    }
+  })
+  if (agents.length === 0) return []
+
+  const lossesRes = await db.query(
+    `SELECT u.agent_id,
+            CASE WHEN wt.description ILIKE '%color%' THEN 'color_prediction' 
+                 WHEN wt.description ILIKE '%matka%' THEN 'matka' 
+                 WHEN wt.description ILIKE '%cricket%' THEN 'cricket' 
+                 WHEN wt.description ILIKE '%aviator%' THEN 'aviator' 
+                 ELSE COALESCE(gr.game_type::text, 'general') END AS game_type,
+            COALESCE(SUM(CASE WHEN wt.type = 'game_debit' AND wt.status = 'completed' THEN wt.amount ELSE 0 END), 0)::float AS turnover,
+            COALESCE(SUM(CASE WHEN wt.type = 'game_debit' THEN wt.amount ELSE 0 END), 0)
+            - COALESCE(SUM(CASE WHEN wt.type = 'game_credit' THEN wt.amount ELSE 0 END), 0)::float AS net_house_win
+     FROM wallet_transactions wt
+     JOIN users u ON u.id = wt.user_id
+     LEFT JOIN game_rooms gr ON gr.id::text = wt.reference_id
+     WHERE u.agent_id IS NOT NULL
+       AND wt.type IN ('game_debit', 'game_credit')
+       AND wt.status = 'completed'
+       AND wt.created_at >= ($1::date AT TIME ZONE 'Asia/Kolkata')
+       AND wt.created_at <  (($1::date + 1) AT TIME ZONE 'Asia/Kolkata')
+     GROUP BY u.agent_id, CASE WHEN wt.description ILIKE '%color%' THEN 'color_prediction' WHEN wt.description ILIKE '%matka%' THEN 'matka' WHEN wt.description ILIKE '%cricket%' THEN 'cricket' WHEN wt.description ILIKE '%aviator%' THEN 'aviator' ELSE COALESCE(gr.game_type::text, 'general') END`,
+    [targetDate]
+  )
+  const playerLosses: PlayerNetLoss[] = lossesRes.rows.map(r => ({
+    agentId: r.agent_id,
+    gameType: r.game_type,
+    netHouseWin: parseFloat(r.net_house_win),
+    turnover: parseFloat(r.turnover),
+  }))
+
+  const results = calculateDailySettlement(agents, playerLosses)
+  if (results.length === 0) return []
+
+  const client = await db.connect()
+  try {
+    await client.query('BEGIN')
+    for (const r of results) {
+      const existingLedger = await client.query(
+        `SELECT total_commission::float FROM agent_commission_ledger WHERE agent_id = $1 AND date = $2 FOR UPDATE`,
+        [r.agentId, targetDate]
+      )
+      const oldTotal = existingLedger.rows.length > 0 ? parseFloat(existingLedger.rows[0].total_commission) : 0
+      const delta = Math.round((r.totalCommission - oldTotal) * 100) / 100
+
+      await client.query(
+        `INSERT INTO agent_commission_ledger (agent_id, date, direct_commission, override_commission, total_commission, game_breakdown)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (agent_id, date) DO UPDATE SET
+           direct_commission = EXCLUDED.direct_commission,
+           override_commission = EXCLUDED.override_commission,
+           total_commission = EXCLUDED.total_commission,
+           game_breakdown = EXCLUDED.game_breakdown`,
+        [r.agentId, targetDate, r.directCommission, r.overrideCommission, r.totalCommission, JSON.stringify(r.gameBreakdown)]
+      )
+
+      if (delta > 0) {
+        await client.query(
+          `INSERT INTO agent_wallets (agent_id, balance, total_earned)
+           VALUES ($1, $2, $2)
+           ON CONFLICT (agent_id) DO UPDATE SET
+             balance = agent_wallets.balance + EXCLUDED.balance,
+             total_earned = agent_wallets.total_earned + EXCLUDED.total_earned,
+             updated_at = NOW()`,
+          [r.agentId, delta]
+        )
+      }
+    }
+    await client.query('COMMIT')
+    log(`[agent-settlement] synced ${targetDate}: ${results.length} agent(s) processed`)
+    return results
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
+  }
+}
 
 // Runs the previous day's agent commission settlement once per day, shortly
 // after midnight IST. Mirrors the setInterval-with-time-check pattern used
@@ -36,82 +143,6 @@ export class AgentSettlementJob {
   }
 
   async runSettlementForDate(dateStr: string): Promise<void> {
-    const agentsRes = await this.db.query('SELECT id, parent_agent_id, commission_rate, game_commissions, status FROM agents')
-    const agents: AgentNode[] = agentsRes.rows.map(r => {
-      let gameCommissions: Record<string, number> = {}
-      try {
-        if (typeof r.game_commissions === 'string') {
-          gameCommissions = JSON.parse(r.game_commissions)
-        } else if (r.game_commissions && typeof r.game_commissions === 'object') {
-          gameCommissions = r.game_commissions
-        }
-      } catch (_) {}
-      return {
-        id: r.id,
-        parentAgentId: r.parent_agent_id,
-        commissionRate: parseFloat(r.commission_rate),
-        gameCommissions,
-        status: r.status,
-      }
-    })
-    if (agents.length === 0) return
-
-    // Net house win per player for the target IST day, attributed to their
-    // direct agent and broken down by game type.
-    const lossesRes = await this.db.query(
-      `SELECT u.agent_id,
-              CASE WHEN wt.description ILIKE '%color%' THEN 'color_prediction' WHEN wt.description ILIKE '%matka%' THEN 'matka' WHEN wt.description ILIKE '%cricket%' THEN 'cricket' WHEN wt.description ILIKE '%aviator%' THEN 'aviator' ELSE COALESCE(gr.game_type::text, 'general') END AS game_type,
-              COALESCE(SUM(CASE WHEN wt.type = 'game_debit' THEN wt.amount ELSE 0 END), 0)
-              - COALESCE(SUM(CASE WHEN wt.type = 'game_credit' THEN wt.amount ELSE 0 END), 0) AS net_house_win
-       FROM wallet_transactions wt
-       JOIN users u ON u.id = wt.user_id
-       LEFT JOIN game_rooms gr ON gr.id::text = wt.reference_id
-       WHERE u.agent_id IS NOT NULL
-         AND wt.type IN ('game_debit', 'game_credit')
-         AND wt.status = 'completed'
-         AND wt.created_at >= ($1::date AT TIME ZONE 'Asia/Kolkata')
-         AND wt.created_at <  (($1::date + 1) AT TIME ZONE 'Asia/Kolkata')
-       GROUP BY u.agent_id, CASE WHEN wt.description ILIKE '%color%' THEN 'color_prediction' WHEN wt.description ILIKE '%matka%' THEN 'matka' WHEN wt.description ILIKE '%cricket%' THEN 'cricket' WHEN wt.description ILIKE '%aviator%' THEN 'aviator' ELSE COALESCE(gr.game_type::text, 'general') END`,
-      [dateStr]
-    )
-    const playerLosses: PlayerNetLoss[] = lossesRes.rows.map(r => ({
-      agentId: r.agent_id,
-      gameType: r.game_type,
-      netHouseWin: parseFloat(r.net_house_win)
-    }))
-
-    const results = calculateDailySettlement(agents, playerLosses)
-    if (results.length === 0) return
-
-    const client = await this.db.connect()
-    try {
-      await client.query('BEGIN')
-      for (const r of results) {
-        const ledgerRes = await client.query(
-          `INSERT INTO agent_commission_ledger (agent_id, date, direct_commission, override_commission, total_commission, game_breakdown)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (agent_id, date) DO UPDATE SET
-             direct_commission = EXCLUDED.direct_commission,
-             override_commission = EXCLUDED.override_commission,
-             total_commission = EXCLUDED.total_commission,
-             game_breakdown = EXCLUDED.game_breakdown
-           RETURNING agent_id`,
-          [r.agentId, dateStr, r.directCommission, r.overrideCommission, r.totalCommission, JSON.stringify(r.gameBreakdown)]
-        )
-        if (ledgerRes.rows.length > 0 && r.totalCommission > 0) {
-          await client.query(
-            `UPDATE agent_wallets SET balance = balance + $1, total_earned = total_earned + $1, updated_at = NOW() WHERE agent_id = $2`,
-            [r.totalCommission, r.agentId]
-          )
-        }
-      }
-      await client.query('COMMIT')
-      this.log(`[agent-settlement] settled ${dateStr}: ${results.length} agent(s) with per-game rates`)
-    } catch (err) {
-      await client.query('ROLLBACK')
-      throw err
-    } finally {
-      client.release()
-    }
+    await syncRealtimeCommissionForDate(this.db, dateStr, this.log)
   }
 }

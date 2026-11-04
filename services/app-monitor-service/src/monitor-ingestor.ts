@@ -427,7 +427,7 @@ export class MonitorIngestor {
   }
 
   async getLivePlayers() {
-    const res = await this.pool.query(`
+    let res = await this.pool.query(`
       SELECT s.id AS session_id, s.user_id, u.username, u.phone,
              s.device_model, s.manufacturer, s.platform, s.ip_address,
              s.geo_city, s.geo_region,
@@ -444,6 +444,25 @@ export class MonitorIngestor {
         AND (u.is_bot IS NULL OR u.is_bot = false)
       ORDER BY s.last_seen_at DESC
       LIMIT 500`)
+    if (res.rows.length === 0) {
+      res = await this.pool.query(`
+        SELECT s.id AS session_id, s.user_id, u.username, u.phone,
+               s.device_model, s.manufacturer, s.platform, s.ip_address,
+               s.geo_city, s.geo_region,
+               COALESCE(loc.lat, s.geo_lat) AS geo_lat,
+               COALESCE(loc.lon, s.geo_lon) AS geo_lon,
+               s.last_screen, s.last_game, s.started_at, s.last_seen_at
+        FROM app_sessions s
+        LEFT JOIN users u ON u.id = s.user_id
+        LEFT JOIN LATERAL (
+          SELECT lat, lon FROM app_device_locations d
+          WHERE d.session_id = s.id ORDER BY d.created_at DESC LIMIT 1
+        ) loc ON true
+        WHERE s.last_seen_at > NOW() - INTERVAL '24 hours'
+          AND (u.is_bot IS NULL OR u.is_bot = false)
+        ORDER BY s.last_seen_at DESC
+        LIMIT 100`)
+    }
     return res.rows
   }
 
@@ -473,7 +492,7 @@ export class MonitorIngestor {
   }
 
   async getGeoDistribution() {
-    const res = await this.pool.query(`
+    let res = await this.pool.query(`
       SELECT ROUND(COALESCE(loc.lat, s.geo_lat)::numeric, 2) AS lat,
              ROUND(COALESCE(loc.lon, s.geo_lon)::numeric, 2) AS lon,
              MAX(s.geo_city) AS city, COUNT(*)::int AS players
@@ -487,6 +506,22 @@ export class MonitorIngestor {
         AND (u.is_bot IS NULL OR u.is_bot = false)
         AND COALESCE(loc.lat, s.geo_lat) IS NOT NULL
       GROUP BY 1, 2 ORDER BY players DESC LIMIT 500`)
+    if (res.rows.length === 0) {
+      res = await this.pool.query(`
+        SELECT ROUND(COALESCE(loc.lat, s.geo_lat)::numeric, 2) AS lat,
+               ROUND(COALESCE(loc.lon, s.geo_lon)::numeric, 2) AS lon,
+               MAX(s.geo_city) AS city, COUNT(*)::int AS players
+        FROM app_sessions s
+        LEFT JOIN users u ON u.id = s.user_id
+        LEFT JOIN LATERAL (
+          SELECT lat, lon FROM app_device_locations d
+          WHERE d.session_id = s.id ORDER BY d.created_at DESC LIMIT 1
+        ) loc ON true
+        WHERE s.last_seen_at > NOW() - INTERVAL '24 hours'
+          AND (u.is_bot IS NULL OR u.is_bot = false)
+          AND COALESCE(loc.lat, s.geo_lat) IS NOT NULL
+        GROUP BY 1, 2 ORDER BY players DESC LIMIT 500`)
+    }
     return res.rows
   }
 

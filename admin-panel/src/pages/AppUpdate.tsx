@@ -106,33 +106,43 @@ export default function AppUpdate() {
   ]
 
   const downloadUrl = current?.download_url || `${window.location.origin}/downloads/app-release.apk`
+  const agentDownloadUrl = `${window.location.origin}/downloads/agent-partner-release.apk`
 
   return (
     <div style={{ padding: 24 }}>
-      <Title level={3}><AndroidOutlined /> App Update Manager</Title>
+      <Title level={3}><AndroidOutlined /> App Update & Release Manager</Title>
 
       <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={6}>
+        <Col span={4}>
           <Card>
-            <Statistic title="Current Live Version" value={current?.version_name ?? '—'} prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />} />
+            <Statistic title="Live Player Version" value={current?.version_name ?? '—'} prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />} />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col span={4}>
           <Card>
             <Statistic title="Version Code" value={current?.version_code ?? 0} />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col span={4}>
           <Card>
             <Statistic title="Update Type" value={current?.force_update ? 'Force Update' : 'Optional'} valueStyle={{ color: current?.force_update ? '#ff4d4f' : '#52c41a' }} />
           </Card>
         </Col>
         <Col span={6}>
           <Card>
-            <div style={{ marginBottom: 8 }}><Text strong>Download Link</Text></div>
+            <div style={{ marginBottom: 6 }}><Text strong>🎮 Player App APK (v{current?.version_name})</Text></div>
             <Space direction="vertical" style={{ width: '100%' }}>
               <a href={downloadUrl} target="_blank" rel="noreferrer" style={{ wordBreak: 'break-all', fontSize: 12 }}>{downloadUrl}</a>
-              <Button size="small" icon={<LinkOutlined />} onClick={() => { navigator.clipboard.writeText(downloadUrl); message.success('Copied!') }}>Copy</Button>
+              <Button size="small" icon={<LinkOutlined />} onClick={() => { navigator.clipboard.writeText(downloadUrl); message.success('Copied Player APK URL!') }}>Copy Player APK Link</Button>
+            </Space>
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card style={{ border: '1px solid #d4af37', background: 'rgba(212,175,55,0.03)' }}>
+            <div style={{ marginBottom: 6 }}><Text strong style={{ color: '#d4af37' }}>💼 Agent Partner App (v1.0)</Text></div>
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <a href={agentDownloadUrl} target="_blank" rel="noreferrer" style={{ wordBreak: 'break-all', fontSize: 12 }}>{agentDownloadUrl}</a>
+              <Button size="small" type="primary" style={{ background: '#d4af37', borderColor: '#d4af37', color: '#000', fontWeight: 600 }} icon={<LinkOutlined />} onClick={() => { navigator.clipboard.writeText(agentDownloadUrl); message.success('Copied Agent Partner APK URL!') }}>Copy Agent APK Link</Button>
             </Space>
           </Card>
         </Col>

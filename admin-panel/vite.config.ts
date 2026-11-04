@@ -8,6 +8,7 @@ export default defineConfig({
   base: process.env.ADMIN_BASE || '/admin/',
   build: {
     outDir: 'dist',
+    sourcemap: false,
   },
   server: {
     port: 3000,

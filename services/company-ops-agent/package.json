@@ -1,0 +1,21 @@
+{
+  "name": "company-ops-agent",
+  "version": "1.0.0",
+  "description": "Autonomous AI Operations, SRE Watchdog, Financial Guardian & Marketing Agent for MyOnlineJoker",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ioredis": "^5.4.1",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/pg": "^8.11.6",
+    "typescript": "^5.5.3"
+  }
+}

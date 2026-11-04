@@ -1,5 +1,5 @@
-﻿import { useState, useEffect } from 'react'
-import { Card, Form, Slider, InputNumber, Switch, Button, Space, message, Divider, Alert, Row, Col } from 'antd'
+import { useState, useEffect } from 'react'
+import { Card, Form, Slider, InputNumber, Switch, Button, Space, message, Divider, Alert, Row, Col, Radio } from 'antd'
 import { Link } from 'react-router-dom'
 import { SaveOutlined, ReloadOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
@@ -8,7 +8,7 @@ interface MLConfig {
   fraudDetection: {
     coLocationThreshold: number // 3+ accounts
     winRateAnomalyThreshold: number // 95%+
-    velocityLimitHours: number // â‚¹10k in X hours
+    velocityLimitHours: number // ₹10k in X hours
     referralChainDepth: number // How deep to check
     enabled: boolean
   }
@@ -94,7 +94,7 @@ export function MLConfigPanel() {
 
       <Form form={form} layout="vertical" onFinish={handleSave}>
         {/* Fraud Detection */}
-        <Card title="ðŸ” Fraud Detection Rules" style={{ marginBottom: 24 }}>
+        <Card title="🔍 Fraud Detection Rules" style={{ marginBottom: 24 }}>
           <Row gutter={24}>
             <Col xs={24} sm={12}>
               <Form.Item
@@ -121,7 +121,7 @@ export function MLConfigPanel() {
               <Form.Item
                 label="Velocity Limit (hours)"
                 name={['fraudDetection', 'velocityLimitHours']}
-                tooltip="Flag if user deposits/withdraws â‚¹10k in <X hours"
+                tooltip="Flag if user deposits/withdraws ₹10k in <X hours"
               >
                 <InputNumber min={1} max={24} style={{ width: '100%' }} />
               </Form.Item>
@@ -147,7 +147,7 @@ export function MLConfigPanel() {
         </Card>
 
         {/* Churn Prediction */}
-        <Card title="ðŸ“‰ Churn Prediction Model" style={{ marginBottom: 24 }}>
+        <Card title="📉 Churn Prediction Model" style={{ marginBottom: 24 }}>
           <Row gutter={24}>
             <Col xs={24} sm={12}>
               <Form.Item
@@ -175,32 +175,11 @@ export function MLConfigPanel() {
                 label="Retrain Frequency"
                 name={['churnPrediction', 'retrainFrequency']}
               >
-                <div style={{ display: 'flex', gap: 12 }}>
-                  {['daily', 'weekly', 'monthly'].map((freq) => (
-                    <Button
-                      key={freq}
-                      type="default"
-                      onClick={() =>
-                        form.setFieldValue(
-                          ['churnPrediction', 'retrainFrequency'],
-                          freq
-                        )
-                      }
-                      style={{
-                        backgroundColor:
-                          config.churnPrediction.retrainFrequency === freq
-                            ? '#1890ff'
-                            : undefined,
-                        color:
-                          config.churnPrediction.retrainFrequency === freq
-                            ? '#fff'
-                            : undefined,
-                      }}
-                    >
-                      {freq}
-                    </Button>
-                  ))}
-                </div>
+                <Radio.Group buttonStyle="solid">
+                  <Radio.Button value="daily">Daily</Radio.Button>
+                  <Radio.Button value="weekly">Weekly</Radio.Button>
+                  <Radio.Button value="monthly">Monthly</Radio.Button>
+                </Radio.Group>
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
@@ -216,7 +195,7 @@ export function MLConfigPanel() {
         </Card>
 
         {/* RTP Optimizer */}
-        <Card title="ðŸ’° RTP / Revenue Optimizer" style={{ marginBottom: 24 }}>
+        <Card title="💰 RTP / Revenue Optimizer" style={{ marginBottom: 24 }}>
           <Row gutter={24}>
             <Col xs={24} sm={12}>
               <Form.Item

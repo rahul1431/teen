@@ -53,6 +53,58 @@ function greedyGroup(hand: Card[], wildRank: string): { groups: Card[][]; leftov
   return { groups, leftover: remaining }
 }
 
+export function calculateDeadwoodPoints(hand: Card[], wildRank: string): number {
+  const { leftover } = greedyGroup(hand, wildRank)
+  let sum = 0
+  for (const c of leftover) {
+    sum += cardValue(c, wildRank)
+  }
+  return Math.min(80, sum)
+}
+
+export function shouldBotDrop(state: RummyState, playerIdx: number, dropProbability?: number): boolean {
+  const player = state.players[playerIdx]
+  if (player.has_taken_turn) return false
+
+  const jokerCount = player.hand.filter(c => isJoker(c, state.wild_rank)).length
+  const { groups, leftover } = greedyGroup(player.hand, state.wild_rank)
+
+  const hasPureSeq = groups.some(g => checkGroup(g, state.wild_rank).pure)
+  if (hasPureSeq) return false
+
+  const deadwood = leftover.reduce((acc, c) => acc + cardValue(c, state.wild_rank), 0)
+
+  // If a trained profile drop_probability is supplied, scale decision with it
+  if (typeof dropProbability === 'number') {
+    if (jokerCount === 0 && deadwood >= 55) {
+      return Math.random() < dropProbability
+    }
+    if (jokerCount === 1 && deadwood >= 70 && groups.length === 0) {
+      return Math.random() < (dropProbability * 0.7)
+    }
+  }
+
+  const diff = player.bot_difficulty || state.bot_difficulty || 'medium'
+
+  if (diff === 'easy') return false
+
+  if (diff === 'god_mode') {
+    if (jokerCount === 0 && deadwood >= 40) return true
+    if (jokerCount === 1 && deadwood >= 55 && groups.length === 0) return true
+  }
+
+  if (diff === 'hard') {
+    if (jokerCount === 0 && deadwood >= 55) return true
+    if (jokerCount === 1 && deadwood >= 70 && groups.length === 0) return true
+  }
+
+  if (diff === 'medium') {
+    if (jokerCount === 0 && deadwood >= 68) return true
+  }
+
+  return false
+}
+
 // Evaluates how well a card connects with the rest of the hand (potential pure sequences, sequences with jokers, sets)
 function evaluateCardSynergy(c: Card, hand: Card[], wildRank: string): number {
   if (isJoker(c, wildRank)) return 100 // Jokers have maximum synergy
@@ -92,30 +144,39 @@ function evaluateCardSynergy(c: Card, hand: Card[], wildRank: string): number {
   return score
 }
 
-export function chooseBotDraw(state: RummyState, playerIdx: number): 'closed' | 'open' {
+export function chooseBotDraw(state: RummyState, playerIdx: number, openDrawProbability?: number): 'closed' | 'open' {
   const player = state.players[playerIdx]
   const topOfOpen = state.open_pile[state.open_pile.length - 1]
   if (!topOfOpen) return 'closed'
   if (isJoker(topOfOpen, state.wild_rank)) return 'open'
 
-  // Calculate if the top of open card directly forms or completes a sequence or set
+  // Calculate if drawing the open card forms an additional group or completes a sequence
   const testHand = [...player.hand, topOfOpen]
   const curMelds = greedyGroup(player.hand, state.wild_rank)
   const newMelds = greedyGroup(testHand, state.wild_rank)
 
-  // If drawing open creates an additional valid group or reduces deadwood significantly, take it
   if (newMelds.groups.length > curMelds.groups.length) {
     return 'open'
   }
 
+  // Calculate deadwood reduction
+  const curDeadwood = calculateDeadwoodPoints(player.hand, state.wild_rank)
+  const testDeadwood = calculateDeadwoodPoints(testHand, state.wild_rank)
+  if (testDeadwood < curDeadwood - 5) {
+    return 'open'
+  }
+
   const synergy = evaluateCardSynergy(topOfOpen, player.hand, state.wild_rank)
-  const threshold = state.bot_difficulty === 'hard' ? 12 : state.bot_difficulty === 'medium' ? 15 : 25
+  let threshold = state.bot_difficulty === 'god_mode' ? 8 : state.bot_difficulty === 'hard' ? 12 : state.bot_difficulty === 'medium' ? 15 : 25
+  if (typeof openDrawProbability === 'number') {
+    threshold = Math.round(30 * (1 - openDrawProbability))
+  }
   return synergy >= threshold ? 'open' : 'closed'
 }
 
-export function chooseBotDiscard(state: RummyState, playerIdx: number): string {
+export function chooseBotDiscard(state: RummyState, playerIdx: number, unsafeCards?: string[]): string {
   const player = state.players[playerIdx]
-  const { groups, leftover } = greedyGroup(player.hand, state.wild_rank)
+  const { leftover } = greedyGroup(player.hand, state.wild_rank)
   const pool = leftover.length > 0 ? leftover : player.hand
   const poolNonJokers = pool.filter(c => !isJoker(c, state.wild_rank))
   const handNonJokers = player.hand.filter(c => !isJoker(c, state.wild_rank))
@@ -123,22 +184,33 @@ export function chooseBotDiscard(state: RummyState, playerIdx: number): string {
   const candidates = poolNonJokers.length > 0 ? poolNonJokers : handNonJokers.length > 0 ? handNonJokers : pool
 
   let bestDiscard = candidates[0]
+  let minDeadwoodAfterDiscard = 9999
   let maxDiscardDesirability = -9999
+  const unsafeSet = new Set((unsafeCards || []).map(c => c.toUpperCase()))
 
   for (const c of candidates) {
-    const val = cardValue(c, state.wild_rank) // High point value card (10, J, Q, K)
+    const val = cardValue(c, state.wild_rank)
     const synergy = evaluateCardSynergy(c, player.hand, state.wild_rank)
 
-    // Higher desirability to discard = High card points + Low synergy/connection to hand
-    let discardScore = (val * 1.5) - synergy
+    // Evaluate remaining 13 cards deadwood after this card is discarded
+    const remainingHand = player.hand.filter(card => card.id !== c.id)
+    const remainingDeadwood = calculateDeadwoodPoints(remainingHand, state.wild_rank)
 
-    // If bot difficulty is easy, introduce minor noise
-    if (state.bot_difficulty === 'easy') {
-      discardScore += (Math.random() * 8 - 4)
+    // Desirability: minimizes remaining deadwood, favors dumping high point cards with low synergy
+    let score = (val * 1.5) - synergy - (remainingDeadwood * 0.5)
+    // Cognitive working memory penalty: avoid feeding opponents with cards adjacent/identical to their picks
+    const cardKey = `${c.rank}${c.suit.toUpperCase()}`
+    if (unsafeSet.has(cardKey)) {
+      score -= 40
     }
 
-    if (discardScore > maxDiscardDesirability) {
-      maxDiscardDesirability = discardScore
+    if (state.bot_difficulty === 'easy') {
+      score += (Math.random() * 8 - 4)
+    }
+
+    if (remainingDeadwood < minDeadwoodAfterDiscard || (remainingDeadwood === minDeadwoodAfterDiscard && score > maxDiscardDesirability)) {
+      minDeadwoodAfterDiscard = remainingDeadwood
+      maxDiscardDesirability = score
       bestDiscard = c
     }
   }
@@ -148,18 +220,10 @@ export function chooseBotDiscard(state: RummyState, playerIdx: number): string {
 
 // Returns a valid declare grouping if the bot's current hand (14 cards,
 // post-draw) can legally declare right now, else null.
-//
-// Uses the EXACT search in rules.ts rather than greedyGroup above: greedy
-// doesn't backtrack, so it can extract a locally-valid meld that strands the
-// rest of the hand and then report "can't declare" on a hand that genuinely
-// wins. greedyGroup is still used for chooseBotDiscard's leftover heuristic,
-// where an approximate melding is all that's needed.
 export function tryBotDeclare(state: RummyState, playerIdx: number): string[][] | null {
   const player = state.players[playerIdx]
   const groupIds = findValidDeclareGrouping(player.hand, state.wild_rank)
   if (!groupIds) return null
-  // Defensive: the search already guarantees this, but a declare is
-  // irreversible (a rejected one eliminates the bot), so re-verify.
   const check = validateDeclareGroups(player.hand, groupIds, state.wild_rank)
   return check.valid ? groupIds : null
 }

@@ -16,7 +16,7 @@ interface AuditSession {
 }
 
 interface BotTrainingAuditTrailProps {
-  gameType?: 'ludo' | 'teen_patti' | 'rummy'
+  gameType?: 'ludo' | 'teen_patti' | 'rummy' | 'aviator' | 'color_prediction' | 'matka' | 'lottery'
 }
 
 export const BotTrainingAuditTrail: React.FC<BotTrainingAuditTrailProps> = ({ gameType = 'ludo' }) => {

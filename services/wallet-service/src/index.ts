@@ -108,7 +108,10 @@ async function tryTriggerReferralReward(userId: string, db: Pool, walletSvc: any
   }
 }
 
-const app = Fastify({ logger: true })
+const app = Fastify({
+  logger: { level: process.env.NODE_ENV === 'production' ? 'warn' : 'info' },
+  trustProxy: true,
+})
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
 const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : undefined
 const walletSvc = new WalletService(db, redis)
@@ -118,17 +121,54 @@ const walletSvc = new WalletService(db, redis)
 // without them (online gateway routes will 503 until keys are provided).
 const razorpay: Razorpay | null = process.env.RAZORPAY_KEY_ID
   ? new Razorpay({
-      key_id: process.env.RAZORPAY_KEY_ID,
-      key_secret: process.env.RAZORPAY_KEY_SECRET!,
-    })
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET!,
+  })
   : null
 
+const ALLOWED_ORIGINS = new Set([
+  'https://game.myonlinejoker.com',
+  'https://myonlinejoker.com',
+  'https://dev.myonlinejoker.com',
+])
+
+function isAllowedOrigin(origin?: string): boolean {
+  if (!origin) return true
+  if (ALLOWED_ORIGINS.has(origin)) return true
+  if (process.env.NODE_ENV !== 'production') {
+    if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) return true
+  }
+  return false
+}
+
 async function start() {
-  await app.register(helmet, { crossOriginResourcePolicy: false })
-  await app.register(cors, { origin: true })
-  await app.register(jwt, { secret: process.env.JWT_SECRET! })
-  await app.register(multipart, { limits: { fileSize: 8 * 1024 * 1024 } }) // 8MB screenshots
+  await app.register(helmet as any, { crossOriginResourcePolicy: false })
+  await app.register(cors as any, {
+    origin: (origin: string | undefined, cb: any) => {
+      if (isAllowedOrigin(origin)) {
+        cb(null, true)
+      } else {
+        cb(new Error('CORS policy: origin not allowed'), false)
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-internal-key', 'x-youpi-secret', 'X-Requested-With', 'Accept'],
+  })
+  await app.register(jwt as any, { secret: process.env.JWT_SECRET! })
+  await app.register(multipart as any, { limits: { fileSize: 8 * 1024 * 1024 } }) // 8MB screenshots
   fs.mkdirSync(UPLOAD_DIR, { recursive: true })
+
+  // Production-safe error handler
+  app.setErrorHandler((error: any, req, reply) => {
+    req.log.error(error)
+    if (error.validation) {
+      return reply.code(400).send({ error: 'Validation failed', message: error.message })
+    }
+    const statusCode = error.statusCode && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500
+    const clientMessage = statusCode === 500 ? 'An internal error occurred. Please try again.' : error.message
+    return reply.code(statusCode).send({ error: clientMessage })
+  })
 
   const authenticate = async (req: any, reply: any) => {
     try { await req.jwtVerify() } catch { reply.code(401).send({ error: 'Unauthorized' }) }
@@ -218,7 +258,9 @@ async function start() {
       .update(`${body.razorpay_order_id}|${body.razorpay_payment_id}`)
       .digest('hex')
 
-    if (expectedSig !== body.razorpay_signature) {
+    const expectedBuf = Buffer.from(expectedSig, 'utf8')
+    const receivedBuf = Buffer.from(body.razorpay_signature, 'utf8')
+    if (expectedBuf.length !== receivedBuf.length || !crypto.timingSafeEqual(expectedBuf, receivedBuf)) {
       return reply.code(400).send({ error: 'Invalid payment signature' })
     }
 
@@ -361,8 +403,10 @@ async function start() {
     for await (const part of parts) {
       if (part.type === 'file') {
         const ext = path.extname(part.filename || '').toLowerCase().slice(0, 8) || '.jpg'
-        if (!['.jpg', '.jpeg', '.png', '.webp', '.pdf'].includes(ext)) {
-          return reply.code(400).send({ error: 'Unsupported file type' })
+        const allowedExts = ['.jpg', '.jpeg', '.png', '.webp']
+        const allowedMimes = ['image/jpeg', 'image/png', 'image/webp']
+        if (!allowedExts.includes(ext) || !allowedMimes.includes(part.mimetype)) {
+          return reply.code(400).send({ error: 'Only valid JPG, PNG, or WebP screenshot images are allowed' })
         }
         const fname = `${user.sub}_${crypto.randomUUID()}${ext}`
         await pipeline(part.file, fs.createWriteStream(path.join(UPLOAD_DIR, fname)))
@@ -446,12 +490,12 @@ async function start() {
        VALUES ($1, 'manual', $2, 'deposit', 'created', $3, $4, $5, $6)
        RETURNING id`,
       [user.sub, amount, referenceNumber, screenshotUrl, methodId,
-       JSON.stringify({ submitted_at: new Date().toISOString(), promo_code: promoCode, promo_bonus: promoBonus })]
+      JSON.stringify({ submitted_at: new Date().toISOString(), promo_code: promoCode, promo_bonus: promoBonus })]
     )
 
     if (promoRow && promoBonus > 0) {
       await db.query(`UPDATE promo_code_usages SET deposit_id = $1 WHERE promo_id = $2 AND user_id = $3`,
-        [ins.rows[0].id, promoRow.id, user.sub]).catch(() => {})
+        [ins.rows[0].id, promoRow.id, user.sub]).catch(() => { })
     }
 
     return reply.send({
@@ -462,6 +506,782 @@ async function start() {
         ? `Deposit submitted! ₹${promoBonus} bonus will be added on approval.`
         : 'Deposit submitted for review. Your balance updates once an admin approves it.',
     })
+  })
+
+  // =========================================================================
+  // YouPI-PG Sovereign UPI Gateway (0% Fees, Direct NPCI Intent & Auto-Credit)
+  // =========================================================================
+
+  async function getYouPiConfig(): Promise<{
+    enabled: boolean
+    vpa: string
+    merchantName: string
+    webhookSecret: string
+    minDeposit: number
+    maxDeposit: number
+    autoCreditUtr: boolean
+    autoCreditMaxAmount: number
+  }> {
+    const res = await db.query(
+      `SELECT key, value FROM system_settings WHERE key LIKE 'youpi_%'`
+    )
+    const cfg: Record<string, string> = {
+      youpi_enabled: 'true',
+      youpi_vpa: 'Q918286633@ybl',
+      youpi_merchant_name: 'MY ONLINE JOKER',
+      youpi_webhook_secret: 'youpi_sec_moj_2026_prod',
+      youpi_min_deposit: '100',
+      youpi_max_deposit: '50000',
+      youpi_auto_credit_utr: 'true',
+      youpi_auto_credit_max: '50000',
+    }
+    for (const row of res.rows) {
+      cfg[row.key] = row.value
+    }
+    return {
+      enabled: cfg.youpi_enabled !== 'false',
+      vpa: cfg.youpi_vpa || 'Q918286633@ybl',
+      merchantName: cfg.youpi_merchant_name || 'MY ONLINE JOKER',
+      webhookSecret: cfg.youpi_webhook_secret || 'youpi_sec_moj_2026_prod',
+      minDeposit: parseFloat(cfg.youpi_min_deposit || '100'),
+      maxDeposit: parseFloat(cfg.youpi_max_deposit || '50000'),
+      autoCreditUtr: cfg.youpi_auto_credit_utr !== 'false',
+      autoCreditMaxAmount: parseFloat(cfg.youpi_auto_credit_max || '50000'),
+    }
+  }
+
+  function parseUpiNotification(body: any): {
+    amount?: number
+    utr?: string
+    orderId?: string
+    payerVpa?: string
+    rawText: string
+  } {
+    const rawParts = [
+      body.title,
+      body.message,
+      body.text,
+      body.body,
+      body.content,
+      body.raw_sms,
+      body.rawText,
+      body.notification
+    ].filter(v => typeof v === 'string' && v.trim().length > 0)
+
+    const rawText = rawParts.length > 0
+      ? rawParts.join(' ')
+      : (typeof body === 'string' ? body : JSON.stringify(body)).toString()
+
+    let amount: number | undefined
+    if (body.amount !== undefined && !isNaN(parseFloat(body.amount))) {
+      amount = parseFloat(body.amount)
+    } else if (body.amountPaise !== undefined && !isNaN(parseFloat(body.amountPaise))) {
+      amount = parseFloat(body.amountPaise) / 100
+    } else {
+      const amtMatch =
+        rawText.match(/(?:credited\s*(?:by|with)?\s*(?:rs\.?|inr|₹)?\s*|rec(?:eive)?d\s*(?:rs\.?|inr|₹)?\s*|payment\s*(?:of)?\s*(?:rs\.?|inr|₹)?\s*|(?:rs\.?|inr|₹)\s*)([0-9]+(?:\.[0-9]{1,2})?)/i) ||
+        rawText.match(/([0-9]+(?:\.[0-9]{1,2})?)\s*(?:rs\.?|inr|₹)?\s*(?:credited|received)/i) ||
+        rawText.match(/(?:rs\.?|inr|₹)\s*([0-9]+(?:\.[0-9]{1,2})?)/i)
+      if (amtMatch && amtMatch[1]) {
+        amount = parseFloat(amtMatch[1])
+      }
+    }
+
+    let utr: string | undefined
+    if (body.utr && typeof body.utr === 'string' && body.utr.trim().length >= 10) {
+      utr = body.utr.trim()
+    } else if (body.paymentId && typeof body.paymentId === 'string' && body.paymentId.trim().length >= 10) {
+      utr = body.paymentId.trim()
+    } else if (body.rrn && typeof body.rrn === 'string' && body.rrn.trim().length >= 10) {
+      utr = body.rrn.trim()
+    } else if (body.transactionId && typeof body.transactionId === 'string' && body.transactionId.trim().length >= 10) {
+      utr = body.transactionId.trim()
+    } else {
+      const utrMatch = rawText.match(
+        /(?:upi\/(?:ref\s*)?|rrn\s*[:\s]?|ref\s*(?:no\.?)?[:\s]?|utr\s*[:\s]?|txn\s*(?:id)?\s*[:\s]?)(\d{12})/i
+      ) || rawText.match(/\b\d{12}\b/)
+      if (utrMatch && utrMatch[1]) {
+        utr = utrMatch[1]
+      } else if (utrMatch && utrMatch[0]) {
+        utr = utrMatch[0]
+      }
+    }
+
+    let orderId: string | undefined
+    if (body.order_id && typeof body.order_id === 'string') {
+      orderId = body.order_id.trim()
+    } else if (body.orderId && typeof body.orderId === 'string') {
+      orderId = body.orderId.trim()
+    } else {
+      const orderMatch = rawText.match(/\b(MOJ[A-Z0-9]{6,16})\b/i)
+      if (orderMatch && orderMatch[1]) {
+        orderId = orderMatch[1].toUpperCase()
+      }
+    }
+
+    let payerVpa: string | undefined
+    if (body.payer_vpa && typeof body.payer_vpa === 'string') {
+      payerVpa = body.payer_vpa.trim()
+    } else if (body.payerVpa && typeof body.payerVpa === 'string') {
+      payerVpa = body.payerVpa.trim()
+    } else {
+      const vpaMatch = rawText.match(/\b([a-zA-Z0-9.\-_]{2,64}@[a-zA-Z]{2,32})\b/)
+      if (vpaMatch && vpaMatch[1]) {
+        payerVpa = vpaMatch[1].toLowerCase()
+      }
+    }
+
+    return { amount, utr, orderId, payerVpa, rawText }
+  }
+
+  // 1. POST /wallet/youpi/create-order (Client app initiates an instant UPI deposit)
+  app.post('/wallet/youpi/create-order', { onRequest: [authenticate] }, async (req, reply) => {
+    const user = req.user as any
+    const body = z.object({
+      amount: z.number().positive(),
+      promo_code: z.string().optional(),
+    }).parse(req.body)
+
+    const cfg = await getYouPiConfig()
+    if (!cfg.enabled) {
+      return reply.code(503).send({ error: 'Instant UPI gateway is currently undergoing maintenance. Please use manual deposit.' })
+    }
+
+    if (body.amount < cfg.minDeposit || body.amount > cfg.maxDeposit) {
+      return reply.code(400).send({
+        error: `Deposit amount must be between ₹${cfg.minDeposit} and ₹${cfg.maxDeposit}`
+      })
+    }
+
+    // Unique order ID e.g. MOJ + timestamp slice + random 3-digit
+    const orderId = `MOJ${Date.now().toString().slice(-7)}${Math.floor(100 + Math.random() * 900)}`
+
+    // NPCI UPI Intent URI standard (no 'tr' for retail merchant VPAs to prevent bank switch validation errors)
+    const params = new URLSearchParams()
+    params.set('pa', cfg.vpa.trim())
+    params.set('pn', cfg.merchantName.trim())
+    params.set('am', body.amount.toFixed(2))
+    params.set('cu', 'INR')
+    params.set('tn', orderId)
+    const upiIntentUrl = `upi://pay?${params.toString()}`
+
+    const expiresAt = new Date(Date.now() + 20 * 60 * 1000) // 20 mins validity
+
+    // 2. Register session in YouPI Gateway Core (http://127.0.0.1:6100)
+    let checkoutUrl = `https://wallet.myonlinejoker.com/checkout/${orderId}`
+    let youpiPaymentId: string | null = null
+    try {
+      const youpiApiRes = await fetch('http://127.0.0.1:6100/api/v1/payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId,
+          amount: body.amount,
+          currency: 'INR',
+          autoActivate: true,
+          customer: {
+            mobileNumber: user.phone || '9999999999',
+            email: user.email || `${user.sub}@myonlinejoker.com`,
+            name: user.name || 'Player'
+          }
+        })
+      })
+      if (youpiApiRes.ok) {
+        const youpiData = await youpiApiRes.json() as any
+        if (youpiData && youpiData.paymentId) {
+          youpiPaymentId = youpiData.paymentId
+          checkoutUrl = youpiData.checkoutUrl || `https://wallet.myonlinejoker.com/checkout/${youpiData.paymentId}`
+        }
+      }
+    } catch (apiErr: any) {
+      req.log.warn({ err: apiErr.message }, '[youpi-gateway] Could not pre-register session in YouPI engine')
+    }
+
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
+
+      // Insert YouPI order record
+      const youpiRes = await client.query(
+        `INSERT INTO youpi_orders (user_id, order_id, amount, vpa, merchant_name, upi_intent_url, status, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', $7)
+         RETURNING id`,
+        [user.sub, orderId, body.amount, cfg.vpa, cfg.merchantName, upiIntentUrl, expiresAt.toISOString()]
+      )
+
+      // Insert matching payment_orders record for global ledger / reconciliation
+      await client.query(
+        `INSERT INTO payment_orders (user_id, gateway, gateway_order_id, amount, type, status, metadata)
+         VALUES ($1, 'youpi', $2, $3, 'deposit', 'created', $4)`,
+        [user.sub, orderId, body.amount, JSON.stringify({
+          youpi_id: youpiRes.rows[0].id,
+          youpi_payment_id: youpiPaymentId,
+          vpa: cfg.vpa,
+          promo_code: body.promo_code || null,
+        })]
+      )
+
+      await client.query('COMMIT')
+
+      return reply.send({
+        success: true,
+        order_id: orderId,
+        payment_id: youpiPaymentId,
+        amount: body.amount,
+        vpa: cfg.vpa,
+        merchant_name: cfg.merchantName,
+        upi_intent_url: upiIntentUrl,
+        qr_data: upiIntentUrl,
+        checkout_url: checkoutUrl,
+        expires_at: expiresAt.toISOString(),
+      })
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
+  })
+
+  // 2. GET /wallet/youpi/order/:orderId/status (Client app polls or checks payment progress)
+  app.get('/wallet/youpi/order/:orderId/status', { onRequest: [authenticate] }, async (req, reply) => {
+    const user = req.user as any
+    const { orderId } = req.params as any
+
+    const res = await db.query(
+      `SELECT order_id, amount, vpa, merchant_name, status, utr, paid_at, expires_at, created_at
+       FROM youpi_orders
+       WHERE order_id = $1 AND user_id = $2`,
+      [orderId, user.sub]
+    )
+
+    if (!res.rows.length) {
+      return reply.code(404).send({ error: 'Order not found' })
+    }
+
+    const order = res.rows[0]
+    // Check auto-expiry
+    if (order.status === 'PENDING' && new Date(order.expires_at).getTime() < Date.now()) {
+      await db.query(`UPDATE youpi_orders SET status = 'EXPIRED' WHERE order_id = $1`, [orderId])
+      order.status = 'EXPIRED'
+    }
+
+    return reply.send({
+      success: true,
+      order_id: order.order_id,
+      amount: parseFloat(order.amount),
+      status: order.status,
+      utr: order.utr,
+      paid_at: order.paid_at,
+      expires_at: order.expires_at,
+      created_at: order.created_at,
+    })
+  })
+
+  // 3. POST /wallet/youpi/order/:orderId/verify-utr (Player manually submits 12-digit UTR if bank SMS was delayed)
+  app.post('/wallet/youpi/order/:orderId/verify-utr', { onRequest: [authenticate] }, async (req, reply) => {
+    const user = req.user as any
+    const { orderId } = req.params as any
+    const body = z.object({
+      utr: z.string().regex(/^\d{12}$/, 'UTR must be exactly 12 digits'),
+    }).parse(req.body)
+
+    const orderRes = await db.query(
+      `SELECT * FROM youpi_orders WHERE order_id = $1 AND user_id = $2`,
+      [orderId, user.sub]
+    )
+    if (!orderRes.rows.length) {
+      return reply.code(404).send({ error: 'Order not found' })
+    }
+    const order = orderRes.rows[0]
+
+    if (order.status === 'SUCCESS') {
+      return reply.send({ success: true, status: 'SUCCESS', message: 'Order is already paid and credited.' })
+    }
+
+    // Check if UTR is already credited on another order
+    const dupeCheck = await db.query(
+      `SELECT id, order_id, status FROM youpi_orders WHERE utr = $1 AND status = 'SUCCESS'`,
+      [body.utr]
+    )
+    if (dupeCheck.rows.length) {
+      return reply.code(400).send({ error: 'This UTR has already been claimed on another transaction.' })
+    }
+
+    // Check if an UNMATCHED bank webhook already recorded this UTR!
+    const unmatchedCheck = await db.query(
+      `SELECT * FROM youpi_orders WHERE utr = $1 AND status = 'UNMATCHED'`,
+      [body.utr]
+    )
+
+    if (unmatchedCheck.rows.length) {
+      // Auto-match and credit immediately!
+      const unmatched = unmatchedCheck.rows[0]
+      const client = await db.connect()
+      try {
+        await client.query('BEGIN')
+        await client.query(
+          `UPDATE youpi_orders SET status = 'SUCCESS', utr = $1, paid_at = NOW(), raw_sms = $2 WHERE id = $3`,
+          [body.utr, unmatched.raw_sms, order.id]
+        )
+        // Delete the temporary unmatched row
+        await client.query(`DELETE FROM youpi_orders WHERE id = $1`, [unmatched.id])
+        await client.query(
+          `UPDATE payment_orders SET status = 'paid', gateway_payment_id = $1, updated_at = NOW() WHERE gateway_order_id = $2`,
+          [body.utr, order.order_id]
+        )
+        await walletSvc.credit({
+          userId: user.sub,
+          amount: parseFloat(order.amount),
+          type: 'deposit',
+          walletType: 'real',
+          referenceId: order.order_id,
+          idempotencyKey: `youpi_utr_${body.utr}`,
+          description: `Instant UPI Auto-Credit (UTR: ${body.utr})`,
+        }, client)
+
+        await client.query('COMMIT')
+
+        await tryTriggerReferralReward(user.sub, db, walletSvc)
+
+        return reply.send({
+          success: true,
+          status: 'SUCCESS',
+          credited: true,
+          amount: parseFloat(order.amount),
+          message: 'Payment verified and wallet credited!'
+        })
+      } catch (err) {
+        await client.query('ROLLBACK')
+        throw err
+      } finally {
+        client.release()
+      }
+    }
+
+    // If bank SMS hasn't arrived yet, check if Auto-Credit on valid UTR is active
+    const cfg = await getYouPiConfig()
+    const autoCreditEnabled = cfg.autoCreditUtr && parseFloat(order.amount) <= cfg.autoCreditMaxAmount
+
+    if (autoCreditEnabled) {
+      const client = await db.connect()
+      try {
+        await client.query('BEGIN')
+
+        // Lock row to prevent concurrent race conditions
+        const lockRes = await client.query(
+          `SELECT * FROM youpi_orders WHERE id = $1 FOR UPDATE`,
+          [order.id]
+        )
+        if (!lockRes.rows.length) {
+          await client.query('ROLLBACK')
+          return reply.code(404).send({ error: 'Order not found' })
+        }
+        const currentOrder = lockRes.rows[0]
+        if (currentOrder.status === 'SUCCESS') {
+          await client.query('ROLLBACK')
+          return reply.send({ success: true, status: 'SUCCESS', credited: true, message: 'Order is already paid and credited.' })
+        }
+
+        await client.query(
+          `UPDATE youpi_orders 
+           SET status = 'SUCCESS', utr = $1, paid_at = NOW(), updated_at = NOW() 
+           WHERE id = $2`,
+          [body.utr, currentOrder.id]
+        )
+
+        await client.query(
+          `UPDATE payment_orders 
+           SET status = 'paid', gateway_payment_id = $1, updated_at = NOW() 
+           WHERE gateway_order_id = $2`,
+          [body.utr, currentOrder.order_id]
+        )
+
+        await walletSvc.credit({
+          userId: user.sub,
+          amount: parseFloat(currentOrder.amount),
+          type: 'deposit',
+          walletType: 'real',
+          referenceId: currentOrder.order_id,
+          idempotencyKey: `youpi_utr_${body.utr}`,
+          description: `Instant UPI Auto-Credit (UTR: ${body.utr})`,
+        }, client)
+
+        await client.query('COMMIT')
+
+        await tryTriggerReferralReward(user.sub, db, walletSvc)
+
+        const coreApiUrl = process.env.CORE_API_SERVICE_URL || 'http://127.0.0.1:3001'
+        const key = process.env.INTERNAL_SERVICE_KEY || ''
+        fetch(`${coreApiUrl}/internal/notifications/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-key': key },
+          body: JSON.stringify({
+            user_id: user.sub,
+            title: 'Deposit Successful ⚡',
+            body: `₹${parseFloat(currentOrder.amount).toFixed(2)} credited to your wallet instantly via UPI!`,
+            type: 'deposit_success',
+          }),
+        }).catch(() => {})
+
+        // Notify YouPI-PG core engine if session is active
+        try {
+          fetch('http://127.0.0.1:6100/api/v1/pollers/events', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer youpi_observer_moj_2026_secure_token'
+            },
+            body: JSON.stringify({
+              receivingAccountId: '613b50dd-5634-4dd6-ba67-53e9d3d4f28c',
+              source: 'DIRECT_APP_UTR',
+              amountPaise: Math.round(parseFloat(currentOrder.amount) * 100),
+              utr: body.utr,
+              bankReferenceNumber: body.utr,
+              paymentSessionId: currentOrder.order_id,
+              rawText: `Direct App UPI Payment of Rs ${currentOrder.amount} UTR ${body.utr} to 9849495032-3@ybl`
+            })
+          }).catch(() => {})
+        } catch {}
+
+        return reply.send({
+          success: true,
+          status: 'SUCCESS',
+          credited: true,
+          amount: parseFloat(currentOrder.amount),
+          message: `Payment verified and ₹${parseFloat(currentOrder.amount).toFixed(2)} credited to your wallet!`
+        })
+      } catch (err) {
+        await client.query('ROLLBACK')
+        throw err
+      } finally {
+        client.release()
+      }
+    }
+
+    // Fallback: If auto-credit is disabled by admin, save UTR and await manual approval
+    await db.query(`UPDATE youpi_orders SET utr = $1 WHERE id = $2`, [body.utr, order.id])
+
+    return reply.send({
+      success: true,
+      status: 'PENDING',
+      message: 'UTR registered and queued for review. Balance will update shortly.',
+    })
+  })
+
+  // 4. GET /wallet/youpi/webhook (Health check / status)
+  app.get('/wallet/youpi/webhook', async (_req, reply) => {
+    return reply.send({
+      status: 'active',
+      service: 'YouPI Webhook Listener',
+      method: 'POST required for event dispatch',
+      time: new Date().toISOString()
+    })
+  })
+
+  // POST /wallet/youpi/webhook (Observer app / SMS forwarder endpoint)
+  app.post('/wallet/youpi/webhook', async (req, reply) => {
+    const cfg = await getYouPiConfig()
+    const query = req.query as any
+    const body = (req.body || {}) as any
+    const sigHeader = (req.headers['x-gateway-signature'] || '') as string
+    const secret = req.headers['x-youpi-secret'] || query.secret || body.secret
+
+    let isAuthorized = false
+    if (secret && secret === cfg.webhookSecret) {
+      isAuthorized = true
+    } else if (sigHeader && sigHeader.startsWith('sha256=')) {
+      const signature = sigHeader.slice(7).trim()
+      const rawPayload = typeof req.body === 'string' ? req.body : JSON.stringify(req.body)
+      const expectedSig = crypto.createHmac('sha256', cfg.webhookSecret).update(rawPayload).digest('hex')
+      if (crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) {
+        isAuthorized = true
+      }
+    }
+
+    if (!isAuthorized) {
+      req.log.warn({ ip: req.ip }, '[youpi-webhook] Unauthorized webhook attempt')
+      return reply.code(401).send({ error: 'Unauthorized: Invalid secret or signature' })
+    }
+
+    const { amount, utr, orderId, payerVpa, rawText } = parseUpiNotification(body)
+
+    if (!amount || amount <= 0) {
+      req.log.info({ rawText }, '[youpi-webhook] Ignored: No credit amount found in notification')
+      return reply.send({ success: false, message: 'No valid credit amount detected' })
+    }
+
+    // Check duplicate UTR
+    if (utr) {
+      const dupe = await db.query(
+        `SELECT id, order_id, user_id, amount FROM youpi_orders WHERE utr = $1 AND status = 'SUCCESS'`,
+        [utr]
+      )
+      if (dupe.rows.length) {
+        return reply.send({ success: true, message: 'Payment already credited', duplicate: true, utr })
+      }
+    }
+
+    // Attempt to match pending order:
+    // Strategy 1: Match by exact orderId (e.g. MOJ1234567)
+    // Strategy 2: Match by exact UTR if user pre-submitted it in verify-utr
+    // Strategy 3: Match by exact amount in the last 25 minutes
+    let matchedOrder: any = null
+
+    if (orderId) {
+      const oRes = await db.query(
+        `SELECT * FROM youpi_orders WHERE order_id = $1 AND status = 'PENDING'`,
+        [orderId]
+      )
+      if (oRes.rows.length) matchedOrder = oRes.rows[0]
+    }
+
+    if (!matchedOrder && utr) {
+      const uRes = await db.query(
+        `SELECT * FROM youpi_orders WHERE utr = $1 AND status = 'PENDING'`,
+        [utr]
+      )
+      if (uRes.rows.length) matchedOrder = uRes.rows[0]
+    }
+
+    if (!matchedOrder) {
+      // Amount match in last 25 mins
+      const aRes = await db.query(
+        `SELECT * FROM youpi_orders 
+         WHERE amount = $1 AND status = 'PENDING' AND created_at >= NOW() - INTERVAL '25 minutes'
+         ORDER BY created_at DESC LIMIT 1`,
+        [amount]
+      )
+      if (aRes.rows.length) matchedOrder = aRes.rows[0]
+    }
+
+    if (matchedOrder) {
+      const client = await db.connect()
+      try {
+        await client.query('BEGIN')
+
+        await client.query(
+          `UPDATE youpi_orders
+           SET status = 'SUCCESS',
+               utr = COALESCE($1, utr),
+               payer_vpa = COALESCE($2, payer_vpa),
+               raw_sms = $3,
+               paid_at = NOW(),
+               updated_at = NOW()
+           WHERE id = $4`,
+          [utr || null, payerVpa || null, rawText, matchedOrder.id]
+        )
+
+        await client.query(
+          `UPDATE payment_orders
+           SET status = 'paid',
+               gateway_payment_id = COALESCE($1, gateway_order_id),
+               updated_at = NOW()
+           WHERE gateway_order_id = $2`,
+          [utr || null, matchedOrder.order_id]
+        )
+
+        const idemKey = utr ? `youpi_utr_${utr}` : `youpi_order_${matchedOrder.order_id}`
+        await walletSvc.credit({
+          userId: matchedOrder.user_id,
+          amount: parseFloat(matchedOrder.amount),
+          type: 'deposit',
+          walletType: 'real',
+          referenceId: matchedOrder.order_id,
+          idempotencyKey: idemKey,
+          description: `Instant UPI Auto-Credit (UTR: ${utr || 'Direct'})`,
+        }, client)
+
+        await client.query('COMMIT')
+
+        // Trigger referral rewards & push notification
+        await tryTriggerReferralReward(matchedOrder.user_id, db, walletSvc)
+
+        const coreApiUrl = process.env.CORE_API_SERVICE_URL || 'http://127.0.0.1:3001'
+        const key = process.env.INTERNAL_SERVICE_KEY || ''
+        fetch(`${coreApiUrl}/internal/notifications/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-key': key },
+          body: JSON.stringify({
+            user_id: matchedOrder.user_id,
+            title: 'Deposit Successful ⚡',
+            body: `₹${parseFloat(matchedOrder.amount).toFixed(2)} credited to your wallet instantly via UPI!`,
+            type: 'deposit_success',
+          }),
+        }).catch(() => { })
+
+        return reply.send({
+          success: true,
+          matched: true,
+          order_id: matchedOrder.order_id,
+          amount,
+          utr,
+        })
+      } catch (err) {
+        await client.query('ROLLBACK')
+        throw err
+      } finally {
+        client.release()
+      }
+    } else {
+      // Payment arrived at bank, but couldn't be auto-matched to an active pending order.
+      // Save as UNMATCHED so admin can review and link with 1-click on the dashboard!
+      const unmatchedOrderId = `UNMATCHED_${Date.now()}`
+      await db.query(
+        `INSERT INTO youpi_orders (order_id, amount, vpa, merchant_name, upi_intent_url, utr, payer_vpa, raw_sms, status, expires_at)
+         VALUES ($1, $2, $3, $4, '', $5, $6, $7, 'UNMATCHED', NOW() + INTERVAL '7 days')`,
+        [unmatchedOrderId, amount, cfg.vpa, cfg.merchantName, utr || null, payerVpa || null, rawText]
+      )
+
+      return reply.send({
+        success: true,
+        matched: false,
+        message: 'Bank payment received and recorded for admin reconciliation',
+        amount,
+        utr,
+      })
+    }
+  })
+
+  // 5. Admin / Internal: GET /wallet/youpi/admin/orders
+  app.get('/wallet/youpi/admin/orders', { onRequest: [authenticateInternal] }, async (req, reply) => {
+    const { status, limit = '50', offset = '0', search } = req.query as any
+    const conditions: string[] = []
+    const params: any[] = []
+    let pIdx = 1
+
+    if (status && status !== 'all') {
+      conditions.push(`yo.status = $${pIdx++}`)
+      params.push(status)
+    }
+
+    if (search) {
+      conditions.push(`(yo.order_id ILIKE $${pIdx} OR yo.utr ILIKE $${pIdx} OR u.username ILIKE $${pIdx} OR u.phone ILIKE $${pIdx})`)
+      params.push(`%${search}%`)
+      pIdx++
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+    const lim = Math.min(parseInt(limit) || 50, 100)
+    const off = parseInt(offset) || 0
+
+    const [rows, count] = await Promise.all([
+      db.query(
+        `SELECT yo.*, u.username, u.phone
+         FROM youpi_orders yo
+         LEFT JOIN users u ON u.id = yo.user_id
+         ${where}
+         ORDER BY yo.created_at DESC
+         LIMIT $${pIdx++} OFFSET $${pIdx++}`,
+        [...params, lim, off]
+      ),
+      db.query(`SELECT COUNT(*) FROM youpi_orders yo LEFT JOIN users u ON u.id = yo.user_id ${where}`, params),
+    ])
+
+    return reply.send({
+      orders: rows.rows,
+      total: parseInt(count.rows[0].count),
+    })
+  })
+
+  // 6. Admin / Internal: POST /wallet/youpi/admin/orders/:orderId/manual-credit
+  app.post('/wallet/youpi/admin/orders/:orderId/manual-credit', { onRequest: [authenticateInternal] }, async (req, reply) => {
+    const { orderId } = req.params as any
+    const body = z.object({
+      user_id: z.string().uuid().optional(),
+      utr: z.string().optional(),
+      admin_note: z.string().optional(),
+    }).parse(req.body)
+
+    const orderRes = await db.query(`SELECT * FROM youpi_orders WHERE order_id = $1`, [orderId])
+    if (!orderRes.rows.length) return reply.code(404).send({ error: 'Order not found' })
+
+    const order = orderRes.rows[0]
+    if (order.status === 'SUCCESS') {
+      return reply.code(400).send({ error: 'Order is already credited and marked SUCCESS' })
+    }
+
+    const targetUserId = order.user_id || body.user_id
+    if (!targetUserId) {
+      return reply.code(400).send({ error: 'User ID is required to credit this unmatched order' })
+    }
+
+    const finalUtr = body.utr || order.utr || `MANUAL_${Date.now()}`
+
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query(
+        `UPDATE youpi_orders
+         SET user_id = $1, status = 'SUCCESS', utr = $2, paid_at = NOW(), updated_at = NOW()
+         WHERE id = $3`,
+        [targetUserId, finalUtr, order.id]
+      )
+
+      await client.query(
+        `UPDATE payment_orders
+         SET status = 'paid', gateway_payment_id = $1, updated_at = NOW()
+         WHERE gateway_order_id = $2`,
+        [finalUtr, order.order_id]
+      )
+
+      await walletSvc.credit({
+        userId: targetUserId,
+        amount: parseFloat(order.amount),
+        type: 'deposit',
+        walletType: 'real',
+        referenceId: order.order_id,
+        idempotencyKey: `youpi_manual_admin_${order.id}`,
+        description: `YouPI Manual Credit by Admin${body.admin_note ? `: ${body.admin_note}` : ''}`,
+      }, client)
+
+      await client.query('COMMIT')
+
+      await tryTriggerReferralReward(targetUserId, db, walletSvc)
+
+      return reply.send({ success: true, message: `Credited ₹${order.amount} to user successfully!` })
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
+  })
+
+  // 7. Admin / Internal: GET /wallet/youpi/admin/settings
+  app.get('/wallet/youpi/admin/settings', { onRequest: [authenticateInternal] }, async (_req, reply) => {
+    const cfg = await getYouPiConfig()
+    return reply.send({
+      ...cfg,
+      webhook_url: 'https://game.myonlinejoker.com/api/wallet/youpi/webhook',
+    })
+  })
+
+  // 8. Admin / Internal: POST /wallet/youpi/admin/settings
+  app.post('/wallet/youpi/admin/settings', { onRequest: [authenticateInternal] }, async (req, reply) => {
+    const body = z.object({
+      youpi_enabled: z.boolean().optional(),
+      youpi_vpa: z.string().min(3).optional(),
+      youpi_merchant_name: z.string().min(2).optional(),
+      youpi_webhook_secret: z.string().min(6).optional(),
+      youpi_min_deposit: z.number().min(1).optional(),
+      youpi_max_deposit: z.number().min(100).optional(),
+      youpi_auto_credit_utr: z.boolean().optional(),
+      youpi_auto_credit_max: z.number().min(1).optional(),
+    }).parse(req.body)
+
+    for (const [k, v] of Object.entries(body)) {
+      if (v !== undefined) {
+        await db.query(
+          `INSERT INTO system_settings (key, value) VALUES ($1, $2)
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+          [k, String(v)]
+        )
+      }
+    }
+
+    const cfg = await getYouPiConfig()
+    return reply.send({ success: true, settings: cfg })
   })
 
   // POST /wallet/debit/manual (admin only — identified by internal key)
@@ -577,7 +1397,7 @@ async function start() {
            (user_id, type, wallet_type, amount, balance_before, balance_after, reference_id, idempotency_key, status, description)
          VALUES ($1, 'withdrawal', 'real', $2, $3, $4, $5, $6, 'pending', 'Withdrawal pending admin approval')`,
         [user.sub, body.amount, realBalance, realBalance - body.amount,
-         orderRes.rows[0].id, `withdraw:${orderRes.rows[0].id}`]
+        orderRes.rows[0].id, `withdraw:${orderRes.rows[0].id}`]
       )
 
       await client.query('COMMIT')

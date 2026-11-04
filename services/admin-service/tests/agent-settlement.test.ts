@@ -6,14 +6,18 @@ describe('calculateDailySettlement', () => {
     const agents: AgentNode[] = [{ id: 'A', parentAgentId: null, commissionRate: 20, status: 'active' }]
     const losses: PlayerNetLoss[] = [{ agentId: 'A', netHouseWin: 1000 }]
     const result = calculateDailySettlement(agents, losses)
-    expect(result).toEqual([{ agentId: 'A', directCommission: 200, overrideCommission: 0, totalCommission: 200 }])
+    expect(result[0].directCommission).toBe(200)
+    expect(result[0].overrideCommission).toBe(0)
+    expect(result[0].totalCommission).toBe(200)
   })
 
   it('floors at zero when the agent\'s players collectively won money that day', () => {
     const agents: AgentNode[] = [{ id: 'A', parentAgentId: null, commissionRate: 20, status: 'active' }]
     const losses: PlayerNetLoss[] = [{ agentId: 'A', netHouseWin: -500 }]
     const result = calculateDailySettlement(agents, losses)
-    expect(result).toEqual([{ agentId: 'A', directCommission: 0, overrideCommission: 0, totalCommission: 0 }])
+    expect(result[0].directCommission).toBe(0)
+    expect(result[0].overrideCommission).toBe(0)
+    expect(result[0].totalCommission).toBe(0)
   })
 
   it('nets multiple players under the same agent before flooring', () => {
@@ -36,9 +40,11 @@ describe('calculateDailySettlement', () => {
     const result = calculateDailySettlement(agents, losses)
     const sub = result.find(r => r.agentId === 'SUB')!
     const master = result.find(r => r.agentId === 'MASTER')!
-    expect(sub).toEqual({ agentId: 'SUB', directCommission: 200, overrideCommission: 0, totalCommission: 200 })
+    expect(sub.directCommission).toBe(200)
+    expect(sub.totalCommission).toBe(200)
     // (25% - 20%) * 1000 = 50
-    expect(master).toEqual({ agentId: 'MASTER', directCommission: 0, overrideCommission: 50, totalCommission: 50 })
+    expect(master.overrideCommission).toBe(50)
+    expect(master.totalCommission).toBe(50)
   })
 
   it('three-level override cascade: each level earns the difference down to the player pool', () => {

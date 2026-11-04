@@ -95,6 +95,40 @@ async function start() {
     }
   )
 
+  // Autonomous Self-Play Simulation Batch Retraining
+  app.post<{ Body: { games?: number; applyUpdates?: boolean } }>(
+    '/internal/bot/train-self-play',
+    { onRequest: [authenticateInternal] },
+    async (request, reply) => {
+      const games = request.body?.games ? parseInt(String(request.body.games), 10) : 200
+      const applyUpdates = request.body?.applyUpdates !== false
+      try {
+        const result = await trainer.runSelfPlayTraining(games, applyUpdates, 'admin_api')
+        return reply.send({ success: true, data: result })
+      } catch (err) {
+        logger.error({ err }, 'Self-play training failed')
+        return reply.code(500).send({ success: false, error: (err as Error).message })
+      }
+    }
+  )
+
+  // Behavioral Cloning: Imitation Learning from Top 5% Human Winners
+  app.post<{ Body: { topPercentile?: number; applyUpdates?: boolean } }>(
+    '/internal/bot/clone-elite-humans',
+    { onRequest: [authenticateInternal] },
+    async (request, reply) => {
+      const topPercentile = request.body?.topPercentile ? parseFloat(String(request.body.topPercentile)) : 5
+      const applyUpdates = request.body?.applyUpdates !== false
+      try {
+        const result = await trainer.runBehavioralCloning(topPercentile, applyUpdates)
+        return reply.send({ success: true, data: result })
+      } catch (err) {
+        logger.error({ err }, 'Behavioral cloning failed')
+        return reply.code(500).send({ success: false, error: (err as Error).message })
+      }
+    }
+  )
+
   // Rebuilds can take tens of seconds on a large history; kick off and return
   // rather than holding the admin request open.
   app.post('/internal/bot/rebuild', { onRequest: [authenticateInternal] }, async (_req, reply) => {

@@ -1,5 +1,5 @@
 export type Suit = 'S' | 'H' | 'D' | 'C' | 'JK'
-export type BotDifficulty = 'easy' | 'medium' | 'hard'
+export type BotDifficulty = 'easy' | 'medium' | 'hard' | 'god_mode'
 
 export interface Card {
   id: string

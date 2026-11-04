@@ -7,17 +7,22 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS bot_player_profiles (
   id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   player_id                 UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  game_type                 VARCHAR(50) NOT NULL,
-  current_difficulty        VARCHAR(20) NOT NULL CHECK (current_difficulty IN ('easy', 'medium', 'hard')),
+  game_type                 VARCHAR(50) NOT NULL DEFAULT 'teen_patti',
+  current_difficulty        VARCHAR(20) NOT NULL DEFAULT 'medium' CHECK (current_difficulty IN ('easy', 'medium', 'hard')),
   recommended_difficulty    VARCHAR(20) CHECK (recommended_difficulty IN ('easy', 'medium', 'hard')),
   playstyle_cluster         INTEGER,
   win_rate                  NUMERIC(5, 3),
   game_count                INTEGER NOT NULL DEFAULT 0,
-  last_updated              TIMESTAMP DEFAULT NOW(),
-  CONSTRAINT uq_player_game_type UNIQUE (player_id, game_type),
-  CONSTRAINT fk_player_id FOREIGN KEY (player_id) REFERENCES users(id) ON DELETE CASCADE,
-  CONSTRAINT fk_game_type CHECK (game_type IN ('teen_patti', 'ludo', 'aviator', 'matka'))
+  last_updated              TIMESTAMP DEFAULT NOW()
 );
+
+-- Ensure columns exist if table was created by a previous migration
+ALTER TABLE bot_player_profiles ADD COLUMN IF NOT EXISTS game_type VARCHAR(50) DEFAULT 'teen_patti';
+ALTER TABLE bot_player_profiles ADD COLUMN IF NOT EXISTS current_difficulty VARCHAR(20) DEFAULT 'medium';
+ALTER TABLE bot_player_profiles ADD COLUMN IF NOT EXISTS recommended_difficulty VARCHAR(20);
+ALTER TABLE bot_player_profiles ADD COLUMN IF NOT EXISTS playstyle_cluster INTEGER;
+ALTER TABLE bot_player_profiles ADD COLUMN IF NOT EXISTS win_rate NUMERIC(5, 3);
+ALTER TABLE bot_player_profiles ADD COLUMN IF NOT EXISTS last_updated TIMESTAMP DEFAULT NOW();
 
 -- Index for efficient lookup by player_id
 CREATE INDEX IF NOT EXISTS idx_bot_player_profiles_player_id
@@ -41,12 +46,3 @@ CREATE INDEX IF NOT EXISTS idx_bot_player_profiles_player_game
   ON bot_player_profiles(player_id, game_type);
 
 COMMIT;
-
--- ========== DOWN: Drop table and indices (for manual rollback) ==========
--- To rollback, run:
--- DROP TABLE IF EXISTS bot_player_profiles CASCADE;
--- DROP INDEX IF EXISTS idx_bot_player_profiles_player_id;
--- DROP INDEX IF EXISTS idx_bot_player_profiles_game_type;
--- DROP INDEX IF EXISTS idx_bot_player_profiles_recommended_difficulty;
--- DROP INDEX IF EXISTS idx_bot_player_profiles_last_updated;
--- DROP INDEX IF EXISTS idx_bot_player_profiles_player_game;

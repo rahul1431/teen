@@ -48,6 +48,7 @@ export const FALLBACK: Record<string, TeenPattiBotProfile> = {
   easy:   { fold_probability: 0.45, call_probability: 0.45, raise_probability: 0.10, avg_decision_delay_ms: 2800, aggression_score: null },
   medium: { fold_probability: 0.30, call_probability: 0.47, raise_probability: 0.23, avg_decision_delay_ms: 2000, aggression_score: null },
   hard:   { fold_probability: 0.18, call_probability: 0.42, raise_probability: 0.40, avg_decision_delay_ms: 1400, aggression_score: null },
+  god_mode: { fold_probability: 0.04, call_probability: 0.36, raise_probability: 0.60, avg_decision_delay_ms: 1000, aggression_score: 4.8 },
 }
 
 const CACHE_TTL = 3600
@@ -58,7 +59,7 @@ export async function getTeenPattiBotProfile(
   difficulty: string,
   logger?: { warn: (msg: string) => void }
 ): Promise<TeenPattiBotProfile> {
-  const tier = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium'
+  const tier = ['easy', 'medium', 'hard', 'god_mode'].includes(difficulty) ? difficulty : 'medium'
   const cacheKey = `bot:profile:teen_patti:${tier}`
 
   try {

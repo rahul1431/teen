@@ -160,6 +160,24 @@ export function usersPlugin(db: Pool) {
       return reply.send(res.rows)
     })
 
+    // GET /users/popups — public active popups for Player App & Agent App
+    app.get('/users/popups', async (req, reply) => {
+      const { target = 'player' } = (req.query || {}) as { target?: string };
+      const { page = 'all' } = (req.query || {}) as { page?: string };
+      const res = await db.query(
+        `SELECT id, title, body, image_url, button_text, button_link, target_audience, display_type, target_page, delay_seconds, action_type, sort_order
+         FROM app_popups
+         WHERE is_active = true
+           AND (target_audience = 'all' OR target_audience = $1)
+           AND (target_page = 'all' OR target_page = $2)
+           AND (starts_at IS NULL OR starts_at <= NOW())
+           AND (ends_at IS NULL OR ends_at >= NOW())
+         ORDER BY sort_order ASC, created_at DESC`,
+        [target, page]
+      );
+      return reply.send(res.rows);
+    });
+
     // GET /users/pages/:slug — public read of admin-authored cms_pages
     // (Support & CMS → CMS Pages tab), for static content screens like
     // Terms/Privacy/FAQ. Published rows only.
@@ -173,12 +191,17 @@ export function usersPlugin(db: Pool) {
       return reply.send(res.rows[0])
     })
 
+    const ALLOWED_IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp']
+    const ALLOWED_IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp']
+
     app.post('/users/me/avatar', { onRequest: [app.authenticate] }, async (req, reply) => {
       const user = req.user as any
       const data = await (req as any).file()
       if (!data) return reply.code(400).send({ error: 'No file uploaded' })
-      const ext = path.extname(data.filename || '.jpg').toLowerCase()
-      if (!['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) return reply.code(400).send({ error: 'Only jpg/png/webp allowed' })
+      const ext = path.extname(data.filename || '.jpg').toLowerCase().slice(0, 8)
+      if (!ALLOWED_IMAGE_EXTS.includes(ext) || !ALLOWED_IMAGE_MIMES.includes(data.mimetype)) {
+        return reply.code(400).send({ error: 'Only valid JPG, PNG, or WebP images are allowed' })
+      }
       const filename = `${user.sub}_${crypto.randomBytes(6).toString('hex')}${ext}`
       const filePath = path.join(AVATAR_UPLOAD_DIR, filename)
       await pipeline(data.file, fs.createWriteStream(filePath))
@@ -198,7 +221,10 @@ export function usersPlugin(db: Pool) {
           if (part.type !== 'file') continue
           const key = part.fieldname
           if (!['aadhaar_front', 'aadhaar_back', 'selfie'].includes(key)) continue
-          const ext = path.extname(part.filename || '.jpg').toLowerCase()
+          const ext = path.extname(part.filename || '.jpg').toLowerCase().slice(0, 8)
+          if (!ALLOWED_IMAGE_EXTS.includes(ext) || !ALLOWED_IMAGE_MIMES.includes(part.mimetype)) {
+            return reply.code(400).send({ error: 'Only valid JPG, PNG, or WebP images are allowed for KYC verification' })
+          }
           await pipeline(part.file, fs.createWriteStream(path.join(userDir, `${key}${ext}`)))
           files[key] = `${APP_URL}/uploads/kyc/${user.sub}/${key}${ext}`
         }
@@ -437,7 +463,7 @@ export function usersPlugin(db: Pool) {
     // ── Gallery File Upload ───────────────────────────────────────────────────
     app.post('/users/me/gallery/upload', { onRequest: [app.authenticate] }, async (req, reply) => {
       const user = req.user as any
-      const data = await req.file()
+      const data = await (req as any).file()
       if (!data) return reply.code(400).send({ error: 'No file uploaded' })
 
       const ext = path.extname(data.filename || '.jpg').toLowerCase()

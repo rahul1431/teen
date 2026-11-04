@@ -4986,6 +4986,152 @@ async function start() {
     return reply.send({ ok: true })
   })
 
+  // ── App Popups (Player & Agent Apps) ──────────────────────────────────────────────
+  const POPUP_UPLOAD_DIR = process.env.POPUP_UPLOAD_DIR || '/opt/teen-prod/uploads/popups'
+  try { fs.mkdirSync(POPUP_UPLOAD_DIR, { recursive: true }) } catch { /* ignore */ }
+
+  app.get('/api/admin/popups', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { target_audience } = req.query as { target_audience?: string }
+    let query = `SELECT * FROM app_popups`
+    const params: any[] = []
+    if (target_audience && target_audience !== 'all') {
+      params.push(target_audience)
+      query += ` WHERE target_audience = $1 OR target_audience = 'all'`
+    }
+    query += ` ORDER BY sort_order ASC, created_at DESC`
+    const res = await db.query(query, params)
+    return reply.send(res.rows)
+  })
+
+  app.post('/api/admin/popups', {
+    onRequest: [app.authenticate, app.requireRole('support')],
+  }, async (req, reply) => {
+    let imageUrl = ''
+    let title = '', body = '', buttonText = '', buttonLink = ''
+    let targetAudience = 'all', displayType = 'modal'
+    let targetPage = 'all', delaySeconds = 2, actionType = 'navigate'
+    let sortOrder = 0, isActive = true
+
+    if ((req as any).isMultipart && (req as any).isMultipart()) {
+      const parts = (req as any).parts()
+      for await (const part of parts) {
+        if (part.type === 'file') {
+          const ext = path.extname(part.filename || '').toLowerCase().slice(0, 8) || '.jpg'
+          if (!['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) {
+            part.file.resume()
+            return reply.code(400).send({ error: 'Only jpg/png/webp/gif allowed' })
+          }
+          const fname = `popup_${crypto.randomUUID()}${ext}`
+          await pipeline(part.file, fs.createWriteStream(path.join(POPUP_UPLOAD_DIR, fname)))
+          imageUrl = `/uploads/popups/${fname}`
+        } else {
+          const v = (part.value as string)?.trim() ?? ''
+          if (part.fieldname === 'title') title = v
+          if (part.fieldname === 'body') body = v
+          if (part.fieldname === 'button_text') buttonText = v
+          if (part.fieldname === 'button_link') buttonLink = v
+          if (part.fieldname === 'target_audience') targetAudience = v
+          if (part.fieldname === 'display_type') displayType = v
+          if (part.fieldname === 'target_page') targetPage = v
+          if (part.fieldname === 'delay_seconds') delaySeconds = parseInt(v) || 2
+          if (part.fieldname === 'action_type') actionType = v
+          if (part.fieldname === 'sort_order') sortOrder = parseInt(v) || 0
+          if (part.fieldname === 'is_active') isActive = v !== 'false'
+          if (part.fieldname === 'image_url') imageUrl = imageUrl || v
+        }
+      }
+    } else {
+      const b = (req.body as any) || {}
+      title = (b.title || '').trim()
+      body = b.body || ''
+      imageUrl = b.image_url || ''
+      buttonText = b.button_text || ''
+      buttonLink = b.button_link || ''
+      targetAudience = b.target_audience || 'all'
+      displayType = b.display_type || 'modal'
+      targetPage = b.target_page || 'all'
+      delaySeconds = Number(b.delay_seconds) || 2
+      actionType = b.action_type || 'navigate'
+      sortOrder = Number(b.sort_order) || 0
+      isActive = b.is_active !== false
+    }
+
+    if (!title) return reply.code(400).send({ error: 'Title is required' })
+
+    const res = await db.query(
+      `INSERT INTO app_popups (title, body, image_url, button_text, button_link, target_audience, display_type, target_page, delay_seconds, action_type, sort_order, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      [title, body || null, imageUrl || null, buttonText || null, buttonLink || null, targetAudience, displayType, targetPage, delaySeconds, actionType, sortOrder, isActive]
+    )
+    return reply.send(res.rows[0])
+  })
+
+  app.put('/api/admin/popups/:id', {
+    onRequest: [app.authenticate, app.requireRole('support')],
+  }, async (req, reply) => {
+    const { id } = req.params as any
+    const b = (req.body as any) || {}
+    const res = await db.query(
+      `UPDATE app_popups SET
+         title = COALESCE($1, title),
+         body = COALESCE($2, body),
+         image_url = COALESCE($3, image_url),
+         button_text = COALESCE($4, button_text),
+         button_link = COALESCE($5, button_link),
+         target_audience = COALESCE($6, target_audience),
+         display_type = COALESCE($7, display_type),
+         target_page = COALESCE($8, target_page),
+         delay_seconds = COALESCE($9, delay_seconds),
+         action_type = COALESCE($10, action_type),
+         sort_order = COALESCE($11, sort_order),
+         is_active = COALESCE($12, is_active),
+         updated_at = NOW()
+       WHERE id = $13 RETURNING *`,
+      [b.title ?? null, b.body ?? null, b.image_url ?? null, b.button_text ?? null,
+       b.button_link ?? null, b.target_audience ?? null, b.display_type ?? null,
+       b.target_page ?? null, b.delay_seconds ?? null, b.action_type ?? null,
+       b.sort_order ?? null, b.is_active ?? null, id]
+    )
+    if (!res.rows.length) return reply.code(404).send({ error: 'Popup not found' })
+    return reply.send(res.rows[0])
+  })
+
+  app.patch('/api/admin/popups/:id/toggle', {
+    onRequest: [app.authenticate, app.requireRole('support')],
+  }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `UPDATE app_popups SET is_active = NOT is_active, updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [id]
+    )
+    if (!res.rows.length) return reply.code(404).send({ error: 'Popup not found' })
+    return reply.send(res.rows[0])
+  })
+
+  app.delete('/api/admin/popups/:id', {
+    onRequest: [app.authenticate, app.requireRole('support')],
+  }, async (req, reply) => {
+    const { id } = req.params as any
+    await db.query(`DELETE FROM app_popups WHERE id = $1`, [id])
+    return reply.send({ ok: true })
+  })
+
+  // Public active popups endpoint (No auth required)
+  app.get('/api/popups/active', async (req, reply) => {
+    const { target = 'all' } = (req.query || {}) as { target?: string }
+    const res = await db.query(
+      `SELECT id, title, body, image_url, button_text, button_link, target_audience, display_type, target_page, delay_seconds, action_type, sort_order
+       FROM app_popups
+       WHERE is_active = true
+         AND (target_audience = 'all' OR target_audience = $1)
+         AND (starts_at IS NULL OR starts_at <= NOW())
+         AND (ends_at IS NULL OR ends_at >= NOW())
+       ORDER BY sort_order ASC, created_at DESC`,
+      [target]
+    )
+    return reply.send(res.rows)
+  })
+
   // ── Promo Codes ───────────────────────────────────────────────────────────────
   app.get('/api/admin/promo-codes', { onRequest: [app.authenticate] }, async (_req, reply) => {
     const res = await db.query(`SELECT * FROM promo_codes ORDER BY created_at DESC`)

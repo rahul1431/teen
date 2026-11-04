@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { createInitialState } from './rules'
-import { chooseBotDraw, chooseBotDiscard, tryBotDeclare } from './coordination'
+import { chooseBotDraw, chooseBotDiscard, tryBotDeclare, calculateDeadwoodPoints, shouldBotDrop } from './coordination'
 
 function makeState() {
   const state = createInitialState('r', 100, [
@@ -94,5 +94,68 @@ describe('tryBotDeclare', () => {
     ]
     const result = tryBotDeclare(state, 0)
     assert.notEqual(result, null)
+  })
+})
+
+describe('calculateDeadwoodPoints & shouldBotDrop', () => {
+  test('calculates deadwood points capped at 80', () => {
+    const hand = [
+      { id: '1', rank: 'K', suit: 'S' as const },
+      { id: '2', rank: 'Q', suit: 'H' as const },
+      { id: '3', rank: 'J', suit: 'D' as const },
+      { id: '4', rank: '10', suit: 'C' as const },
+    ]
+    const pts = calculateDeadwoodPoints(hand, '__NONE__')
+    assert.equal(pts, 40) // 10 + 10 + 10 + 10 = 40
+  })
+
+  test('shouldBotDrop triggers on terrible unmelded hand with high deadwood on hard difficulty', () => {
+    const state = makeState()
+    state.bot_difficulty = 'hard'
+    state.players[0].bot_difficulty = 'hard'
+    state.wild_rank = '__NONE__'
+    state.players[0].has_taken_turn = false
+    // 13 uncoordinated high deadwood cards with 0 jokers and no sequence
+    state.players[0].hand = [
+      { id: '1', rank: 'K', suit: 'S' },
+      { id: '2', rank: 'Q', suit: 'H' },
+      { id: '3', rank: 'J', suit: 'D' },
+      { id: '4', rank: '9', suit: 'C' },
+      { id: '5', rank: '7', suit: 'S' },
+      { id: '6', rank: '5', suit: 'H' },
+      { id: '7', rank: '3', suit: 'D' },
+      { id: '8', rank: '2', suit: 'C' },
+      { id: '9', rank: 'K', suit: 'H' },
+      { id: '10', rank: 'Q', suit: 'D' },
+      { id: '11', rank: 'J', suit: 'C' },
+      { id: '12', rank: '9', suit: 'S' },
+      { id: '13', rank: '7', suit: 'D' },
+    ]
+    assert.equal(shouldBotDrop(state, 0), true)
+  })
+
+  test('shouldBotDrop does not drop when bot holds a pure sequence', () => {
+    const state = makeState()
+    state.bot_difficulty = 'hard'
+    state.players[0].bot_difficulty = 'hard'
+    state.wild_rank = '__NONE__'
+    state.players[0].has_taken_turn = false
+    state.players[0].hand = [
+      // Pure sequence: 2S, 3S, 4S
+      { id: '1', rank: '2', suit: 'S' },
+      { id: '2', rank: '3', suit: 'S' },
+      { id: '3', rank: '4', suit: 'S' },
+      { id: '4', rank: 'K', suit: 'H' },
+      { id: '5', rank: 'Q', suit: 'D' },
+      { id: '6', rank: 'J', suit: 'C' },
+      { id: '7', rank: '9', suit: 'S' },
+      { id: '8', rank: '7', suit: 'H' },
+      { id: '9', rank: '5', suit: 'D' },
+      { id: '10', rank: '3', suit: 'C' },
+      { id: '11', rank: 'K', suit: 'D' },
+      { id: '12', rank: 'Q', suit: 'C' },
+      { id: '13', rank: 'J', suit: 'S' },
+    ]
+    assert.equal(shouldBotDrop(state, 0), false)
   })
 })

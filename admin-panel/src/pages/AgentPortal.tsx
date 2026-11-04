@@ -28,7 +28,7 @@ export const SUPPORTED_GAMES = [
   { key: 'aviator', label: 'Aviator', icon: '🚀', color: '#f5222d' },
   { key: 'matka', label: 'Satta Matka', icon: '🎯', color: '#722ed1' },
   { key: 'lottery', label: 'Lottery', icon: '🎟️', color: '#eb2f96' },
-  { key: 'cricket', label: 'Cricket Betting', icon: '🏏', color: '#13c2c2' },
+  { key: 'cricket', label: 'Sports Betting', icon: '🏆', color: '#13c2c2' },
 ]
 
 export default function AgentPortal() {
@@ -49,6 +49,32 @@ export default function AgentPortal() {
   const [subAgentModalOpen, setSubAgentModalOpen] = useState(false)
   const [passwordModalOpen, setPasswordModalOpen] = useState(false)
   const [qrModalOpen, setQrModalOpen] = useState(false)
+
+  // Announcement popup state for Agent Portal
+  const [activePopup, setActivePopup] = useState<any | null>(null)
+  const [popupVisible, setPopupVisible] = useState(false)
+
+  useEffect(() => {
+    const fetchAgentPopup = async () => {
+      try {
+        const res = await window.fetch('/api/users/popups?target=agent')
+        if (res.ok) {
+          const list = await res.json()
+          if (Array.isArray(list) && list.length > 0) {
+            const first = list[0]
+            const dismissedKey = `dismissed_agent_popup_${first.id}`
+            if (!sessionStorage.getItem(dismissedKey)) {
+              setActivePopup(first)
+              setPopupVisible(true)
+            }
+          }
+        }
+      } catch {
+        // graceful
+      }
+    }
+    fetchAgentPopup()
+  }, [])
 
   // Player search filter
   const [playerSearch, setPlayerSearch] = useState('')
@@ -279,6 +305,9 @@ export default function AgentPortal() {
             </Col>
             <Col xs={24} md={10} style={{ textAlign: 'right' }}>
               <Space wrap size="small">
+                <Button size="small" type="primary" style={{ background: '#d4af37', borderColor: '#d4af37', color: '#000', fontWeight: 700 }} icon={<MobileOutlined />} href="/downloads/agent-partner-release.apk" target="_blank">
+                  Agent App (v1.0)
+                </Button>
                 <Button size="small" icon={<QrcodeOutlined />} onClick={() => setQrModalOpen(true)}>
                   QR Code
                 </Button>
@@ -950,6 +979,70 @@ export default function AgentPortal() {
           Payout
         </Button>
       </div>
+      {/* Announcement Popup for Agent */}
+      <Modal
+        open={popupVisible && Boolean(activePopup)}
+        onCancel={() => {
+          if (activePopup) sessionStorage.setItem(`dismissed_agent_popup_${activePopup.id}`, 'true')
+          setPopupVisible(false)
+        }}
+        footer={null}
+        centered
+        closable={true}
+        bodyStyle={{ padding: 0, borderRadius: 16, overflow: 'hidden' }}
+        style={{ maxWidth: 420 }}
+      >
+        {activePopup && (
+          <div style={{ background: '#0F172A', color: '#F8FAFC', borderRadius: 16, overflow: 'hidden', textAlign: 'center' }}>
+            {activePopup.image_url && (
+              <img
+                src={activePopup.image_url}
+                alt={activePopup.title}
+                style={{ width: '100%', maxHeight: 180, objectFit: 'cover' }}
+              />
+            )}
+            <div style={{ padding: '20px 24px' }}>
+              <div style={{ fontSize: 18, fontWeight: 800, color: '#FBBF24', marginBottom: 8 }}>
+                {activePopup.title}
+              </div>
+              {activePopup.body && (
+                <div style={{ fontSize: 14, color: '#CBD5E1', lineHeight: '1.5', marginBottom: 20 }}>
+                  {activePopup.body}
+                </div>
+              )}
+              {activePopup.button_text && (
+                <Button
+                  type="primary"
+                  size="large"
+                  block
+                  style={{
+                    background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
+                    borderColor: '#D97706',
+                    color: '#000',
+                    fontWeight: 800,
+                    height: 44,
+                    borderRadius: 10,
+                  }}
+                  onClick={() => {
+                    sessionStorage.setItem(`dismissed_agent_popup_${activePopup.id}`, 'true')
+                    setPopupVisible(false)
+                    if (activePopup.button_link) {
+                      if (activePopup.button_link.startsWith('http')) {
+                        window.open(activePopup.button_link, '_blank')
+                      } else {
+                        window.location.href = activePopup.button_link
+                      }
+                    }
+                  }}
+                >
+                  {activePopup.button_text}
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+
     </div>
   )
 }

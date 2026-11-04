@@ -1,17 +1,19 @@
 import { useState } from 'react'
 import { Tabs, Card, Alert, Button, Space, Tag, Divider, Tooltip } from 'antd'
-import { RobotOutlined, SettingOutlined, DashboardOutlined, SyncOutlined, AlertOutlined, AimOutlined, SafetyOutlined, MonitorOutlined, CloudServerOutlined } from '@ant-design/icons'
+import { RobotOutlined, SettingOutlined, DashboardOutlined, SyncOutlined, AlertOutlined, AimOutlined, SafetyOutlined, MonitorOutlined, CloudServerOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { AIPromptConsole } from '../components/AI/AIPromptConsole'
 import { MLConfigPanel } from '../components/AI/MLConfigPanel'
+import { BotLearningTab } from '../components/AI/BotLearningTab'
 import { WorkflowDashboard } from '../components/AI/WorkflowDashboard'
 import { ServerStatsTab } from '../components/AI/ServerStatsTab'
 import { ChurnTab } from '../components/AI/ChurnTab'
 import { WatchdogTab } from '../components/AI/WatchdogTab'
 import { AppMonitorTab } from '../components/AI/AppMonitorTab'
+import { AICompanySwarmTab } from '../components/AI/AICompanySwarmTab'
 import PlayerTracking from './PlayerTracking'
 
 export function AIControlCenter() {
-  const [activeTab, setActiveTab] = useState('1')
+  const [activeTab, setActiveTab] = useState('bot-arena-learning')
   const [refreshing, setRefreshing] = useState(false)
 
   const handleRefresh = async () => {
@@ -22,6 +24,28 @@ export function AIControlCenter() {
   }
 
   const tabItems = [
+    {
+      key: 'bot-arena-learning',
+      label: (
+        <span>
+          <ThunderboltOutlined style={{ color: '#ec4899' }} />
+          🤖 Game Bots &amp; AI Arena
+        </span>
+      ),
+      children: <BotLearningTab />,
+      extra: <Tag color="magenta">Arena &amp; Profiles</Tag>,
+    },
+    {
+      key: 'company-swarm',
+      label: (
+        <span>
+          <RobotOutlined style={{ color: '#0284c7' }} />
+          🏢 AI Company &amp; Employees
+        </span>
+      ),
+      children: <AICompanySwarmTab />,
+      extra: <Tag color="blue">Autonomous COO</Tag>,
+    },
     {
       key: '1',
       label: (
@@ -45,7 +69,7 @@ export function AIControlCenter() {
       extra: <Tag color="orange">Parameter Tuning</Tag>,
     },
     {
-      key: '3',
+      key: '4',
       label: (
         <span>
           <DashboardOutlined />
@@ -56,7 +80,7 @@ export function AIControlCenter() {
       extra: <Tag color="green">Live Monitoring</Tag>,
     },
     {
-      key: '4',
+      key: '5',
       label: (
         <span>
           <AlertOutlined />
@@ -67,7 +91,7 @@ export function AIControlCenter() {
       extra: <Tag color="red">Re-Engagement</Tag>,
     },
     {
-      key: '5',
+      key: '6',
       label: (
         <span>
           <AimOutlined />
@@ -78,7 +102,7 @@ export function AIControlCenter() {
       extra: <Tag color="gold">Live Players</Tag>,
     },
     {
-      key: '6',
+      key: '7',
       label: (
         <span>
           <SafetyOutlined />
@@ -89,7 +113,7 @@ export function AIControlCenter() {
       extra: <Tag color="purple">Self-Healing</Tag>,
     },
     {
-      key: '7',
+      key: '8',
       label: (
         <span>
           <MonitorOutlined />
@@ -100,7 +124,7 @@ export function AIControlCenter() {
       extra: <Tag color="cyan">App Health</Tag>,
     },
     {
-      key: '8',
+      key: '9',
       label: (
         <span>
           <CloudServerOutlined />

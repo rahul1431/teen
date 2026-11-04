@@ -39,7 +39,15 @@ export async function cricApiFetch(db: Pool, buildUrl: (apiKey: string) => strin
   for (let i = 0; i < keys.length; i++) {
     const key = keys[(startIndex + i) % keys.length]
     try {
-      const data = await (await fetch(buildUrl(key))).json() as any
+      const res = await fetch(buildUrl(key))
+      const text = await res.text()
+      let data: any
+      try {
+        data = JSON.parse(text)
+      } catch {
+        lastResult = { status: 'failure', reason: `CricAPI returned non-JSON HTTP ${res.status}` }
+        continue
+      }
       rrIndex = (startIndex + i + 1) % keys.length
       if (data.status === 'success' || !isRateLimited(data)) return data
       lastResult = data // rate-limited on this key — try the next one in the pool

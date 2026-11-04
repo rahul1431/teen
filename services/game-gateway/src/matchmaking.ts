@@ -4,7 +4,7 @@ import { v4 as uuid } from 'uuid'
 import crypto from 'crypto'
 import { RealtimeHub } from './realtime'
 import { GameWatchdog } from './watchdog'
-import { aggressionUnit, getBotProfile, getLudoBotProfile, pickBotAction, pickBotDelay, TeenPattiBotProfile } from './bot-profile'
+import { aggressionUnit, getBotProfile, getLudoBotProfile, getRummyBotProfile, pickBotAction, pickBotDelay, pickRummyBotDelay, pickLudoBotDelay, TeenPattiBotProfile } from './bot-profile'
 
 /**
  * Actions the Teen Patti engine's bot brain may return.
@@ -27,6 +27,12 @@ import { GameRecorder } from './botCoordination/gameRecorder'
 import { computeEffectiveBoldness } from './botCoordination/adaptiveBoldness'
 import { decideBotWinner, buildEngineCoordination } from './botCoordination/winnerDecision'
 import { applyEntryFeeDelta } from './entry-fee-reconcile'
+import { OpponentModeler } from './botCoordination/opponentModeler'
+import { triggerBotReaction } from './botCoordination/botReactions'
+import { PlayerMemoryManager } from './bot-memory/player-memory'
+import { RetentionManager } from './bot-retention/retention-manager'
+import { RummyWorkingMemory } from './bot-memory/working-memory-rummy'
+import { CollusionSentinelSwarm } from './bot-sentinel/collusion-sentinel'
 
 export interface MatchmakingEntry {
   userId: string
@@ -386,6 +392,7 @@ export class MatchmakingService {
   private electionAlgorithm: ElectionAlgorithm
   private botTrainingConfig: BotTrainingConfigRepository
   private gameRecorder: GameRecorder
+  private collusionSentinel: CollusionSentinelSwarm
 
   constructor(
     private redis: Redis,
@@ -396,6 +403,7 @@ export class MatchmakingService {
     this.electionAlgorithm = new ElectionAlgorithm()
     this.botTrainingConfig = new BotTrainingConfigRepository(this.redis, this.db as any)
     this.gameRecorder = new GameRecorder(this.db)
+    this.collusionSentinel = new CollusionSentinelSwarm(this.redis, this.db)
   }
 
   // Room-state helpers used by the gateway's game:action handler.
@@ -587,6 +595,21 @@ export class MatchmakingService {
     console.log(`[matchmaking] tryCreateRoom: ${members.length} players ready for ${gameType}:${variation}:${stake} — starting game`)
     this.clearBotFillTimers(`${gameType}:${variation}:${stake}`)
     const players: MatchmakingEntry[] = members.map(m => JSON.parse(m))
+
+    // Multi-Agent Anti-Collusion Sentinel check
+    const realUserIds = players.filter(p => !p.isBot).map(p => p.userId)
+    if (realUserIds.length >= 2) {
+      const collusionCheck = await this.collusionSentinel.checkMatchmakingCollusion(realUserIds)
+      if (!collusionCheck.allowed && collusionCheck.conflictingPair) {
+        console.warn(`[sentinel] Collusion quarantine active: ${collusionCheck.reason} — separating players`)
+        const [, p2] = collusionCheck.conflictingPair
+        const removeIdx = players.findIndex(p => p.userId === p2)
+        if (removeIdx !== -1) {
+          const removed = players.splice(removeIdx, 1)[0]
+          await this.redis.zadd(key, Date.now() + 5000, JSON.stringify(removed))
+        }
+      }
+    }
     await this.startGame(gameType, stake, players, [], variation)
   }
 
@@ -937,9 +960,31 @@ export class MatchmakingService {
   private async askEngineForBotAction(
     roomId: string,
     currentPlayer: any,
-    profile: TeenPattiBotProfile
+    profile: TeenPattiBotProfile,
+    state?: any
   ): Promise<{ action: BotAction; amount: number | null }> {
     const engineUrl = process.env.TEEN_PATTI_ENGINE_URL || 'http://127.0.0.1:3010'
+    const opponentTendency = state?.players
+      ? await OpponentModeler.getRoomOpponentTendency(this.redis, state.players)
+      : 'balanced'
+
+    // Exploit human leaks via cognitive episodic memory
+    let effectiveProfile = { ...profile }
+    const realPlayers = (state?.players ?? []).filter((p: any) => !(p.isBot || p.is_bot))
+    const primaryHuman = realPlayers[0]
+    const primaryHumanId = primaryHuman?.user_id ?? primaryHuman?.userId
+    if (primaryHumanId) {
+      try {
+        const mem = await PlayerMemoryManager.getPlayerMemory(this.redis, this.db, primaryHumanId)
+        effectiveProfile = {
+          ...effectiveProfile,
+          ...PlayerMemoryManager.adaptTeenPattiProfile(profile, mem),
+        }
+      } catch {
+        // Fall back to baseline profile
+      }
+    }
+
     try {
       const res = await fetch(`${engineUrl}/bot/decide`, {
         method: 'POST',
@@ -947,12 +992,13 @@ export class MatchmakingService {
         body: JSON.stringify({
           room_id: roomId,
           user_id: currentPlayer.user_id ?? currentPlayer.userId,
-          fold_probability: profile.fold_probability,
-          call_probability: profile.call_probability,
-          raise_probability: profile.raise_probability,
+          fold_probability: effectiveProfile.fold_probability,
+          call_probability: effectiveProfile.call_probability,
+          raise_probability: effectiveProfile.raise_probability,
           // Scales how hard the engine lets the hand override the trained rates,
           // how often it bluffs, and how much it over-bets a strong hand.
-          aggression: aggressionUnit(profile),
+          aggression: aggressionUnit(effectiveProfile),
+          opponent_tendency: opponentTendency,
         }),
         signal: AbortSignal.timeout(1000),
       })
@@ -965,6 +1011,19 @@ export class MatchmakingService {
           // a flat 2x here would throw that away and put every bot back on the
           // fixed bet size that made them identifiable.
           const amount = typeof decision.amount === 'number' && decision.amount > 0 ? decision.amount : null
+          PlayerMemoryManager.logBotDecision(this.db, {
+            gameType: 'teen_patti',
+            roomId,
+            botUserId: currentPlayer.user_id ?? currentPlayer.userId,
+            targetUserId: primaryHumanId,
+            decisionType: 'action',
+            stateSnapshot: {
+              pot: state?.pot,
+              currentTurn: state?.currentTurn ?? state?.current_turn,
+              isSeen: currentPlayer.isSeen || currentPlayer.is_seen,
+            },
+            actionChosen: decision.action as string,
+          })
           return { action: decision.action as BotAction, amount }
         }
       }
@@ -1674,7 +1733,7 @@ export class MatchmakingService {
     // Bot acts after a profile-driven delay
     const gameType = state.gameType ?? state.game_type ?? 'teen_patti'
     // I3: Ensure botDifficulty always resolves to a typed string before reaching getBotProfile
-    const roomWideDifficulty = (state.botDifficulty ?? state.bot_difficulty ?? 'medium') as 'easy' | 'medium' | 'hard'
+    const roomWideDifficulty = (state.botDifficulty ?? state.bot_difficulty ?? 'medium') as 'easy' | 'medium' | 'hard' | 'god_mode' | 'god_mode'
     // Teen Patti's persisted room state comes from the Go engine's response,
     // which has no bot_difficulty field per player — so the acting bot's own
     // override (if any) is looked up directly here rather than read off state.
@@ -1689,7 +1748,7 @@ export class MatchmakingService {
     // locally. On any engine failure we fall back to the local draw rather than
     // stalling the bot's turn.
     const decision = gameType === 'teen_patti'
-      ? await this.askEngineForBotAction(roomId, currentPlayer, botProfile)
+      ? await this.askEngineForBotAction(roomId, currentPlayer, botProfile, state)
       : { action: pickBotAction(botProfile) as BotAction, amount: null as number | null }
     const botAction = decision.action
     const botDelay = pickBotDelay(botProfile)
@@ -1800,7 +1859,7 @@ export class MatchmakingService {
               body: JSON.stringify({ user_id: userId, amount: extraBet, room_id: roomId }),
             }).catch(e => console.error('[gateway] Bot unlock rollback failed', e))
 
-            await this.db.query(
+          await this.db.query(
               'UPDATE game_participants SET entry_fee_deducted = entry_fee_deducted - $1 WHERE room_id = $2 AND user_id = $3',
               [extraBet, roomId, userId]
             ).catch(e => console.error('[gateway] Failed to rollback bot entry_fee_deducted in DB', e))
@@ -2031,7 +2090,11 @@ export class MatchmakingService {
         return
       }
 
-      await new Promise(r => setTimeout(r, 1200)) // pacing so the table feels live
+      // Natural human timing: random 2 to 7 seconds (2000ms - 7000ms)
+      const botDiff = (cur.bot_difficulty ?? state.bot_difficulty ?? 'medium') as string
+      const ludoProfile = await getLudoBotProfile(this.redis, botDiff)
+      const delayMs = pickLudoBotDelay(ludoProfile)
+      await new Promise(r => setTimeout(r, delayMs))
       try {
         // Check bot coordination state
         const coordination = await this.handleBotTurn(roomId, cur.user_id)
@@ -2062,6 +2125,16 @@ export class MatchmakingService {
           result: data.result ?? null,
         })
         if (data.result) { await this.handleLudoEnd(roomId, data.result); return }
+        if (newState && newState.current_turn === turnIdx && data.dice !== 6) {
+          triggerBotReaction(this.hub, roomId, { userId: cur.user_id, username: cur.username || 'Player' }, 'capture', 0.60)
+        } else if (botTurnPayload.retention_mode === 'soft_pacing' && Math.random() < 0.35) {
+          triggerBotReaction(this.hub, roomId, { userId: cur.user_id, username: cur.username || 'Player' }, 'near_miss', 0.45)
+        }
+        if (newState && newState.current_turn === turnIdx && data.dice !== 6) {
+          triggerBotReaction(this.hub, roomId, { userId: cur.user_id, username: cur.username || 'Player' }, 'capture', 0.60)
+        } else if (botTurnPayload.retention_mode === 'soft_pacing' && Math.random() < 0.35) {
+          triggerBotReaction(this.hub, roomId, { userId: cur.user_id, username: cur.username || 'Player' }, 'near_miss', 0.45)
+        }
       } catch (e) {
         console.error('Ludo bot turn error', e)
         return
@@ -2261,6 +2334,16 @@ export class MatchmakingService {
       rankings: result.rankings ?? [],
     })
 
+    // Human-like bot emoji reaction on win
+    if (effectiveWinnerId) {
+      void this.getRoomState(roomId).then(ludoState => {
+        const ludoWinner = ludoState?.players?.find((p: any) => (p.userId ?? p.user_id) === effectiveWinnerId)
+        if (ludoWinner && (ludoWinner.isBot || ludoWinner.is_bot)) {
+          triggerBotReaction(this.hub, roomId, { userId: effectiveWinnerId, username: ludoWinner.username || 'Bot' }, 'win')
+        }
+      }).catch(() => {})
+    }
+
     let players: { user_id: string; entry_fee: number }[] = []
     try {
       const parts = await this.db.query(
@@ -2269,7 +2352,8 @@ export class MatchmakingService {
       )
       players = parts.rows.map(r => ({
         user_id: r.user_id,
-        entry_fee: parseFloat(r.entry_fee_deducted) || 0
+        entry_fee: parseFloat(r.entry_fee_deducted) || 0,
+        is_bot: r.is_bot,
       }))
 
       // idempotency_key makes a retry safe (settle-game won't double-credit).
@@ -2487,20 +2571,56 @@ export class MatchmakingService {
         return
       }
 
-      // Random thinking time for bots between 5 and 15 seconds
-      const delayMs = Math.floor(Math.random() * 10001) + 5000;
+      // Natural cognitive thinking time for bots based on trained profile
+      const actingBotId = cur.user_id ?? cur.userId
+      const botDiff = (cur.bot_difficulty ?? state.bot_difficulty ?? 'medium') as string
+      const baseRummyProfile = await getRummyBotProfile(this.redis, botDiff)
+      let rummyProfile = { ...baseRummyProfile }
+      const rummyRealPlayers = (state.players || []).filter((p: any) => !p.is_bot && !p.isBot)
+      const primaryRummyHumanId = rummyRealPlayers[0]?.user_id ?? rummyRealPlayers[0]?.userId
+      if (primaryRummyHumanId) {
+        try {
+          const retention = await RetentionManager.evaluateRetention(this.redis, this.db, primaryRummyHumanId)
+          rummyProfile = RetentionManager.adaptRummyForRetention(rummyProfile, retention)
+        } catch {}
+      }
+      const delayMs = pickRummyBotDelay(rummyProfile)
+      const nextPlayerIdx = (turnIdx + 1) % (state.players?.length || 1)
+      const nextPlayer = state.players?.[nextPlayerIdx]
+      const nextPlayerId = nextPlayer?.user_id ?? nextPlayer?.userId
+      const unsafeCards = await RummyWorkingMemory.getUnsafeDiscards(this.redis, roomId, nextPlayerId)
       await new Promise(r => setTimeout(r, delayMs))
       try {
         const res = await fetch(`${engineUrl}/bot-turn`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ room_id: roomId, user_id: cur.user_id ?? cur.userId }),
+          body: JSON.stringify({
+            room_id: roomId,
+            user_id: actingBotId,
+            drop_probability: rummyProfile.drop_probability,
+            open_draw_probability: rummyProfile.open_draw_probability,
+            unsafe_cards: unsafeCards,
+          }),
           signal: AbortSignal.timeout(5000),
         })
         if (!res.ok) return
         const data = await res.json() as any
         const newState = data.state
         await this.setRoomState(roomId, { ...newState, gameType: 'rummy' })
+        if (newState?.open_pile?.length > 0) {
+          const lastDiscard = newState.open_pile[newState.open_pile.length - 1]
+          void RummyWorkingMemory.recordDiscard(this.redis, roomId, actingBotId, lastDiscard)
+        }
+        PlayerMemoryManager.logBotDecision(this.db, {
+          gameType: 'rummy',
+          roomId,
+          botUserId: actingBotId,
+          targetUserId: nextPlayerId,
+          decisionType: 'turn',
+          stateSnapshot: { unsafeCount: unsafeCards.length, turnIdx },
+          actionChosen: data.dropped ? 'drop' : (data.result ? 'declare' : 'discard'),
+          wasSuccessful: !!data.result,
+        })
         this.broadcastRummyStateUpdate(roomId, {
           state: newState,
           last_action: { user_id: cur.user_id ?? cur.userId, action: 'bot' },
@@ -2648,6 +2768,7 @@ export class MatchmakingService {
   // retry-once, Redis reconcile-failed dead-letter list on repeated failure).
   async handleRummyEnd(roomId: string, result: any): Promise<void> {
     this.clearRummyAfkTimer(roomId)
+    void RummyWorkingMemory.clear(this.redis, roomId)
     try {
       const parts = await this.db.query(
         'SELECT user_id, entry_fee_deducted, is_bot FROM game_participants WHERE room_id = $1',
@@ -2669,6 +2790,16 @@ export class MatchmakingService {
         result: result || null,
       })
 
+      // Human-like bot emoji reaction on declare
+      if (effectiveWinnerId) {
+        void this.getRoomState(roomId).then(rummyState => {
+          const rummyWinner = rummyState?.players?.find((p: any) => (p.user_id ?? p.userId) === effectiveWinnerId)
+          if (rummyWinner && (rummyWinner.is_bot || rummyWinner.isBot)) {
+            triggerBotReaction(this.hub, roomId, { userId: effectiveWinnerId, username: rummyWinner.username || 'Bot' }, 'declare')
+          }
+        }).catch(() => {})
+      }
+
       const settlePayload = JSON.stringify({
         room_id: roomId,
         winner_id: effectiveWinnerId,
@@ -2681,6 +2812,7 @@ export class MatchmakingService {
         headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
         body: settlePayload,
       })
+
 
       let settleRes = await callSettle()
       let errBody = ''
@@ -2718,6 +2850,17 @@ export class MatchmakingService {
           const isWinner = effectiveWinnerId && p.user_id === effectiveWinnerId
           const prizeWon = isWinner ? effectivePrize : 0
           const finalRank = effectiveWinnerId ? (isWinner ? 1 : 2) : null
+          if (!p.is_bot) {
+            const entryFee = parseFloat(p.entry_fee_deducted) || 0
+            const net = isWinner ? effectivePrize - entryFee : -entryFee
+            void PlayerMemoryManager.recordPlayerOutcome(this.redis, this.db, {
+              userId: p.user_id,
+              gameType: 'rummy',
+              isWin: !!isWinner,
+              amountWonOrLost: net,
+              stake: entryFee,
+            })
+          }
           await this.db.query(
             'UPDATE game_participants SET prize_won = $1, final_rank = $2 WHERE room_id = $3 AND user_id = $4',
             [prizeWon, finalRank, roomId, p.user_id],
@@ -2750,12 +2893,28 @@ export class MatchmakingService {
       const players = parts.rows.map(r => ({
         user_id: r.user_id,
         entry_fee: parseFloat(r.entry_fee_deducted) || 0,
+        is_bot: r.is_bot,
       }))
 
       const effectiveWinnerId = result.winner_id || null
       const effectivePrize    = effectiveWinnerId ? Number(result.prize) : 0
 
       console.log(`[gateway] handleGameEnd room=${roomId} winner=${result.winner_id} prize=${effectivePrize}`)
+
+      for (const p of parts.rows) {
+        if (!p.is_bot) {
+          const isWinner = effectiveWinnerId && p.user_id === effectiveWinnerId
+          const entryFee = parseFloat(p.entry_fee_deducted) || 0
+          const net = isWinner ? effectivePrize - entryFee : -entryFee
+          void PlayerMemoryManager.recordPlayerOutcome(this.redis, this.db, {
+            userId: p.user_id,
+            gameType: 'teen_patti',
+            isWin: !!isWinner,
+            amountWonOrLost: net,
+            stake: entryFee,
+          })
+        }
+      }
 
       const walletUrl = process.env.WALLET_SERVICE_URL || 'http://localhost:3003'
       const settleRes = await fetch(`${walletUrl}/internal/wallet/settle-game`, {
@@ -2819,6 +2978,15 @@ export class MatchmakingService {
 
     const winner = state.players?.find((p: any) => (p.userId ?? p.user_id ?? p.id) === result.winner_id)
     const winnerUsername = winner ? (winner.username ?? 'Player') : 'Unknown'
+    if (winner && (winner.isBot || winner.is_bot)) {
+      triggerBotReaction(this.hub, roomId, { userId: result.winner_id, username: winnerUsername }, 'win')
+    } else {
+      const bots = (state.players || []).filter((p: any) => (p.isBot || p.is_bot))
+      if (bots.length > 0) {
+        const sadBot = bots[Math.floor(Math.random() * bots.length)]
+        triggerBotReaction(this.hub, roomId, { userId: sadBot.userId ?? sadBot.user_id, username: sadBot.username || 'Bot' }, 'bad_beat')
+      }
+    }
 
     // Ensure hand_rank has a fallback value
     const handRank = result.hand_rank || 'High Card'

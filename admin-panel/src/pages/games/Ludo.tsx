@@ -1,18 +1,13 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag, Badge,
-  Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col, Grid, Tabs
+  Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col, Grid, Tabs, Alert
 } from 'antd'
-import { ReloadOutlined, EyeOutlined } from '@ant-design/icons'
+import { ReloadOutlined, EyeOutlined, RobotOutlined, UserOutlined, LineChartOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 import BotManagementPanel from '../../components/BotManagementPanel'
 import GamePnlDashboard from '../../components/GamePnlDashboard'
-import { BotTrainingConfigPanel } from '../../components/BotTrainingConfigPanel'
-import { BotMetricsTable } from '../../components/BotMetricsTable'
-import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
-import { BotTrainingTrendChart } from '../../components/BotTrainingTrendChart'
-import { MLTrainingPanel } from '../../components/MLTrainingPanel'
-import { BotLearningSection } from '../../components/AI/BotLearningSection'
+import UnifiedGameAIHub from '../../components/AI/UnifiedGameAIHub'
 
 export default function Ludo() {
   const screens = Grid.useBreakpoint()
@@ -179,14 +174,44 @@ export default function Ludo() {
         )}
       </Drawer>
     </div>
-    ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="ludo" /> }, { key: 'analytics', label: 'Analytics', children: <GamePnlDashboard gameType="ludo" /> }, { key: 'bot-training', label: 'Bot Training', children: (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-        <BotTrainingConfigPanel gameType="ludo" />
-        <BotTrainingTrendChart gameType="ludo" />
-        <BotMetricsTable gameType="ludo" />
-        <BotTrainingAuditTrail gameType="ludo" />
-        <BotLearningSection gameType="ludo" />
-      </div>
-    ) }, { key: 'ml-training', label: 'ML Training', children: <MLTrainingPanel /> }]} />
+    ) },
+    {
+      key: 'bot-accounts',
+      label: (
+        <span>
+          <UserOutlined /> Bot Accounts
+        </span>
+      ),
+      children: (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <Alert
+            type="info"
+            showIcon
+            message="Ludo Bot Player Accounts"
+            description="Manage simulated player accounts (usernames, coins, avatars) that sit at Ludo tables to ensure fast matchmaking."
+          />
+          <BotManagementPanel gameType="ludo" />
+        </div>
+      )
+    },
+    {
+      key: 'bot-ai',
+      label: (
+        <span>
+          <RobotOutlined style={{ color: '#2563EB' }} /> AI & Bot Intelligence
+        </span>
+      ),
+      children: <UnifiedGameAIHub gameType="ludo" />
+    },
+    {
+      key: 'analytics',
+      label: (
+        <span>
+          <LineChartOutlined /> Analytics & PnL
+        </span>
+      ),
+      children: <GamePnlDashboard gameType="ludo" />
+    }
+  ]} />
   )
 }

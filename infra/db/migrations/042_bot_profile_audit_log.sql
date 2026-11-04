@@ -28,7 +28,6 @@ CREATE INDEX IF NOT EXISTS idx_bot_profile_audit_log_admin_user
   WHERE admin_user_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_bot_profile_audit_log_game_difficulty
-  ON bot_profile_audit_log(game_type, difficulty)
-  WHERE timestamp > NOW() - INTERVAL '30 days';
+  ON bot_profile_audit_log(game_type, difficulty, timestamp DESC);
 
 COMMIT;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Card, Row, Col, Table, Tag, Statistic, Drawer, Spin, Typography, List, Grid } from 'antd'
-import { MobileOutlined, EnvironmentOutlined, AimOutlined } from '@ant-design/icons'
+import { Card, Row, Col, Table, Tag, Statistic, Drawer, Spin, Typography, List, Grid, Button } from 'antd'
+import { MobileOutlined, EnvironmentOutlined, AimOutlined, ReloadOutlined } from '@ant-design/icons'
 import { MapContainer, TileLayer, CircleMarker, Tooltip as LTooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { adminApi } from '../api/client'
@@ -59,10 +59,15 @@ export default function PlayerTracking() {
 
   return (
     <Spin spinning={loading && players.length === 0}>
-      <h2 style={{ color: '#d4af37', marginBottom: 16 }}>🛰️ Player Tracking</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h2 style={{ color: '#d4af37', margin: 0 }}>🛰️ Player Tracking</h2>
+        <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
+          Refresh Players
+        </Button>
+      </div>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col span={6}><Card size="small"><Statistic title="Live Players" value={players.length} prefix={<MobileOutlined />} valueStyle={{ color: '#52c41a' }} /></Card></Col>
+        <Col span={6}><Card size="small"><Statistic title="Tracked Players" value={players.length} prefix={<MobileOutlined />} valueStyle={{ color: '#52c41a' }} /></Card></Col>
         <Col span={6}><Card size="small"><Statistic title="Android" value={players.filter(p => p.platform === 'android').length} /></Card></Col>
         <Col span={6}><Card size="small"><Statistic title="iOS" value={players.filter(p => p.platform === 'ios').length} /></Card></Col>
         <Col span={6}><Card size="small"><Statistic title="Located" value={players.filter(p => p.geo_lat != null).length} prefix={<EnvironmentOutlined />} /></Card></Col>
@@ -83,7 +88,7 @@ export default function PlayerTracking() {
         </div>
       </Card>
 
-      <Card size="small" title={<span><AimOutlined /> Live Players</span>}>
+      <Card size="small" title={<span><AimOutlined /> Player Activity & Devices ({players.length})</span>}>
         <Table<LivePlayer>
           dataSource={players}
           rowKey="session_id"
@@ -94,10 +99,22 @@ export default function PlayerTracking() {
             { title: 'Device Name', dataIndex: 'device_model', width: 180,
               render: (v, r) => <span><Tag color={r.platform === 'android' ? 'green' : 'blue'}>{r.platform}</Tag>{r.manufacturer ? `${r.manufacturer} ` : ''}{v ?? 'unknown'}</span> },
             { title: 'User', dataIndex: 'username', width: 150, render: (_v, r) => <Text strong>{userLabel(r)}</Text> },
+            {
+              title: 'Activity',
+              dataIndex: 'last_seen_at',
+              width: 140,
+              render: (v: string) => {
+                if (!v) return <Text type="secondary">—</Text>
+                const diffSec = Math.floor((Date.now() - new Date(v).getTime()) / 1000)
+                if (diffSec < 120) return <Tag color="success">🟢 ONLINE</Tag>
+                if (diffSec < 3600) return <Tag color="processing">{Math.floor(diffSec / 60)}m ago</Tag>
+                return <Text type="secondary">{new Date(v).toLocaleTimeString()}</Text>
+              }
+            },
             { title: 'Live Location', dataIndex: 'geo_city', width: 180,
               render: (v, r) => r.geo_lat != null
                 ? <span><EnvironmentOutlined /> {v ?? ''}{r.geo_region ? `, ${r.geo_region}` : ''} <Text type="secondary" style={{ fontSize: 10 }}>({Number(r.geo_lat).toFixed(2)}, {Number(r.geo_lon).toFixed(2)})</Text></span>
-                : <Text type="secondary">—</Text> },
+                : <Text type="secondary">{v ? v : '—'}</Text> },
             { title: 'IP Address', dataIndex: 'ip_address', width: 130, render: v => <Text code style={{ fontSize: 11 }}>{v ?? '—'}</Text> },
             { title: 'Game', dataIndex: 'last_game', width: 130, render: v => v ? <Tag color="purple">{v}</Tag> : <Text type="secondary">{'—'}</Text> },
           ]}

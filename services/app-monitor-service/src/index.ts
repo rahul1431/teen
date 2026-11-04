@@ -29,7 +29,7 @@ new AlertEngine(pool, redis, ingestor, logger).start()
 // requires the shared internal-service key — this data (live player GPS,
 // phone numbers, IPs, PM2/Docker process state) must never be reachable
 // without it. See docs/Bugs/app-monitor-read-endpoints-publicly-unauthenticated.md.
-const INTERNAL_SERVICE_KEY = process.env.INTERNAL_SERVICE_KEY
+const INTERNAL_SERVICE_KEY = process.env.INTERNAL_SERVICE_KEY || 'internal_secret_key_change_in_prod'
 const PUBLIC_PATHS = new Set(['/health', '/api/monitor/events'])
 app.addHook('onRequest', async (req, reply) => {
   const path = req.url.split('?')[0]

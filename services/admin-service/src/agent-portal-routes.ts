@@ -6,6 +6,7 @@ import crypto from 'crypto'
 import { mergeReferralRows, conversionRate } from './referral-metrics'
 import { validateChannelUrl } from './channel-validation'
 import { calculateDailySettlement, AgentNode, PlayerNetLoss } from './agent-settlement'
+import { syncRealtimeCommissionForDate } from './agent-settlement-job'
 import { validateRateAssignment, validateNewAgentParent } from './agent-hierarchy'
 
 
@@ -134,6 +135,12 @@ export async function registerAgentPortalRoutes(
   // GET /api/admin/agent-portal/me — comprehensive dashboard summary
   app.get('/api/admin/agent-portal/me', { onRequest: [authenticateAgent] }, async (req, reply) => {
     const agentId = (req.user as any).sub
+
+    // Sync real-time commission to reflect live earnings in wallet immediately
+    await syncRealtimeCommissionForDate(db).catch(err => {
+      req.log.error(err, '[agent-portal] syncRealtimeCommissionForDate error in /me')
+    })
+
     const [agentRes, walletRes, subAgentsRes, playersCountRes] = await Promise.all([
       db.query(
         `SELECT id, username, display_name, phone, email, avatar_url,
@@ -752,29 +759,32 @@ export async function registerAgentPortalRoutes(
   app.get('/api/admin/agent-portal/commission/live', { onRequest: [authenticateAgent] }, async (req, reply) => {
     const agentId = (req.user as any).sub
 
-    const [agentsRes, lossesRes, playersRes] = await Promise.all([
-      db.query('SELECT id, parent_agent_id, commission_rate, game_commissions, status FROM agents'),
+    // Synchronize realtime commission and credit wallet delta immediately
+    await syncRealtimeCommissionForDate(db).catch(err => {
+      req.log.error(err, '[agent-portal] syncRealtimeCommissionForDate error in /commission/live')
+    })
+
+    const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000)
+    const todayStr = nowIst.toISOString().slice(0, 10)
+
+    const [ledgerRes, playersRes] = await Promise.all([
       db.query(
-        `SELECT u.agent_id,
-                CASE WHEN wt.description ILIKE '%color%' THEN 'color_prediction' WHEN wt.description ILIKE '%matka%' THEN 'matka' WHEN wt.description ILIKE '%cricket%' THEN 'cricket' WHEN wt.description ILIKE '%aviator%' THEN 'aviator' ELSE COALESCE(gr.game_type::text, 'general') END AS game_type,
-                COALESCE(SUM(CASE WHEN wt.type = 'game_debit' THEN wt.amount ELSE 0 END), 0)
-                - COALESCE(SUM(CASE WHEN wt.type = 'game_credit' THEN wt.amount ELSE 0 END), 0) AS net_house_win
-         FROM wallet_transactions wt
-         JOIN users u ON u.id = wt.user_id
-         LEFT JOIN game_rooms gr ON gr.id::text = wt.reference_id
-         WHERE u.agent_id IS NOT NULL
-           AND wt.type IN ('game_debit', 'game_credit')
-           AND wt.status = 'completed'
-           AND wt.created_at >= ((now() AT TIME ZONE 'Asia/Kolkata')::date AT TIME ZONE 'Asia/Kolkata')
-           AND wt.created_at <  (((now() AT TIME ZONE 'Asia/Kolkata')::date + 1) AT TIME ZONE 'Asia/Kolkata')
-         GROUP BY u.agent_id, CASE WHEN wt.description ILIKE '%color%' THEN 'color_prediction' WHEN wt.description ILIKE '%matka%' THEN 'matka' WHEN wt.description ILIKE '%cricket%' THEN 'cricket' WHEN wt.description ILIKE '%aviator%' THEN 'aviator' ELSE COALESCE(gr.game_type::text, 'general') END`
+        `SELECT direct_commission::float, override_commission::float, total_commission::float, game_breakdown
+         FROM agent_commission_ledger
+         WHERE agent_id = $1 AND date = $2`,
+        [agentId, todayStr]
       ),
       // Per-player breakdown for THIS agent's own direct players only.
       db.query(
         `SELECT u.username,
-                CASE WHEN wt.description ILIKE '%color%' THEN 'color_prediction' WHEN wt.description ILIKE '%matka%' THEN 'matka' WHEN wt.description ILIKE '%cricket%' THEN 'cricket' WHEN wt.description ILIKE '%aviator%' THEN 'aviator' ELSE COALESCE(gr.game_type::text, 'general') END AS game_type,
+                CASE WHEN wt.description ILIKE '%color%' THEN 'color_prediction' 
+                     WHEN wt.description ILIKE '%matka%' THEN 'matka' 
+                     WHEN wt.description ILIKE '%cricket%' THEN 'cricket' 
+                     WHEN wt.description ILIKE '%aviator%' THEN 'aviator' 
+                     ELSE COALESCE(gr.game_type::text, 'general') END AS game_type,
+                COALESCE(SUM(CASE WHEN wt.type = 'game_debit' AND wt.status = 'completed' THEN wt.amount ELSE 0 END), 0)::float AS turnover,
                 COALESCE(SUM(CASE WHEN wt.type = 'game_debit' THEN wt.amount ELSE 0 END), 0)
-                - COALESCE(SUM(CASE WHEN wt.type = 'game_credit' THEN wt.amount ELSE 0 END), 0) AS net_house_win
+                - COALESCE(SUM(CASE WHEN wt.type = 'game_credit' THEN wt.amount ELSE 0 END), 0)::float AS net_house_win
          FROM wallet_transactions wt
          JOIN users u ON u.id = wt.user_id
          LEFT JOIN game_rooms gr ON gr.id::text = wt.reference_id
@@ -784,37 +794,24 @@ export async function registerAgentPortalRoutes(
            AND wt.created_at >= ((now() AT TIME ZONE 'Asia/Kolkata')::date AT TIME ZONE 'Asia/Kolkata')
            AND wt.created_at <  (((now() AT TIME ZONE 'Asia/Kolkata')::date + 1) AT TIME ZONE 'Asia/Kolkata')
          GROUP BY u.username, CASE WHEN wt.description ILIKE '%color%' THEN 'color_prediction' WHEN wt.description ILIKE '%matka%' THEN 'matka' WHEN wt.description ILIKE '%cricket%' THEN 'cricket' WHEN wt.description ILIKE '%aviator%' THEN 'aviator' ELSE COALESCE(gr.game_type::text, 'general') END
-         ORDER BY net_house_win DESC`,
+         ORDER BY turnover DESC`,
         [agentId]
       ),
     ])
 
-    const agents: AgentNode[] = agentsRes.rows.map(r => ({
-      id: r.id,
-      parentAgentId: r.parent_agent_id,
-      commissionRate: parseFloat(r.commission_rate),
-      gameCommissions: typeof r.game_commissions === 'string' ? JSON.parse(r.game_commissions) : (r.game_commissions || {}),
-      status: r.status,
-    }))
-    const playerLosses: PlayerNetLoss[] = lossesRes.rows.map(r => ({
-      agentId: r.agent_id,
-      gameType: r.game_type,
-      netHouseWin: parseFloat(r.net_house_win),
-    }))
-
-    const results = calculateDailySettlement(agents, playerLosses)
-    const mine = results.find(r => r.agentId === agentId)
+    const ledger = ledgerRes.rows[0]
 
     return reply.send({
       today: {
-        direct_commission: mine?.directCommission ?? 0,
-        override_commission: mine?.overrideCommission ?? 0,
-        total_commission: mine?.totalCommission ?? 0,
-        game_breakdown: mine?.gameBreakdown ?? {},
+        direct_commission: ledger?.direct_commission ?? 0,
+        override_commission: ledger?.override_commission ?? 0,
+        total_commission: ledger?.total_commission ?? 0,
+        game_breakdown: ledger?.game_breakdown ?? {},
       },
       players: playersRes.rows.map(r => ({
         username: r.username,
         game_type: r.game_type,
+        turnover: parseFloat(r.turnover),
         net_house_win: parseFloat(r.net_house_win),
       })),
     })

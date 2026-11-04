@@ -16,12 +16,7 @@ import { tokens } from '../../theme/tokens'
 // AI, ML & Analytics Components
 import BotManagementPanel from '../../components/BotManagementPanel'
 import GamePnlDashboard from '../../components/GamePnlDashboard'
-import { BotTrainingConfigPanel } from '../../components/BotTrainingConfigPanel'
-import { BotMetricsTable } from '../../components/BotMetricsTable'
-import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
-import { BotTrainingTrendChart } from '../../components/BotTrainingTrendChart'
-import { MLTrainingPanel } from '../../components/MLTrainingPanel'
-import { BotLearningSection } from '../../components/AI/BotLearningSection'
+import UnifiedGameAIHub from '../../components/AI/UnifiedGameAIHub'
 
 const { Text, Title, Paragraph } = Typography
 
@@ -364,38 +359,29 @@ export default function Rummy() {
             )
           },
           {
-            key: 'bots',
-            label: <span><RobotOutlined /> Bots</span>,
-            children: <BotManagementPanel gameType="rummy" />
+            key: 'bot-accounts',
+            label: <span><UserOutlined /> Bot Accounts</span>,
+            children: (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <Alert
+                  type="info"
+                  showIcon
+                  message="13-Card Rummy Bot Player Accounts"
+                  description="Manage simulated player accounts (usernames, chips, avatars) that sit at Rummy tables to ensure prompt table starts."
+                />
+                <BotManagementPanel gameType="rummy" />
+              </div>
+            )
+          },
+          {
+            key: 'bot-ai',
+            label: <span><RobotOutlined style={{ color: '#7C3AED' }} /> AI & Bot Intelligence</span>,
+            children: <UnifiedGameAIHub gameType="rummy" />
           },
           {
             key: 'analytics',
             label: <span><LineChartOutlined /> Analytics & PnL</span>,
             children: <GamePnlDashboard gameType="rummy" />
-          },
-          {
-            key: 'bot-training',
-            label: <span><TrophyOutlined /> Bot Training</span>,
-            children: (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                <Alert
-                  type="info"
-                  showIcon
-                  message="Rummy AI Bot Coordination & DDAS Training"
-                  description="Rummy bot coordination steers winner selection based on lifetime and vs-real-player win rates. Drop probabilities, open draw preferences, and declare speed factors adapt dynamically based on table stakes."
-                />
-                <BotTrainingConfigPanel gameType="rummy" />
-                <BotTrainingTrendChart gameType="rummy" />
-                <BotMetricsTable gameType="rummy" />
-                <BotTrainingAuditTrail gameType="rummy" />
-                <BotLearningSection gameType="rummy" />
-              </div>
-            )
-          },
-          {
-            key: 'ml-training',
-            label: <span><ExperimentOutlined /> ML Training</span>,
-            children: <MLTrainingPanel gameType="rummy" />
           }
         ]} />
       </Card>

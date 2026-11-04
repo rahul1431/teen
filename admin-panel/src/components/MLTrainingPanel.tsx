@@ -26,7 +26,17 @@ interface MlTrainingStatus {
 }
 
 interface MLTrainingPanelProps {
-  gameType?: 'ludo' | 'teen_patti' | 'rummy'
+  gameType?: 'ludo' | 'teen_patti' | 'rummy' | 'aviator' | 'color_prediction' | 'matka' | 'lottery'
+}
+
+const GAME_LABELS: Record<string, string> = {
+  teen_patti: 'Teen Patti',
+  ludo: 'Ludo',
+  rummy: 'Rummy',
+  aviator: 'Aviator',
+  color_prediction: 'Color Prediction',
+  matka: 'Matka',
+  lottery: 'Lottery',
 }
 
 export const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ gameType = 'ludo' }) => {
@@ -37,7 +47,7 @@ export const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ gameType = 'lu
   const [training, setTraining] = useState(false)
   const [runningAnomalyScan, setRunningAnomalyScan] = useState(false)
 
-  const gameLabel = gameType === 'ludo' ? 'Ludo' : gameType === 'teen_patti' ? 'Teen Patti' : 'Rummy'
+  const gameLabel = GAME_LABELS[gameType] || gameType
 
   const fetchStatus = async () => {
     setLoading(true)

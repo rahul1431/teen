@@ -120,9 +120,12 @@ const Leaderboard = lazyRetry(() => import('./pages/Leaderboard'), 'Leaderboard'
 const Security = lazyRetry(() => import('./pages/Security'), 'Security')
 const Changelog = lazyRetry(() => import('./pages/Changelog'), 'Changelog')
 const AIControlCenter = lazyRetry(() => import('./pages/AIControlCenter').then(module => ({ default: module.AIControlCenter })), 'AIControlCenter')
+const AICompany = lazyRetry(() => import('./pages/AICompany'), 'AICompany')
+const BotArena = lazyRetry(() => import('./pages/BotArena'), 'BotArena')
 const AppMonitor = lazyRetry(() => import('./pages/AppMonitor'), 'AppMonitor')
 const PlayerTracking = lazyRetry(() => import('./pages/PlayerTracking'), 'PlayerTracking')
 const Banners = lazyRetry(() => import('./pages/Banners'), 'Banners')
+const Popups = lazyRetry(() => import('./pages/Popups'), 'Popups')
 const PromoCodes = lazyRetry(() => import('./pages/PromoCodes'), 'PromoCodes')
 const KYCPage = lazyRetry(() => import('./pages/KYC'), 'KYC')
 const AppUpdate = lazyRetry(() => import('./pages/AppUpdate'), 'AppUpdate')
@@ -132,6 +135,7 @@ const MetricsDashboard = lazyRetry(() => import('./pages/MetricsDashboard'), 'Me
 const PlayerAnomaliesPage = lazyRetry(() => import('./pages/PlayerAnomaliesPage'), 'PlayerAnomaliesPage')
 const Tasks = lazyRetry(() => import('./pages/Tasks'), 'Tasks')
 const Agents = lazyRetry(() => import('./pages/Agents'), 'Agents')
+const AgentDetailPage = lazyRetry(() => import('./pages/AgentDetailPage'), 'AgentDetailPage')
 const Analytics = lazyRetry(() => import('./pages/Analytics'), 'Analytics')
 const AgentLogin = lazyRetry(() => import('./pages/AgentLogin'), 'AgentLogin')
 const AgentPortal = lazyRetry(() => import('./pages/AgentPortal'), 'AgentPortal')
@@ -141,6 +145,7 @@ const Missions = lazyRetry(() => import('./pages/Missions'), 'Missions')
 const GameRooms = lazyRetry(() => import('./pages/GameRooms'), 'GameRooms')
 const LeadManager = lazyRetry(() => import('./pages/LeadManager'), 'LeadManager')
 const UserDetailPage = lazyRetry(() => import('./pages/UserDetailPage'), 'UserDetailPage')
+const ServerDashboard = lazyRetry(() => import('./pages/ServerDashboard'), 'ServerDashboard')
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token, admin } = useAuthStore()
@@ -180,11 +185,14 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <Route path="games/matka" element={<Matka />} />
                 <Route path="games/lottery" element={<Lottery />} />
                 <Route path="games/cricket" element={<Cricket />} />
+                <Route path="games/sports" element={<Cricket />} />
                 <Route path="games/rummy" element={<Rummy />} />
                 <Route path="games/color-prediction" element={<ColorPrediction />} />
                 <Route path="admin-users" element={<AdminUsers />} />
                 <Route path="profile" element={<Profile />} />
                 <Route path="risk-center" element={<RiskCenter />} />
+                <Route path="ai-company" element={<AICompany />} />
+                <Route path="bot-arena" element={<BotArena />} />
                 <Route path="ai-control" element={<AIControlCenter />} />
                 <Route path="support" element={<Support />} />
                 <Route path="leaderboard" element={<Leaderboard />} />
@@ -193,6 +201,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <Route path="app-monitor" element={<AppMonitor />} />
                 <Route path="player-tracking" element={<PlayerTracking />} />
                 <Route path="banners" element={<Banners />} />
+                <Route path="popups" element={<Popups />} />
                 <Route path="promo-codes" element={<PromoCodes />} />
                 <Route path="marketing" element={<Marketing />} />
                 <Route path="marketing/cms" element={<CMSManagement />} />
@@ -202,12 +211,15 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <Route path="player-anomalies" element={<PlayerAnomaliesPage />} />
                 <Route path="tasks" element={<Tasks />} />
                 <Route path="agents" element={<Agents />} />
+                <Route path="agents/:agentId" element={<AgentDetailPage />} />
                 <Route path="analytics" element={<Analytics />} />
                 <Route path="settings" element={<WebsiteSettings />} />
                 <Route path="app-controls" element={<AppControls />} />
                 <Route path="missions" element={<Missions />} />
                 <Route path="game-rooms" element={<GameRooms />} />
+                <Route path="server" element={<ServerDashboard isEmbedded={true} />} />
               </Route>
+              <Route path="/server" element={<ProtectedRoute><ServerDashboard isEmbedded={false} /></ProtectedRoute>} />
               <Route path="*" element={<Navigate to="/admin" replace />} />
             </Routes>
           </Suspense>

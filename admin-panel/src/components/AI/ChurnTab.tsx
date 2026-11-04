@@ -62,22 +62,32 @@ export function ChurnTab() {
     try {
       const params = riskFilter ? { risk_level: riskFilter } : {}
       const res = await adminApi.get('/churn/users', { params })
-      if (res.data.success) setUsers(res.data.data.users)
-    } catch { message.error('Failed to load at-risk users') }
-    finally { setLoading(false) }
+      if (res.data?.success && res.data?.data?.users) {
+        setUsers(res.data.data.users)
+      } else if (res.data?.success && Array.isArray(res.data?.data)) {
+        setUsers(res.data.data)
+      } else {
+        setUsers([])
+      }
+    } catch {
+      message.error('Failed to load at-risk users')
+      setUsers([])
+    } finally {
+      setLoading(false)
+    }
   }
 
   const loadStats = async () => {
     try {
       const res = await adminApi.get('/churn/stats')
-      if (res.data.success) setStats(res.data.data)
+      if (res.data?.success && res.data?.data) setStats(res.data.data)
     } catch { /* silent */ }
   }
 
   const loadConfig = async () => {
     try {
       const res = await adminApi.get('/churn/config')
-      if (res.data.success) {
+      if (res.data?.success && res.data?.data) {
         setConfig(res.data.data)
         form.setFieldsValue(res.data.data)
       }

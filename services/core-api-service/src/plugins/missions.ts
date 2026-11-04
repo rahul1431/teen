@@ -194,7 +194,7 @@ export function missionsPlugin(db: Pool) {
       if (alreadyClaimed >= cap) return reply.code(400).send({ error: 'Already submitted for this period' })
 
       let proofUrl: string | null = null
-      if (req.isMultipart()) {
+      if ((req as any).isMultipart()) {
         const data = await (req as any).file()
         if (data) {
           const ext = path.extname(data.filename || '.jpg').toLowerCase()

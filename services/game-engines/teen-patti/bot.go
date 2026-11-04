@@ -41,6 +41,9 @@ type botDecideRequest struct {
 	// bluffs, and how much it over-bets a strong hand. A 0 aggression bot plays
 	// its profile almost straight.
 	Aggression float64 `json:"aggression"`
+	// Real-time opponent modeling tendency for dynamic counter-adaptations:
+	// "tight_folder", "calling_station", "maniac_aggressor", or "balanced".
+	OpponentTendency string `json:"opponent_tendency"`
 }
 
 type botDecideResponse struct {
@@ -83,10 +86,11 @@ type botSituation struct {
 	isSeen     bool
 	canShow    bool // exactly two players left, so "show" is legal
 	aggression float64
-	foldP      float64
-	callP      float64
-	raiseP     float64
-	minBet     float64
+	foldP            float64
+	callP            float64
+	raiseP           float64
+	minBet           float64
+	opponentTendency string
 }
 
 // rolls carries the random draws a decision needs, so tests can pin them.
@@ -198,6 +202,15 @@ func tiltedWeights(s botSituation, winProb, potOdds float64) (float64, float64, 
 		raise += s.callP * conviction * 0.5
 	}
 
+	// Dynamic opponent profiling counter-adaptations
+	if s.opponentTendency == "calling_station" && winProb > 0.60 {
+		// Extract value against calling stations who never fold
+		raise *= 1.35
+	} else if s.opponentTendency == "tight_folder" && winProb < 0.40 {
+		// Don't call down light against tight players who only stay with the goods
+		fold *= 1.25
+	}
+
 	// A hand this strong is not a folding hand at any price this game can
 	// charge. Without this floor a trail still folds at the profile's base rate,
 	// which is the single most obviously non-human thing a bot can do.
@@ -276,13 +289,25 @@ func decideBot(s botSituation, r botRolls) (action string, amount float64, reaso
 	// Trap: a monster occasionally just calls, so that raising isn't a perfect
 	// signal of strength. Without this, any observant human folds every time a
 	// bot raises.
-	if winProb > 0.90 && r.trap < 0.25 {
+	trapThreshold := 0.25
+	if s.opponentTendency == "maniac_aggressor" {
+		trapThreshold = 0.45 // Against hyper-aggressive players, slow play more often to let them bet into you
+	} else if s.opponentTendency == "calling_station" {
+		trapThreshold = 0.05 // Never slow-play a calling station; always charge them directly
+	}
+	if winProb > 0.90 && r.trap < trapThreshold {
 		return "call", s.callCost, "slow-playing a monster"
 	}
 
 	// Bluff: a weak hand raises into a small field. Rare, aggression-scaled, and
 	// deliberately not attempted multi-way where it almost never works.
-	if winProb < 0.35 && s.opponents <= 2 && r.bluff < 0.12*s.aggression {
+	bluffThreshold := 0.12 * s.aggression
+	if s.opponentTendency == "tight_folder" {
+		bluffThreshold = 0.28 * s.aggression // Exploit tight folders who fold too easily
+	} else if s.opponentTendency == "calling_station" {
+		bluffThreshold = 0.0 // Don't bluff calling stations who never fold
+	}
+	if winProb < 0.35 && s.opponents <= 2 && r.bluff < bluffThreshold {
 		return "raise", raiseAmount(s, 1.0), "bluff"
 	}
 
@@ -430,11 +455,12 @@ func (s *Server) decideBotAction(w http.ResponseWriter, r *http.Request) {
 		potRatio:   potRatio,
 		isSeen:     p.IsSeen,
 		canShow:    active == 2,
-		aggression: clamp(req.Aggression, 0, 1),
-		foldP:      req.FoldProbability,
-		callP:      req.CallProbability,
-		raiseP:     req.RaiseProbability,
-		minBet:     state.MinBet,
+		aggression:       clamp(req.Aggression, 0, 1),
+		foldP:            req.FoldProbability,
+		callP:            req.CallProbability,
+		raiseP:           req.RaiseProbability,
+		minBet:           state.MinBet,
+		opponentTendency: req.OpponentTendency,
 	}
 	// Only compute strength once the bot has actually looked. Guarding here as
 	// well as in decideBot means a future caller cannot accidentally hand the

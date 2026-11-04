@@ -127,14 +127,14 @@ export function ServerStatsTab() {
   )
 
   // Status badges
-  const cpuPercent = health?.cpu.usage ?? 0
-  const totalMem = health?.memory.total ?? 1
-  const usedMem = health?.memory.used ?? 0
+  const cpuPercent = health?.cpu?.usage ?? 0
+  const totalMem = health?.memory?.total || 1
+  const usedMem = health?.memory?.used ?? 0
   const memPercent = Math.round((usedMem / totalMem) * 100)
 
   // Find root or primary partition disk percent
-  const rootDisk = health?.disk.find(d => d.mounted === '/')
-  const diskPercent = rootDisk ? parseInt(rootDisk.percent.replace('%', ''), 10) : 0
+  const rootDisk = Array.isArray(health?.disk) ? health.disk.find(d => d.mounted === '/') : undefined
+  const diskPercent = rootDisk?.percent ? parseInt(rootDisk.percent.replace('%', ''), 10) : 0
 
   return (
     <Spin spinning={loading}>
@@ -179,9 +179,9 @@ export function ServerStatsTab() {
               />
               <div style={{ marginTop: 8 }}>
                 <Text strong>Load Average: </Text>
-                <Tag color="blue">{health?.cpu.loadAvg.join(', ') || 'N/A'}</Tag>
+                <Tag color="blue">{health?.cpu?.loadAvg?.join(', ') || 'N/A'}</Tag>
                 <div style={{ marginTop: 4, fontSize: 12 }}>
-                  <Text type="secondary">{health?.cpu.cores} CPU Cores Active</Text>
+                  <Text type="secondary">{health?.cpu?.cores ?? 1} CPU Cores Active</Text>
                 </div>
               </div>
             </div>

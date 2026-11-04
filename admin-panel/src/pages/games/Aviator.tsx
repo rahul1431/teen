@@ -1,9 +1,16 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Button, message, Divider, Row, Col, Tag,
-  Statistic, Table
+  Statistic, Table, Tabs, Alert
 } from 'antd'
 import { adminApi } from '../../api/client'
+import BotManagementPanel from '../../components/BotManagementPanel'
+import { BotTrainingConfigPanel } from '../../components/BotTrainingConfigPanel'
+import { BotMetricsTable } from '../../components/BotMetricsTable'
+import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
+import { BotTrainingTrendChart } from '../../components/BotTrainingTrendChart'
+import { MLTrainingPanel } from '../../components/MLTrainingPanel'
+import { BotLearningSection } from '../../components/AI/BotLearningSection'
 
 function AviatorPnl() {
   const [pnl, setPnl] = useState<any>(null)
@@ -122,76 +129,115 @@ export default function Aviator() {
   return (
     <div>
       <h2 style={{ color: '#d4af37', marginBottom: 24 }}>✈️ Aviator Management</h2>
-      <Row gutter={[24, 24]}>
-        <Col xs={24} lg={12}>
-          <Card
-            title={
-              <span>
-                Aviator Rules & Settings{' '}
-                {config?.is_active ? <Tag color="green">LIVE</Tag> : <Tag color="red">OFF</Tag>}
-              </span>
-            }
-            loading={loading}
-          >
-            {config && (
-              <Form
-                layout="vertical"
-                initialValues={{ ...config, ...(config.special_rules || {}) }}
-                onFinish={saveConfig}
-              >
-                <Form.Item name="is_active" label="Game Active" valuePropName="checked">
-                  <Switch checkedChildren="ON" unCheckedChildren="OFF" />
-                </Form.Item>
-                <Form.Item name="rake_percent" label="Rake % (Platform Fee)">
-                  <InputNumber min={0} max={20} step={0.5} suffix="%" style={{ width: '100%' }} />
-                </Form.Item>
+      <Tabs items={[
+        {
+          key: 'overview',
+          label: 'Overview',
+          children: (
+            <div>
+              <Row gutter={[24, 24]}>
+                <Col xs={24} lg={12}>
+                  <Card
+                    title={
+                      <span>
+                        Aviator Rules & Settings{' '}
+                        {config?.is_active ? <Tag color="green">LIVE</Tag> : <Tag color="red">OFF</Tag>}
+                      </span>
+                    }
+                    loading={loading}
+                  >
+                    {config && (
+                      <Form
+                        layout="vertical"
+                        initialValues={{ ...config, ...(config.special_rules || {}) }}
+                        onFinish={saveConfig}
+                      >
+                        <Form.Item name="is_active" label="Game Active" valuePropName="checked">
+                          <Switch checkedChildren="ON" unCheckedChildren="OFF" />
+                        </Form.Item>
+                        <Form.Item name="rake_percent" label="Rake % (Platform Fee)">
+                          <InputNumber min={0} max={20} step={0.5} suffix="%" style={{ width: '100%' }} />
+                        </Form.Item>
 
-                <Divider>Aviator Economics 💰</Divider>
-                <Form.Item name="house_edge_percent" label="House Edge % (instant-crash rate → profit margin)">
-                  <InputNumber min={0} max={20} step={0.5} suffix="%" style={{ width: '100%' }} />
-                </Form.Item>
-                <Form.Item name="max_win" label="Max Win Cap (₹, 0 = unlimited)">
-                  <InputNumber min={0} step={1000} style={{ width: '100%' }} />
-                </Form.Item>
-                <Form.Item name="min_bet" label="Min Bet (₹)">
-                  <InputNumber min={1} step={10} style={{ width: '100%' }} />
-                </Form.Item>
-                <Form.Item name="max_bet" label="Max Bet (₹)">
-                  <InputNumber min={10} step={100} style={{ width: '100%' }} />
-                </Form.Item>
-                <Form.Item name="betting_time_ms" label="Betting Window (ms)">
-                  <InputNumber min={2000} max={15000} step={500} style={{ width: '100%' }} />
-                </Form.Item>
+                        <Divider>Aviator Economics 💰</Divider>
+                        <Form.Item name="house_edge_percent" label="House Edge % (instant-crash rate → profit margin)">
+                          <InputNumber min={0} max={20} step={0.5} suffix="%" style={{ width: '100%' }} />
+                        </Form.Item>
+                        <Form.Item name="max_win" label="Max Win Cap (₹, 0 = unlimited)">
+                          <InputNumber min={0} step={1000} style={{ width: '100%' }} />
+                        </Form.Item>
+                        <Form.Item name="min_bet" label="Min Bet (₹)">
+                          <InputNumber min={1} step={10} style={{ width: '100%' }} />
+                        </Form.Item>
+                        <Form.Item name="max_bet" label="Max Bet (₹)">
+                          <InputNumber min={10} step={100} style={{ width: '100%' }} />
+                        </Form.Item>
+                        <Form.Item name="betting_time_ms" label="Betting Window (ms)">
+                          <InputNumber min={2000} max={15000} step={500} style={{ width: '100%' }} />
+                        </Form.Item>
 
-                <Form.Item>
-                  <Button type="primary" htmlType="submit" block loading={saving}>
-                    Save Config
-                  </Button>
-                </Form.Item>
-              </Form>
-            )}
-          </Card>
-        </Col>
-        <Col xs={24} lg={12}>
-          <Card title="Aviator System Overview">
-            <p>
-              Aviator operates as a single continuous multiplayer crash round in memory.
-              Bets are accepted during the betting window, after which the multiplier increases exponentially until a random crash point occurs.
-            </p>
-            <p>
-              The crash point is calculated in a provably fair manner using HMAC-SHA256 based on the server seed and round ID. The house edge setting defines the probability of an instant 1.00x crash.
-            </p>
-          </Card>
-        </Col>
-      </Row>
+                        <Form.Item>
+                          <Button type="primary" htmlType="submit" block loading={saving}>
+                            Save Config
+                          </Button>
+                        </Form.Item>
+                      </Form>
+                    )}
+                  </Card>
+                </Col>
+                <Col xs={24} lg={12}>
+                  <Card title="Aviator System Overview">
+                    <p>
+                      Aviator operates as a single continuous multiplayer crash round in memory.
+                      Bets are accepted during the betting window, after which the multiplier increases exponentially until a random crash point occurs.
+                    </p>
+                    <p>
+                      The crash point is calculated in a provably fair manner using HMAC-SHA256 based on the server seed and round ID. The house edge setting defines the probability of an instant 1.00x crash.
+                    </p>
+                  </Card>
+                </Col>
+              </Row>
 
-      <Divider>PnL</Divider>
-      <AviatorPnl />
+              <Divider>PnL</Divider>
+              <AviatorPnl />
 
-      <Divider>Game History</Divider>
-      <Card>
-        <AviatorHistory />
-      </Card>
+              <Divider>Game History</Divider>
+              <Card>
+                <AviatorHistory />
+              </Card>
+            </div>
+          )
+        },
+        {
+          key: 'bots',
+          label: 'Bots',
+          children: <BotManagementPanel gameType="aviator" />
+        },
+        {
+          key: 'bot-training',
+          label: 'Bot Training',
+          children: (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <Alert
+                type="info"
+                showIcon
+                message="Aviator AI Bot Coordination & Cashout Profile Training"
+                description="Aviator bots simulate realistic multiplayer crash participation. Cashout multipliers, greed factors, and bet sizes adapt to match human distribution and maintain target RTP."
+              />
+              <BotTrainingConfigPanel gameType="aviator" />
+              <BotTrainingTrendChart gameType="aviator" />
+              <BotMetricsTable gameType="aviator" />
+              <BotTrainingAuditTrail gameType="aviator" />
+              <BotLearningSection gameType="aviator" />
+            </div>
+          )
+        },
+        {
+          key: 'ml-training',
+          label: 'ML Training',
+          children: <MLTrainingPanel gameType="aviator" />
+        }
+      ]} />
     </div>
   )
 }

@@ -6,9 +6,19 @@ import {
 } from 'antd'
 import {
   ReloadOutlined, DeleteOutlined, CheckCircleOutlined, ClockCircleOutlined,
-  TrophyOutlined, DollarOutlined, FireOutlined, BarChartOutlined, PlusOutlined
+  TrophyOutlined, DollarOutlined, FireOutlined, BarChartOutlined, PlusOutlined,
+  RobotOutlined, ExperimentOutlined
 } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
+
+// AI & Bot Training Components
+import BotManagementPanel from '../../components/BotManagementPanel'
+import { BotTrainingConfigPanel } from '../../components/BotTrainingConfigPanel'
+import { BotMetricsTable } from '../../components/BotMetricsTable'
+import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
+import { BotTrainingTrendChart } from '../../components/BotTrainingTrendChart'
+import { MLTrainingPanel } from '../../components/MLTrainingPanel'
+import { BotLearningSection } from '../../components/AI/BotLearningSection'
 
 const { Text, Title } = Typography
 
@@ -493,6 +503,35 @@ export default function Matka() {
                   </Card>
                 ),
               },
+              {
+                key: 'bots',
+                label: <Space><RobotOutlined />Bots</Space>,
+                children: <BotManagementPanel gameType="matka" />
+              },
+              {
+                key: 'bot-training',
+                label: <Space><TrophyOutlined />Bot Training</Space>,
+                children: (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                    <Alert
+                      type="info"
+                      showIcon
+                      message="Matka Simulated Bot Activity & Betting Profile Training"
+                      description="Matka bots simulate authentic punter bet placements across Single Ank, Jodi, and Panna markets according to realistic historical timing patterns."
+                    />
+                    <BotTrainingConfigPanel gameType="matka" />
+                    <BotTrainingTrendChart gameType="matka" />
+                    <BotMetricsTable gameType="matka" />
+                    <BotTrainingAuditTrail gameType="matka" />
+                    <BotLearningSection gameType="matka" />
+                  </div>
+                )
+              },
+              {
+                key: 'ml-training',
+                label: <Space><ExperimentOutlined />ML Training</Space>,
+                children: <MLTrainingPanel gameType="matka" />
+              }
             ]}
           />
         </Col>

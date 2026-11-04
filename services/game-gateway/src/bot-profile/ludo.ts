@@ -26,6 +26,7 @@ export const FALLBACK: Record<string, LudoBotProfile> = {
   easy:   { capture_probability: null, safe_play_probability: null, avg_decision_delay_ms: 3000 },
   medium: { capture_probability: null, safe_play_probability: null, avg_decision_delay_ms: 3500 },
   hard:   { capture_probability: null, safe_play_probability: null, avg_decision_delay_ms: 3700 },
+  god_mode: { capture_probability: 0.98, safe_play_probability: 0.98, avg_decision_delay_ms: 800 },
 }
 
 const CACHE_TTL = 3600
@@ -36,7 +37,7 @@ export async function getLudoBotProfile(
   difficulty: string,
   logger?: { warn: (msg: string) => void }
 ): Promise<LudoBotProfile> {
-  const tier = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium'
+  const tier = ['easy', 'medium', 'hard', 'god_mode'].includes(difficulty) ? difficulty : 'medium'
   const cacheKey = `bot:profile:ludo:${tier}`
 
   try {
@@ -67,4 +68,14 @@ export async function getLudoBotProfile(
   }
 
   return FALLBACK[tier] ?? FALLBACK.medium
+}
+
+/**
+ * Natural cognitive reaction timing for Ludo bots:
+ * Human-like timing with each bot timing random 2-7 seconds (2000ms - 7000ms).
+ */
+export function pickLudoBotDelay(profile?: LudoBotProfile): number {
+  const minDelayMs = 2000
+  const maxDelayMs = 7000
+  return Math.floor(minDelayMs + Math.random() * (maxDelayMs - minDelayMs + 1))
 }

@@ -1,10 +1,13 @@
 import { Redis } from 'ioredis'
 import { getTeenPattiBotProfile, TeenPattiBotProfile } from './bot-profile/teen-patti'
 import { getLudoBotProfile, LudoBotProfile } from './bot-profile/ludo'
+import { getRummyBotProfile, RummyBotProfile } from './bot-profile/rummy'
 
 export { aggressionUnit, pickBotAction, pickBotDelay } from './bot-profile/teen-patti'
-export { getTeenPattiBotProfile, getLudoBotProfile }
-export type { TeenPattiBotProfile, LudoBotProfile }
+export { pickRummyBotDelay } from './bot-profile/rummy'
+export { pickLudoBotDelay } from './bot-profile/ludo'
+export { getTeenPattiBotProfile, getLudoBotProfile, getRummyBotProfile }
+export type { TeenPattiBotProfile, LudoBotProfile, RummyBotProfile }
 
 /**
  * Per-game bot profile routing.
@@ -44,7 +47,7 @@ export async function getBotProfile(
   difficulty: string,
   logger?: { warn: (msg: string) => void }
 ): Promise<BotDecisionProfile> {
-  const tier = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium'
+  const tier = ['easy', 'medium', 'hard', 'god_mode'].includes(difficulty) ? difficulty : 'medium'
 
   if (gameType === 'ludo') {
     const ludo = await getLudoBotProfile(redis, tier, logger)

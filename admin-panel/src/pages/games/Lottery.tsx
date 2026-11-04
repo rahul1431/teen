@@ -1,15 +1,25 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Form, Switch, InputNumber, Select, Button, Table, Tag,
-  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Popconfirm, Drawer, Statistic, Radio, Tabs, Grid
+  Space, Modal, Input, Typography, message, Row, Col, DatePicker, Popconfirm, Drawer, Statistic, Radio, Tabs, Grid, Alert
 } from 'antd'
 import {
   ReloadOutlined, DeleteOutlined, TrophyOutlined, WalletOutlined,
-  ShoppingCartOutlined, CalendarOutlined, PlusOutlined, SettingOutlined, WarningOutlined
+  ShoppingCartOutlined, CalendarOutlined, PlusOutlined, SettingOutlined, WarningOutlined,
+  RobotOutlined, ExperimentOutlined
 } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 import dayjs from 'dayjs'
 import LotteryScratch from './LotteryScratch'
+
+// AI & Bot Training Components
+import BotManagementPanel from '../../components/BotManagementPanel'
+import { BotTrainingConfigPanel } from '../../components/BotTrainingConfigPanel'
+import { BotMetricsTable } from '../../components/BotMetricsTable'
+import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
+import { BotTrainingTrendChart } from '../../components/BotTrainingTrendChart'
+import { MLTrainingPanel } from '../../components/MLTrainingPanel'
+import { BotLearningSection } from '../../components/AI/BotLearningSection'
 
 const { Text, Title } = Typography
 
@@ -727,6 +737,35 @@ export default function Lottery() {
           label: 'Instant Lottery',
           children: <LotteryScratch />,
         },
+        {
+          key: 'bots',
+          label: <span><RobotOutlined /> Bots</span>,
+          children: <BotManagementPanel gameType="lottery" />
+        },
+        {
+          key: 'bot-training',
+          label: <span><TrophyOutlined /> Bot Training</span>,
+          children: (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <Alert
+                type="info"
+                showIcon
+                message="Lottery Synthetic Bot Volume & Ticket Participation Training"
+                description="Lottery bots simulate player ticket purchases and favorite numbers across regular and bumper draws to ensure prize pools and participation quotas."
+              />
+              <BotTrainingConfigPanel gameType="lottery" />
+              <BotTrainingTrendChart gameType="lottery" />
+              <BotMetricsTable gameType="lottery" />
+              <BotTrainingAuditTrail gameType="lottery" />
+              <BotLearningSection gameType="lottery" />
+            </div>
+          )
+        },
+        {
+          key: 'ml-training',
+          label: <span><ExperimentOutlined /> ML Training</span>,
+          children: <MLTrainingPanel gameType="lottery" />
+        }
       ]}
     />
   )

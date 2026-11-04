@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Download MyOnlineJoker — India's #1 Real Money Gaming App</title>
+  <meta name="description" content="Download MyOnlineJoker APK. Play Ludo, Teen Patti, Aviator & Matka. Win real cash daily with instant withdrawals!">
+  <style>
+    :root {
+      --gold: #D4AF37;
+      --gold-light: #FFE066;
+      --bg: #07091A;
+      --card: #0F1422;
+      --green: #4CAF50;
+      --gold-glow: rgba(212, 175, 55, 0.15);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      background-image: radial-gradient(ellipse at 50% 20%, #1a1f42 0%, var(--bg) 65%);
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid rgba(212,175,55,0.25);
+      border-radius: 24px;
+      padding: 36px 24px 28px;
+      max-width: 420px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.03);
+    }
+    .logo-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 24px; }
+    .logo { font-size: 48px; filter: drop-shadow(0 0 8px var(--gold)); animation: float 3s ease-in-out infinite; }
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+    .app-info { text-align: left; }
+    .app-name { font-size: 24px; font-weight: 900; color: var(--gold); letter-spacing: 0.5px; line-height: 1.1; }
+    .app-sub { color: rgba(255,255,255,0.45); font-size: 12px; margin-top: 4px; }
+
+    .promo-box {
+      background: linear-gradient(135deg, rgba(212,175,55,0.1), rgba(212,175,55,0.02));
+      border: 1px solid rgba(212,175,55,0.2);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+    .promo-title { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+    .promo-desc { font-size: 12px; color: rgba(255,255,255,0.6); line-height: 1.4; }
+
+    .section-label {
+      color: rgba(255,255,255,0.35);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-bottom: 14px;
+    }
+    .btn {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 16px 20px;
+      border-radius: 14px;
+      font-size: 16px;
+      font-weight: 700;
+      text-decoration: none;
+      width: 100%;
+      margin-bottom: 12px;
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+      border: none;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+    }
+    .btn:hover { transform: translateY(-2px); }
+    .btn:active { transform: scale(0.98); opacity: 0.9; }
+    
+    .btn-android {
+      background: linear-gradient(135deg, #3DDC84 0%, #1B9E57 100%);
+      color: #fff;
+      box-shadow: 0 6px 20px rgba(61,220,132,0.3), inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+    .btn-android:hover {
+      box-shadow: 0 8px 24px rgba(61,220,132,0.4), inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+
+    .btn-agent {
+      background: linear-gradient(135deg, #D97706 0%, #92400E 100%);
+      color: #fff;
+      box-shadow: 0 6px 20px rgba(217,119,6,0.35), inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+    .btn-agent:hover {
+      box-shadow: 0 8px 24px rgba(217,119,6,0.5), inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+
+    .btn-ios {
+      background: linear-gradient(135deg, #2C2C2C 0%, #111 100%);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .btn-icon { font-size: 28px; flex-shrink: 0; }
+    .btn-text { text-align: left; flex: 1; }
+    .btn-text .main { display: block; }
+    .btn-text .sub { display: block; font-size: 11px; font-weight: 400; opacity: 0.7; margin-top: 2px; }
+    .btn-arrow { font-size: 18px; opacity: 0.7; }
+
+    .steps {
+      margin-top: 24px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      padding-top: 22px;
+      text-align: left;
+    }
+    .steps-title { font-size: 13px; font-weight: 700; margin-bottom: 14px; color: rgba(255,255,255,0.7); }
+    .step { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+    .step-num {
+      background: var(--gold);
+      color: #000;
+      font-weight: 900;
+      font-size: 11px;
+      min-width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .step-text { color: rgba(255,255,255,0.6); font-size: 13px; line-height: 1.4; }
+    .step-text strong { color: var(--gold); }
+
+    .games-strip {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 24px;
+      flex-wrap: wrap;
+    }
+    .game-tag {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.65);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .game-tag:hover {
+      background: rgba(212,175,55,0.08);
+      border-color: rgba(212,175,55,0.3);
+      color: var(--gold-light);
+    }
+
+    footer { margin-top: 24px; color: rgba(255,255,255,0.25); font-size: 11px; text-align: center; line-height: 1.6; }
+    footer a { color: rgba(255,255,255,0.35); text-decoration: none; margin: 0 4px; }
+    footer a:hover { color: var(--gold); text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo-row">
+      <div class="logo">🃏</div>
+      <div class="app-info">
+        <div class="app-name">MyOnlineJoker</div>
+        <div class="app-sub">India's Premium Real Money Gaming App</div>
+      </div>
+    </div>
+
+    <div class="promo-box">
+      <div class="promo-title">⚡ Instant Cash Withdrawals</div>
+      <div class="promo-desc">Play your favorite games online against real players and win direct pay-outs 24/7.</div>
+    </div>
+
+    <div class="section-label">Select Your Application</div>
+
+    <a class="btn btn-android" id="androidBtn" href="/downloads/app-release.apk">
+      <span class="btn-icon">🎮</span>
+      <span class="btn-text">
+        <span class="main">Download Player Game App</span>
+        <span class="sub">v1.3.94 · Teen Patti, Ludo, Aviator & Matka</span>
+      </span>
+      <span class="btn-arrow">↓</span>
+    </a>
+
+    <a class="btn btn-agent" id="agentBtn" href="/downloads/agent-partner-release.apk">
+      <span class="btn-icon">💼</span>
+      <span class="btn-text">
+        <span class="main">Download Agent Partner App</span>
+        <span class="sub">Version 1.0 (v1.0.0) · Commissions, Analytics & KYC</span>
+      </span>
+      <span class="btn-arrow">↓</span>
+    </a>
+
+    <a class="btn btn-ios" href="#" id="iosBtn">
+      <span class="btn-icon">🍎</span>
+      <span class="btn-text">
+        <span class="main">Download for iOS</span>
+        <span class="sub">Apple App Store · Coming soon</span>
+      </span>
+      <span class="btn-arrow">›</span>
+    </a>
+
+    <div class="steps">
+      <div class="steps-title">Installation Guide:</div>
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">Choose <strong>Player Game App</strong> for playing games, or <strong>Agent Partner App</strong> for partner portal. Both apps can be installed on the same phone!</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">If prompted, allow download from browser / unknown sources.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text">Open the downloaded APK (<strong>MyOnlineJoker-v1.3.94.apk</strong> or <strong>JokerAgentPartner-v1.0.apk</strong>) and tap Install.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-text">Open the app, sign in, and enjoy!</div>
+      </div>
+    </div>
+
+    <div class="games-strip">
+      <span class="game-tag">🎲 Ludo</span>
+      <span class="game-tag">🃏 Teen Patti</span>
+      <span class="game-tag">✈️ Aviator</span>
+      <span class="game-tag">🎯 Matka</span>
+    </div>
+  </div>
+
+  <footer>
+    © 2026 MyOnlineJoker &nbsp;·&nbsp; 18+ only &nbsp;·&nbsp; Play responsibly<br>
+    <a href="#">Terms of Service</a> &nbsp;·&nbsp; <a href="#">Privacy Policy</a>
+  </footer>
+
+  <script>
+    (function () {
+      // Handle referral code passing if arrived with ?ref=
+      var params = new URLSearchParams(window.location.search);
+      var ref = params.get('ref') || '';
+      if (ref) {
+        var apkHref = '/downloads/app-release.apk?ref=' + encodeURIComponent(ref);
+        document.getElementById('androidBtn').href = apkHref;
+      }
+
+      // iOS placeholder action
+      document.getElementById('iosBtn').addEventListener('click', function (e) {
+        e.preventDefault();
+        alert('iOS version is coming soon! Please play on an Android device.');
+      });
+
+      // Auto-reorder if user agent is iOS or requested agent role
+      var role = params.get('role') || params.get('app');
+      if (role === 'agent' || params.has('agent')) {
+        document.getElementById('agentBtn').style.order = '-2';
+        document.getElementById('agentBtn').style.border = '2px solid #FFE066';
+      }
+
+      var ua = navigator.userAgent;
+      if (/iphone|ipad|ipod/i.test(ua)) {
+        document.getElementById('iosBtn').style.order = '-1';
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -14,8 +14,14 @@ import { monitorEmitter } from './monitor-emitter'
 import { SessionManager } from './session-manager'
 import { createRateLimiter } from './middleware/rate-limiter'
 import { applyEntryFeeDelta } from './entry-fee-reconcile'
+import { OpponentModeler } from './botCoordination/opponentModeler'
+import { PlayerMemoryManager } from './bot-memory/player-memory'
+import { RummyWorkingMemory } from './bot-memory/working-memory-rummy'
 
-const app = Fastify({ logger: true })
+const app = Fastify({
+  logger: { level: process.env.NODE_ENV === 'production' ? 'warn' : 'info' },
+  trustProxy: true,
+})
 const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
 const redisOpts = {
   retryStrategy: (times: number) => Math.min(times * 500, 5000),
@@ -44,8 +50,30 @@ async function start() {
     throw new Error('JWT_SECRET environment variable is not set. Configure it in .env or via PM2 ecosystem config.')
   }
 
-  await app.register(cors, { origin: true })
-  await app.register(jwt, { secret: jwtSecret })
+  const ALLOWED_ORIGINS = new Set([
+    'https://game.myonlinejoker.com',
+    'https://myonlinejoker.com',
+    'https://dev.myonlinejoker.com',
+  ])
+  await app.register(cors as any, {
+    origin: (origin: string | undefined, cb: any) => {
+      if (!origin) return cb(null, true) // mobile apps, curl
+      if (ALLOWED_ORIGINS.has(origin)) return cb(null, true)
+      if (process.env.NODE_ENV !== 'production' &&
+          (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:'))) return cb(null, true)
+      return cb(new Error('CORS policy: origin not allowed'), false)
+    },
+    credentials: true,
+  })
+  await app.register(jwt as any, { secret: jwtSecret })
+
+  app.setErrorHandler((error: any, req, reply) => {
+    req.log.error(error)
+    if (error.validation) return reply.code(400).send({ error: 'Validation failed', message: error.message })
+    const statusCode = error.statusCode && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500
+    const clientMessage = statusCode === 500 ? 'An internal error occurred.' : error.message
+    return reply.code(statusCode).send({ error: clientMessage })
+  })
 
   // Initialize rate limiter
   const rateLimiter = createRateLimiter(redis)
@@ -681,7 +709,7 @@ async function start() {
   // Ludo: forward roll_dice / move_token to the Ludo engine, broadcast the new
   // board to the room, then either finish or hand off to the bot driver.
   async function handleLudoAction(conn: Conn, room_id: string, data: any): Promise<void> {
-    const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
+    const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3006'
     try {
       const currentState = await matchmaking.getRoomState(room_id)
 
@@ -727,12 +755,19 @@ async function start() {
       }
       const out = await res.json() as any
       const newState = out.state
-      monitorEmitter.emit('game_action', {
+            monitorEmitter.emit('game_action', {
         game_type: 'ludo',
         room_id,
         user_id: conn.userId,
         action: data.action,
         amount: 0,
+      })
+      void OpponentModeler.recordPlayerAction(redis, conn.userId, data.action)
+      void PlayerMemoryManager.recordPlayerAction(redis, db, {
+        userId: conn.userId,
+        gameType: 'ludo',
+        action: data.action,
+        ludoMoveType: data.action === 'move' ? 'advance' : undefined,
       })
       await matchmaking.setRoomState(room_id, { ...newState, gameType: 'ludo' })
       hub.sendToRoom(room_id, 'game:state_update', {
@@ -762,7 +797,7 @@ async function start() {
   // players left, or a last player standing wins) or lets it continue. The
   // leaver's stake is consumed at settlement (no refund).
   async function handleLudoLeave(conn: Conn, room_id: string): Promise<void> {
-    const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3011'
+    const engineUrl = process.env.LUDO_ENGINE_URL || 'http://127.0.0.1:3006'
     try {
       matchmaking.clearLudoAfkTimer(room_id)
       const res = await fetch(`${engineUrl}/leave`, {
@@ -800,7 +835,7 @@ async function start() {
   // the new state to the room, then either finish or hand off to the bot
   // driver. Mirrors handleLudoAction.
   async function handleRummyAction(conn: Conn, room_id: string, data: any, currentState?: any): Promise<void> {
-    const engineUrl = process.env.RUMMY_ENGINE_URL || 'http://127.0.0.1:3012'
+    const engineUrl = process.env.RUMMY_ENGINE_URL || 'http://127.0.0.1:3009'
     try {
       // Cancel this room's pending AFK backstop the instant a real action is
       // RECEIVED — before the engine round trip below (see clearLudoAfkTimer
@@ -841,13 +876,38 @@ async function start() {
       }
       const out = await res.json() as any
       const newState = out.state
-      monitorEmitter.emit('game_action', {
+            monitorEmitter.emit('game_action', {
         game_type: 'rummy',
         room_id,
         user_id: conn.userId,
         action: data.action,
         amount: 0,
       })
+      void OpponentModeler.recordPlayerAction(redis, conn.userId, data.action)
+      if (data.action === 'draw_open' && currentState?.open_pile?.length > 0) {
+        const drawnCard = currentState.open_pile[currentState.open_pile.length - 1]
+        void RummyWorkingMemory.recordDraw(redis, room_id, conn.userId, 'open', drawnCard)
+      } else if (data.action === 'draw_closed') {
+        void RummyWorkingMemory.recordDraw(redis, room_id, conn.userId, 'closed')
+      } else if (data.action === 'discard') {
+        if (newState?.open_pile?.length > 0) {
+          const discardedCard = newState.open_pile[newState.open_pile.length - 1]
+          void RummyWorkingMemory.recordDiscard(redis, room_id, conn.userId, discardedCard)
+          void PlayerMemoryManager.recordPlayerAction(redis, db, {
+            userId: conn.userId,
+            gameType: 'rummy',
+            action: 'discard',
+            cardDiscarded: discardedCard,
+          })
+        }
+      } else if (data.action === 'drop') {
+        void PlayerMemoryManager.recordPlayerAction(redis, db, {
+          userId: conn.userId,
+          gameType: 'rummy',
+          action: 'drop',
+          isFold: true,
+        })
+      }
       await matchmaking.setRoomState(room_id, { ...newState, gameType: 'rummy' })
       matchmaking.broadcastRummyStateUpdate(room_id, {
         state: newState,
@@ -874,7 +934,7 @@ async function start() {
   // A real player tapped Leave in a Rummy game — forfeit. Consistent with
   // Ludo: no refund, game continues or ends via last-player-standing.
   async function handleRummyLeave(conn: Conn, room_id: string): Promise<void> {
-    const engineUrl = process.env.RUMMY_ENGINE_URL || 'http://127.0.0.1:3012'
+    const engineUrl = process.env.RUMMY_ENGINE_URL || 'http://127.0.0.1:3009'
     try {
       matchmaking.clearRummyAfkTimer(room_id)
       const res = await fetch(`${engineUrl}/leave`, {
@@ -1053,6 +1113,7 @@ async function start() {
         action,
         amount: extraBet > 0 ? extraBet : (amount ?? 0),
       })
+      void OpponentModeler.recordPlayerAction(redis, conn.userId, action)
 
       if (locked) {
         await applyEntryFeeDelta(db, redis, { room_id, user_id: conn.userId, delta: extraBet, isBot: false })

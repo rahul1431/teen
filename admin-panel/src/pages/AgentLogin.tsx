@@ -179,6 +179,35 @@ export default function AgentLogin() {
           </Row>
         </div>
 
+        {/* Download Agent Partner App */}
+        <div style={{ marginTop: 20, textAlign: 'center' }}>
+          <a
+            href="/downloads/agent-partner-release.apk"
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              width: '100%',
+              padding: '12px 16px',
+              borderRadius: 12,
+              background: 'linear-gradient(135deg, rgba(212, 175, 55, 0.15) 0%, rgba(212, 175, 55, 0.05) 100%)',
+              border: '1px solid rgba(212, 175, 55, 0.4)',
+              color: tokens.color.gold,
+              fontWeight: 700,
+              fontSize: 14,
+              textDecoration: 'none',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <span>📱</span>
+            <span>Download Agent Android App (v1.0)</span>
+            <span style={{ fontSize: 11, opacity: 0.8 }}>· Direct APK</span>
+          </a>
+        </div>
+
         {/* Footer Support */}
         <div style={{ textAlign: 'center', marginTop: 18 }}>
           <Text style={{ color: tokens.color.textOnDarkMuted, fontSize: 12 }}>

@@ -32,8 +32,9 @@ export class MatchStatusPoller {
   private async sweep(): Promise<void> {
     const matches = await this.db.query(
       `SELECT id, match_api_id, start_time, status FROM cricket_matches
-       WHERE (status = 'upcoming' AND start_time <= NOW())
-          OR (status = 'live' AND match_api_id IS NOT NULL)`
+       WHERE ((status = 'upcoming' AND start_time <= NOW())
+          OR (status = 'live' AND match_api_id IS NOT NULL))
+         AND (match_api_id IS NULL OR (match_api_id NOT LIKE 'seed_%' AND match_api_id NOT LIKE 'mock_%'))`
     )
     if (!matches.rows.length) return
     for (const m of matches.rows) {
@@ -46,7 +47,8 @@ export class MatchStatusPoller {
   }
 
   private async checkMatch(m: { id: string; match_api_id: string | null; start_time: string; status: string }): Promise<void> {
-    if (m.match_api_id) {
+    const isGuid = m.match_api_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(m.match_api_id)
+    if (m.match_api_id && isGuid) {
       try {
         const data = await cricApiFetch(this.db, apiKey => `https://api.cricapi.com/v1/match_info?apikey=${apiKey}&id=${m.match_api_id}`)
         if (data.status === 'success' && data.data) {

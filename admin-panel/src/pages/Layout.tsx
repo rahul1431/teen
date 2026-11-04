@@ -4,6 +4,7 @@ import {
   UserOutlined, LogoutOutlined, ProfileOutlined, MenuOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, SearchOutlined, SafetyCertificateOutlined,
   GlobalOutlined, ThunderboltOutlined, ArrowRightOutlined,
+  CloudServerOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet, Link } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
@@ -20,18 +21,20 @@ const routeTitles: Record<string, string> = {
   '/admin': 'Dashboard & Overview',
   '/admin/users': 'Player Management',
   '/admin/admin-users': 'Admin Personnel & Permissions',
-  '/admin/bots': 'AI Bot Profiles',
+  '/admin/bots': 'Bot Accounts & Auto-Fill',
   '/admin/games/teen-patti': 'Teen Patti Control',
   '/admin/games/ludo': 'Ludo Rooms',
   '/admin/games/aviator': 'Aviator Crash Control',
   '/admin/games/matka': 'Satta Matka Result Engine',
   '/admin/games/lottery': 'Lottery Pools',
-  '/admin/games/cricket': 'Cricket Fantasy Control',
+  '/admin/games/sports': 'Sports Betting Control',
+  '/admin/games/cricket': 'Sports Betting Control',
   '/admin/games/rummy': 'Rummy Tables',
   '/admin/games/color-prediction': 'Color Prediction Wingo Control',
   '/admin/marketing': 'SEO & Campaigns',
   '/admin/promo-codes': 'Promo Codes & Bonus Rules',
   '/admin/banners': 'Homepage Banners',
+  '/admin/popups': 'App Announcement Popups',
   '/admin/marketing/cms': 'CMS & Static Content',
   '/admin/finance': 'Financial Operations & Deposits',
   '/admin/risk-center': 'Risk & Fraud Shield',
@@ -44,18 +47,26 @@ const routeTitles: Record<string, string> = {
   '/admin/missions': 'Player Missions & Rewards',
   '/admin/support': 'Support Center & Tickets',
   '/admin/ai-control': 'AI Control Center & ML Models',
+  '/admin/ai-company': 'AI Company & Virtual Employees',
+  '/admin/bot-arena': 'Game Bots & AI Arena Studio',
   '/admin/app-controls': 'App Feature Controls & Play Store Mode',
   '/admin/app-update': 'Mobile App Over-the-Air Updates',
   '/admin/settings': 'Website Global Settings',
   '/admin/analytics': 'Analytics & BI Insights',
   '/admin/agents': 'Agent Network',
-  '/admin/tasks': 'Background Tasks & Jobs',
+  '/admin/tasks': 'Task Management & Background Jobs',
   '/admin/changelog': 'System Changelog & Versions',
   '/admin/profile': 'Admin Profile & Security 2FA',
+  '/admin/server': 'Server & Gateway Ops',
 }
 
 const quickPages = [
   { path: '/admin', title: 'Dashboard', icon: '📊' },
+  { path: '/admin/tasks', title: 'Task Management', icon: '📋' },
+  { path: '/admin/ai-company', title: 'AI Company & Employees', icon: '🏢' },
+  { path: '/admin/bot-arena', title: 'Game Bots & AI Arena', icon: '🤖' },
+  { path: '/admin/popups', title: 'App Popups', icon: '📢' },
+  { path: '/admin/server', title: 'Server & Gateway Ops', icon: '🖥️' },
   { path: '/admin/users', title: 'Players List', icon: '👥' },
   { path: '/admin/finance', title: 'Finance & Wallet Log', icon: '💳' },
   { path: '/admin/risk-center', title: 'Risk & Fraud Center', icon: '🛡️' },
@@ -265,6 +276,26 @@ export default function AdminLayout() {
             </Button>
 
             <NotificationBell />
+
+            <Tooltip title="PM2 Fleet, Gateways, Docker & Server Ops">
+              <Button
+                type="text"
+                icon={<CloudServerOutlined style={{ fontSize: 16, color: '#0284c7' }} />}
+                onClick={() => navigate('/admin/server')}
+                style={{
+                  background: 'rgba(56, 189, 248, 0.08)',
+                  border: '1px solid rgba(56, 189, 248, 0.25)',
+                  borderRadius: 18,
+                  padding: isMobile ? '0 8px' : '0 12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  height: 36,
+                }}
+              >
+                {!isMobile && <span style={{ fontSize: 12, fontWeight: 700, color: '#0284c7' }}>Server Ops</span>}
+              </Button>
+            </Tooltip>
 
             <Dropdown
               menu={{

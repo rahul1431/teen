@@ -7,7 +7,7 @@ const LOCKOUT_SECONDS = 15 * 60 // 15 minutes lockout after 5 failed attempts
 
 const isProduction = process.env.NODE_ENV === 'production'
 const isDevProvider = !process.env.OTP_PROVIDER || process.env.OTP_PROVIDER === 'dev' || process.env.OTP_PROVIDER === 'console'
-const DEV_MODE = isDevProvider || process.env.ALLOW_DEV_OTP === 'true' || (!isProduction && process.env.OTP_PROVIDER !== 'msg91' && process.env.OTP_PROVIDER !== 'sms-gateway')
+const DEV_MODE = !isProduction && (isDevProvider || process.env.ALLOW_DEV_OTP === 'true')
 
 function generateOtp(): string {
   // Cryptographically secure 6-digit OTP
@@ -86,8 +86,8 @@ export async function verifyOtp(redis: Redis, phone: string, otp: string, delete
     return false
   }
 
-  // Master OTP check: allowed in DEV_MODE, when ENABLE_MASTER_OTP=true, or when MASTER_OTP is configured
-  const allowMaster = DEV_MODE || process.env.ENABLE_MASTER_OTP === 'true' || !isProduction
+  // Master OTP check: strictly disabled in production
+  const allowMaster = !isProduction && (DEV_MODE || process.env.ENABLE_MASTER_OTP === 'true')
   if (allowMaster) {
     const master = process.env.MASTER_OTP ?? '123456'
     if (master && otp === master) {

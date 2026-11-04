@@ -3,7 +3,10 @@ import {
   Table, Tag, Button, Space, message, Select, Statistic, Row, Col, Card, Tabs,
   Modal, Input, Descriptions, Empty, Tooltip, Switch, InputNumber, Form, Popconfirm, Upload,
 } from 'antd'
-import { CheckOutlined, CloseOutlined, DollarOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons'
+import {
+  CheckOutlined, CloseOutlined, DollarOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined,
+  UploadOutlined, ThunderboltOutlined, CopyOutlined, SettingOutlined, QuestionCircleOutlined,
+} from '@ant-design/icons'
 import { adminApi } from '../api/client'
 
 export default function Finance() {
@@ -24,6 +27,7 @@ export default function Finance() {
         items={[
           { key: 'withdrawals', label: 'Withdrawals', children: <Withdrawals /> },
           { key: 'deposits', label: 'Deposits', children: <Deposits /> },
+          { key: 'youpi', label: '⚡ YouPI Gateway (0%)', children: <YouPiAdmin /> },
           { key: 'bank_details', label: '🏦 Bank Details', children: <BankDetailsAdmin /> },
           { key: 'methods', label: 'Payment Methods', children: <PaymentMethods /> },
           { key: 'tips', label: '💰 Dealer Tips', children: <DealerTips /> },
@@ -872,3 +876,514 @@ function PaymentMethods() {
     </>
   )
 }
+
+// ---- YouPI Sovereign Gateway (0% Fees, Direct NPCI Intent & Auto-Credit) ----
+function YouPiAdmin() {
+  const [settings, setSettings] = useState<any>(null)
+  const [settingsLoading, setSettingsLoading] = useState(false)
+  const [savingSettings, setSavingSettings] = useState(false)
+  const [settingsForm] = Form.useForm()
+
+  const [orders, setOrders] = useState<any[]>([])
+  const [ordersTotal, setOrdersTotal] = useState(0)
+  const [ordersLoading, setOrdersLoading] = useState(false)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [search, setSearch] = useState('')
+
+  const [manualCreditModal, setManualCreditModal] = useState<any>(null)
+  const [manualCreditForm] = Form.useForm()
+  const [manualCreditLoading, setManualCreditLoading] = useState(false)
+
+  const [rawSmsModal, setRawSmsModal] = useState<any>(null)
+  const [guideModalOpen, setGuideModalOpen] = useState(false)
+
+  const copyText = (txt: string, lbl: string) => {
+    navigator.clipboard.writeText(txt)
+    message.success(`${lbl} copied to clipboard!`)
+  }
+
+  const loadSettings = async () => {
+    setSettingsLoading(true)
+    try {
+      const res = await adminApi.get('/finance/youpi/settings')
+      setSettings(res.data)
+      settingsForm.setFieldsValue({
+        enabled: res.data.enabled,
+        vpa: res.data.vpa,
+        merchant_name: res.data.merchant_name,
+        webhook_secret: res.data.webhook_secret,
+        min_deposit: res.data.min_deposit,
+        max_deposit: res.data.max_deposit,
+        auto_credit_utr: res.data.auto_credit_utr !== false,
+        auto_credit_max: res.data.auto_credit_max || 50000,
+      })
+    } catch {
+      message.error('Failed to load YouPI configuration')
+    } finally {
+      setSettingsLoading(false)
+    }
+  }
+
+  const saveSettings = async (values: any) => {
+    setSavingSettings(true)
+    try {
+      await adminApi.post('/finance/youpi/settings', values)
+      message.success('YouPI Gateway settings saved!')
+      loadSettings()
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || 'Failed to update settings')
+    } finally {
+      setSavingSettings(false)
+    }
+  }
+
+  const loadOrders = async () => {
+    setOrdersLoading(true)
+    try {
+      const res = await adminApi.get('/finance/youpi/orders', {
+        params: { status: statusFilter, search: search || undefined, page, limit: pageSize },
+      })
+      setOrders(res.data.orders || [])
+      setOrdersTotal(res.data.total || 0)
+    } catch {
+      message.error('Failed to load YouPI orders')
+    } finally {
+      setOrdersLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadSettings()
+  }, [])
+
+  useEffect(() => {
+    loadOrders()
+  }, [page, pageSize, statusFilter])
+
+  const handleManualCredit = async (values: any) => {
+    if (!manualCreditModal) return
+    setManualCreditLoading(true)
+    try {
+      await adminApi.post(`/finance/youpi/orders/${manualCreditModal.order_id}/manual-credit`, values)
+      message.success(`Order ${manualCreditModal.order_id} manually credited successfully!`)
+      setManualCreditModal(null)
+      manualCreditForm.resetFields()
+      loadOrders()
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || 'Manual credit failed')
+    } finally {
+      setManualCreditLoading(false)
+    }
+  }
+
+  const successCount = orders.filter(o => o.status === 'SUCCESS').length
+  const totalVolume = orders.filter(o => o.status === 'SUCCESS').reduce((acc, o) => acc + parseFloat(o.amount || 0), 0)
+
+  return (
+    <div>
+      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
+        <Col span={6}>
+          <Card size="small" style={{ borderLeft: '4px solid #52c41a' }}>
+            <Statistic
+              title="Gateway Status"
+              value={settings?.enabled ? 'ACTIVE (0% FEE)' : 'PAUSED'}
+              valueStyle={{ color: settings?.enabled ? '#52c41a' : '#faad14', fontWeight: 'bold', fontSize: 18 }}
+              prefix={<ThunderboltOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card size="small" style={{ borderLeft: '4px solid #1890ff' }}>
+            <Statistic
+              title="Active UPI ID (VPA)"
+              value={settings?.vpa || '—'}
+              valueStyle={{ color: '#1890ff', fontSize: 16 }}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card size="small" style={{ borderLeft: '4px solid #722ed1' }}>
+            <Statistic
+              title="Volume in Current View"
+              value={totalVolume}
+              precision={2}
+              prefix="₹"
+              valueStyle={{ color: '#722ed1', fontWeight: 'bold' }}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card size="small" style={{ borderLeft: '4px solid #fa8c16' }}>
+            <Statistic
+              title="Settlement Fee"
+              value="0.00 %"
+              suffix="(Zero Charges)"
+              valueStyle={{ color: '#52c41a', fontWeight: 'bold' }}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      {/* Gateway Configuration & Quick Integration Drawer */}
+      <Card
+        title={<span><SettingOutlined /> YouPI Sovereign Gateway Engine</span>}
+        size="small"
+        style={{ marginBottom: 20 }}
+        extra={
+          <Space>
+            <Button
+              icon={<QuestionCircleOutlined />}
+              onClick={() => setGuideModalOpen(true)}
+            >
+              How Observer App Works
+            </Button>
+            <Button
+              type="primary"
+              loading={savingSettings}
+              onClick={() => settingsForm.submit()}
+            >
+              Save Configuration
+            </Button>
+          </Space>
+        }
+      >
+        <Form
+          form={settingsForm}
+          layout="vertical"
+          onFinish={saveSettings}
+          initialValues={{ enabled: true, min_deposit: 100, max_deposit: 50000 }}
+        >
+          <Row gutter={16}>
+            <Col span={4}>
+              <Form.Item name="enabled" label="Enable Gateway" valuePropName="checked">
+                <Switch checkedChildren="ON" unCheckedChildren="OFF" />
+              </Form.Item>
+            </Col>
+            <Col span={5}>
+              <Form.Item
+                name="auto_credit_utr"
+                label="⚡ Instant UTR Auto-Credit"
+                valuePropName="checked"
+                tooltip="When active, valid 12-digit UTRs submitted by players are verified against fraud and credited immediately within 2 seconds without waiting for bank SMS."
+              >
+                <Switch checkedChildren="AUTO-CREDIT ON" unCheckedChildren="MANUAL ONLY" />
+              </Form.Item>
+            </Col>
+            <Col span={5}>
+              <Form.Item
+                name="auto_credit_max"
+                label="Auto-Credit Max Limit (₹)"
+                tooltip="Maximum deposit amount allowed for instant automatic crediting."
+              >
+                <InputNumber style={{ width: '100%' }} min={1} max={1000000} />
+              </Form.Item>
+            </Col>
+            <Col span={5}>
+              <Form.Item
+                name="vpa"
+                label="Merchant UPI VPA"
+                rules={[{ required: true, message: 'UPI ID is required' }]}
+                tooltip="Your business/personal UPI ID (e.g. 9849495032-3@ybl). All player payments route directly here."
+              >
+                <Input placeholder="merchant@upi" />
+              </Form.Item>
+            </Col>
+            <Col span={5}>
+              <Form.Item
+                name="merchant_name"
+                label="Payee Display Name"
+                rules={[{ required: true, message: 'Merchant name is required' }]}
+                tooltip="Name displayed to the player in PhonePe / GPay / Paytm when the UPI intent opens."
+              >
+                <Input placeholder="My Online Joker" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={6}>
+              <Form.Item name="min_deposit" label="Min Deposit (₹)">
+                <InputNumber style={{ width: '100%' }} min={1} />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="max_deposit" label="Max Deposit (₹)">
+                <InputNumber style={{ width: '100%' }} min={100} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={14}>
+              <Form.Item
+                label="Observer Webhook URL (Paste this into YouPI Android App / SMS Forwarder)"
+                tooltip="This endpoint receives incoming bank SMS notifications and credits player balances in < 3 seconds."
+              >
+                <Input.Group compact>
+                  <Input
+                    style={{ width: 'calc(100% - 100px)' }}
+                    readOnly
+                    value={settings?.webhook_url || 'https://game.myonlinejoker.com/api/wallet/youpi/webhook'}
+                  />
+                  <Button
+                    icon={<CopyOutlined />}
+                    onClick={() => copyText(settings?.webhook_url || 'https://game.myonlinejoker.com/api/wallet/youpi/webhook', 'Webhook URL')}
+                  >
+                    Copy
+                  </Button>
+                </Input.Group>
+              </Form.Item>
+            </Col>
+            <Col span={10}>
+              <Form.Item
+                name="webhook_secret"
+                label="Webhook Secret (x-youpi-secret)"
+                rules={[{ required: true, message: 'Secret is required' }]}
+                tooltip="Authentication secret header to secure the webhook against forged requests."
+              >
+                <Input.Password
+                  placeholder="Secret key"
+                  addonAfter={
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<CopyOutlined />}
+                      onClick={() => copyText(settingsForm.getFieldValue('webhook_secret') || '', 'Secret Key')}
+                    >
+                      Copy
+                    </Button>
+                  }
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Card>
+
+      {/* Orders Table */}
+      <Card
+        title={<span><ThunderboltOutlined style={{ color: '#faad14' }} /> Real-time YouPI Transactions ({ordersTotal})</span>}
+        size="small"
+        extra={
+          <Space>
+            <Input.Search
+              placeholder="Search Order ID, UTR, User..."
+              allowClear
+              onSearch={(v) => { setSearch(v); setPage(1); loadOrders() }}
+              style={{ width: 250 }}
+            />
+            <Select
+              value={statusFilter}
+              onChange={(v) => { setStatusFilter(v); setPage(1) }}
+              style={{ width: 140 }}
+            >
+              <Select.Option value="all">All Statuses</Select.Option>
+              <Select.Option value="SUCCESS">SUCCESS</Select.Option>
+              <Select.Option value="PENDING">PENDING</Select.Option>
+              <Select.Option value="UNMATCHED">UNMATCHED</Select.Option>
+              <Select.Option value="EXPIRED">EXPIRED</Select.Option>
+            </Select>
+            <Button icon={<ReloadOutlined />} onClick={loadOrders} loading={ordersLoading}>
+              Refresh
+            </Button>
+          </Space>
+        }
+      >
+        <Table
+          dataSource={orders}
+          rowKey="id"
+          size="small"
+          loading={ordersLoading}
+          pagination={{
+            current: page,
+            pageSize,
+            total: ordersTotal,
+            onChange: (p, ps) => { setPage(p); setPageSize(ps) },
+            showSizeChanger: true,
+            showTotal: (t) => `Total ${t} orders`,
+          }}
+          scroll={{ x: 'max-content' }}
+          columns={[
+            {
+              title: 'Created At',
+              dataIndex: 'created_at',
+              width: 160,
+              render: (v: string) => new Date(v).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+            },
+            {
+              title: 'Order ID',
+              dataIndex: 'order_id',
+              width: 170,
+              render: (oid: string) => (
+                <Space>
+                  <code>{oid}</code>
+                  <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copyText(oid, 'Order ID')} />
+                </Space>
+              ),
+            },
+            {
+              title: 'Player',
+              key: 'player',
+              render: (_, row) => {
+                if (!row.user_id || row.order_id.startsWith('UNMATCHED')) {
+                  return <Tag color="purple">Orphaned / Unmatched</Tag>
+                }
+                return (
+                  <div>
+                    <Tag color="cyan">{row.username || 'User'}</Tag>
+                    {row.phone && <small style={{ color: '#888', display: 'block' }}>{row.phone}</small>}
+                  </div>
+                )
+              },
+            },
+            {
+              title: 'Amount',
+              dataIndex: 'amount',
+              width: 110,
+              render: (amt: any) => <b style={{ color: '#52c41a', fontSize: 14 }}>₹{parseFloat(amt).toFixed(2)}</b>,
+            },
+            {
+              title: 'Bank Ref (UTR)',
+              dataIndex: 'utr',
+              width: 160,
+              render: (utr: string) => utr ? <code>{utr}</code> : <span style={{ color: '#999' }}>Awaiting SMS</span>,
+            },
+            {
+              title: 'Status',
+              dataIndex: 'status',
+              width: 120,
+              render: (st: string) => {
+                if (st === 'SUCCESS') return <Tag color="success">SUCCESS ⚡</Tag>
+                if (st === 'PENDING') return <Tag color="warning">PENDING</Tag>
+                if (st === 'UNMATCHED') return <Tag color="purple">UNMATCHED</Tag>
+                if (st === 'EXPIRED') return <Tag color="default">EXPIRED</Tag>
+                return <Tag>{st}</Tag>
+              },
+            },
+            {
+              title: 'Paid At',
+              dataIndex: 'paid_at',
+              width: 160,
+              render: (v: string) => v ? new Date(v).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : '—',
+            },
+            {
+              title: 'Actions',
+              key: 'actions',
+              width: 160,
+              render: (_, row) => (
+                <Space size="small">
+                  {row.status !== 'SUCCESS' && (
+                    <Button
+                      size="small"
+                      type="primary"
+                      onClick={() => {
+                        setManualCreditModal(row)
+                        manualCreditForm.setFieldsValue({
+                          user_id: row.user_id || undefined,
+                          utr: row.utr || undefined,
+                          admin_note: 'Manual reconciliation by admin',
+                        })
+                      }}
+                    >
+                      Credit
+                    </Button>
+                  )}
+                  {row.raw_sms && (
+                    <Button
+                      size="small"
+                      onClick={() => setRawSmsModal(row.raw_sms)}
+                    >
+                      SMS
+                    </Button>
+                  )}
+                </Space>
+              ),
+            },
+          ]}
+        />
+      </Card>
+
+      {/* Manual Credit / Match Modal */}
+      <Modal
+        title={`Manual Credit — Order ${manualCreditModal?.order_id}`}
+        open={!!manualCreditModal}
+        onCancel={() => { setManualCreditModal(null); manualCreditForm.resetFields() }}
+        onOk={() => manualCreditForm.submit()}
+        confirmLoading={manualCreditLoading}
+      >
+        <p>
+          Manually credit <b>₹{manualCreditModal?.amount}</b> to player wallet.
+          Use this if bank SMS reference failed to auto-match or player deposited via direct VPA transfer.
+        </p>
+        <Form form={manualCreditForm} layout="vertical" onFinish={handleManualCredit}>
+          <Form.Item
+            name="user_id"
+            label="Player User UUID"
+            rules={[{ required: !manualCreditModal?.user_id, message: 'User ID is required' }]}
+            tooltip="Player's UUID from the Users management table"
+          >
+            <Input placeholder="Enter user UUID..." />
+          </Form.Item>
+          <Form.Item name="utr" label="12-digit UTR (Optional)">
+            <Input placeholder="Bank UTR if known" />
+          </Form.Item>
+          <Form.Item name="admin_note" label="Admin Note">
+            <Input placeholder="Reason for manual credit" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Raw SMS Inspection Modal */}
+      <Modal
+        title="Bank SMS Payload Received"
+        open={!!rawSmsModal}
+        footer={<Button onClick={() => setRawSmsModal(null)}>Close</Button>}
+        onCancel={() => setRawSmsModal(null)}
+      >
+        <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 6, whiteSpace: 'pre-wrap' }}>
+          {rawSmsModal}
+        </pre>
+      </Modal>
+
+      {/* How Observer Works Guide Modal */}
+      <Modal
+        title="⚡ How YouPI-PG Sovereign 0% Gateway Works"
+        open={guideModalOpen}
+        onCancel={() => setGuideModalOpen(false)}
+        footer={<Button type="primary" onClick={() => setGuideModalOpen(false)}>Got It</Button>}
+        width={680}
+      >
+        <div style={{ lineHeight: 1.6 }}>
+          <h4>1. Sovereign UPI Flow (Direct NPCI)</h4>
+          <p>
+            When a player clicks <b>Add Money</b> in the Android App, the app calls
+            <code>/wallet/youpi/create-order</code> which generates an official NPCI UPI Intent URI:
+            <code>upi://pay?pa=YOUR_VPA&am=500&tr=ORDER_ID...</code>. The player selects PhonePe, Google Pay,
+            Paytm, or BHIM. 100% of the money moves bank-to-bank directly with <b>0% payment gateway fees</b>.
+          </p>
+
+          <h4>2. Real-Time Bank Observer App</h4>
+          <p>
+            An inexpensive Android phone running your SIM card (which receives bank SMS alerts) runs the YouPI Observer app
+            or any standard SMS Forwarder app (like SMS Forwarder / Tasker / Webhook Forwarder).
+          </p>
+          <ul>
+            <li><b>Webhook URL:</b> <code>{settings?.webhook_url || 'https://game.myonlinejoker.com/api/wallet/youpi/webhook'}</code></li>
+            <li><b>Header:</b> <code>x-youpi-secret: {settings?.webhook_secret || 'your_secret'}</code></li>
+            <li><b>Method:</b> <code>POST</code> (JSON or raw SMS message body)</li>
+          </ul>
+
+          <h4>3. Instant 3-Second Auto-Credit & Resilience</h4>
+          <p>
+            When the bank sends the SMS alert (e.g. <i>"A/C credited by Rs 500 by UPI/4289.../MOJ12345"</i>),
+            the webhook matches the pending order, verifies the 12-digit UTR, credits the player's wallet balance atomically,
+            triggers referral bonuses, and emits a push notification.
+          </p>
+        </div>
+      </Modal>
+    </div>
+  )
+}
+

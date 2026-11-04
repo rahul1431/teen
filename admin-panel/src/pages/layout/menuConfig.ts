@@ -17,7 +17,7 @@ import {
   BellOutlined, TrophyOutlined, CustomerServiceOutlined,
   FundOutlined, MobileOutlined, SettingOutlined, LineChartOutlined,
   RobotOutlined, ProfileOutlined, HistoryOutlined, AlertOutlined, BgColorsOutlined,
-  PoweroffOutlined,
+  PoweroffOutlined, CloudServerOutlined, NotificationOutlined,
 } from '@ant-design/icons'
 
 // Wraps a leaf item's label in a real <Link>, so the sidebar renders actual
@@ -30,12 +30,10 @@ function link(path: string, label: string) {
   return createElement(Link, { to: path }, label)
 }
 
-// Regroups the panel's existing 29 route keys into clearer top-level
-// sections. This function must never add, remove, or rename a route key —
-// see menuConfig.test.ts for the locked set.
 export function buildMenuItems(): MenuProps['items'] {
   return [
     { key: '/admin', icon: createElement(DashboardOutlined), label: link('/admin', 'Dashboard') },
+    { key: '/admin/agents', icon: createElement(TeamOutlined), label: link('/admin/agents', 'Agents') },
     {
       key: 'user_management_group',
       icon: createElement(TeamOutlined),
@@ -43,7 +41,7 @@ export function buildMenuItems(): MenuProps['items'] {
       children: [
         { key: '/admin/users', icon: createElement(UserOutlined), label: link('/admin/users', 'Players') },
         { key: '/admin/admin-users', icon: createElement(SafetyCertificateOutlined), label: link('/admin/admin-users', 'Admin Users') },
-        { key: '/admin/bots', icon: createElement(ExperimentOutlined), label: link('/admin/bots', 'Bot Profiles') },
+        { key: '/admin/bots', icon: createElement(RobotOutlined), label: link('/admin/bots', 'Bot Accounts') },
       ],
     },
     {
@@ -56,11 +54,12 @@ export function buildMenuItems(): MenuProps['items'] {
         { key: '/admin/games/aviator', icon: createElement(RocketOutlined), label: link('/admin/games/aviator', 'Aviator') },
         { key: '/admin/games/matka', icon: createElement(NumberOutlined), label: link('/admin/games/matka', 'Satta Matka') },
         { key: '/admin/games/lottery', icon: createElement(CrownOutlined), label: link('/admin/games/lottery', 'Lottery') },
-        { key: '/admin/games/cricket', icon: createElement(AimOutlined), label: link('/admin/games/cricket', 'Cricket') },
+        { key: '/admin/games/sports', icon: createElement(TrophyOutlined), label: link('/admin/games/sports', 'Sports Betting') },
         { key: '/admin/games/rummy', icon: createElement(IdcardOutlined), label: link('/admin/games/rummy', 'Rummy') },
         { key: '/admin/games/color-prediction', icon: createElement(BgColorsOutlined), label: link('/admin/games/color-prediction', 'Color Prediction') },
       ],
     },
+    { key: '/admin/finance', icon: createElement(DollarOutlined), label: link('/admin/finance', 'Finance') },
     {
       key: 'marketing_group',
       icon: createElement(GlobalOutlined),
@@ -70,6 +69,7 @@ export function buildMenuItems(): MenuProps['items'] {
         { key: '/admin/marketing', icon: createElement(SoundOutlined), label: link('/admin/marketing', 'SEO & Campaigns') },
         { key: '/admin/promo-codes', icon: createElement(TagOutlined), label: link('/admin/promo-codes', 'Promo Codes') },
         { key: '/admin/banners', icon: createElement(PictureOutlined), label: link('/admin/banners', 'Home Banners') },
+        { key: '/admin/popups', icon: createElement(NotificationOutlined), label: link('/admin/popups', 'App Popups') },
         { key: '/admin/marketing/cms', icon: createElement(FileTextOutlined), label: link('/admin/marketing/cms', 'CMS Management') },
       ],
     },
@@ -78,7 +78,6 @@ export function buildMenuItems(): MenuProps['items'] {
       icon: createElement(ControlOutlined),
       label: 'Operations',
       children: [
-        { key: '/admin/finance', icon: createElement(DollarOutlined), label: link('/admin/finance', 'Finance') },
         { key: '/admin/risk-center', icon: createElement(WarningOutlined), label: link('/admin/risk-center', 'Risk Center') },
         { key: '/admin/security', icon: createElement(SafetyOutlined), label: link('/admin/security', 'Security') },
         { key: '/admin/kyc', icon: createElement(AuditOutlined), label: link('/admin/kyc', 'KYC Verification') },
@@ -97,6 +96,8 @@ export function buildMenuItems(): MenuProps['items'] {
         { key: '/admin/support', icon: createElement(CustomerServiceOutlined), label: link('/admin/support', 'Support Center') },
       ],
     },
+    { key: '/admin/bot-arena', icon: createElement(ThunderboltOutlined), label: link('/admin/bot-arena', 'Game Bots & AI Arena') },
+    { key: '/admin/ai-company', icon: createElement(RobotOutlined), label: link('/admin/ai-company', 'AI Company') },
     {
       key: 'platform_group',
       icon: createElement(AppstoreOutlined),
@@ -107,11 +108,11 @@ export function buildMenuItems(): MenuProps['items'] {
         { key: '/admin/app-update', icon: createElement(MobileOutlined), label: link('/admin/app-update', 'App Update') },
         { key: '/admin/settings', icon: createElement(SettingOutlined), label: link('/admin/settings', 'Website Settings') },
         { key: '/admin/analytics', icon: createElement(LineChartOutlined), label: link('/admin/analytics', 'Analytics') },
-        { key: '/admin/agents', icon: createElement(RobotOutlined), label: link('/admin/agents', 'Agents') },
-        { key: '/admin/tasks', icon: createElement(ProfileOutlined), label: link('/admin/tasks', 'Tasks') },
         { key: '/admin/changelog', icon: createElement(HistoryOutlined), label: link('/admin/changelog', 'Changelog') },
       ],
     },
+    { key: '/admin/server', icon: createElement(CloudServerOutlined), label: link('/admin/server', 'Server & Gateway') },
+    { key: '/admin/tasks', icon: createElement(ProfileOutlined), label: link('/admin/tasks', 'Task Management') },
   ]
 }
 

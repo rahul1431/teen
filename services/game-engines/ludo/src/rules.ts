@@ -41,7 +41,7 @@ export interface LudoPlayer {
   safe_play_probability?: number | null
 }
 
-export type BotDifficulty = 'easy' | 'medium' | 'hard'
+export type BotDifficulty = 'easy' | 'medium' | 'hard' | 'god_mode'
 export type WinnerSkill = 'casual' | 'skilled' | 'expert'
 
 export interface LudoState {
@@ -413,6 +413,7 @@ const DEFAULT_SAFETY_WEIGHT: Record<BotDifficulty, number> = {
   easy: 0,
   medium: 0.35,
   hard: 1,
+  god_mode: 1.5,
 }
 
 /** Score contributions, named so the tuning is legible rather than magic. */
@@ -459,6 +460,17 @@ function captureTargetProgress(state: LudoState, playerIdx: number, cell: number
     if (p === playerIdx) continue
     const here = state.players[p].tokens.filter((tp) => absoluteCell(p, tp) === cell)
     if (here.length === 1) return here[0]
+  }
+  return null
+}
+
+/** The opponent token owner and progress this move would capture, if any. */
+export function getCapturedTokenInfo(state: LudoState, playerIdx: number, cell: number): { ownerId: string; progress: number } | null {
+  if (cell === -1 || SAFE_CELLS.has(cell)) return null
+  for (let p = 0; p < state.players.length; p++) {
+    if (p === playerIdx) continue
+    const here = state.players[p].tokens.filter((tp) => absoluteCell(p, tp) === cell)
+    if (here.length === 1) return { ownerId: state.players[p].user_id, progress: here[0] }
   }
   return null
 }
@@ -546,6 +558,7 @@ export function chooseBotToken(
   dice: number,
   difficulty: BotDifficulty = 'medium',
   trainedProfile?: { capture_probability?: number | null; safe_play_probability?: number | null },
+  options?: { mercyPlayerId?: string; retentionMode?: 'soft_pacing' | 'normal' | 'shark_mode' },
 ): number {
   const movable = movableTokens(state, playerIdx, dice)
   if (movable.length === 0) return -1
@@ -570,6 +583,21 @@ export function chooseBotToken(
     })
     // Only drop captures if something else is legal — never forfeit the turn.
     if (nonCapturing.length > 0) candidates = nonCapturing
+  }
+
+  // Dramatic Near-Miss for Churn Retention:
+  // In soft pacing mode, avoid ruthlessly killing a tilted/struggling player's late-stage token (progress >= 25)
+  // IF another valid legal move exists.
+  if (options?.retentionMode === 'soft_pacing' && options?.mercyPlayerId) {
+    const mercyMoves = candidates.filter((t) => {
+      const prog = state.players[playerIdx].tokens[t]
+      const dest = absoluteCell(playerIdx, prog === -1 ? 0 : prog + dice)
+      const cap = getCapturedTokenInfo(state, playerIdx, dest)
+      return !(cap && cap.ownerId === options.mercyPlayerId && cap.progress >= 25)
+    })
+    if (mercyMoves.length > 0) {
+      candidates = mercyMoves
+    }
   }
 
   let best = candidates[0]

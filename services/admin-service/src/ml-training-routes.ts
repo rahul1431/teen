@@ -15,13 +15,25 @@ import { z } from 'zod'
 // nothing in production ever called before this.
 const CHURN_ML_SERVICE_URL = process.env.CHURN_ML_SERVICE_URL || 'http://127.0.0.1:3020'
 
-const SUPPORTED_GAME_TYPES = ['ludo', 'teen_patti', 'rummy'] as const
+const SUPPORTED_GAME_TYPES = [
+  'ludo',
+  'teen_patti',
+  'rummy',
+  'aviator',
+  'color_prediction',
+  'matka',
+  'lottery',
+] as const
 type SupportedGameType = (typeof SUPPORTED_GAME_TYPES)[number]
 
 const TRAINING_DATA_CUTOVER: Record<SupportedGameType, string> = {
   ludo: '2026-07-25 06:04:03+00',
   teen_patti: '2026-07-31 17:00:00+00',
   rummy: '2026-08-01 00:00:00+00',
+  aviator: '2026-08-01 00:00:00+00',
+  color_prediction: '2026-08-01 00:00:00+00',
+  matka: '2026-08-01 00:00:00+00',
+  lottery: '2026-08-01 00:00:00+00',
 }
 const MIN_TRAINING_ROWS = 200
 
@@ -47,6 +59,35 @@ export async function registerMlTrainingRoutes(
     try {
       const isLudo = gameType === 'ludo'
       const isRummy = gameType === 'rummy'
+      const isTeenPatti = gameType === 'teen_patti'
+
+      const playstylePromise = isLudo
+        ? db.query(
+            `SELECT difficulty, capture_probability, safe_play_probability, sample_size, win_rate_target, avg_decision_delay_ms
+             FROM ludo_bot_profiles ORDER BY CASE difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`
+          )
+        : isRummy
+        ? db.query(
+            `SELECT difficulty, drop_probability as fold_probability, open_draw_probability as call_probability, declare_speed_factor as raise_probability, aggression_score, sample_size, win_rate_target, avg_decision_delay_ms
+             FROM rummy_bot_profiles ORDER BY CASE difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`
+          )
+        : isTeenPatti
+        ? db.query(
+            `SELECT difficulty, fold_probability, call_probability, raise_probability, aggression_score, sample_size, win_rate_target, avg_decision_delay_ms
+             FROM teen_patti_bot_profiles ORDER BY CASE difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`
+          )
+        : db.query(
+            `SELECT difficulty, fold_probability, call_probability, raise_probability, aggression_score, sample_size, win_rate_target, avg_decision_delay_ms
+             FROM bot_profiles WHERE game_type = $1 ORDER BY CASE difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`,
+            [gameType]
+          )
+
+      const decisionsPromise = isLudo
+        ? db.query(`SELECT COUNT(*)::int AS rows FROM ludo_move_decisions`).catch(() => ({ rows: [{ rows: 0 }] }))
+        : isTeenPatti
+        ? db.query(`SELECT COUNT(*)::int AS rows FROM teen_patti_move_decisions`).catch(() => ({ rows: [{ rows: 0 }] }))
+        : db.query(`SELECT COUNT(*)::int AS rows FROM bot_learning_sessions WHERE game_type = $1`, [gameType]).catch(() => ({ rows: [{ rows: 0 }] }))
+
       const [configRes, volumeRes, healthRes, playstyleRes, decisionsLoggedRes] = await Promise.all([
         db.query(
           `SELECT personalization_canary_pct FROM game_configs WHERE game_type = $1`,
@@ -57,30 +98,13 @@ export async function registerMlTrainingRoutes(
            JOIN game_rooms gr ON gr.id = gp.room_id
            WHERE gr.game_type = $1 AND gr.status = 'completed'
              AND gp.joined_at >= $2`,
-          [gameType, TRAINING_DATA_CUTOVER[gameType]]
+          [gameType, TRAINING_DATA_CUTOVER[gameType] || '2026-08-01 00:00:00+00']
         ),
         fetch(`${CHURN_ML_SERVICE_URL}/health`, { signal: AbortSignal.timeout(3000) })
           .then((r) => (r.ok ? r.json() : null))
           .catch(() => null),
-        isLudo
-          ? db.query(
-              `SELECT difficulty, capture_probability, safe_play_probability, sample_size, win_rate_target, avg_decision_delay_ms
-               FROM ludo_bot_profiles ORDER BY CASE difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`
-            )
-          : isRummy
-          ? db.query(
-              `SELECT difficulty, drop_probability as fold_probability, open_draw_probability as call_probability, declare_speed_factor as raise_probability, aggression_score, sample_size, win_rate_target, avg_decision_delay_ms
-               FROM rummy_bot_profiles ORDER BY CASE difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`
-            )
-          : db.query(
-              `SELECT difficulty, fold_probability, call_probability, raise_probability, aggression_score, sample_size, win_rate_target, avg_decision_delay_ms
-               FROM teen_patti_bot_profiles ORDER BY CASE difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`
-            ),
-        isLudo
-          ? db.query(`SELECT COUNT(*)::int AS rows FROM ludo_move_decisions`)
-          : isRummy
-          ? db.query(`SELECT COUNT(*)::int AS rows FROM bot_learning_sessions WHERE game_type = 'rummy'`).catch(() => ({ rows: [{ rows: 0 }] }))
-          : db.query(`SELECT COUNT(*)::int AS rows FROM teen_patti_move_decisions`).catch(() => ({ rows: [{ rows: 0 }] })),
+        playstylePromise,
+        decisionsPromise,
       ])
 
       const postCutoverRows = volumeRes.rows[0]?.rows ?? 0

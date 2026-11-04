@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Table, Tag, Card, Row, Col, Statistic, Button, Tooltip, Typography } from 'antd'
-import { ReloadOutlined, SafetyOutlined } from '@ant-design/icons'
+import { Table, Tag, Card, Row, Col, Statistic, Button, Tooltip, Typography, message, Alert, Space } from 'antd'
+import { ReloadOutlined, SafetyOutlined, ThunderboltOutlined, CheckCircleOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 
 const { Text } = Typography
@@ -30,26 +30,62 @@ interface WatchdogStats {
   active_rooms: number
 }
 
-// Game Watchdog: the gateway sweeps every 5 min and reaps rooms idle 15+ min,
-// refunding unconsumed entry fees. This tab shows what it did and when.
+interface ActiveRoom {
+  id: string
+  game_type: string
+  status: string
+  max_players: number
+  current_players: number
+  created_at: string
+  age_seconds: number
+  player_count: number
+}
+
 export function WatchdogTab() {
   const [events, setEvents] = useState<WatchdogEvent[]>([])
   const [stats, setStats] = useState<WatchdogStats | null>(null)
+  const [activeRooms, setActiveRooms] = useState<ActiveRoom[]>([])
   const [loading, setLoading] = useState(false)
+  const [sweeping, setSweeping] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await adminApi.get('/watchdog/events')
-      setEvents(res.data.events)
-      setStats(res.data.stats)
+      const [eventsRes, roomsRes] = await Promise.allSettled([
+        adminApi.get('/watchdog/events'),
+        adminApi.get('/watchdog/active-rooms'),
+      ])
+      if (eventsRes.status === 'fulfilled') {
+        setEvents(eventsRes.value.data?.events ?? [])
+        setStats(eventsRes.value.data?.stats ?? null)
+      }
+      if (roomsRes.status === 'fulfilled') {
+        setActiveRooms(roomsRes.value.data?.rooms ?? [])
+      }
     } catch { /* keep last data on transient errors */ }
     finally { setLoading(false) }
   }, [])
 
+  const triggerSweep = async () => {
+    setSweeping(true)
+    try {
+      const res = await adminApi.post('/watchdog/sweep')
+      if (res.data?.success) {
+        message.success(res.data.message || 'Watchdog sweep executed successfully')
+        load()
+      } else {
+        message.warning(res.data?.error || 'Sweep finished with warnings')
+      }
+    } catch (err: any) {
+      message.error(err.response?.data?.error || 'Failed to trigger watchdog sweep')
+    } finally {
+      setSweeping(false)
+    }
+  }
+
   useEffect(() => {
     load()
-    const t = setInterval(load, 60_000)
+    const t = setInterval(load, 30_000)
     window.addEventListener('aiDashboardRefresh', load)
     return () => {
       clearInterval(t)
@@ -57,7 +93,7 @@ export function WatchdogTab() {
     }
   }, [load])
 
-  const columns = [
+  const eventColumns = [
     {
       title: 'Time',
       dataIndex: 'created_at',
@@ -67,33 +103,34 @@ export function WatchdogTab() {
     {
       title: 'Game',
       dataIndex: 'game_type',
-      width: 110,
-      render: (g: string) => <Tag color="blue">{g.replace('_', ' ')}</Tag>,
+      width: 120,
+      render: (g: string) => <Tag color="blue">{g.replace('_', ' ').toUpperCase()}</Tag>,
     },
     {
-      title: 'Room',
+      title: 'Room ID',
       dataIndex: 'room_id',
-      width: 120,
-      render: (id: string) => <Text code>{id.slice(0, 8)}</Text>,
+      width: 130,
+      render: (id: string) => <Text code>{id ? id.slice(0, 8) : '—'}</Text>,
     },
     {
       title: 'Action',
       dataIndex: 'action',
-      width: 130,
+      width: 140,
       render: (action: string) =>
         action === 'reconciled_stranded_consume'
           ? <Tag color="orange">RECONCILED</Tag>
           : <Tag color="purple">REAPED</Tag>,
     },
     {
-      title: 'Details',
+      title: 'Details / Refunds',
       dataIndex: 'refunds',
       render: (refunds: WatchdogRefund[], row: WatchdogEvent) => {
         const isReconcile = row.action === 'reconciled_stranded_consume'
-        return refunds.length === 0 ? (
+        const list = Array.isArray(refunds) ? refunds : []
+        return list.length === 0 ? (
           <Text type="secondary">{isReconcile ? 'nothing stranded' : 'nothing to refund'}</Text>
         ) : (
-          refunds.map(r => (
+          list.map(r => (
             <Tooltip key={r.user_id} title={r.user_id}>
               <Tag color={r.is_bot ? 'default' : (isReconcile ? 'orange' : 'green')}>
                 {r.username}{r.is_bot ? ' 🤖' : ''} ₹{r.amount}
@@ -110,19 +147,66 @@ export function WatchdogTab() {
       render: (v: string, row: WatchdogEvent) => (
         <Text strong style={{ color: '#d4af37' }}>
           {row.action === 'reconciled_stranded_consume' ? 'collected ' : 'refunded '}
-          ₹{parseFloat(v).toFixed(2)}
+          ₹{parseFloat(v || '0').toFixed(2)}
         </Text>
       ),
     },
   ]
 
+  const roomColumns = [
+    {
+      title: 'Room ID',
+      dataIndex: 'id',
+      width: 130,
+      render: (id: string) => <Text code>{id ? id.slice(0, 8) : '—'}</Text>,
+    },
+    {
+      title: 'Game',
+      dataIndex: 'game_type',
+      width: 130,
+      render: (g: string) => <Tag color="cyan">{g ? g.replace('_', ' ').toUpperCase() : 'GAME'}</Tag>,
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      width: 100,
+      render: (s: string) => <Tag color={s === 'active' ? 'green' : 'gold'}>{s.toUpperCase()}</Tag>,
+    },
+    {
+      title: 'Players',
+      dataIndex: 'player_count',
+      width: 100,
+      render: (v: number, r: ActiveRoom) => `${r.current_players || v || 0} / ${r.max_players || 4}`,
+    },
+    {
+      title: 'Age',
+      dataIndex: 'age_seconds',
+      width: 120,
+      render: (s: number) => {
+        const mins = Math.floor((s || 0) / 60)
+        return `${mins}m ${(s || 0) % 60}s`
+      },
+    },
+    {
+      title: 'Watchdog State',
+      dataIndex: 'age_seconds',
+      width: 150,
+      render: (s: number) => {
+        const mins = Math.floor((s || 0) / 60)
+        if (mins >= 15) return <Tag color="error">Idle ({mins}m) - Due for Reap</Tag>
+        if (mins >= 10) return <Tag color="warning">Aging ({mins}m)</Tag>
+        return <Tag color="success"><CheckCircleOutlined /> Active ({mins}m)</Tag>
+      },
+    },
+  ]
+
   return (
     <div>
-      <Row gutter={16} style={{ marginBottom: 16 }}>
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col span={5}>
           <Card size="small">
-            <Statistic title="Active Rooms Now" value={stats?.active_rooms ?? 0}
-              prefix={<SafetyOutlined />} />
+            <Statistic title="Active Rooms Now" value={stats?.active_rooms ?? activeRooms.length}
+              prefix={<SafetyOutlined />} valueStyle={{ color: '#1890ff' }} />
           </Card>
         </Col>
         <Col span={5}>
@@ -149,19 +233,63 @@ export function WatchdogTab() {
         </Col>
       </Row>
 
+      <Alert
+        message="Watchdog Self-Healing Daemon Active"
+        description={
+          <div>
+            Daemon automatically monitors live rooms across all games. Idle rooms older than 15 minutes with no player actions are automatically reaped and player entry fees are safely unlocked back to their wallets. Completed games with uncollected settlements are auto-reconciled every 5 minutes.
+          </div>
+        }
+        type="info"
+        showIcon
+        icon={<SafetyOutlined />}
+        action={
+          <Space>
+            <Button
+              type="primary"
+              icon={<ThunderboltOutlined />}
+              onClick={triggerSweep}
+              loading={sweeping}
+              style={{ background: '#722ed1', borderColor: '#722ed1' }}
+            >
+              Trigger Manual Sweep Now
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
+              Refresh
+            </Button>
+          </Space>
+        }
+        style={{ marginBottom: 16 }}
+      />
+
       <Card
         size="small"
-        title="Watchdog Events — idle rooms reaped (refunded & cancelled) and completed-room stranded locks reconciled (collected), both every 5 min"
-        extra={<Button size="small" icon={<ReloadOutlined />} onClick={load} loading={loading} />}
+        title={<span><ClockCircleOutlined /> Currently Monitored Active Game Rooms ({activeRooms.length})</span>}
+        style={{ marginBottom: 16 }}
       >
-        <Table
-          dataSource={events}
-          columns={columns}
+        <Table<ActiveRoom>
+          dataSource={activeRooms}
+          columns={roomColumns}
           rowKey="id"
           size="small"
           loading={loading}
-          pagination={{ pageSize: 15 }}
-          locale={{ emptyText: 'No games reaped yet — everything is finishing cleanly 🎉' }}
+          pagination={{ pageSize: 5 }}
+          locale={{ emptyText: 'No active game rooms running right now' }}
+        />
+      </Card>
+
+      <Card
+        size="small"
+        title="Watchdog Audit Log — Idle rooms reaped & completed rooms reconciled"
+      >
+        <Table<WatchdogEvent>
+          dataSource={events}
+          columns={eventColumns}
+          rowKey="id"
+          size="small"
+          loading={loading}
+          pagination={{ pageSize: 10 }}
+          locale={{ emptyText: 'No games reaped yet — games are running and finishing cleanly' }}
         />
       </Card>
     </div>

@@ -398,3 +398,61 @@ func TestBrakeLeavesNormalPotsAlone(t *testing.T) {
 		t.Errorf("a strong hand never raised in a normal pot — the brake is too strong")
 	}
 }
+
+// --- Opponent Modeling Adaptations ---------------------------------------
+
+func TestOpponentModelingBluffAdaptation(t *testing.T) {
+	s := baseSituation()
+	s.strength = 0.10
+	s.aggression = 1.0
+	r := never()
+	// roll between 0.12 and 0.28
+	r.bluff = 0.20
+
+	// Default / balanced opponent: roll 0.20 > 0.12 so no bluff
+	s.opponentTendency = "balanced"
+	if _, _, reason := decideBot(s, r); reason == "bluff" {
+		t.Errorf("balanced opponent should not trigger bluff at roll 0.20")
+	}
+
+	// Tight folder opponent: threshold is 0.28, roll 0.20 should bluff
+	s.opponentTendency = "tight_folder"
+	if action, _, reason := decideBot(s, r); action != "raise" || reason != "bluff" {
+		t.Errorf("tight folder opponent should trigger bluff at roll 0.20, got action=%s reason=%s", action, reason)
+	}
+
+	// Calling station: threshold is 0.0, never bluff even at tiny roll
+	s.opponentTendency = "calling_station"
+	r.bluff = 0.01
+	if _, _, reason := decideBot(s, r); reason == "bluff" {
+		t.Errorf("calling station opponent should NEVER be bluffed")
+	}
+}
+
+func TestOpponentModelingTrapAdaptation(t *testing.T) {
+	s := baseSituation()
+	s.strength = 0.98
+	s.canShow = false
+	r := never()
+	r.trap = 0.35 // between 0.25 and 0.45
+
+	// Normal opponent: threshold is 0.25, so roll 0.35 does not trap
+	s.opponentTendency = "balanced"
+	if _, _, reason := decideBot(s, r); reason == "slow-playing a monster" {
+		t.Errorf("balanced opponent should not trap at roll 0.35")
+	}
+
+	// Maniac aggressor: threshold is 0.45, so roll 0.35 traps (calls instead of raising)
+	s.opponentTendency = "maniac_aggressor"
+	if action, _, reason := decideBot(s, r); action != "call" || reason != "slow-playing a monster" {
+		t.Errorf("maniac aggressor should trigger trap at roll 0.35, got action=%s reason=%s", action, reason)
+	}
+
+	// Calling station: threshold is 0.05, so roll 0.10 does not trap
+	s.opponentTendency = "calling_station"
+	r.trap = 0.10
+	if _, _, reason := decideBot(s, r); reason == "slow-playing a monster" {
+		t.Errorf("calling station should not trap at roll 0.10")
+	}
+}
+

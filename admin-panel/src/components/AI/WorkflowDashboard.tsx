@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, Row, Col, Progress, Tag, List, Empty, Spin, Alert, Statistic, Divider } from 'antd'
 import { CheckCircleOutlined, SyncOutlined, ClockCircleOutlined, AlertOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
@@ -295,7 +295,7 @@ export function WorkflowDashboard() {
       <Divider />
 
       {/* Predictions Feed (Bottom) */}
-      <Card title="ðŸŽ¯ Real-Time Predictions & Alerts">
+      <Card title="🎯 Real-Time Predictions & Alerts">
         <Row gutter={24}>
           {/* Churn Risk Alerts */}
           <Col xs={24} md={12}>
@@ -379,7 +379,7 @@ export function WorkflowDashboard() {
             renderItem={(pred) => (
               <List.Item>
                 <List.Item.Meta
-                  title={`${pred.target} â†’ ${pred.action}`}
+                  title={`${pred.target} → ${pred.action}`}
                   description={`Confidence: ${(pred.confidence * 100).toFixed(0)}% | ${new Date(pred.timestamp).toLocaleTimeString()}`}
                 />
               </List.Item>

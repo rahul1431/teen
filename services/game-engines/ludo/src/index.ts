@@ -1,7 +1,6 @@
 import 'dotenv/config'
 import crypto from 'crypto'
 import Fastify from 'fastify'
-import cors from '@fastify/cors'
 import Redis from 'ioredis'
 import { Pool } from 'pg'
 import {
@@ -140,8 +139,9 @@ interface ActionReq {
 }
 
 async function start() {
-  await app.register(cors, { origin: true })
   if (redis.status === 'wait') await redis.connect()
+
+  app.get('/health', async () => ({ status: 'ok', service: 'ludo-engine' }))
 
   // POST /start — create a fresh game and return the initial state.
   app.post('/start', async (req, reply) => {
@@ -149,7 +149,7 @@ async function start() {
     if (!body?.room_id || !body.players?.length) {
       return reply.code(400).send({ error: 'room_id and players required' })
     }
-    const validDifficulties: BotDifficulty[] = ['easy', 'medium', 'hard']
+    const validDifficulties: BotDifficulty[] = ['easy', 'medium', 'hard', 'god_mode']
     const difficulty = validDifficulties.includes(body.bot_difficulty as BotDifficulty)
       ? (body.bot_difficulty as BotDifficulty)
       : 'medium'
@@ -258,7 +258,12 @@ async function start() {
   // Convenience endpoint the gateway uses to drive bot turns. It rolls and,
   // if a move is required, picks and plays a token in one call.
   app.post('/bot-turn', async (req, reply) => {
-    const body = req.body as { room_id: string; user_id: string }
+    const body = req.body as {
+      room_id: string
+      user_id: string
+      mercy_player_id?: string
+      retention_mode?: 'soft_pacing' | 'normal' | 'shark_mode'
+    }
     try {
       return await withRoomLock(body.room_id, async () => {
         const state = await loadState(body.room_id)
@@ -315,7 +320,12 @@ async function start() {
   // lets it continue with whoever remains. Idempotent: leaving twice, or when
   // already completed, is a no-op result.
   app.post('/leave', async (req, reply) => {
-    const body = req.body as { room_id: string; user_id: string }
+    const body = req.body as {
+      room_id: string
+      user_id: string
+      mercy_player_id?: string
+      retention_mode?: 'soft_pacing' | 'normal' | 'shark_mode'
+    }
     if (!body?.room_id || !body?.user_id) {
       return reply.code(400).send({ error: 'room_id and user_id required' })
     }
@@ -342,8 +352,6 @@ async function start() {
     if (!state) return reply.code(404).send({ error: 'Room not found' })
     return state
   })
-
-  app.get('/health', async () => ({ status: 'ok', service: 'ludo-engine' }))
 
   const port = parseInt(process.env.PORT || '3011')
   app.listen({ port, host: '0.0.0.0' }, (err) => {

@@ -4,16 +4,11 @@ import {
   Space, Drawer, Descriptions, List, Avatar, message, Divider, Row, Col,
   Input, Popconfirm, Modal, Typography, Spin, Upload, Grid, Tabs, Alert
 } from 'antd'
-import { ReloadOutlined, EyeOutlined, PlusOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons'
+import { ReloadOutlined, EyeOutlined, PlusOutlined, DeleteOutlined, UploadOutlined, RobotOutlined, UserOutlined, LineChartOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { adminApi } from '../../api/client'
 import BotManagementPanel from '../../components/BotManagementPanel'
 import GamePnlDashboard from '../../components/GamePnlDashboard'
-import { BotTrainingConfigPanel } from '../../components/BotTrainingConfigPanel'
-import { BotMetricsTable } from '../../components/BotMetricsTable'
-import { BotTrainingAuditTrail } from '../../components/BotTrainingAuditTrail'
-import { BotTrainingTrendChart } from '../../components/BotTrainingTrendChart'
-import { MLTrainingPanel } from '../../components/MLTrainingPanel'
-import { BotLearningSection } from '../../components/AI/BotLearningSection'
+import UnifiedGameAIHub from '../../components/AI/UnifiedGameAIHub'
 
 const { Text } = Typography
 
@@ -465,20 +460,44 @@ export default function TeenPatti() {
         )}
       </Drawer>
     </div>
-    ) }, { key: 'bots', label: 'Bots', children: <BotManagementPanel gameType="teen_patti" /> }, { key: 'analytics', label: 'Analytics', children: <GamePnlDashboard gameType="teen_patti" /> }, { key: 'bot-training', label: 'Bot Training', children: (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-        <Alert
-          type="info"
-          showIcon
-          message="Skill / Boldness / Dice Bias only affect Ludo"
-          description="Independent from Ludo's config as of 2026-07-31 (own sliders, own session history). Enabled/Strategy/Target Win Rate control which bot is elected to win a Teen Patti hand and are recorded to the audit trail below, but Winner Bot Skill, Boldness, and Dice Bias are Ludo engine-only mechanics right now — they're saved but have no effect on Teen Patti gameplay. Teen Patti's actual win-rate steering happens via the DDAS win-rate target in Bot Learning below."
-        />
-        <BotTrainingConfigPanel gameType="teen_patti" />
-        <BotTrainingTrendChart gameType="teen_patti" />
-        <BotMetricsTable gameType="teen_patti" />
-        <BotTrainingAuditTrail gameType="teen_patti" />
-        <BotLearningSection gameType="teen_patti" />
-      </div>
-    ) }, { key: 'ml-training', label: 'ML Training', children: <MLTrainingPanel gameType="teen_patti" /> }]} />
+    ) },
+    {
+      key: 'bot-accounts',
+      label: (
+        <span>
+          <UserOutlined /> Bot Accounts
+        </span>
+      ),
+      children: (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <Alert
+            type="info"
+            showIcon
+            message="Teen Patti Bot Player Accounts"
+            description="Manage simulated player accounts (usernames, chips, avatars) that sit at Teen Patti tables to ensure active matchmaking."
+          />
+          <BotManagementPanel gameType="teen_patti" />
+        </div>
+      )
+    },
+    {
+      key: 'bot-ai',
+      label: (
+        <span>
+          <RobotOutlined style={{ color: '#D97706' }} /> AI & Bot Intelligence
+        </span>
+      ),
+      children: <UnifiedGameAIHub gameType="teen_patti" />
+    },
+    {
+      key: 'analytics',
+      label: (
+        <span>
+          <LineChartOutlined /> Analytics & PnL
+        </span>
+      ),
+      children: <GamePnlDashboard gameType="teen_patti" />
+    }
+  ]} />
   )
 }

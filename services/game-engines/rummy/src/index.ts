@@ -1,7 +1,6 @@
 import 'dotenv/config'
 import crypto from 'crypto'
 import Fastify from 'fastify'
-import cors from '@fastify/cors'
 import Redis from 'ioredis'
 import { Pool } from 'pg'
 import {
@@ -18,7 +17,7 @@ import {
   ActionResult,
   BotDifficulty,
 } from './rules'
-import { chooseBotDraw, chooseBotDiscard, tryBotDeclare } from './coordination'
+import { chooseBotDraw, chooseBotDiscard, tryBotDeclare, shouldBotDrop } from './coordination'
 
 const app = Fastify({ logger: false })
 const redis = new Redis(process.env.REDIS_URL!, { lazyConnect: true })
@@ -86,15 +85,16 @@ interface ActionReq {
 }
 
 async function start() {
-  await app.register(cors, { origin: true })
   if (redis.status === 'wait') await redis.connect()
+
+  app.get('/health', async () => ({ status: 'ok', service: 'rummy-engine' }))
 
   app.post('/start', async (req, reply) => {
     const body = req.body as StartReq
     if (!body?.room_id || !body.players?.length) {
       return reply.code(400).send({ error: 'room_id and players required' })
     }
-    const validDifficulties: BotDifficulty[] = ['easy', 'medium', 'hard']
+    const validDifficulties: BotDifficulty[] = ['easy', 'medium', 'hard', 'god_mode']
     const difficulty = validDifficulties.includes(body.bot_difficulty as BotDifficulty)
       ? (body.bot_difficulty as BotDifficulty)
       : 'medium'
@@ -191,7 +191,13 @@ async function start() {
   // Convenience endpoint the gateway uses to drive a full bot turn: pick a
   // draw source, try to declare, otherwise discard.
   app.post('/bot-turn', async (req, reply) => {
-    const body = req.body as { room_id: string; user_id: string }
+    const body = req.body as {
+      room_id: string
+      user_id: string
+      drop_probability?: number
+      open_draw_probability?: number
+      unsafe_cards?: string[]
+    }
     try {
       return await withRoomLock(body.room_id, async () => {
         const state = await loadState(body.room_id)
@@ -202,7 +208,15 @@ async function start() {
           return reply.code(409).send({ error: 'Not bot turn' })
         }
 
-        const drawChoice = chooseBotDraw(state, idx)
+        // Check First Drop before drawing
+        if (!state.players[idx].has_taken_turn && shouldBotDrop(state, idx, body.drop_probability)) {
+          const dropResult = dropPlayer(state, idx)
+          await saveState(state)
+          if (dropResult) void saveCompletedGame(state, dropResult)
+          return { state, result: dropResult, dropped: true }
+        }
+
+        const drawChoice = chooseBotDraw(state, idx, body.open_draw_probability)
         if (drawChoice === 'open') drawFromOpen(state, idx)
         else drawFromClosed(state, idx)
 
@@ -212,7 +226,7 @@ async function start() {
           const { result: declareResult } = attemptDeclare(state, idx, declareGroups)
           result = declareResult
         } else {
-          const discardId = chooseBotDiscard(state, idx)
+          const discardId = chooseBotDiscard(state, idx, body.unsafe_cards)
           discardCard(state, idx, discardId)
         }
 
@@ -255,9 +269,7 @@ async function start() {
     return state
   })
 
-  app.get('/health', async () => ({ status: 'ok', service: 'rummy-engine' }))
-
-  const port = parseInt(process.env.PORT || '3012')
+  const port = parseInt(process.env.PORT || '3009')
   app.listen({ port, host: '0.0.0.0' }, (err) => {
     if (err) { console.error(err); process.exit(1) }
     console.log(`Rummy engine running on port ${port}`)

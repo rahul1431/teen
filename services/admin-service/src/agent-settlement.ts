@@ -10,6 +10,7 @@ export interface PlayerNetLoss {
   agentId: string   // the player's direct agent (users.agent_id)
   gameType?: string  // 'teen_patti', 'rummy', 'ludo', 'aviator', 'matka', 'lottery', 'cricket', or 'general'
   netHouseWin: number // can be negative if the player won overall that day
+  turnover?: number   // total game wager / turnover (game_debit)
 }
 
 export interface GameCommissionBreakdown {
@@ -51,7 +52,10 @@ export function calculateDailySettlement(
       gameMap = new Map<string, number>()
       poolByAgentAndGame.set(p.agentId, gameMap)
     }
-    gameMap.set(game, (gameMap.get(game) || 0) + p.netHouseWin)
+    // Gaming affiliate commission is computed on game turnover / wagering volume (SUM of game_debit).
+    // If turnover is not supplied, fallback to netHouseWin (netted across players).
+    const poolContribution = (p.turnover !== undefined && p.turnover > 0) ? p.turnover : p.netHouseWin
+    gameMap.set(game, (gameMap.get(game) || 0) + poolContribution)
   }
 
   const results = new Map<string, AgentSettlementResult>()
