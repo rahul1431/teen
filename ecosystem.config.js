@@ -16,6 +16,23 @@ const LOAD_ENV = (svc) => {
   return out
 }
 const NODE_OPTS = { NODE_OPTIONS: '--max-old-space-size=120' }
+const SHARED_INTERNAL_KEY = 'internal_secret_key_change_in_prod'
+const SHARED_INTERNAL_ENV = {
+  INTERNAL_SERVICE_KEY: SHARED_INTERNAL_KEY,
+  WALLET_SERVICE_URL: 'http://127.0.0.1:3003',
+  TEEN_PATTI_BOT_SERVICE_URL: 'http://127.0.0.1:3023',
+  LUDO_BOT_SERVICE_URL: 'http://127.0.0.1:3024',
+  RUMMY_BOT_SERVICE_URL: 'http://127.0.0.1:3025',
+}
+
+const GATEWAY_COMMON_ENV = {
+  ...NODE_OPTS,
+  ...SHARED_INTERNAL_ENV,
+  ...LOAD_ENV('game-gateway'),
+  LUDO_ENGINE_URL: 'http://127.0.0.1:3011',
+  RUMMY_ENGINE_URL: 'http://127.0.0.1:3009',
+  TEEN_PATTI_ENGINE_URL: 'http://127.0.0.1:3010',
+}
 
 module.exports = {
   apps: [
@@ -29,7 +46,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '350M',
-      env: { ...NODE_OPTS, PORT: 3001 },
+      env: { ...NODE_OPTS, ...SHARED_INTERNAL_ENV, PORT: 3001 },
     },
 
     // ── Wallet: critical financial service, keep isolated ──
@@ -42,7 +59,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '200M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...SHARED_INTERNAL_ENV },
     },
 
     // ── Game Gateway: WebSocket hub ──
@@ -63,7 +80,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '300M',
-      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3004 },
+      env: { ...GATEWAY_COMMON_ENV, PORT: 3004 },
     },
     {
       name: 'teen-gateway-2',
@@ -74,7 +91,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '300M',
-      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3021 },
+      env: { ...GATEWAY_COMMON_ENV, PORT: 3021 },
     },
     {
       name: 'teen-gateway-3',
@@ -85,7 +102,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '300M',
-      env: { ...NODE_OPTS, ...LOAD_ENV('game-gateway'), PORT: 3022 },
+      env: { ...GATEWAY_COMMON_ENV, PORT: 3022 },
     },
 
     // ── Game Engines ──
@@ -98,7 +115,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '200M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...SHARED_INTERNAL_ENV },
     },
     {
       name: 'teen-ludo',
@@ -109,7 +126,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '200M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...SHARED_INTERNAL_ENV, PORT: 3011 },
     },
     {
       name: 'teen-rummy',
@@ -120,7 +137,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '200M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...SHARED_INTERNAL_ENV, PORT: 3009 },
     },
     {
       name: 'teen-tp-engine',
@@ -131,7 +148,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '200M',
-      env: { PORT: '3010', ...LOAD_ENV('game-engines/teen-patti') },
+      env: { PORT: '3010', ...SHARED_INTERNAL_ENV, ...LOAD_ENV('game-engines/teen-patti') },
     },
 
     // ── Admin: keep separate — 2300+ lines with multipart KYC upload ──
@@ -144,7 +161,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '250M',
-      env: NODE_OPTS,
+      env: { ...NODE_OPTS, ...SHARED_INTERNAL_ENV },
     },
 
     // ── Monitoring: WebSocket receiver from game-gateway + metrics ──
@@ -210,7 +227,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '150M',
-      env: { ...NODE_OPTS, NODE_ENV: 'production', PORT: 3015, GEOLITE2_CITY_PATH: '/opt/teen/geoip/GeoLite2-City.mmdb' },
+      env: { ...NODE_OPTS, ...SHARED_INTERNAL_ENV, NODE_ENV: 'production', PORT: 3015, GEOLITE2_CITY_PATH: '/opt/teen-prod/geoip/GeoLite2-City.mmdb' },
     },
 
     // ── Uptime Bot: Monitoring service health + TCP ports, writes to JSON ──
@@ -254,7 +271,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '150M',
-      env: { ...NODE_OPTS, PORT: 3023 },
+      env: { ...NODE_OPTS, ...SHARED_INTERNAL_ENV, PORT: 3023 },
     },
     {
       name: 'ludo-bot-training',
@@ -265,7 +282,31 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       max_memory_restart: '150M',
-      env: { ...NODE_OPTS, PORT: 3024 },
+      env: { ...NODE_OPTS, ...SHARED_INTERNAL_ENV, PORT: 3024 },
+    },
+    {
+      name: 'rummy-bot-training',
+      cwd: `${BASE}/bot-training/rummy`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('bot-training/rummy'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '150M',
+      env: { ...NODE_OPTS, ...SHARED_INTERNAL_ENV, PORT: 3025 },
+    },
+
+    // ── Company AI Operations Agent: 24/7 SRE Watchdog, Self-Healing, Telegram & Gemini COO ──
+    {
+      name: 'teen-company-ops',
+      cwd: `${BASE}/company-ops-agent`,
+      script: 'dist/index.js',
+      env_file: ENV_FILE('company-ops-agent'),
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+      max_memory_restart: '150M',
+      env: { ...NODE_OPTS, PORT: 3035 },
     },
   ],
 }

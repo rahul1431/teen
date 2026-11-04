@@ -8,6 +8,6 @@
 - **Verifying Version Parity:** Before uploading any APK in the Admin Panel or serving it via `/downloads/app-release.apk`, confirm that the compiled binary's internal Flutter asset `version.json` / `buildNumber` matches the `version_code` set on the admin dashboard.
 - **Reference:** See `docs/in-app-update-deployment.md`.
 
-### 2. VPS Deployment & Direct Sync
-- **Deployment:** When deploying codebase updates (including backend services, lead manager, contact sync, gallery sync, admin panel, etc.) to the production VPS (`64.204.130.181`), run `node scripts/deploy-full-vps.js`. This script tars the entire workspace code and transfers it directly over SSH to `/opt/teen-prod/` on the VPS, executing `infra/deploy/go.sh` to update all 19 PM2 services instantly.
-- **Admin Panel Assets:** Run `node scripts/upload-admin-dist.js` after `npm run build` to upload the static admin panel build to HestiaCP nginx at `/home/admin/web/game.myonlinejoker.com/public_html/admin/`.
+### 2. GCP Deployment & Direct Sync
+- **Deployment:** When deploying codebase updates (including backend services, lead manager, contact sync, gallery sync, admin panel, etc.) to the production GCP VM (`35.244.3.210`), run `node scripts/sync-gcp-codebase.js`. This script archives the workspace code and transfers it directly over SSH to `/opt/teen-prod/` on the GCP Compute Engine instance, executing the build and PM2 restart.
+- **Admin Panel Assets:** Run `node scripts/upload-admin-dist.js` after `npm run build` in `admin-panel` to upload the static admin panel build to the Nginx root at `/home/admin/web/game.myonlinejoker.com/public_html/admin/`.

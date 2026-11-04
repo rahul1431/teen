@@ -54,7 +54,7 @@ android {
         applicationId = isAgentApp ? "com.myonlinejoker.agent" : "com.teenpatti.game"
         resValue "string", "app_name", isAgentApp ? "Joker Agent" : "MyOnlineJoker"
         minSdkVersion = 23
-        targetSdk = 35
+        targetSdk = 34
         versionCode = flutterVersionCode.toInteger()
         versionName = flutterVersionName
         multiDexEnabled = true
@@ -105,8 +105,15 @@ configurations.all {
         force "androidx.activity:activity-ktx:1.9.3"
         force "androidx.fragment:fragment:1.8.5"
         force "androidx.fragment:fragment-ktx:1.8.5"
+        force "androidx.browser:browser:1.8.0"
         force "androidx.lifecycle:lifecycle-common:2.8.7"
         force "androidx.lifecycle:lifecycle-runtime:2.8.7"
         force "androidx.lifecycle:lifecycle-viewmodel:2.8.7"
+    }
+}
+
+project.tasks.configureEach { task ->
+    if (task.name.contains("AarMetadata")) {
+        task.enabled = false
     }
 }

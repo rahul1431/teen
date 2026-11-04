@@ -5,13 +5,13 @@ const os = require('os');
 const { execSync } = require('child_process');
 
 const VPS_CONFIG = {
-  host: process.env.VPS_HOST || '64.204.130.181',
+  host: process.env.VPS_HOST || '35.244.3.210',
   port: 22,
-  username: process.env.VPS_USER || 'root',
-  password: process.env.VPS_PASSWORD || '4sXWo02f4WkNm8fM'
+  username: process.env.VPS_USER || 'rahulrathodloan3l',
+  privateKey: fs.existsSync('C:/Users/Rahul/.ssh/id_ed25519') ? fs.readFileSync('C:/Users/Rahul/.ssh/id_ed25519') : undefined
 };
 
-console.log('📦 Tarring admin-panel/dist...');
+console.log('📦 Tarring admin-panel/dist for GCP VM...');
 const localDist = path.join(__dirname, '../admin-panel/dist');
 const localTar = path.join(os.tmpdir(), 'admin-dist.tar.gz');
 
@@ -32,13 +32,10 @@ conn.on('ready', () => {
       console.log('✅ Tar archive uploaded to VPS.');
 
       const remoteCmds = `
-        mkdir -p /home/admin/web/game.myonlinejoker.com/public_html/admin/ && \\
-        rm -rf /home/admin/web/game.myonlinejoker.com/public_html/admin/* && \\
-        tar -xzf ${remoteTar} -C /home/admin/web/game.myonlinejoker.com/public_html/admin/ && \\
         mkdir -p /opt/teen-prod/admin-panel/dist && \\
         rm -rf /opt/teen-prod/admin-panel/dist/* && \\
         tar -xzf ${remoteTar} -C /opt/teen-prod/admin-panel/dist/ && \\
-        chown -R admin:admin /home/admin/web/game.myonlinejoker.com/public_html/admin/ && \\
+        (if [ -d /home/admin/web/game.myonlinejoker.com/public_html/admin ]; then sudo cp -r /opt/teen-prod/admin-panel/dist/* /home/admin/web/game.myonlinejoker.com/public_html/admin/; fi) && \\
         rm -f ${remoteTar} && \\
         echo "ADMIN_DEPLOY_SUCCESS"
       `;

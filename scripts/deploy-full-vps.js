@@ -5,14 +5,14 @@ const os = require('os');
 const { execSync } = require('child_process');
 
 const VPS_CONFIG = {
-  host: process.env.VPS_HOST || '64.204.130.181',
+  host: process.env.VPS_HOST || '35.244.3.210',
   port: 22,
-  username: process.env.VPS_USER || 'root',
-  password: process.env.VPS_PASSWORD || '4sXWo02f4WkNm8fM'
+  username: process.env.VPS_USER || 'rahulrathodrr9849',
+  privateKey: fs.existsSync('C:/Users/Rahul/.ssh/id_ed25519') ? fs.readFileSync('C:/Users/Rahul/.ssh/id_ed25519') : undefined
 };
 
-console.log('🚀 Starting Full Direct Codebase Sync & VPS Deployment...');
-console.log(`📡 Target VPS: ${VPS_CONFIG.username}@${VPS_CONFIG.host}`);
+console.log('🚀 Starting Full Direct Codebase Sync & GCP Deployment...');
+console.log(`📡 Target GCP VM: ${VPS_CONFIG.username}@${VPS_CONFIG.host}`);
 
 const rootDir = path.join(__dirname, '..');
 const localTar = path.join(os.tmpdir(), 'teen-full-code.tar.gz');
