@@ -338,7 +338,7 @@ class _AgentProfileScreenState extends State<AgentProfileScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Version: 1.3.93 (Build 4285)', style: TextStyle(color: AgentTheme.gold, fontWeight: FontWeight.bold)),
+              Text('Version: 1.0 (v1.0.0)', style: TextStyle(color: AgentTheme.gold, fontWeight: FontWeight.bold)),
               SizedBox(height: 8),
               Text(
                 'MyOnlineJoker Partner Platform empowers agents with real-time multi-tier commission settlements, live referral attribution, sub-agent override tracking, and fast payouts.',

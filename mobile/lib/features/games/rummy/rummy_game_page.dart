@@ -176,8 +176,8 @@ class _RummyGamePageState extends State<RummyGamePage>
     _syncTurnTimer();
     setState(() => _banner = '${cur.username} is thinking... (AI Turn)');
 
-    // Random thinking time for bots between 5 and 15 seconds
-    final delaySeconds = math.Random().nextInt(11) + 5;
+    // Human-like timing for bots: random 2 to 7 seconds
+    final delaySeconds = math.Random().nextInt(6) + 2; // 2 to 7 seconds
     await Future.delayed(Duration(seconds: delaySeconds));
     if (!mounted) return;
     final idx = s.currentTurn;
@@ -3434,6 +3434,86 @@ class _RummyGamePageState extends State<RummyGamePage>
     );
   }
 
+  // Floating glowing waiting banner shown when opponents are taking their turn
+  Widget _buildOpponentTurnBanner() {
+    final all = _allPlayers;
+    String opponentName = 'Opponent';
+    if (_currentTurnIndex >= 0 && _currentTurnIndex < all.length) {
+      opponentName = (all[_currentTurnIndex]['username'] ?? 'Opponent').toString();
+      opponentName = opponentName.replaceAll(RegExp(r'(_bot|_ludo|_rummy)', caseSensitive: false), '');
+    }
+
+    return AnimatedBuilder(
+      animation: _pulseController,
+      builder: (context, child) {
+        final val = _pulseController.value;
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [
+                Color(0xEB0F172A),
+                Color(0xF21E293B),
+                Color(0xEB0F172A),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: AppColors.gold.withValues(alpha: 0.35 + (val * 0.45)),
+              width: 1.2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.gold.withValues(alpha: 0.15 + (val * 0.25)),
+                blurRadius: 8 + (val * 4),
+                spreadRadius: 1,
+              ),
+              const BoxShadow(
+                color: Colors.black45,
+                blurRadius: 4,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 13,
+                height: 13,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    AppColors.gold.withValues(alpha: 0.7 + (val * 0.3)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 7),
+              Text(
+                'Waiting for $opponentName…',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.3,
+                ),
+              ),
+              const SizedBox(width: 5),
+              Text(
+                '(${_turnSecondsLeft}s)',
+                style: TextStyle(
+                  color: AppColors.gold.withValues(alpha: 0.9),
+                  fontSize: 10.0,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   //  MAIN BUILD METHOD (LANDSCAPE WITH POPSCOPE)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -3620,16 +3700,17 @@ class _RummyGamePageState extends State<RummyGamePage>
                         // ④b Table Center Area: Closed Deck, Open Pile, Wild Joker
                         _buildTableCenter(tableL, tableT, tableW, tableH),
 
-                        // ⑤ High-Visibility Floating "YOUR TURN" Banner cleanly positioned below Card Piles
-                        if (canAct)
-                          Positioned(
-                            left: tableL,
-                            width: tableW,
-                            top: tableT + (tableH * 0.68).clamp(138.0, 185.0),
-                            child: Center(
-                              child: _buildUserTurnBanner(awaitingDraw),
-                            ),
+                        // ⑤ High-Visibility Floating "YOUR TURN" or Animated "WAITING" Banner cleanly positioned below Card Piles
+                        Positioned(
+                          left: tableL,
+                          width: tableW,
+                          top: tableT + (tableH * 0.68).clamp(138.0, 185.0),
+                          child: Center(
+                            child: canAct
+                                ? _buildUserTurnBanner(awaitingDraw)
+                                : _buildOpponentTurnBanner(),
                           ),
+                        ),
 
                         // ⑥ Right-Side Board Control HUD (Score, Auto, Sort, Group, Drop, Discard, Declare)
                         Positioned(

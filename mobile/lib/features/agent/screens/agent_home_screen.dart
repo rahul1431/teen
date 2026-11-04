@@ -15,6 +15,7 @@ import 'agent_notifications_screen.dart';
 import 'agent_analytics_screen.dart';
 import 'agent_support_screen.dart';
 import 'agent_profile_screen.dart';
+import '../../../../shared/widgets/app_popup_dialog.dart';
 
 class AgentHomeScreen extends StatefulWidget {
   const AgentHomeScreen({super.key});
@@ -35,6 +36,11 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
   void initState() {
     super.initState();
     _loadDashboardData();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) AppPopupHelper.checkAndShowPopup(context, target: 'agent');
+      });
+    });
   }
 
   Future<void> _loadDashboardData() async {

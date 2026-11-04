@@ -290,9 +290,18 @@ class _AgentLoginScreenState extends State<AgentLoginScreen> {
 
                 // Footer Info
                 Center(
-                  child: Text(
-                    'Need an agent account? Contact Master Admin Support',
-                    style: TextStyle(color: AgentTheme.textMuted.withOpacity(0.8), fontSize: 12),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Need an agent account? Contact Master Admin Support',
+                        style: TextStyle(color: AgentTheme.textMuted.withOpacity(0.8), fontSize: 12),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Agent Partner App v1.0',
+                        style: TextStyle(color: AgentTheme.gold.withOpacity(0.7), fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ],
                   ),
                 ),
               ],

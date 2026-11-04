@@ -270,7 +270,7 @@ class _LudoGamePageState extends State<LudoGamePage>
       setState(
           () => _banner = '${s.players[s.currentTurn].username} is playing…');
       await Future.delayed(
-          const Duration(milliseconds: 1500)); // Increased from 900
+          Duration(milliseconds: 2000 + math.Random().nextInt(5001)));
       final dice = _engine.rollDie();
       _diceCtrl.forward(from: 0);
       await Future.delayed(

@@ -15,6 +15,7 @@ import '../../core/monitor/location_consent_service.dart';
 import '../../core/services/locale_service.dart';
 import '../../core/services/app_config_service.dart';
 import '../../shared/widgets/cms_banner_strip.dart';
+import '../../shared/widgets/app_popup_dialog.dart';
 import '../../shared/utils/permission_helper.dart';
 
 String _resolveImageUrl(String? p) {
@@ -129,6 +130,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted) UpdateService.instance.checkAndPrompt(context);
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) AppPopupHelper.checkAndShowPopup(context, target: 'player');
+      });
       });
     });
     // Tag telemetry with the logged-in user and (if not yet decided) prompt

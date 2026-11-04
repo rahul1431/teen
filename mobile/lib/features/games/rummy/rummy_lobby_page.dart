@@ -28,6 +28,8 @@ class _RummyLobbyPageState extends State<RummyLobbyPage> {
   final _stakes = [100.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0];
   StreamSubscription? _roomJoinedSub;
   StreamSubscription? _errorSub;
+  StreamSubscription? _statusSub;
+  List<Map<String, dynamic>> _queuedPlayers = [];
   int _secondsRemaining = 60;
   StateSetter? _dialogSetState;
   Timer? _searchingTimer;
@@ -109,6 +111,24 @@ class _RummyLobbyPageState extends State<RummyLobbyPage> {
     }
     _loadBalance();
     _loadFeePercent();
+    _statusSub = _socket.on('matchmaking:status').listen((data) {
+      if (!mounted) return;
+      if (data is Map) {
+        setState(() {
+          if (data['seconds_remaining'] != null) {
+            _secondsRemaining = int.tryParse(data['seconds_remaining'].toString()) ??
+                (data['seconds_remaining'] is num
+                    ? (data['seconds_remaining'] as num).toInt()
+                    : 10);
+          }
+          if (data['players'] != null && data['players'] is List) {
+            _queuedPlayers = List<Map<String, dynamic>>.from(
+                (data['players'] as List).map((p) => Map<String, dynamic>.from(p)));
+          }
+        });
+        _dialogSetState?.call(() {});
+      }
+    });
     _roomJoinedSub = _socket.on(SocketEvents.roomJoined).listen((data) {
       if (!mounted) return;
       if (data['game_type'] != null && data['game_type'] != 'rummy') return;
@@ -139,6 +159,7 @@ class _RummyLobbyPageState extends State<RummyLobbyPage> {
     _searchingTimer?.cancel();
     _roomJoinedSub?.cancel();
     _errorSub?.cancel();
+    _statusSub?.cancel();
     super.dispose();
   }
 
@@ -184,6 +205,7 @@ class _RummyLobbyPageState extends State<RummyLobbyPage> {
     setState(() {
       _searching = true;
       _secondsRemaining = 60;
+      _queuedPlayers = [{'username': 'You', 'isBot': false}];
     });
     _showSearchingDialog();
 
@@ -215,39 +237,99 @@ class _RummyLobbyPageState extends State<RummyLobbyPage> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
+        final accent = _variationGradient;
         return StatefulBuilder(
           builder: (context, setDialogState) {
             _dialogSetState = setDialogState;
             return AlertDialog(
               backgroundColor: AppColors.cardBg,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
-                  side: BorderSide(
-                      color: AppColors.gold.withValues(alpha: 0.5))),
-              contentPadding:
-                  const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+                borderRadius: BorderRadius.circular(18),
+                side: BorderSide(color: accent.last.withValues(alpha: 0.5)),
+              ),
+              contentPadding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const SizedBox(
-                    width: 30,
-                    height: 30,
-                    child: CircularProgressIndicator(
-                        color: AppColors.gold, strokeWidth: 3),
-                  ),
-                  const SizedBox(height: 14),
-                  Text('Finding players… (${_secondsRemaining}s)',
-                      style: const TextStyle(
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          color: AppColors.gold,
+                          strokeWidth: 2.5,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        'Finding players for $_variationLabel… (${_secondsRemaining}s)',
+                        style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
-                          fontSize: 14)),
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: List.generate(4, (index) {
+                      final hasPlayer = index < _queuedPlayers.length;
+                      final player = hasPlayer ? _queuedPlayers[index] : null;
+                      final rawName = (player?['username'] ?? 'Waiting…').toString();
+                      final name = rawName.replaceAll(
+                          RegExp(r'(_bot|_ludo|_rummy)', caseSensitive: false), '');
+
+                      return Container(
+                        width: 64,
+                        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                        decoration: BoxDecoration(
+                          color: hasPlayer
+                              ? AppColors.gold.withValues(alpha: 0.15)
+                              : Colors.black26,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: hasPlayer ? AppColors.gold : Colors.white12,
+                            width: hasPlayer ? 1.5 : 1.0,
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              hasPlayer
+                                  ? Icons.person_rounded
+                                  : Icons.hourglass_empty_rounded,
+                              size: 20,
+                              color: hasPlayer ? AppColors.gold : Colors.white30,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                                color: hasPlayer ? Colors.white : Colors.white38,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ),
                   const SizedBox(height: 22),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton(
                       onPressed: _cancelSearch,
                       style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: AppColors.red)),
+                        side: const BorderSide(color: AppColors.red),
+                      ),
                       child: const Text('Cancel',
                           style: TextStyle(color: AppColors.red)),
                     ),
