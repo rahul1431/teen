@@ -5,7 +5,6 @@ import helmet from '@fastify/helmet'
 import jwt from '@fastify/jwt'
 import multipart from '@fastify/multipart'
 import { Pool } from 'pg'
-import Razorpay from 'razorpay'
 import crypto from 'crypto'
 import { z } from 'zod'
 import fs from 'fs'
@@ -116,15 +115,7 @@ const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 })
 const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : undefined
 const walletSvc = new WalletService(db, redis)
 
-// Razorpay is optional — manual UPI/bank deposits are the primary flow.
-// Only construct the client when keys are configured so the service boots
-// without them (online gateway routes will 503 until keys are provided).
-const razorpay: Razorpay | null = process.env.RAZORPAY_KEY_ID
-  ? new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET!,
-  })
-  : null
+// Online deposits are handled sovereignly via YouPI-PG (Instant UPI QR/Intent) and Manual Transfers.
 
 const ALLOWED_ORIGINS = new Set([
   'https://game.myonlinejoker.com',
@@ -219,87 +210,6 @@ async function start() {
     const { limit = 20, offset = 0 } = req.query as any
     const txns = await walletSvc.getTransactions(user.sub, parseInt(limit), parseInt(offset))
     return reply.send(txns)
-  })
-
-  // POST /wallet/deposit/create-order
-  app.post('/wallet/deposit/create-order', { onRequest: [authenticate] }, async (req, reply) => {
-    const user = req.user as any
-    const body = z.object({ amount: z.number().min(MIN_DEPOSIT_AMOUNT).max(MAX_DEPOSIT_AMOUNT) }).parse(req.body)
-
-    if (!razorpay) {
-      return reply.code(503).send({ error: 'Online payment gateway not configured. Use manual deposit.' })
-    }
-    const order = await razorpay.orders.create({
-      amount: body.amount * 100, // paise
-      currency: 'INR',
-      receipt: `dep_${user.sub}_${Date.now()}`,
-    })
-
-    await db.query(
-      `INSERT INTO payment_orders (user_id, gateway, gateway_order_id, amount, type, status)
-       VALUES ($1, 'razorpay', $2, $3, 'deposit', 'created')`,
-      [user.sub, order.id, body.amount]
-    )
-
-    return reply.send({ order_id: order.id, amount: body.amount, key_id: process.env.RAZORPAY_KEY_ID })
-  })
-
-  // POST /wallet/deposit/verify
-  app.post('/wallet/deposit/verify', { onRequest: [authenticate] }, async (req, reply) => {
-    const user = req.user as any
-    const body = z.object({
-      razorpay_order_id: z.string(),
-      razorpay_payment_id: z.string(),
-      razorpay_signature: z.string(),
-    }).parse(req.body)
-
-    const expectedSig = crypto
-      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET!)
-      .update(`${body.razorpay_order_id}|${body.razorpay_payment_id}`)
-      .digest('hex')
-
-    const expectedBuf = Buffer.from(expectedSig, 'utf8')
-    const receivedBuf = Buffer.from(body.razorpay_signature, 'utf8')
-    if (expectedBuf.length !== receivedBuf.length || !crypto.timingSafeEqual(expectedBuf, receivedBuf)) {
-      return reply.code(400).send({ error: 'Invalid payment signature' })
-    }
-
-    const orderRes = await db.query(
-      `SELECT * FROM payment_orders WHERE gateway_order_id = $1 AND user_id = $2 AND status = 'created'`,
-      [body.razorpay_order_id, user.sub]
-    )
-    if (!orderRes.rows.length) return reply.code(400).send({ error: 'Order not found or already processed' })
-    const order = orderRes.rows[0]
-
-    const client = await db.connect()
-    try {
-      await client.query('BEGIN')
-      await client.query(
-        `UPDATE payment_orders SET status = 'paid', gateway_payment_id = $1, updated_at = NOW() WHERE id = $2`,
-        [body.razorpay_payment_id, order.id]
-      )
-      await walletSvc.credit({
-        userId: user.sub,
-        amount: parseFloat(order.amount),
-        type: 'deposit',
-        walletType: 'real',
-        referenceId: body.razorpay_payment_id,
-        idempotencyKey: `deposit_${body.razorpay_payment_id}`,
-        description: `Deposit via Razorpay`,
-      }, client)
-      await client.query('COMMIT')
-    } catch (err) {
-      await client.query('ROLLBACK')
-      throw err
-    } finally {
-      client.release()
-    }
-
-    // Trigger referral reward after successful deposit (outside the payment tx)
-    await tryTriggerReferralReward(user.sub, db, walletSvc)
-
-    const balance = await walletSvc.getBalance(user.sub)
-    return reply.send({ success: true, balance })
   })
 
   // POST /wallet/deposit/manual (admin only — identified by internal key)
