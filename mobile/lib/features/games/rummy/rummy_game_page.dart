@@ -3459,12 +3459,12 @@ class _RummyGamePageState extends State<RummyGamePage>
             ),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: AppColors.gold.withValues(alpha: 0.35 + (val * 0.45)),
+              color: const Color(0xFFFFD700).withValues(alpha: 0.35 + (val * 0.45)),
               width: 1.2,
             ),
             boxShadow: [
               BoxShadow(
-                color: AppColors.gold.withValues(alpha: 0.15 + (val * 0.25)),
+                color: const Color(0xFFFFD700).withValues(alpha: 0.15 + (val * 0.25)),
                 blurRadius: 8 + (val * 4),
                 spreadRadius: 1,
               ),
@@ -3484,7 +3484,7 @@ class _RummyGamePageState extends State<RummyGamePage>
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
                   valueColor: AlwaysStoppedAnimation<Color>(
-                    AppColors.gold.withValues(alpha: 0.7 + (val * 0.3)),
+                    const Color(0xFFFFD700).withValues(alpha: 0.7 + (val * 0.3)),
                   ),
                 ),
               ),
@@ -3502,7 +3502,7 @@ class _RummyGamePageState extends State<RummyGamePage>
               Text(
                 '(${_turnSecondsLeft}s)',
                 style: TextStyle(
-                  color: AppColors.gold.withValues(alpha: 0.9),
+                  color: const Color(0xFFFFD700).withValues(alpha: 0.9),
                   fontSize: 10.0,
                   fontWeight: FontWeight.w800,
                 ),
