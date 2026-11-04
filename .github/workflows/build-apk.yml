@@ -63,20 +63,22 @@ jobs:
         env:
           API_BASE_URL: ${{ secrets.API_BASE_URL }}
           SOCKET_URL: ${{ secrets.SOCKET_URL }}
-                  run: |
+        run: |
           # Fall back to the production HTTPS host when the secret is unset/empty
           API_BASE_URL="${API_BASE_URL:-https://game.myonlinejoker.com}"
           SOCKET_URL="${SOCKET_URL:-https://game.myonlinejoker.com}"
-                    # Strip leading/trailing whitespace — a SOCKET_URL secret with a stray
+
+          # Strip leading/trailing whitespace — a SOCKET_URL secret with a stray
           # trailing space compiles fine but makes the socket fail host lookup
           # (getaddrinfo errno 7) while leaving HTTP/Dio unaffected.
           API_BASE_URL="$(printf '%s' "$API_BASE_URL" | xargs)"
           SOCKET_URL="$(printf '%s' "$SOCKET_URL" | xargs)"
-                    cat > lib/core/constants/app_config.dart << EOF
+
+          cat > lib/core/constants/app_config.dart << EOF
           class AppConfig {
             static const String apiBaseUrl = '${API_BASE_URL}';
             static const String socketUrl = '${SOCKET_URL}';
-                        static const String appName = 'MyOnlineJoker';
+            static const String appName = 'MyOnlineJoker';
             static const String appVersion = '1.0.0';
           }
           EOF
@@ -89,7 +91,14 @@ jobs:
         working-directory: mobile
         env:
           MONITOR_SECRET_KEY: ${{ secrets.MONITOR_SECRET_KEY }}
-        run: flutter build apk --release --split-per-abi --dart-define=MONITOR_SECRET_KEY=$MONITOR_SECRET_KEY
+        run: |
+          # 1. Build universal release APK (all architectures: arm64-v8a, armeabi-v7a, x86_64)
+          flutter build apk --release --dart-define=MONITOR_SECRET_KEY=$MONITOR_SECRET_KEY
+          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/app-universal-release.apk
+          # 2. Build per-ABI APKs
+          flutter build apk --release --split-per-abi --dart-define=MONITOR_SECRET_KEY=$MONITOR_SECRET_KEY
+          # 3. Restore universal app-release.apk so standard download link serves all architectures
+          cp build/app/outputs/flutter-apk/app-universal-release.apk build/app/outputs/flutter-apk/app-release.apk
 
       - name: Build Agent Partner release APK
         working-directory: mobile
@@ -102,6 +111,7 @@ jobs:
         with:
           name: release-apks-${{ github.sha }}
           path: |
+            mobile/build/app/outputs/flutter-apk/app-release.apk
             mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             mobile/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             mobile/build/app/outputs/flutter-apk/agent-partner-release.apk
@@ -114,5 +124,7 @@ jobs:
           echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Download the APK from the **Artifacts** section above." >> $GITHUB_STEP_SUMMARY
-          echo "- **arm64-v8a** — modern phones (recommended)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Universal APK (app-release.apk)** — all devices & emulators" >> $GITHUB_STEP_SUMMARY
+          echo "- **arm64-v8a** — modern 64-bit phones" >> $GITHUB_STEP_SUMMARY
           echo "- **armeabi-v7a** — older 32-bit phones" >> $GITHUB_STEP_SUMMARY
+          echo "- **agent-partner-release.apk** — Partner Agent app" >> $GITHUB_STEP_SUMMARY

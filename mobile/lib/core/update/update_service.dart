@@ -100,6 +100,8 @@ class UpdateDialogState extends State<UpdateDialog> {
       _progress = 0;
     });
     final path = '${Directory.systemTemp.path}/myonlinejoker_update.apk';
+    final file = File(path);
+    if (await file.exists()) { try { await file.delete(); } catch (_) {} }
     _cancelToken = CancelToken();
     try {
       await Dio().download(

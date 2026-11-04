@@ -30,7 +30,7 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.myonlinejoker.app"
-    compileSdk = 36
+    compileSdk = 35
     ndkVersion = "28.2.13676358"
 
     compileOptions {
@@ -53,8 +53,8 @@ android {
         // Player App: com.teenpatti.game | Agent App: com.myonlinejoker.agent (enables side-by-side install)
         applicationId = isAgentApp ? "com.myonlinejoker.agent" : "com.teenpatti.game"
         resValue "string", "app_name", isAgentApp ? "Joker Agent" : "MyOnlineJoker"
-        minSdkVersion = flutter.minSdkVersion
-        targetSdk = 36
+        minSdkVersion = 23
+        targetSdk = 35
         versionCode = flutterVersionCode.toInteger()
         versionName = flutterVersionName
         multiDexEnabled = true
