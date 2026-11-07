@@ -87,24 +87,37 @@ jobs:
         working-directory: mobile
         run: flutter pub get
 
-      - name: Build release APK
+      - name: Build release APK (Player Game App)
         working-directory: mobile
         env:
           MONITOR_SECRET_KEY: ${{ secrets.MONITOR_SECRET_KEY }}
         run: |
-          # 1. Build universal release APK (all architectures: arm64-v8a, armeabi-v7a, x86_64)
+          # 1. Build universal release APK for Player App (com.teenpatti.game / MyOnlineJoker)
           flutter build apk --release --dart-define=MONITOR_SECRET_KEY=$MONITOR_SECRET_KEY
-          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/app-universal-release.apk
-          # 2. Build per-ABI APKs
+          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/player-universal-release.apk
+
+          # 2. Build per-ABI APKs for Player App
           flutter build apk --release --split-per-abi --dart-define=MONITOR_SECRET_KEY=$MONITOR_SECRET_KEY
-          # 3. Restore universal app-release.apk so standard download link serves all architectures
-          cp build/app/outputs/flutter-apk/app-universal-release.apk build/app/outputs/flutter-apk/app-release.apk
 
       - name: Build Agent Partner release APK
         working-directory: mobile
         run: |
+          # 3. Build Agent Partner release APK (com.myonlinejoker.agent / Joker Agent)
           flutter build apk --release -t lib/main_agent.dart -PagentApp=true
-          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/agent-partner-release.apk
+
+          # Move the newly built agent APK to agent-partner-release.apk
+          mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/agent-partner-release.apk
+
+          # 4. RESTORE the Player universal APK as app-release.apk so standard download link serves Player App!
+          cp build/app/outputs/flutter-apk/player-universal-release.apk build/app/outputs/flutter-apk/app-release.apk
+
+          # Verify both APKs exist and have different content
+          ls -lh build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/agent-partner-release.apk
+          if cmp -s build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/agent-partner-release.apk; then
+            echo "ERROR: Player and Agent APKs are identical! Build failed."
+            exit 1
+          fi
+          echo "Verified: Player APK and Agent Partner APK are distinct builds."
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
