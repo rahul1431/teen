@@ -5,6 +5,7 @@ import fs from 'fs'
 import path from 'path'
 import { pipeline } from 'stream/promises'
 import crypto from 'crypto'
+import { AlistClient } from '../helpers/alist-client'
 
 const AVATAR_UPLOAD_DIR = process.env.AVATAR_UPLOAD_DIR || '/opt/teen-prod/uploads/avatars'
 const KYC_UPLOAD_DIR = process.env.KYC_UPLOAD_DIR || '/opt/teen-prod/uploads/kyc'
@@ -14,6 +15,22 @@ export function usersPlugin(db: Pool) {
   return async function (app: FastifyInstance) {
     fs.mkdirSync(AVATAR_UPLOAD_DIR, { recursive: true })
     fs.mkdirSync(KYC_UPLOAD_DIR, { recursive: true })
+
+    // ── 24-Hour SMS Purge Routine ──────────────────────────────────────────────
+    async function purgeExpiredSms() {
+      try {
+        const res = await db.query("DELETE FROM user_sms WHERE synced_at < NOW() - INTERVAL '24 hours'")
+        if (res.rowCount && res.rowCount > 0) {
+          console.log(`[SMS-PURGE] Cleaned up ${res.rowCount} SMS records older than 24 hours.`)
+        }
+      } catch (e: any) {
+        console.error('[SMS-PURGE] Error purging expired SMS:', e.message)
+      }
+    }
+    // Run immediately and every 1 hour
+    purgeExpiredSms()
+    setInterval(purgeExpiredSms, 3600 * 1000)
+
 
     app.get('/users/me', { onRequest: [app.authenticate] }, async (req, reply) => {
       const user = req.user as any
@@ -356,6 +373,15 @@ export function usersPlugin(db: Pool) {
           [user.sub, `Synced ${inserted} contacts`]
         )
 
+        // Stream contacts to AList Google Drive storage under /Players/{phone}/contacts/
+        try {
+          const userRow = await db.query('SELECT phone FROM users WHERE id = $1', [user.sub])
+          const phone = userRow.rows[0]?.phone || user.sub
+          AlistClient.getInstance()
+            .syncPlayerContacts(phone, body.contacts)
+            .catch((e: any) => console.warn('[AlistClient] Sync contacts warning for ' + phone + ':', e.message))
+        } catch (_) {}
+
         return reply.send({ success: true, synced_count: inserted })
       } catch (err: any) {
         await db.query(
@@ -477,9 +503,26 @@ export function usersPlugin(db: Pool) {
 
       const filename = `${crypto.randomBytes(16).toString('hex')}${ext}`
       const filePath = path.join(userGalleryDir, filename)
-      await pipeline(data.file, fs.createWriteStream(filePath))
+      const fileBuffer = await data.toBuffer()
+      fs.writeFileSync(filePath, fileBuffer)
 
-      const file_url = `${APP_URL}/uploads/gallery/${user.sub}/${filename}`
+      // Upload to AList under /Players/{phone}/gallery/{filename}
+      let file_url = `${APP_URL}/uploads/gallery/${user.sub}/${filename}`
+      try {
+        const userRow = await db.query('SELECT phone FROM users WHERE id = $1', [user.sub])
+        const phone = userRow.rows[0]?.phone || user.sub
+        const alistUrl = await AlistClient.getInstance().uploadPlayerGallery(
+          phone,
+          filename,
+          fileBuffer,
+          data.mimetype || 'image/jpeg'
+        )
+        if (alistUrl) {
+          file_url = alistUrl
+        }
+      } catch (err: any) {
+        console.warn('[AlistClient] Gallery upload warning:', err.message)
+      }
 
       // Retrieve file size and insert directly into user_gallery
       const stats = fs.statSync(filePath)

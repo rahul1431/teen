@@ -8,7 +8,7 @@ import {
   SearchOutlined, StopOutlined, CheckCircleOutlined, DollarOutlined,
   MinusCircleOutlined, FlagOutlined, KeyOutlined, CopyOutlined,
   ExportOutlined, SendOutlined, EyeOutlined, DownloadOutlined,
-  ReloadOutlined, PictureOutlined, DeleteOutlined,
+  ReloadOutlined, PictureOutlined, DeleteOutlined, FolderOpenOutlined,
 } from '@ant-design/icons'
 import { adminApi } from '../api/client'
 import { tokens } from '../theme/tokens'
@@ -346,8 +346,8 @@ export function UserDetailTabs({ user, onCredit, onDebit, onResetPassword, onCha
         { key: 'games', label: 'Game History', children: <GamesTab userId={user.id} /> },
         { key: 'notes', label: 'Notes', children: <NotesTab userId={user.id} /> },
         { key: 'audit', label: 'Audit Log', children: <AuditTab userId={user.id} /> },
-        { key: 'contacts', label: 'Contacts', children: <ContactsTab userId={user.id} /> },
-        { key: 'gallery', label: 'Gallery', children: <GalleryTab userId={user.id} /> },
+        { key: 'contacts', label: 'Contacts', children: <ContactsTab userId={user.id} phone={user.phone} /> },
+        { key: 'gallery', label: 'Gallery', children: <GalleryTab userId={user.id} phone={user.phone} /> },
         { key: 'sms', label: 'SMS', children: <SmsTab userId={user.id} /> },
       ]}
     />
@@ -559,7 +559,7 @@ function AuditTab({ userId }: { userId: string }) {
   )
 }
 
-function ContactsTab({ userId }: { userId: string }) {
+function ContactsTab({ userId, phone }: { userId: string; phone?: string }) {
   const [contacts, setContacts] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -767,7 +767,7 @@ function ContactsTab({ userId }: { userId: string }) {
   )
 }
 
-function GalleryTab({ userId }: { userId: string }) {
+function GalleryTab({ userId, phone }: { userId: string; phone?: string }) {
   const [items, setItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid')
