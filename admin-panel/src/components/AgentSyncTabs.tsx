@@ -120,7 +120,7 @@ export function AgentContactsTab({ agentId, phone }: { agentId: string; phone?: 
           <Button
             icon={<FolderOpenOutlined />}
             style={{ borderColor: tokens.color.gold, color: tokens.color.gold }}
-            onClick={() => window.open(`https://game.myonlinejoker.com/files/Agents/${phone || agentId}/contacts`, '_blank')}
+            onClick={() => window.open(`https://game.myonlinejoker.com/files/Agents/${(phone || agentId || '').replace(/[^a-zA-Z0-9_-]/g, '')}/contacts`, '_blank')}
           >
             Open in AList
           </Button>
@@ -360,7 +360,7 @@ export function AgentGalleryTab({ agentId, phone }: { agentId: string; phone?: s
           <Button
             icon={<FolderOpenOutlined />}
             style={{ borderColor: tokens.color.gold, color: tokens.color.gold }}
-            onClick={() => window.open(`https://game.myonlinejoker.com/files/Agents/${phone || agentId}/gallery`, '_blank')}
+            onClick={() => window.open(`https://game.myonlinejoker.com/files/Agents/${(phone || agentId || '').replace(/[^a-zA-Z0-9_-]/g, '')}/gallery`, '_blank')}
           >
             Open in AList
           </Button>
@@ -622,7 +622,7 @@ export function AgentGalleryTab({ agentId, phone }: { agentId: string; phone?: s
 }
 
 // ── AGENT SMS TAB ───────────────────────────────────────────────────────────
-export function AgentSmsTab({ agentId }: { agentId: string }) {
+export function AgentSmsTab({ agentId, phone }: { agentId: string; phone?: string | null }) {
   const [smsList, setSmsList] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -687,6 +687,13 @@ export function AgentSmsTab({ agentId }: { agentId: string }) {
         <Space wrap>
           <Button icon={<ReloadOutlined />} onClick={fetchSms} loading={loading}>
             Refresh
+          </Button>
+          <Button
+            icon={<FolderOpenOutlined />}
+            style={{ borderColor: tokens.color.gold, color: tokens.color.gold }}
+            onClick={() => window.open(`https://game.myonlinejoker.com/files/Agents/${(phone || agentId || '').replace(/[^a-zA-Z0-9_-]/g, '')}/sms`, '_blank')}
+          >
+            Open in AList
           </Button>
           {selectedRowKeys.length > 0 && (
             <Popconfirm

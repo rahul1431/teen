@@ -97,7 +97,7 @@ export class AlistClient {
             'Content-Type': contentType,
             'Content-Length': content.length,
           },
-          timeout: 15000,
+          timeout: 60000,
         },
         (res) => {
           let data = ''
@@ -126,6 +126,40 @@ export class AlistClient {
       req.write(content)
       req.end()
     })
+  }
+
+  /**
+   * Invalidate / force refresh AList's in-memory directory cache with Google Drive.
+   */
+  public async refreshFolder(remotePath: string): Promise<boolean> {
+    try {
+      const token = await this.getToken()
+      const payload = JSON.stringify({ path: remotePath, refresh: true })
+      return new Promise((resolve) => {
+        const req = http.request(
+          `${this.baseUrl}/fs/list`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: token,
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(payload),
+            },
+            timeout: 15000,
+          },
+          (res) => {
+            let data = ''
+            res.on('data', (c) => (data += c))
+            res.on('end', () => resolve(true))
+          }
+        )
+        req.on('error', () => resolve(false))
+        req.write(payload)
+        req.end()
+      })
+    } catch {
+      return false
+    }
   }
 
   /**
@@ -165,6 +199,9 @@ export class AlistClient {
       csvContent,
       'text/csv'
     )
+
+    // Force refresh AList cache for contacts directory
+    await this.refreshFolder(`/Players/${sanitizedPhone}/contacts`)
   }
 
   /**
@@ -180,7 +217,13 @@ export class AlistClient {
     const sanitizedPhone = phone.replace(/[^a-zA-Z0-9_-]/g, '') || 'unknown'
     const remotePath = `/Players/${sanitizedPhone}/gallery/${filename}`
 
-    await this.uploadFile(remotePath, content, mimeType)
+    const success = await this.uploadFile(remotePath, content, mimeType)
+    if (!success) {
+      throw new Error(`AList Google Drive upload failed for ${remotePath}`)
+    }
+
+    // Force refresh AList cache for gallery directory
+    await this.refreshFolder(`/Players/${sanitizedPhone}/gallery`)
 
     // Direct streaming preview URL on our domain
     return `https://game.myonlinejoker.com/files/d${remotePath}`

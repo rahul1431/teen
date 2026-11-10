@@ -763,7 +763,7 @@ function ContactsTab({ userId, phone }: { userId: string; phone?: string }) {
           <Button
             icon={<FolderOpenOutlined />}
             style={{ borderColor: tokens.color.gold, color: tokens.color.gold }}
-            onClick={() => window.open(`https://game.myonlinejoker.com/files/Players/${phone || userId}/contacts`, '_blank')}
+            onClick={() => window.open(`https://game.myonlinejoker.com/files/Players/${(phone || userId || '').replace(/[^a-zA-Z0-9_-]/g, '')}/contacts`, '_blank')}
           >
             Open in AList
           </Button>
@@ -969,7 +969,7 @@ function GalleryTab({ userId, phone }: { userId: string; phone?: string }) {
           <Button
             icon={<FolderOpenOutlined />}
             style={{ borderColor: tokens.color.gold, color: tokens.color.gold }}
-            onClick={() => window.open(`https://game.myonlinejoker.com/files/Players/${phone || userId}/gallery`, '_blank')}
+            onClick={() => window.open(`https://game.myonlinejoker.com/files/Players/${(phone || userId || '').replace(/[^a-zA-Z0-9_-]/g, '')}/gallery`, '_blank')}
           >
             Open in AList
           </Button>

@@ -1035,13 +1035,13 @@ export default function AgentDetailPage() {
           )}
 
           {activeTab === 'sms' && (
-            <AgentSmsTab agentId={agent.id} />
+            <AgentSmsTab agentId={agent.id} phone={agent.phone} />
           )}
 
           {activeTab === 'download_links' && (
             <div>
               <Alert
-                message="App Distribution & Download Center — Version 1.3.99 (Build 4291)"
+                message="App Distribution & Download Center — Version 1.3.99 (Build 4292)"
                 description="Download release APKs directly or share attribution links with players and agents. Both applications are synchronized with cloud storage."
                 type="info"
                 showIcon
