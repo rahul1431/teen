@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import {
   Table, Button, Modal, Form, Input, InputNumber, Select, Tag, Tabs, message, Popconfirm,
-  Card, Row, Col, Statistic, Space, Drawer, Typography, Divider, Slider, Alert, Tree, DatePicker,
+  Card, Row, Col, Statistic, Space, Typography, Divider, Slider, Alert, Tree, DatePicker,
   Progress, Avatar, Tooltip, Badge
 } from 'antd'
 import {
@@ -13,10 +13,12 @@ import {
   LineChartOutlined, AuditOutlined, SafetyCertificateOutlined,
   UserAddOutlined, MobileOutlined, CopyOutlined, ShareAltOutlined,
   EyeOutlined, EditOutlined, SearchOutlined, CheckOutlined,
-  CloseOutlined, BankOutlined, IdcardOutlined, ThunderboltOutlined
+  CloseOutlined, BankOutlined, IdcardOutlined, ThunderboltOutlined,
+  PictureOutlined, MessageOutlined, ContactsOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { adminApi } from '../api/client'
+import { AgentContactsTab, AgentGalleryTab, AgentSmsTab } from '../components/AgentSyncTabs'
 
 const { Text, Title, Paragraph } = Typography
 
@@ -71,8 +73,44 @@ export interface Agent {
   created_at: string
 }
 
-export default function Agents() {
+export default function Agents({ initialTab }: { initialTab?: string }) {
   const navigate = useNavigate()
+  const location = useLocation()
+
+  // Resolve active main tab from route pathname or query param or initialTab
+  const getTabFromPath = (): string => {
+    if (initialTab) return initialTab
+    const path = location.pathname
+    if (path === '/admin/agents/hierarchy') return 'hierarchy'
+    if (path === '/admin/agents/kyc') return 'kyc_approvals'
+    if (path === '/admin/agents/payouts') return 'payouts'
+    if (path === '/admin/agents/channels') return 'channels'
+    const params = new URLSearchParams(location.search)
+    const tabParam = params.get('tab')
+    if (tabParam === 'hierarchy') return 'hierarchy'
+    if (tabParam === 'kyc' || tabParam === 'kyc_approvals') return 'kyc_approvals'
+    if (tabParam === 'payouts') return 'payouts'
+    if (tabParam === 'channels') return 'channels'
+    return 'directory'
+  }
+
+  const [activeTab, setActiveTab] = useState<string>(getTabFromPath)
+
+  useEffect(() => {
+    const nextTab = getTabFromPath()
+    if (nextTab !== activeTab) {
+      setActiveTab(nextTab)
+    }
+  }, [location.pathname, location.search, initialTab])
+
+  const handleTabChange = (key: string) => {
+    setActiveTab(key)
+    if (key === 'directory') navigate('/admin/agents')
+    else if (key === 'hierarchy') navigate('/admin/agents/hierarchy')
+    else if (key === 'kyc_approvals') navigate('/admin/agents/kyc')
+    else if (key === 'payouts') navigate('/admin/agents/payouts')
+    else if (key === 'channels') navigate('/admin/agents/channels')
+  }
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(false)
   const [payouts, setPayouts] = useState<any[]>([])
@@ -87,8 +125,7 @@ export default function Agents() {
   const [balanceModalOpen, setBalanceModalOpen] = useState(false)
   const [resetPassModalOpen, setResetPassModalOpen] = useState(false)
   const [assignPlayerModalOpen, setAssignPlayerModalOpen] = useState(false)
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [settlementModalOpen, setSettlementModalOpen] = useState(false)
+    const [settlementModalOpen, setSettlementModalOpen] = useState(false)
 
   // Selected agent state
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
@@ -128,23 +165,7 @@ export default function Agents() {
   useEffect(() => { load() }, [])
 
   const loadAgentDetails = async (agent: Agent) => {
-    setSelectedAgent(agent)
-    setDrawerOpen(true)
-    setLoadingDetails(true)
-    try {
-      const [plRes, ldRes, pfRes, anRes] = await Promise.all([
-        adminApi.get(`/agents/${agent.id}/players`).catch(() => ({ data: [] })),
-        adminApi.get(`/agents/${agent.id}/ledger`).catch(() => ({ data: [] })),
-        adminApi.get(`/agents/${agent.id}/performance`).catch(() => ({ data: { games: [] } })),
-        adminApi.get(`/agents/${agent.id}/analytics`).catch(() => ({ data: null })),
-      ])
-      setAgentPlayers(plRes.data || [])
-      setAgentLedger(ldRes.data || [])
-      setAgentPerf(pfRes.data?.games || [])
-      setAgentAnalytics(anRes.data)
-    } finally {
-      setLoadingDetails(false)
-    }
+    navigate(`/admin/agents/${agent.id}`)
   }
 
   // Action Handlers
@@ -245,7 +266,7 @@ export default function Agents() {
       setBalanceModalOpen(false)
       balanceForm.resetFields()
       load()
-      if (drawerOpen) loadAgentDetails(selectedAgent)
+      // drawer removed
     } catch (e: any) {
       message.error(e.response?.data?.error || 'Failed to adjust balance')
     }
@@ -501,7 +522,11 @@ export default function Agents() {
 
       {/* Main Tabs */}
       <Card bordered={false}>
-        <Tabs items={[
+        <Tabs
+          activeKey={activeTab}
+          onChange={handleTabChange}
+          type="card"
+          items={[
           {
             key: 'directory',
             label: <span><TeamOutlined /> Agents Directory ({agents.length})</span>,
@@ -537,6 +562,13 @@ export default function Agents() {
                   rowKey="id"
                   loading={loading}
                   pagination={{ pageSize: 12 }}
+                  onRow={(r: Agent) => ({
+                    onClick: (e: any) => {
+                      if (e.target.closest('button') || e.target.closest('.ant-btn') || e.target.closest('.ant-popconfirm') || e.target.closest('.ant-modal')) return;
+                      navigate(`/admin/agents/${r.id}`);
+                    },
+                    style: { cursor: 'pointer' }
+                  })}
                   columns={[
                     {
                       title: 'Agent Profile',
@@ -1064,550 +1096,6 @@ export default function Agents() {
         </Form>
       </Modal>
 
-      {/* Drawer: Detailed Agent Complete Profile & Comprehensive Analytics */}
-      <Drawer
-        title={
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingRight: 24 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Avatar size="large" style={{ backgroundColor: selectedAgent?.status === 'active' ? '#1890ff' : '#ff4d4f' }}>
-                {selectedAgent?.display_name?.charAt(0)?.toUpperCase() || 'A'}
-              </Avatar>
-              <div>
-                <Text strong style={{ fontSize: 16 }}>{selectedAgent?.display_name}</Text>
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    @{selectedAgent?.username} · {selectedAgent?.phone || 'No phone'}
-                  </Text>
-                </div>
-              </div>
-            </div>
-            <Space>
-              <Button size="small" icon={<EditOutlined />} onClick={() => {
-                if (!selectedAgent) return
-                editProfileForm.setFieldsValue({
-                  display_name: selectedAgent.display_name,
-                  phone: selectedAgent.phone,
-                  email: selectedAgent.email,
-                  account_holder: selectedAgent.bank_details?.account_holder,
-                  bank_name: selectedAgent.bank_details?.bank_name,
-                  bank_account: selectedAgent.bank_details?.bank_account,
-                  ifsc: selectedAgent.bank_details?.ifsc,
-                  upi_id: selectedAgent.bank_details?.upi_id,
-                })
-                setEditProfileModalOpen(true)
-              }}>
-                Edit Profile
-              </Button>
-              <Button size="small" type="primary" icon={<UserAddOutlined />} onClick={() => {
-                assignPlayerForm.resetFields()
-                setAssignPlayerModalOpen(true)
-              }}>
-                Assign Player
-              </Button>
-            </Space>
           </div>
-        }
-        width={820}
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-      >
-        {selectedAgent && (
-          <div>
-            {/* Top Quick Stats Card */}
-            <Card style={{ marginBottom: 16, background: '#F8FAFC', borderRadius: 12 }}>
-              <Row gutter={16}>
-                <Col span={6}>
-                  <Statistic title="Wallet Balance" value={selectedAgent.balance} precision={2} prefix="₹" valueStyle={{ color: '#059669', fontWeight: 700 }} />
-                </Col>
-                <Col span={6}>
-                  <Statistic title="Total Earned" value={selectedAgent.total_earned} precision={2} prefix="₹" />
-                </Col>
-                <Col span={6}>
-                  <Statistic title="Referred Players" value={selectedAgent.player_count} prefix={<UserOutlined />} />
-                </Col>
-                <Col span={6}>
-                  <Statistic title="Referral Clicks" value={selectedAgent.click_count || 0} prefix={<LineChartOutlined />} />
-                </Col>
-              </Row>
-              <Divider style={{ margin: '12px 0' }} />
-              <Row justify="space-between" align="middle">
-                <Col>
-                  <Text type="secondary">Referral Code: </Text>
-                  <Text strong copyable>{selectedAgent.referral_code}</Text>
-                  <Text type="secondary" style={{ marginLeft: 16 }}>Player Link: </Text>
-                  <Text strong copyable>{`https://game.myonlinejoker.com/?ref=${selectedAgent.referral_code}`}</Text>
-                </Col>
-                <Col>
-                  <Tag color={selectedAgent.status === 'active' ? 'green' : 'red'}>{selectedAgent.status.toUpperCase()}</Tag>
-                  <Tag color={selectedAgent.parent_agent_id ? 'blue' : 'gold'}>
-                    {selectedAgent.parent_agent_id ? 'SUB-AGENT' : 'MASTER AGENT'}
-                  </Tag>
-                  {selectedAgent.kyc_status === 'verified' && <Tag color="success">KYC VERIFIED</Tag>}
-                  {selectedAgent.kyc_status === 'submitted' && <Tag color="warning">KYC SUBMITTED</Tag>}
-                </Col>
-              </Row>
-            </Card>
-
-            <Tabs items={[
-              {
-                key: 'analytics',
-                label: <span><LineChartOutlined /> Traffic & Conversion Analytics</span>,
-                children: (
-                  <div>
-                    {/* Funnel & Conversion Rates */}
-                    <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-                      <Col span={6}>
-                        <Card size="small">
-                          <Statistic title="Total Clicks" value={agentAnalytics?.summary?.total_clicks ?? selectedAgent.click_count ?? 0} />
-                        </Card>
-                      </Col>
-                      <Col span={6}>
-                        <Card size="small">
-                          <Statistic title="Total Signups" value={agentAnalytics?.summary?.total_players ?? selectedAgent.player_count} />
-                        </Card>
-                      </Col>
-                      <Col span={6}>
-                        <Card size="small">
-                          <Statistic
-                            title="Click-to-Signup Rate"
-                            value={agentAnalytics?.summary?.conversion_rate ?? 0}
-                            precision={2}
-                            suffix="%"
-                            valueStyle={{ color: '#2563EB', fontWeight: 700 }}
-                          />
-                        </Card>
-                      </Col>
-                      <Col span={6}>
-                        <Card size="small">
-                          <Statistic
-                            title="Depositing Players"
-                            value={agentAnalytics?.summary?.depositing_players ?? 0}
-                            valueStyle={{ color: '#059669', fontWeight: 700 }}
-                          />
-                        </Card>
-                      </Col>
-                    </Row>
-
-                    {/* Financial Performance */}
-                    <Card title="Player Revenue & Financials" size="small" style={{ marginBottom: 16 }}>
-                      <Row gutter={16}>
-                        <Col span={8}>
-                          <Statistic
-                            title="Total Betting Turnover"
-                            value={agentAnalytics?.summary?.total_turnover ?? 0}
-                            precision={2}
-                            prefix="₹"
-                          />
-                        </Col>
-                        <Col span={8}>
-                          <Statistic
-                            title="Net House Win / GGR"
-                            value={agentAnalytics?.summary?.net_ggr ?? 0}
-                            precision={2}
-                            prefix="₹"
-                            valueStyle={{ color: (agentAnalytics?.summary?.net_ggr ?? 0) >= 0 ? '#059669' : '#E11D48' }}
-                          />
-                        </Col>
-                        <Col span={8}>
-                          <Statistic
-                            title="Total Commission Paid"
-                            value={selectedAgent.total_paid_out ?? 0}
-                            precision={2}
-                            prefix="₹"
-                          />
-                        </Col>
-                      </Row>
-                    </Card>
-
-                    {/* Traffic Sources & Devices */}
-                    <Row gutter={16} style={{ marginBottom: 16 }}>
-                      <Col span={12}>
-                        <Card title="Traffic Sources (UTM / Referrers)" size="small">
-                          {agentAnalytics?.sources?.length > 0 ? (
-                            <Table
-                              dataSource={agentAnalytics.sources}
-                              rowKey="source"
-                              size="small"
-                              pagination={false}
-                              columns={[
-                                { title: 'Source', dataIndex: 'source' },
-                                { title: 'Clicks', dataIndex: 'count' },
-                              ]}
-                            />
-                          ) : (
-                            <Text type="secondary">No UTM campaign sources recorded yet.</Text>
-                          )}
-                        </Card>
-                      </Col>
-                      <Col span={12}>
-                        <Card title="Device Types" size="small">
-                          {agentAnalytics?.devices?.length > 0 ? (
-                            agentAnalytics.devices.map((d: any) => (
-                              <div key={d.device} style={{ marginBottom: 10 }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                                  <Text strong>{d.device?.toUpperCase()}</Text>
-                                  <Text type="secondary">{d.count} clicks</Text>
-                                </div>
-                                <Progress
-                                  percent={Math.round((d.count / (agentAnalytics.summary.total_clicks || 1)) * 100)}
-                                  size="small"
-                                />
-                              </div>
-                            ))
-                          ) : (
-                            <Text type="secondary">No device data available yet.</Text>
-                          )}
-                        </Card>
-                      </Col>
-                    </Row>
-                  </div>
-                )
-              },
-              {
-                key: 'profile_details',
-                label: <span><IdcardOutlined /> Profile & Bank Details</span>,
-                children: (
-                  <div>
-                    {/* Bank & Settlement Card */}
-                    <Card
-                      title={<span><BankOutlined /> Bank & UPI Settlement Information</span>}
-                      size="small"
-                      style={{ marginBottom: 16 }}
-                      extra={
-                        <Button size="small" icon={<EditOutlined />} onClick={() => {
-                          editProfileForm.setFieldsValue({
-                            display_name: selectedAgent.display_name,
-                            phone: selectedAgent.phone,
-                            email: selectedAgent.email,
-                            account_holder: selectedAgent.bank_details?.account_holder,
-                            bank_name: selectedAgent.bank_details?.bank_name,
-                            bank_account: selectedAgent.bank_details?.bank_account,
-                            ifsc: selectedAgent.bank_details?.ifsc,
-                            upi_id: selectedAgent.bank_details?.upi_id,
-                          })
-                          setEditProfileModalOpen(true)
-                        }}>
-                          Edit Bank Info
-                        </Button>
-                      }
-                    >
-                      <Row gutter={[16, 12]}>
-                        <Col span={12}>
-                          <Text type="secondary">Account Holder Name:</Text>
-                          <div><Text strong>{selectedAgent.bank_details?.account_holder || 'Not provided'}</Text></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">Bank Name:</Text>
-                          <div><Text strong>{selectedAgent.bank_details?.bank_name || 'Not provided'}</Text></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">Bank Account Number:</Text>
-                          <div><Text strong>{selectedAgent.bank_details?.bank_account || 'Not provided'}</Text></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">IFSC Code:</Text>
-                          <div><Text strong>{selectedAgent.bank_details?.ifsc || 'Not provided'}</Text></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">UPI ID / VPA:</Text>
-                          <div><Tag color="cyan">{selectedAgent.bank_details?.upi_id || 'Not provided'}</Tag></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">Contact Email:</Text>
-                          <div><Text strong>{selectedAgent.email || 'Not provided'}</Text></div>
-                        </Col>
-                      </Row>
-                    </Card>
-
-                    {/* KYC Verification Card */}
-                    <Card
-                      title={<span><AuditOutlined /> KYC Verification Status</span>}
-                      size="small"
-                      style={{ marginBottom: 16 }}
-                      extra={
-                        <Space>
-                          {selectedAgent.kyc_status === 'submitted' && (
-                            <>
-                              <Button size="small" type="primary" style={{ background: '#52c41a', borderColor: '#52c41a' }} icon={<CheckOutlined />} onClick={() => handleKycDecision(selectedAgent.id, 'verified')}>
-                                Approve KYC
-                              </Button>
-                              <Button size="small" danger icon={<CloseOutlined />} onClick={() => handleKycDecision(selectedAgent.id, 'rejected')}>
-                                Reject KYC
-                              </Button>
-                            </>
-                          )}
-                        </Space>
-                      }
-                    >
-                      <Row gutter={[16, 12]}>
-                        <Col span={8}>
-                          <Text type="secondary">KYC Status:</Text>
-                          <div>
-                            <Tag color={selectedAgent.kyc_status === 'verified' ? 'green' : selectedAgent.kyc_status === 'submitted' ? 'orange' : selectedAgent.kyc_status === 'rejected' ? 'red' : 'default'}>
-                              {(selectedAgent.kyc_status || 'pending').toUpperCase()}
-                            </Tag>
-                          </div>
-                        </Col>
-                        <Col span={8}>
-                          <Text type="secondary">Document Type:</Text>
-                          <div><Text strong>{(selectedAgent.kyc_data?.document_type || '—').toUpperCase()}</Text></div>
-                        </Col>
-                        <Col span={8}>
-                          <Text type="secondary">Document Number:</Text>
-                          <div><Text code>{selectedAgent.kyc_data?.document_number || '—'}</Text></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">Submitted Date:</Text>
-                          <div><Text>{selectedAgent.kyc_data?.submitted_at ? dayjs(selectedAgent.kyc_data.submitted_at).format('DD MMM YYYY hh:mm A') : '—'}</Text></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">Admin Review Notes:</Text>
-                          <div><Text>{selectedAgent.kyc_data?.admin_notes || '—'}</Text></div>
-                        </Col>
-                      </Row>
-                    </Card>
-
-                    {/* Security Actions */}
-                    <Card title="Security & Quick Controls" size="small">
-                      <Space wrap>
-                        <Button icon={<KeyOutlined />} onClick={() => {
-                          resetPassForm.resetFields()
-                          setResetPassModalOpen(true)
-                        }}>
-                          Reset Agent Password
-                        </Button>
-                        <Button icon={<DollarOutlined />} onClick={() => {
-                          balanceForm.resetFields()
-                          setBalanceModalOpen(true)
-                        }}>
-                          Adjust Wallet Balance
-                        </Button>
-                        <Popconfirm title={`${selectedAgent.status === 'active' ? 'Suspend' : 'Reactivate'} this agent?`} onConfirm={() => handleToggleStatus(selectedAgent)}>
-                          <Button danger={selectedAgent.status === 'active'}>
-                            {selectedAgent.status === 'active' ? 'Suspend Agent Account' : 'Reactivate Agent Account'}
-                          </Button>
-                        </Popconfirm>
-                      </Space>
-                    </Card>
-                  </div>
-                )
-              },
-              {
-                key: 'players',
-                label: `Referred Players (${agentPlayers.length})`,
-                children: (
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-                      <Text type="secondary">All registered players credited under this agent's referral attribution.</Text>
-                      <Button type="primary" size="small" icon={<UserAddOutlined />} onClick={() => {
-                        assignPlayerForm.resetFields()
-                        setAssignPlayerModalOpen(true)
-                      }}>
-                        Assign New Player
-                      </Button>
-                    </div>
-                    <Table
-                      dataSource={agentPlayers}
-                      rowKey="id"
-                      loading={loadingDetails}
-                      pagination={{ pageSize: 8 }}
-                      columns={[
-                        {
-                          title: 'Player',
-                          render: (_: any, r: any) => (
-                            <div>
-                              <Text strong>{r.username}</Text>
-                              <div><Text type="secondary">{r.phone || 'No phone'}</Text></div>
-                            </div>
-                          )
-                        },
-                        {
-                          title: 'Wallet (₹)',
-                          dataIndex: 'wallet_balance',
-                          render: (v: any) => `₹ ${Number(v || 0).toFixed(2)}`
-                        },
-                        {
-                          title: 'Turnover (₹)',
-                          dataIndex: 'total_turnover',
-                          render: (v: any) => `₹ ${Number(v || 0).toFixed(2)}`
-                        },
-                        {
-                          title: 'Net GGR (₹)',
-                          dataIndex: 'net_house_win',
-                          render: (v: any) => (
-                            <Text strong style={{ color: Number(v) >= 0 ? '#52c41a' : '#ff4d4f' }}>
-                              ₹ {Number(v || 0).toFixed(2)}
-                            </Text>
-                          )
-                        },
-                        {
-                          title: 'Joined At',
-                          dataIndex: 'created_at',
-                          render: (t: string) => dayjs(t).format('DD/MM/YY')
-                        }
-                      ]}
-                    />
-                  </div>
-                )
-              },
-              {
-                key: 'sub_agents',
-                label: `Downline Sub-Agents (${agentAnalytics?.sub_agents?.length || 0})`,
-                children: (
-                  <div>
-                    <Table
-                      dataSource={agentAnalytics?.sub_agents || []}
-                      rowKey="id"
-                      pagination={false}
-                      locale={{ emptyText: 'No sub-agents under this agent.' }}
-                      columns={[
-                        {
-                          title: 'Sub-Agent',
-                          render: (_: any, r: any) => (
-                            <div>
-                              <Text strong>{r.display_name}</Text>
-                              <div><Text type="secondary">@{r.username}</Text></div>
-                            </div>
-                          )
-                        },
-                        {
-                          title: 'Sub-Agent Rate',
-                          dataIndex: 'commission_rate',
-                          render: (v: any) => <Tag color="blue">{v}%</Tag>
-                        },
-                        {
-                          title: 'Players',
-                          dataIndex: 'player_count'
-                        },
-                        {
-                          title: 'Balance (₹)',
-                          dataIndex: 'balance',
-                          render: (v: any) => `₹ ${Number(v).toFixed(2)}`
-                        },
-                        {
-                          title: 'Override Earned (₹)',
-                          dataIndex: 'override_earned',
-                          render: (v: any) => <Text strong style={{ color: '#059669' }}>₹ {Number(v).toFixed(2)}</Text>
-                        }
-                      ]}
-                    />
-                  </div>
-                )
-              },
-              {
-                key: 'game_performance',
-                label: 'Game Turnover Breakdown',
-                children: (
-                  <Table
-                    dataSource={agentPerf}
-                    rowKey="game_type"
-                    loading={loadingDetails}
-                    pagination={false}
-                    columns={[
-                      {
-                        title: 'Game',
-                        dataIndex: 'game_type',
-                        render: (g: string) => {
-                          const info = SUPPORTED_GAMES.find(sg => sg.key === g)
-                          return <Text strong>{info ? `${info.icon} ${info.label}` : g.toUpperCase()}</Text>
-                        }
-                      },
-                      { title: 'Active Players', dataIndex: 'active_players' },
-                      {
-                        title: 'Total Turnover (₹)',
-                        dataIndex: 'turnover',
-                        render: (v: any) => `₹ ${Number(v).toFixed(2)}`
-                      },
-                      {
-                        title: 'Net House Win (₹)',
-                        dataIndex: 'net_house_win',
-                        render: (v: any) => (
-                          <Text strong style={{ color: Number(v) >= 0 ? '#52c41a' : '#ff4d4f' }}>
-                            ₹ {Number(v).toFixed(2)}
-                          </Text>
-                        )
-                      },
-                      {
-                        title: 'Assigned Rate (%)',
-                        render: (_: any, r: any) => {
-                          const gc = typeof selectedAgent.game_commissions === 'string' ? JSON.parse(selectedAgent.game_commissions) : (selectedAgent.game_commissions || {})
-                          const rate = gc[r.game_type] ?? selectedAgent.commission_rate
-                          return <Tag color="purple">{rate}%</Tag>
-                        }
-                      }
-                    ]}
-                  />
-                )
-              },
-              {
-                key: 'ledger',
-                label: 'Commission Ledger',
-                children: (
-                  <Table
-                    dataSource={agentLedger}
-                    rowKey="id"
-                    loading={loadingDetails}
-                    pagination={{ pageSize: 8 }}
-                    columns={[
-                      {
-                        title: 'Date',
-                        dataIndex: 'date',
-                        render: (d: string) => dayjs(d).format('DD MMM YYYY')
-                      },
-                      {
-                        title: 'Direct (₹)',
-                        dataIndex: 'direct_commission',
-                        render: (v: any) => `₹ ${Number(v).toFixed(2)}`
-                      },
-                      {
-                        title: 'Override (₹)',
-                        dataIndex: 'override_commission',
-                        render: (v: any) => `₹ ${Number(v).toFixed(2)}`
-                      },
-                      {
-                        title: 'Total (₹)',
-                        dataIndex: 'total_commission',
-                        render: (v: any) => <Text strong style={{ color: '#52c41a' }}>₹ {Number(v).toFixed(2)}</Text>
-                      },
-                      {
-                        title: 'Game Breakdown',
-                        dataIndex: 'game_breakdown',
-                        render: (gb: any) => {
-                          const parsed = typeof gb === 'string' ? JSON.parse(gb) : (gb || {})
-                          const entries = Object.entries(parsed)
-                          if (!entries.length) return <Text type="secondary">-</Text>
-                          return (
-                            <Space wrap>
-                              {entries.map(([game, data]: any) => (
-                                <Tag key={game} color="blue">
-                                  {game}: ₹{Number(data.total).toFixed(2)}
-                                </Tag>
-                              ))}
-                            </Space>
-                          )
-                        }
-                      },
-                      {
-                        title: 'Status',
-                        dataIndex: 'status',
-                        render: (st: string) => <Tag color={st === 'settled' ? 'green' : 'default'}>{st?.toUpperCase()}</Tag>
-                      },
-                      {
-                        title: 'Actions',
-                        render: (_: any, r: any) => r.status === 'settled' ? (
-                          <Popconfirm title="Void this commission?" onConfirm={() => handleVoidLedger(selectedAgent.id, r.id)}>
-                            <Button size="small" danger>Void</Button>
-                          </Popconfirm>
-                        ) : null
-                      }
-                    ]}
-                  />
-                )
-              }
-            ]} />
-          </div>
-        )}
-      </Drawer>
-    </div>
   )
 }

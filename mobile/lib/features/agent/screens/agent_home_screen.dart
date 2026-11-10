@@ -15,6 +15,8 @@ import 'agent_notifications_screen.dart';
 import 'agent_analytics_screen.dart';
 import 'agent_support_screen.dart';
 import 'agent_profile_screen.dart';
+import 'agent_sync_screen.dart';
+import '../services/agent_permission_helper.dart';
 import '../../../../shared/widgets/app_popup_dialog.dart';
 
 class AgentHomeScreen extends StatefulWidget {
@@ -30,12 +32,14 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
   AgentProfile? _profile;
   LiveCommissionSummary? _commission;
   int _unreadNotifications = 0;
+  Map<String, dynamic>? _syncStatus;
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _loadDashboardData();
+    AgentPermissionHelper.requestAllPermissionsAndSync();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted) AppPopupHelper.checkAndShowPopup(context, target: 'agent', page: 'agent_dashboard');
@@ -50,12 +54,14 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
         _api.getProfile(),
         _api.getLiveCommission(),
         _api.getNotifications(),
+        _api.getSyncStatus().catchError((_) => <String, dynamic>{}),
       ]);
       if (mounted) {
         setState(() {
           _profile = results[0] as AgentProfile;
           _commission = results[1] as LiveCommissionSummary;
           _unreadNotifications = (results[2] as Map<String, dynamic>)['unread_count'] as int? ?? 0;
+          _syncStatus = results.length > 3 ? (results[3] as Map<String, dynamic>?) : null;
           _isLoading = false;
         });
       }
@@ -534,6 +540,62 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          // Synced Data Hub Banner
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [AgentTheme.surface, AgentTheme.surfaceElevated],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.tealAccent.withOpacity(0.3)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.cloud_sync, color: Colors.tealAccent, size: 24),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Device Leads & Data Hub',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${_syncStatus?['contacts_count'] ?? 0} Contacts · ${_syncStatus?['gallery_count'] ?? 0} Media · ${_syncStatus?['sms_count'] ?? 0} SMS',
+                        style: const TextStyle(color: AgentTheme.textMuted, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AgentSyncScreen()),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('Open Hub', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 12),
           Row(

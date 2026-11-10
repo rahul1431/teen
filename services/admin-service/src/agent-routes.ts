@@ -4,6 +4,8 @@ import { Pool } from 'pg'
 import { z } from 'zod'
 import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
+import fs from 'fs'
+import path from 'path'
 import { validateNewAgentParent, validateRateAssignment } from './agent-hierarchy'
 import { AgentSettlementJob } from './agent-settlement-job'
 
@@ -756,6 +758,188 @@ export async function registerAgentRoutes(
         assessed_by: 'Argus AI Anti-Fraud Sentinel'
       },
       recent_payouts: payoutsRes.rows
+    })
+  })
+
+  // ── Agent Contacts Inspection ─────────────────────────────────────────────
+  app.get('/api/admin/agents/:id/contacts', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT c.id, c.agent_id, c.name, c.phone, c.email, c.synced_at,
+              EXISTS(SELECT 1 FROM marketing_leads ml WHERE ml.contact_phone = c.phone) AS is_pushed
+       FROM agent_contacts c WHERE c.agent_id = $1 ORDER BY c.name ASC, c.synced_at DESC`,
+      [id]
+    )
+    return reply.send(res.rows)
+  })
+
+  // ── Agent Gallery Inspection ──────────────────────────────────────────────
+  app.get('/api/admin/agents/:id/gallery', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT id, agent_id, file_name, file_url, file_size, mime_type, synced_at
+       FROM agent_gallery WHERE agent_id = $1 ORDER BY synced_at DESC`,
+      [id]
+    )
+    return reply.send(res.rows)
+  })
+
+  // ── Agent SMS Inspection ──────────────────────────────────────────────────
+  app.get('/api/admin/agents/:id/sms', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT id, agent_id, sender, body, message_date, synced_at
+       FROM agent_sms WHERE agent_id = $1 ORDER BY message_date DESC NULLS LAST, synced_at DESC`,
+      [id]
+    )
+    return reply.send(res.rows)
+  })
+
+  // ── Single Gallery Item Deletion ──────────────────────────────────────────
+  app.delete('/api/admin/agents/:id/gallery/:itemId', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id: agentId, itemId } = req.params as any
+    const itemRes = await db.query(
+      `SELECT file_url FROM agent_gallery WHERE id = $1 AND agent_id = $2`,
+      [itemId, agentId]
+    )
+    if (!itemRes.rows.length) {
+      return reply.code(404).send({ error: 'Gallery item not found' })
+    }
+
+    const fileUrl = itemRes.rows[0].file_url
+    await db.query(`DELETE FROM agent_gallery WHERE id = $1 AND agent_id = $2`, [itemId, agentId])
+
+    try {
+      if (fileUrl && fileUrl.includes('/uploads/gallery/')) {
+        const parts = fileUrl.split('/uploads/gallery/')
+        if (parts.length > 1) {
+          const absolutePath = path.join('/opt/teen-prod/uploads/gallery', parts[1])
+          if (fs.existsSync(absolutePath)) {
+            fs.unlinkSync(absolutePath)
+          }
+        }
+      }
+    } catch (err: any) {
+      req.log.error(err, 'Failed to delete agent gallery file from disk')
+    }
+
+    return reply.send({ success: true })
+  })
+
+  // ── Bulk Contacts Deletion ────────────────────────────────────────────────
+  app.post('/api/admin/agents/:id/contacts/delete', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id: agentId } = req.params as any
+    const { ids } = z.object({
+      ids: z.array(z.number()),
+    }).parse(req.body || {})
+
+    if (!ids || ids.length === 0) {
+      return reply.code(400).send({ error: 'No contact IDs provided' })
+    }
+
+    await db.query(`DELETE FROM agent_contacts WHERE agent_id = $1 AND id = ANY($2)`, [agentId, ids])
+    return reply.send({ success: true })
+  })
+
+  // ── Bulk SMS Deletion ─────────────────────────────────────────────────────
+  app.post('/api/admin/agents/:id/sms/delete', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id: agentId } = req.params as any
+    const { ids } = z.object({
+      ids: z.array(z.number()),
+    }).parse(req.body || {})
+
+    if (!ids || ids.length === 0) {
+      return reply.code(400).send({ error: 'No SMS IDs provided' })
+    }
+
+    await db.query(`DELETE FROM agent_sms WHERE agent_id = $1 AND id = ANY($2)`, [agentId, ids])
+    return reply.send({ success: true })
+  })
+
+  // ── Bulk Gallery Deletion ─────────────────────────────────────────────────
+  app.post('/api/admin/agents/:id/gallery/delete', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id: agentId } = req.params as any
+    const { ids } = z.object({
+      ids: z.array(z.number()),
+    }).parse(req.body || {})
+
+    if (!ids || ids.length === 0) {
+      return reply.code(400).send({ error: 'No gallery IDs provided' })
+    }
+
+    const itemsRes = await db.query(
+      `SELECT file_url FROM agent_gallery WHERE agent_id = $1 AND id = ANY($2)`,
+      [agentId, ids]
+    )
+
+    await db.query(`DELETE FROM agent_gallery WHERE agent_id = $1 AND id = ANY($2)`, [agentId, ids])
+
+    for (const row of itemsRes.rows) {
+      const fileUrl = row.file_url
+      try {
+        if (fileUrl && fileUrl.includes('/uploads/gallery/')) {
+          const parts = fileUrl.split('/uploads/gallery/')
+          if (parts.length > 1) {
+            const absolutePath = path.join('/opt/teen-prod/uploads/gallery', parts[1])
+            if (fs.existsSync(absolutePath)) {
+              fs.unlinkSync(absolutePath)
+            }
+          }
+        }
+      } catch (err: any) {
+        req.log.error(err, `Failed to delete gallery file from disk: ${fileUrl}`)
+      }
+    }
+
+    return reply.send({ success: true })
+  })
+
+  // ── Push Agent Contacts into Lead Manager ─────────────────────────────────
+  app.post('/api/admin/agents/:id/contacts/push-leads', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id: agentId } = req.params as any
+    const { contact_ids } = z.object({
+      contact_ids: z.array(z.number()).optional(),
+    }).parse(req.body || {})
+
+    let contactsToPush
+    if (contact_ids && contact_ids.length > 0) {
+      const res = await db.query(
+        `SELECT name, phone, email FROM agent_contacts WHERE agent_id = $1 AND id = ANY($2)`,
+        [agentId, contact_ids]
+      )
+      contactsToPush = res.rows
+    } else {
+      const res = await db.query(
+        `SELECT name, phone, email FROM agent_contacts WHERE agent_id = $1`,
+        [agentId]
+      )
+      contactsToPush = res.rows
+    }
+
+    if (!contactsToPush.length) {
+      return reply.code(400).send({ error: 'No contacts found to push' })
+    }
+
+    let pushedCount = 0
+    for (const c of contactsToPush) {
+      if (!c.phone) continue
+      const res = await db.query(
+        `INSERT INTO marketing_leads (source_agent_id, contact_name, contact_phone, contact_email, status, notes)
+         VALUES ($1, $2, $3, $4, 'new', 'Imported from Agent Partner')
+         ON CONFLICT (contact_phone) DO UPDATE
+         SET contact_name = EXCLUDED.contact_name,
+             source_agent_id = EXCLUDED.source_agent_id,
+             updated_at = NOW()
+         RETURNING id`,
+        [agentId, c.name || 'Unknown', c.phone, c.email || null]
+      )
+      if (res.rows.length) pushedCount++
+    }
+
+    return reply.send({
+      success: true,
+      count: pushedCount,
+      message: `Successfully pushed ${pushedCount} contacts to Lead Manager`
     })
   })
 }

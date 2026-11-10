@@ -39,6 +39,10 @@ const EXPECTED_KEYS = [
   '/admin/settings',
   '/admin/analytics',
   '/admin/agents',
+  '/admin/agents/hierarchy',
+  '/admin/agents/kyc',
+  '/admin/agents/payouts',
+  '/admin/agents/channels',
   '/admin/changelog',
   '/admin/server',
   '/admin/tasks',
@@ -62,6 +66,7 @@ describe('menuConfig', () => {
     expect(groupLabels).toContain('Operations')
     expect(groupLabels).toContain('Engagement')
     expect(groupLabels).toContain('Platform')
+    expect(groupLabels).toContain('Agent Network')
 
     // Top-level direct menus (not nested inside Platform)
     const topLevelKeys = (items ?? []).map((i: any) => i.key)

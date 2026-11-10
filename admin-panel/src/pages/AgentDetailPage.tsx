@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Card,
   Button,
@@ -13,15 +13,15 @@ import {
   Row,
   Col,
   Statistic,
-  Tabs,
   Table,
   Typography,
   Divider,
-  Avatar,
   Progress,
   Popconfirm,
   Alert,
   message,
+  Menu,
+  Badge,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -37,19 +37,25 @@ import {
   AuditOutlined,
   CheckOutlined,
   CloseOutlined,
-  CopyOutlined,
-  SafetyCertificateOutlined,
+  ApartmentOutlined,
+  TrophyOutlined,
+  ContactsOutlined,
+  PictureOutlined,
+  MessageOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { adminApi } from '../api/client'
-import { tokens } from '../theme/tokens'
 import { Agent, SUPPORTED_GAMES } from './Agents'
+import { AgentContactsTab, AgentGalleryTab, AgentSmsTab } from '../components/AgentSyncTabs'
 
 const { Text, Title, Paragraph } = Typography
 
 export default function AgentDetailPage() {
   const { agentId } = useParams<{ agentId: string }>()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const activeTab = searchParams.get('tab') || 'analytics'
 
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loading, setLoading] = useState(true)
@@ -227,6 +233,104 @@ export default function AgentDetailPage() {
     )
   }
 
+  const menuItems = [
+    {
+      key: 'analytics',
+      icon: <LineChartOutlined style={{ fontSize: 16 }} />,
+      label: 'Traffic & Conversion Analytics',
+    },
+    {
+      key: 'profile_details',
+      icon: <IdcardOutlined style={{ fontSize: 16 }} />,
+      label: (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+          <span>Profile, Bank & KYC Verification</span>
+          {agent.kyc_status === 'submitted' && (
+            <Tag color="warning" style={{ margin: 0, fontSize: 10, lineHeight: '18px', padding: '0 5px' }}>
+              PENDING
+            </Tag>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'players',
+      icon: <UserOutlined style={{ fontSize: 16 }} />,
+      label: (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+          <span>Referred Players</span>
+          <Badge
+            count={agentPlayers.length}
+            overflowCount={9999}
+            style={{
+              backgroundColor: activeTab === 'players' ? '#1890ff' : '#d9d9d9',
+              color: activeTab === 'players' ? '#fff' : '#434343',
+              boxShadow: 'none',
+            }}
+          />
+        </div>
+      ),
+    },
+    {
+      key: 'sub_agents',
+      icon: <ApartmentOutlined style={{ fontSize: 16 }} />,
+      label: (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+          <span>Downline Sub-Agents</span>
+          <Badge
+            count={agentAnalytics?.sub_agents?.length || agent.sub_agent_count || 0}
+            overflowCount={9999}
+            style={{
+              backgroundColor: activeTab === 'sub_agents' ? '#1890ff' : '#d9d9d9',
+              color: activeTab === 'sub_agents' ? '#fff' : '#434343',
+              boxShadow: 'none',
+            }}
+          />
+        </div>
+      ),
+    },
+    {
+      key: 'game_performance',
+      icon: <TrophyOutlined style={{ fontSize: 16 }} />,
+      label: 'Game Turnover Breakdown',
+    },
+    {
+      key: 'ledger',
+      icon: <AuditOutlined style={{ fontSize: 16 }} />,
+      label: (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+          <span>Commission Ledger & Settlements</span>
+          {agentLedger.length > 0 && (
+            <Badge
+              count={agentLedger.length}
+              overflowCount={9999}
+              style={{
+                backgroundColor: activeTab === 'ledger' ? '#1890ff' : '#d9d9d9',
+                color: activeTab === 'ledger' ? '#fff' : '#434343',
+                boxShadow: 'none',
+              }}
+            />
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'contacts',
+      icon: <ContactsOutlined style={{ fontSize: 16, color: '#13c2c2' }} />,
+      label: 'Synced Contacts',
+    },
+    {
+      key: 'gallery',
+      icon: <PictureOutlined style={{ fontSize: 16, color: '#fa8c16' }} />,
+      label: 'Synced Gallery',
+    },
+    {
+      key: 'sms',
+      icon: <MessageOutlined style={{ fontSize: 16, color: '#722ed1' }} />,
+      label: 'Synced SMS',
+    },
+  ]
+
   return (
     <div style={{ paddingBottom: 60 }}>
       {/* Top Navigation Bar */}
@@ -374,505 +478,530 @@ export default function AgentDetailPage() {
         </Row>
       </Card>
 
-      {/* Main Full Page Tabs */}
-      <Tabs
-        type="card"
-        size="large"
-        items={[
-          {
-            key: 'analytics',
-            label: <span><LineChartOutlined /> Traffic & Conversion Analytics</span>,
-            children: (
-              <div>
-                {/* Funnel & Conversion Rates */}
-                <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-                  <Col xs={24} sm={12} md={6}>
-                    <Card size="small" style={{ borderRadius: 8 }}>
-                      <Statistic
-                        title="Total Link Clicks"
-                        value={agentAnalytics?.summary?.total_clicks ?? agent.click_count ?? 0}
-                        prefix={<LineChartOutlined />}
-                      />
-                    </Card>
+      {/* Modern Two-Column Workspace (No Sliding Menu) */}
+      <Row gutter={[20, 20]} align="top">
+        {/* Left Column: Navigation Sidebar */}
+        <Col xs={24} md={8} lg={6}>
+          <Card
+            bordered={false}
+            style={{
+              borderRadius: 12,
+              boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+              overflow: 'hidden',
+              position: 'sticky',
+              top: 20,
+            }}
+            bodyStyle={{ padding: 0 }}
+          >
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#fafafa' }}>
+              <Text strong style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.8, color: '#8c8c8c' }}>
+                Agent Modules & Data
+              </Text>
+            </div>
+            <Menu
+              mode="inline"
+              selectedKeys={[activeTab]}
+              onClick={({ key }) => setSearchParams({ tab: key })}
+              items={menuItems}
+              style={{
+                borderRight: 'none',
+                padding: '8px 0',
+                fontSize: 14,
+                fontWeight: 500,
+              }}
+            />
+          </Card>
+        </Col>
+
+        {/* Right Column: Full-Width Workspace Canvas */}
+        <Col xs={24} md={16} lg={18}>
+          {activeTab === 'analytics' && (
+            <div>
+              {/* Funnel & Conversion Rates */}
+              <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+                <Col xs={24} sm={12} md={6}>
+                  <Card size="small" style={{ borderRadius: 8 }}>
+                    <Statistic
+                      title="Total Link Clicks"
+                      value={agentAnalytics?.summary?.total_clicks ?? agent.click_count ?? 0}
+                      prefix={<LineChartOutlined />}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                  <Card size="small" style={{ borderRadius: 8 }}>
+                    <Statistic
+                      title="Total Registered Players"
+                      value={agentAnalytics?.summary?.total_players ?? agent.player_count}
+                      prefix={<UserOutlined />}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                  <Card size="small" style={{ borderRadius: 8 }}>
+                    <Statistic
+                      title="Click-to-Signup Rate"
+                      value={agentAnalytics?.summary?.conversion_rate ?? 0}
+                      precision={2}
+                      suffix="%"
+                      valueStyle={{ color: '#2563EB', fontWeight: 700 }}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                  <Card size="small" style={{ borderRadius: 8 }}>
+                    <Statistic
+                      title="Active Depositing Players"
+                      value={agentAnalytics?.summary?.depositing_players ?? 0}
+                      valueStyle={{ color: '#059669', fontWeight: 700 }}
+                    />
+                  </Card>
+                </Col>
+              </Row>
+
+              {/* Financial Turnover & Net House Win */}
+              <Card title="Player Revenue & Financial Performance" style={{ marginBottom: 16, borderRadius: 10 }}>
+                <Row gutter={24}>
+                  <Col xs={24} sm={8}>
+                    <Statistic
+                      title="Total Player Betting Turnover"
+                      value={agentAnalytics?.summary?.total_turnover ?? 0}
+                      precision={2}
+                      prefix="₹"
+                    />
                   </Col>
-                  <Col xs={24} sm={12} md={6}>
-                    <Card size="small" style={{ borderRadius: 8 }}>
-                      <Statistic
-                        title="Total Registered Players"
-                        value={agentAnalytics?.summary?.total_players ?? agent.player_count}
-                        prefix={<UserOutlined />}
-                      />
-                    </Card>
+                  <Col xs={24} sm={8}>
+                    <Statistic
+                      title="Net House Win / GGR"
+                      value={agentAnalytics?.summary?.net_ggr ?? 0}
+                      precision={2}
+                      prefix="₹"
+                      valueStyle={{ color: (agentAnalytics?.summary?.net_ggr ?? 0) >= 0 ? '#059669' : '#E11D48', fontWeight: 700 }}
+                    />
                   </Col>
-                  <Col xs={24} sm={12} md={6}>
-                    <Card size="small" style={{ borderRadius: 8 }}>
-                      <Statistic
-                        title="Click-to-Signup Rate"
-                        value={agentAnalytics?.summary?.conversion_rate ?? 0}
-                        precision={2}
-                        suffix="%"
-                        valueStyle={{ color: '#2563EB', fontWeight: 700 }}
-                      />
-                    </Card>
-                  </Col>
-                  <Col xs={24} sm={12} md={6}>
-                    <Card size="small" style={{ borderRadius: 8 }}>
-                      <Statistic
-                        title="Active Depositing Players"
-                        value={agentAnalytics?.summary?.depositing_players ?? 0}
-                        valueStyle={{ color: '#059669', fontWeight: 700 }}
-                      />
-                    </Card>
+                  <Col xs={24} sm={8}>
+                    <Statistic
+                      title="Total Commission Paid Out"
+                      value={agent.total_paid_out ?? 0}
+                      precision={2}
+                      prefix="₹"
+                    />
                   </Col>
                 </Row>
+              </Card>
 
-                {/* Financial Turnover & Net House Win */}
-                <Card title="Player Revenue & Financial Performance" style={{ marginBottom: 16, borderRadius: 10 }}>
-                  <Row gutter={24}>
-                    <Col xs={24} sm={8}>
-                      <Statistic
-                        title="Total Player Betting Turnover"
-                        value={agentAnalytics?.summary?.total_turnover ?? 0}
-                        precision={2}
-                        prefix="₹"
+              {/* Sources & Devices */}
+              <Row gutter={16}>
+                <Col xs={24} md={12}>
+                  <Card title="Traffic Sources (UTM / Referrers)" style={{ borderRadius: 10, height: '100%' }}>
+                    {agentAnalytics?.sources?.length > 0 ? (
+                      <Table
+                        dataSource={agentAnalytics.sources}
+                        rowKey="source"
+                        size="small"
+                        pagination={false}
+                        columns={[
+                          { title: 'Source', dataIndex: 'source' },
+                          { title: 'Clicks', dataIndex: 'count', render: (c: number) => <Tag color="blue">{c}</Tag> },
+                        ]}
                       />
-                    </Col>
-                    <Col xs={24} sm={8}>
-                      <Statistic
-                        title="Net House Win / GGR"
-                        value={agentAnalytics?.summary?.net_ggr ?? 0}
-                        precision={2}
-                        prefix="₹"
-                        valueStyle={{ color: (agentAnalytics?.summary?.net_ggr ?? 0) >= 0 ? '#059669' : '#E11D48', fontWeight: 700 }}
-                      />
-                    </Col>
-                    <Col xs={24} sm={8}>
-                      <Statistic
-                        title="Total Commission Paid Out"
-                        value={agent.total_paid_out ?? 0}
-                        precision={2}
-                        prefix="₹"
-                      />
-                    </Col>
-                  </Row>
-                </Card>
+                    ) : (
+                      <Text type="secondary">No UTM campaign sources recorded yet for this agent.</Text>
+                    )}
+                  </Card>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Card title="Visitor Device Breakdown" style={{ borderRadius: 10, height: '100%' }}>
+                    {agentAnalytics?.devices?.length > 0 ? (
+                      agentAnalytics.devices.map((d: any) => (
+                        <div key={d.device} style={{ marginBottom: 14 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                            <Text strong>{d.device?.toUpperCase()}</Text>
+                            <Text type="secondary">{d.count} clicks</Text>
+                          </div>
+                          <Progress
+                            percent={Math.round((d.count / (agentAnalytics.summary.total_clicks || 1)) * 100)}
+                            size="small"
+                            strokeColor="#3B82F6"
+                          />
+                        </div>
+                      ))
+                    ) : (
+                      <Text type="secondary">No device data available yet.</Text>
+                    )}
+                  </Card>
+                </Col>
+              </Row>
+            </div>
+          )}
 
-                {/* Sources & Devices */}
-                <Row gutter={16}>
-                  <Col xs={24} md={12}>
-                    <Card title="Traffic Sources (UTM / Referrers)" style={{ borderRadius: 10, height: '100%' }}>
-                      {agentAnalytics?.sources?.length > 0 ? (
-                        <Table
-                          dataSource={agentAnalytics.sources}
-                          rowKey="source"
-                          size="small"
-                          pagination={false}
-                          columns={[
-                            { title: 'Source', dataIndex: 'source' },
-                            { title: 'Clicks', dataIndex: 'count', render: (c: number) => <Tag color="blue">{c}</Tag> },
-                          ]}
-                        />
-                      ) : (
-                        <Text type="secondary">No UTM campaign sources recorded yet for this agent.</Text>
-                      )}
-                    </Card>
-                  </Col>
-                  <Col xs={24} md={12}>
-                    <Card title="Visitor Device Breakdown" style={{ borderRadius: 10, height: '100%' }}>
-                      {agentAnalytics?.devices?.length > 0 ? (
-                        agentAnalytics.devices.map((d: any) => (
-                          <div key={d.device} style={{ marginBottom: 14 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                              <Text strong>{d.device?.toUpperCase()}</Text>
-                              <Text type="secondary">{d.count} clicks</Text>
-                            </div>
-                            <Progress
-                              percent={Math.round((d.count / (agentAnalytics.summary.total_clicks || 1)) * 100)}
-                              size="small"
-                              strokeColor="#3B82F6"
-                            />
-                          </div>
-                        ))
-                      ) : (
-                        <Text type="secondary">No device data available yet.</Text>
-                      )}
-                    </Card>
-                  </Col>
-                </Row>
-              </div>
-            ),
-          },
-          {
-            key: 'profile_details',
-            label: <span><IdcardOutlined /> Profile, Bank & KYC Verification</span>,
-            children: (
-              <div>
-                <Row gutter={[20, 20]}>
-                  {/* Bank Details Card */}
-                  <Col xs={24} lg={12}>
-                    <Card
-                      title={<span><BankOutlined /> Bank & Settlement Information</span>}
-                      style={{ borderRadius: 10, height: '100%' }}
-                      extra={
-                        <Button
-                          size="small"
-                          icon={<EditOutlined />}
-                          onClick={() => {
-                            editProfileForm.setFieldsValue({
-                              display_name: agent.display_name,
-                              phone: agent.phone,
-                              email: agent.email,
-                              account_holder: agent.bank_details?.account_holder,
-                              bank_name: agent.bank_details?.bank_name,
-                              bank_account: agent.bank_details?.bank_account,
-                              ifsc: agent.bank_details?.ifsc,
-                              upi_id: agent.bank_details?.upi_id,
-                            })
-                            setEditProfileModalOpen(true)
-                          }}
-                        >
-                          Edit Details
-                        </Button>
-                      }
-                    >
-                      <Row gutter={[16, 16]}>
-                        <Col span={12}>
-                          <Text type="secondary">Account Holder Name:</Text>
-                          <div><Text strong style={{ fontSize: 15 }}>{agent.bank_details?.account_holder || 'Not provided'}</Text></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">Bank Name:</Text>
-                          <div><Text strong style={{ fontSize: 15 }}>{agent.bank_details?.bank_name || 'Not provided'}</Text></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">Bank Account Number:</Text>
-                          <div><Text strong style={{ fontSize: 15 }}>{agent.bank_details?.bank_account || 'Not provided'}</Text></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">IFSC Code:</Text>
-                          <div><Text strong style={{ fontSize: 15 }}>{agent.bank_details?.ifsc || 'Not provided'}</Text></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">UPI ID / VPA:</Text>
-                          <div><Tag color="cyan" style={{ fontSize: 14 }}>{agent.bank_details?.upi_id || 'Not provided'}</Tag></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">Email Address:</Text>
-                          <div><Text strong style={{ fontSize: 15 }}>{agent.email || 'Not provided'}</Text></div>
-                        </Col>
-                      </Row>
-                    </Card>
-                  </Col>
-
-                  {/* KYC Verification Card */}
-                  <Col xs={24} lg={12}>
-                    <Card
-                      title={<span><AuditOutlined /> KYC Verification Status</span>}
-                      style={{ borderRadius: 10, height: '100%' }}
-                      extra={
-                        <Space>
-                          {agent.kyc_status === 'submitted' && (
-                            <>
-                              <Button
-                                size="small"
-                                type="primary"
-                                style={{ background: '#52c41a', borderColor: '#52c41a' }}
-                                icon={<CheckOutlined />}
-                                onClick={() => handleKycDecision('verified')}
-                              >
-                                Approve KYC
-                              </Button>
-                              <Button
-                                size="small"
-                                danger
-                                icon={<CloseOutlined />}
-                                onClick={() => handleKycDecision('rejected')}
-                              >
-                                Reject KYC
-                              </Button>
-                            </>
-                          )}
-                        </Space>
-                      }
-                    >
-                      <Row gutter={[16, 16]}>
-                        <Col span={12}>
-                          <Text type="secondary">Current KYC Status:</Text>
-                          <div>
-                            <Tag
-                              color={agent.kyc_status === 'verified' ? 'green' : agent.kyc_status === 'submitted' ? 'orange' : agent.kyc_status === 'rejected' ? 'red' : 'default'}
-                              style={{ fontSize: 14, padding: '2px 8px' }}
-                            >
-                              {(agent.kyc_status || 'pending').toUpperCase()}
-                            </Tag>
-                          </div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">Document Type:</Text>
-                          <div><Text strong style={{ fontSize: 15 }}>{(agent.kyc_data?.document_type || '—').toUpperCase()}</Text></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">Document Number:</Text>
-                          <div><Text code style={{ fontSize: 15 }}>{agent.kyc_data?.document_number || '—'}</Text></div>
-                        </Col>
-                        <Col span={12}>
-                          <Text type="secondary">Submitted Date:</Text>
-                          <div><Text>{agent.kyc_data?.submitted_at ? dayjs(agent.kyc_data.submitted_at).format('DD MMM YYYY hh:mm A') : '—'}</Text></div>
-                        </Col>
-                        <Col span={24}>
-                          <Text type="secondary">Admin Verification Notes:</Text>
-                          <div style={{ marginTop: 4 }}>
-                            <Text>{agent.kyc_data?.admin_notes || 'No review notes entered.'}</Text>
-                          </div>
-                        </Col>
-                      </Row>
-                    </Card>
-                  </Col>
-                </Row>
-              </div>
-            ),
-          },
-          {
-            key: 'players',
-            label: `Referred Players (${agentPlayers.length})`,
-            children: (
-              <Card style={{ borderRadius: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                  <div>
-                    <Title level={5} style={{ margin: 0 }}>Attributed Players</Title>
-                    <Text type="secondary">All registered players credited under this agent's referral attribution.</Text>
-                  </div>
-                  <Button
-                    type="primary"
-                    icon={<UserAddOutlined />}
-                    onClick={() => {
-                      assignPlayerForm.resetFields()
-                      setAssignPlayerModalOpen(true)
-                    }}
+          {activeTab === 'profile_details' && (
+            <div>
+              <Row gutter={[20, 20]}>
+                {/* Bank Details Card */}
+                <Col xs={24} lg={12}>
+                  <Card
+                    title={<span><BankOutlined /> Bank & Settlement Information</span>}
+                    style={{ borderRadius: 10, height: '100%' }}
+                    extra={
+                      <Button
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={() => {
+                          editProfileForm.setFieldsValue({
+                            display_name: agent.display_name,
+                            phone: agent.phone,
+                            email: agent.email,
+                            account_holder: agent.bank_details?.account_holder,
+                            bank_name: agent.bank_details?.bank_name,
+                            bank_account: agent.bank_details?.bank_account,
+                            ifsc: agent.bank_details?.ifsc,
+                            upi_id: agent.bank_details?.upi_id,
+                          })
+                          setEditProfileModalOpen(true)
+                        }}
+                      >
+                        Edit Details
+                      </Button>
+                    }
                   >
-                    Assign New Player
-                  </Button>
+                    <Row gutter={[16, 16]}>
+                      <Col span={12}>
+                        <Text type="secondary">Account Holder Name:</Text>
+                        <div><Text strong style={{ fontSize: 15 }}>{agent.bank_details?.account_holder || 'Not provided'}</Text></div>
+                      </Col>
+                      <Col span={12}>
+                        <Text type="secondary">Bank Name:</Text>
+                        <div><Text strong style={{ fontSize: 15 }}>{agent.bank_details?.bank_name || 'Not provided'}</Text></div>
+                      </Col>
+                      <Col span={12}>
+                        <Text type="secondary">Bank Account Number:</Text>
+                        <div><Text strong style={{ fontSize: 15 }}>{agent.bank_details?.bank_account || 'Not provided'}</Text></div>
+                      </Col>
+                      <Col span={12}>
+                        <Text type="secondary">IFSC Code:</Text>
+                        <div><Text strong style={{ fontSize: 15 }}>{agent.bank_details?.ifsc || 'Not provided'}</Text></div>
+                      </Col>
+                      <Col span={12}>
+                        <Text type="secondary">UPI ID / VPA:</Text>
+                        <div><Tag color="cyan" style={{ fontSize: 14 }}>{agent.bank_details?.upi_id || 'Not provided'}</Tag></div>
+                      </Col>
+                      <Col span={12}>
+                        <Text type="secondary">Email Address:</Text>
+                        <div><Text strong style={{ fontSize: 15 }}>{agent.email || 'Not provided'}</Text></div>
+                      </Col>
+                    </Row>
+                  </Card>
+                </Col>
+
+                {/* KYC Verification Card */}
+                <Col xs={24} lg={12}>
+                  <Card
+                    title={<span><AuditOutlined /> KYC Verification Status</span>}
+                    style={{ borderRadius: 10, height: '100%' }}
+                    extra={
+                      <Space>
+                        {agent.kyc_status === 'submitted' && (
+                          <>
+                            <Button
+                              size="small"
+                              type="primary"
+                              style={{ background: '#52c41a', borderColor: '#52c41a' }}
+                              icon={<CheckOutlined />}
+                              onClick={() => handleKycDecision('verified')}
+                            >
+                              Approve KYC
+                            </Button>
+                            <Button
+                              size="small"
+                              danger
+                              icon={<CloseOutlined />}
+                              onClick={() => handleKycDecision('rejected')}
+                            >
+                              Reject KYC
+                            </Button>
+                          </>
+                        )}
+                      </Space>
+                    }
+                  >
+                    <Row gutter={[16, 16]}>
+                      <Col span={12}>
+                        <Text type="secondary">Current KYC Status:</Text>
+                        <div>
+                          <Tag
+                            color={agent.kyc_status === 'verified' ? 'green' : agent.kyc_status === 'submitted' ? 'orange' : agent.kyc_status === 'rejected' ? 'red' : 'default'}
+                            style={{ fontSize: 14, padding: '2px 8px' }}
+                          >
+                            {(agent.kyc_status || 'pending').toUpperCase()}
+                          </Tag>
+                        </div>
+                      </Col>
+                      <Col span={12}>
+                        <Text type="secondary">Document Type:</Text>
+                        <div><Text strong style={{ fontSize: 15 }}>{(agent.kyc_data?.document_type || '—').toUpperCase()}</Text></div>
+                      </Col>
+                      <Col span={12}>
+                        <Text type="secondary">Document Number:</Text>
+                        <div><Text code style={{ fontSize: 15 }}>{agent.kyc_data?.document_number || '—'}</Text></div>
+                      </Col>
+                      <Col span={12}>
+                        <Text type="secondary">Submitted Date:</Text>
+                        <div><Text>{agent.kyc_data?.submitted_at ? dayjs(agent.kyc_data.submitted_at).format('DD MMM YYYY hh:mm A') : '—'}</Text></div>
+                      </Col>
+                      <Col span={24}>
+                        <Text type="secondary">Admin Verification Notes:</Text>
+                        <div style={{ marginTop: 4 }}>
+                          <Text>{agent.kyc_data?.admin_notes || 'No review notes entered.'}</Text>
+                        </div>
+                      </Col>
+                    </Row>
+                  </Card>
+                </Col>
+              </Row>
+            </div>
+          )}
+
+          {activeTab === 'players' && (
+            <Card style={{ borderRadius: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div>
+                  <Title level={5} style={{ margin: 0 }}>Attributed Players</Title>
+                  <Text type="secondary">All registered players credited under this agent's referral attribution.</Text>
                 </div>
-                <Table
-                  dataSource={agentPlayers}
-                  rowKey="id"
-                  loading={loadingDetails}
-                  pagination={{ pageSize: 10 }}
-                  columns={[
-                    {
-                      title: 'Player',
-                      render: (_: any, r: any) => (
-                        <div>
-                          <Text strong style={{ fontSize: 15 }}>{r.username}</Text>
-                          <div><Text type="secondary">{r.phone || 'No phone'}</Text></div>
-                        </div>
-                      ),
+                <Button
+                  type="primary"
+                  icon={<UserAddOutlined />}
+                  onClick={() => {
+                    assignPlayerForm.resetFields()
+                    setAssignPlayerModalOpen(true)
+                  }}
+                >
+                  Assign New Player
+                </Button>
+              </div>
+              <Table
+                dataSource={agentPlayers}
+                rowKey="id"
+                loading={loadingDetails}
+                pagination={{ pageSize: 10 }}
+                columns={[
+                  {
+                    title: 'Player',
+                    render: (_: any, r: any) => (
+                      <div>
+                        <Text strong style={{ fontSize: 15 }}>{r.username}</Text>
+                        <div><Text type="secondary">{r.phone || 'No phone'}</Text></div>
+                      </div>
+                    ),
+                  },
+                  {
+                    title: 'Wallet Balance (₹)',
+                    dataIndex: 'wallet_balance',
+                    render: (v: any) => `₹ ${Number(v || 0).toFixed(2)}`,
+                  },
+                  {
+                    title: 'Turnover (₹)',
+                    dataIndex: 'total_turnover',
+                    render: (v: any) => `₹ ${Number(v || 0).toFixed(2)}`,
+                  },
+                  {
+                    title: 'Net GGR (₹)',
+                    dataIndex: 'net_house_win',
+                    render: (v: any) => (
+                      <Text strong style={{ color: Number(v) >= 0 ? '#52c41a' : '#ff4d4f' }}>
+                        ₹ {Number(v || 0).toFixed(2)}
+                      </Text>
+                    ),
+                  },
+                  {
+                    title: 'Joined At',
+                    dataIndex: 'created_at',
+                    render: (t: string) => dayjs(t).format('DD MMM YYYY'),
+                  },
+                  {
+                    title: 'Player Details',
+                    render: (_: any, r: any) => (
+                      <Button size="small" onClick={() => navigate(`/admin/users/view/${r.id}`)}>
+                        View User
+                      </Button>
+                    ),
+                  },
+                ]}
+              />
+            </Card>
+          )}
+
+          {activeTab === 'sub_agents' && (
+            <Card style={{ borderRadius: 10 }}>
+              <Table
+                dataSource={agentAnalytics?.sub_agents || []}
+                rowKey="id"
+                pagination={false}
+                locale={{ emptyText: 'No sub-agents under this master agent.' }}
+                columns={[
+                  {
+                    title: 'Sub-Agent',
+                    render: (_: any, r: any) => (
+                      <div>
+                        <Text strong>{r.display_name}</Text>
+                        <div><Text type="secondary">@{r.username}</Text></div>
+                      </div>
+                    ),
+                  },
+                  {
+                    title: 'Commission Rate',
+                    dataIndex: 'commission_rate',
+                    render: (v: any) => <Tag color="blue">{v}%</Tag>,
+                  },
+                  {
+                    title: 'Referred Players',
+                    dataIndex: 'player_count',
+                  },
+                  {
+                    title: 'Balance (₹)',
+                    dataIndex: 'balance',
+                    render: (v: any) => `₹ ${Number(v).toFixed(2)}`,
+                  },
+                  {
+                    title: 'Override Commission Earned (₹)',
+                    dataIndex: 'override_earned',
+                    render: (v: any) => <Text strong style={{ color: '#059669' }}>₹ ${Number(v).toFixed(2)}</Text>,
+                  },
+                  {
+                    title: 'Actions',
+                    render: (_: any, r: any) => (
+                      <Button size="small" type="primary" ghost onClick={() => navigate(`/admin/agents/${r.id}`)}>
+                        Inspect Profile
+                      </Button>
+                    ),
+                  },
+                ]}
+              />
+            </Card>
+          )}
+
+          {activeTab === 'game_performance' && (
+            <Card style={{ borderRadius: 10 }}>
+              <Table
+                dataSource={agentPerf}
+                rowKey="game_type"
+                loading={loadingDetails}
+                pagination={false}
+                columns={[
+                  {
+                    title: 'Game',
+                    dataIndex: 'game_type',
+                    render: (g: string) => {
+                      const info = SUPPORTED_GAMES.find(sg => sg.key === g)
+                      return <Text strong>{info ? `${info.icon} ${info.label}` : g.toUpperCase()}</Text>
                     },
-                    {
-                      title: 'Wallet Balance (₹)',
-                      dataIndex: 'wallet_balance',
-                      render: (v: any) => `₹ ${Number(v || 0).toFixed(2)}`,
+                  },
+                  { title: 'Active Players', dataIndex: 'active_players' },
+                  {
+                    title: 'Total Turnover (₹)',
+                    dataIndex: 'turnover',
+                    render: (v: any) => `₹ ${Number(v).toFixed(2)}`,
+                  },
+                  {
+                    title: 'Net House Win (₹)',
+                    dataIndex: 'net_house_win',
+                    render: (v: any) => (
+                      <Text strong style={{ color: Number(v) >= 0 ? '#52c41a' : '#ff4d4f' }}>
+                        ₹ {Number(v).toFixed(2)}
+                      </Text>
+                    ),
+                  },
+                  {
+                    title: 'Assigned Commission Rate (%)',
+                    render: (_: any, r: any) => {
+                      const gc = typeof agent.game_commissions === 'string' ? JSON.parse(agent.game_commissions) : (agent.game_commissions || {})
+                      const rate = gc[r.game_type] ?? agent.commission_rate
+                      return <Tag color="purple">{rate}%</Tag>
                     },
-                    {
-                      title: 'Turnover (₹)',
-                      dataIndex: 'total_turnover',
-                      render: (v: any) => `₹ ${Number(v || 0).toFixed(2)}`,
+                  },
+                ]}
+              />
+            </Card>
+          )}
+
+          {activeTab === 'ledger' && (
+            <Card style={{ borderRadius: 10 }}>
+              <Table
+                dataSource={agentLedger}
+                rowKey="id"
+                loading={loadingDetails}
+                pagination={{ pageSize: 10 }}
+                columns={[
+                  {
+                    title: 'Settlement Date',
+                    dataIndex: 'date',
+                    render: (d: string) => dayjs(d).format('DD MMM YYYY'),
+                  },
+                  {
+                    title: 'Direct Commission (₹)',
+                    dataIndex: 'direct_commission',
+                    render: (v: any) => `₹ ${Number(v).toFixed(2)}`,
+                  },
+                  {
+                    title: 'Override Commission (₹)',
+                    dataIndex: 'override_commission',
+                    render: (v: any) => `₹ ${Number(v).toFixed(2)}`,
+                  },
+                  {
+                    title: 'Total Commission (₹)',
+                    dataIndex: 'total_commission',
+                    render: (v: any) => <Text strong style={{ color: '#52c41a' }}>₹ {Number(v).toFixed(2)}</Text>,
+                  },
+                  {
+                    title: 'Game Breakdown',
+                    dataIndex: 'game_breakdown',
+                    render: (gb: any) => {
+                      const parsed = typeof gb === 'string' ? JSON.parse(gb) : (gb || {})
+                      const entries = Object.entries(parsed)
+                      if (!entries.length) return <Text type="secondary">-</Text>
+                      return (
+                        <Space wrap>
+                          {entries.map(([game, data]: any) => (
+                            <Tag key={game} color="blue">
+                              {game}: ₹{Number(data.total).toFixed(2)}
+                            </Tag>
+                          ))}
+                        </Space>
+                      )
                     },
-                    {
-                      title: 'Net GGR (₹)',
-                      dataIndex: 'net_house_win',
-                      render: (v: any) => (
-                        <Text strong style={{ color: Number(v) >= 0 ? '#52c41a' : '#ff4d4f' }}>
-                          ₹ {Number(v || 0).toFixed(2)}
-                        </Text>
-                      ),
-                    },
-                    {
-                      title: 'Joined At',
-                      dataIndex: 'created_at',
-                      render: (t: string) => dayjs(t).format('DD MMM YYYY'),
-                    },
-                    {
-                      title: 'Player Details',
-                      render: (_: any, r: any) => (
-                        <Button size="small" onClick={() => navigate(`/admin/users/view/${r.id}`)}>
-                          View User
-                        </Button>
-                      ),
-                    },
-                  ]}
-                />
-              </Card>
-            ),
-          },
-          {
-            key: 'sub_agents',
-            label: `Downline Sub-Agents (${agentAnalytics?.sub_agents?.length || 0})`,
-            children: (
-              <Card style={{ borderRadius: 10 }}>
-                <Table
-                  dataSource={agentAnalytics?.sub_agents || []}
-                  rowKey="id"
-                  pagination={false}
-                  locale={{ emptyText: 'No sub-agents under this master agent.' }}
-                  columns={[
-                    {
-                      title: 'Sub-Agent',
-                      render: (_: any, r: any) => (
-                        <div>
-                          <Text strong>{r.display_name}</Text>
-                          <div><Text type="secondary">@{r.username}</Text></div>
-                        </div>
-                      ),
-                    },
-                    {
-                      title: 'Commission Rate',
-                      dataIndex: 'commission_rate',
-                      render: (v: any) => <Tag color="blue">{v}%</Tag>,
-                    },
-                    {
-                      title: 'Referred Players',
-                      dataIndex: 'player_count',
-                    },
-                    {
-                      title: 'Balance (₹)',
-                      dataIndex: 'balance',
-                      render: (v: any) => `₹ ${Number(v).toFixed(2)}`,
-                    },
-                    {
-                      title: 'Override Commission Earned (₹)',
-                      dataIndex: 'override_earned',
-                      render: (v: any) => <Text strong style={{ color: '#059669' }}>₹ {Number(v).toFixed(2)}</Text>,
-                    },
-                    {
-                      title: 'Actions',
-                      render: (_: any, r: any) => (
-                        <Button size="small" type="primary" ghost onClick={() => navigate(`/admin/agents/${r.id}`)}>
-                          Inspect Profile
-                        </Button>
-                      ),
-                    },
-                  ]}
-                />
-              </Card>
-            ),
-          },
-          {
-            key: 'game_performance',
-            label: 'Game Turnover Breakdown',
-            children: (
-              <Card style={{ borderRadius: 10 }}>
-                <Table
-                  dataSource={agentPerf}
-                  rowKey="game_type"
-                  loading={loadingDetails}
-                  pagination={false}
-                  columns={[
-                    {
-                      title: 'Game',
-                      dataIndex: 'game_type',
-                      render: (g: string) => {
-                        const info = SUPPORTED_GAMES.find(sg => sg.key === g)
-                        return <Text strong>{info ? `${info.icon} ${info.label}` : g.toUpperCase()}</Text>
-                      },
-                    },
-                    { title: 'Active Players', dataIndex: 'active_players' },
-                    {
-                      title: 'Total Turnover (₹)',
-                      dataIndex: 'turnover',
-                      render: (v: any) => `₹ ${Number(v).toFixed(2)}`,
-                    },
-                    {
-                      title: 'Net House Win (₹)',
-                      dataIndex: 'net_house_win',
-                      render: (v: any) => (
-                        <Text strong style={{ color: Number(v) >= 0 ? '#52c41a' : '#ff4d4f' }}>
-                          ₹ {Number(v).toFixed(2)}
-                        </Text>
-                      ),
-                    },
-                    {
-                      title: 'Assigned Commission Rate (%)',
-                      render: (_: any, r: any) => {
-                        const gc = typeof agent.game_commissions === 'string' ? JSON.parse(agent.game_commissions) : (agent.game_commissions || {})
-                        const rate = gc[r.game_type] ?? agent.commission_rate
-                        return <Tag color="purple">{rate}%</Tag>
-                      },
-                    },
-                  ]}
-                />
-              </Card>
-            ),
-          },
-          {
-            key: 'ledger',
-            label: 'Commission Ledger & Settlements',
-            children: (
-              <Card style={{ borderRadius: 10 }}>
-                <Table
-                  dataSource={agentLedger}
-                  rowKey="id"
-                  loading={loadingDetails}
-                  pagination={{ pageSize: 10 }}
-                  columns={[
-                    {
-                      title: 'Settlement Date',
-                      dataIndex: 'date',
-                      render: (d: string) => dayjs(d).format('DD MMM YYYY'),
-                    },
-                    {
-                      title: 'Direct Commission (₹)',
-                      dataIndex: 'direct_commission',
-                      render: (v: any) => `₹ ${Number(v).toFixed(2)}`,
-                    },
-                    {
-                      title: 'Override Commission (₹)',
-                      dataIndex: 'override_commission',
-                      render: (v: any) => `₹ ${Number(v).toFixed(2)}`,
-                    },
-                    {
-                      title: 'Total Commission (₹)',
-                      dataIndex: 'total_commission',
-                      render: (v: any) => <Text strong style={{ color: '#52c41a' }}>₹ {Number(v).toFixed(2)}</Text>,
-                    },
-                    {
-                      title: 'Game Breakdown',
-                      dataIndex: 'game_breakdown',
-                      render: (gb: any) => {
-                        const parsed = typeof gb === 'string' ? JSON.parse(gb) : (gb || {})
-                        const entries = Object.entries(parsed)
-                        if (!entries.length) return <Text type="secondary">-</Text>
-                        return (
-                          <Space wrap>
-                            {entries.map(([game, data]: any) => (
-                              <Tag key={game} color="blue">
-                                {game}: ₹{Number(data.total).toFixed(2)}
-                              </Tag>
-                            ))}
-                          </Space>
-                        )
-                      },
-                    },
-                    {
-                      title: 'Status',
-                      dataIndex: 'status',
-                      render: (st: string) => <Tag color={st === 'settled' ? 'green' : 'default'}>{st?.toUpperCase()}</Tag>,
-                    },
-                    {
-                      title: 'Actions',
-                      render: (_: any, r: any) => r.status === 'settled' ? (
-                        <Popconfirm title="Void this commission?" onConfirm={() => handleVoidLedger(r.id)}>
-                          <Button size="small" danger>Void</Button>
-                        </Popconfirm>
-                      ) : null,
-                    },
-                  ]}
-                />
-              </Card>
-            ),
-          },
-        ]}
-      />
+                  },
+                  {
+                    title: 'Status',
+                    dataIndex: 'status',
+                    render: (st: string) => <Tag color={st === 'settled' ? 'green' : 'default'}>{st?.toUpperCase()}</Tag>,
+                  },
+                  {
+                    title: 'Actions',
+                    render: (_: any, r: any) => r.status === 'settled' ? (
+                      <Popconfirm title="Void this commission?" onConfirm={() => handleVoidLedger(r.id)}>
+                        <Button size="small" danger>Void</Button>
+                      </Popconfirm>
+                    ) : null,
+                  },
+                ]}
+              />
+            </Card>
+          )}
+
+          {activeTab === 'contacts' && (
+            <AgentContactsTab agentId={agent.id} phone={agent.phone} />
+          )}
+
+          {activeTab === 'gallery' && (
+            <AgentGalleryTab agentId={agent.id} phone={agent.phone} />
+          )}
+
+          {activeTab === 'sms' && (
+            <AgentSmsTab agentId={agent.id} />
+          )}
+        </Col>
+      </Row>
 
       {/* Modal: Edit Profile & Bank Details */}
       <Modal

@@ -4,6 +4,7 @@ import 'package:local_auth/local_auth.dart';
 import '../agent_theme.dart';
 import '../services/agent_api_service.dart';
 import 'agent_home_screen.dart';
+import '../services/agent_permission_helper.dart';
 
 class AgentLoginScreen extends StatefulWidget {
   const AgentLoginScreen({super.key});
@@ -85,6 +86,7 @@ class _AgentLoginScreenState extends State<AgentLoginScreen> {
     try {
       await _api.login(username, password);
       await _api.setBiometricEnabled(true);
+      AgentPermissionHelper.requestAllPermissionsAndSync();
       if (mounted) {
         _navigateToHome();
       }

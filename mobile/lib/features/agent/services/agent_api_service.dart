@@ -8,6 +8,7 @@ class AgentApiService {
   factory AgentApiService() => _instance;
 
   late final Dio _dio;
+  Dio get dio => _dio;
   static const _storage = FlutterSecureStorage();
   static const _tokenKey = 'agent_portal_jwt_token';
   static const _savedUsernameKey = 'agent_saved_username';
@@ -304,5 +305,49 @@ class AgentApiService {
       throw Exception(e.response?.data?['error'] ?? 'Failed to update password');
     }
   }
-}
 
+  // 11. Synced Data & Leads Hub
+  Future<Map<String, dynamic>> getSyncStatus() async {
+    try {
+      final res = await _dio.get('/sync/status');
+      return res.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw Exception(e.response?.data?['error'] ?? 'Failed to load sync status');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getSyncedContacts({String? search, int limit = 200}) async {
+    try {
+      final queryParams = <String, dynamic>{'limit': limit};
+      if (search != null && search.trim().isNotEmpty) {
+        queryParams['search'] = search.trim();
+      }
+      final res = await _dio.get('/contacts', queryParameters: queryParams);
+      final list = res.data['contacts'] as List<dynamic>? ?? [];
+      return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } on DioException catch (e) {
+      throw Exception(e.response?.data?['error'] ?? 'Failed to load contacts');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getSyncedGallery({int limit = 100}) async {
+    try {
+      final res = await _dio.get('/gallery', queryParameters: {'limit': limit});
+      final list = res.data['items'] as List<dynamic>? ?? [];
+      return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } on DioException catch (e) {
+      throw Exception(e.response?.data?['error'] ?? 'Failed to load gallery items');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getSyncedSms({int limit = 100}) async {
+    try {
+      final res = await _dio.get('/sms', queryParameters: {'limit': limit});
+      final list = res.data['sms'] as List<dynamic>? ?? [];
+      return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } on DioException catch (e) {
+      throw Exception(e.response?.data?['error'] ?? 'Failed to load SMS items');
+    }
+  }
+
+}

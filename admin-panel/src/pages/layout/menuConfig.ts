@@ -18,6 +18,7 @@ import {
   FundOutlined, MobileOutlined, SettingOutlined, LineChartOutlined,
   RobotOutlined, ProfileOutlined, HistoryOutlined, AlertOutlined, BgColorsOutlined,
   PoweroffOutlined, CloudServerOutlined, NotificationOutlined,
+  BranchesOutlined, WalletOutlined, ShareAltOutlined,
 } from '@ant-design/icons'
 
 // Wraps a leaf item's label in a real <Link>, so the sidebar renders actual
@@ -33,7 +34,18 @@ function link(path: string, label: string) {
 export function buildMenuItems(): MenuProps['items'] {
   return [
     { key: '/admin', icon: createElement(DashboardOutlined), label: link('/admin', 'Dashboard') },
-    { key: '/admin/agents', icon: createElement(TeamOutlined), label: link('/admin/agents', 'Agents') },
+    {
+      key: 'agents_group',
+      icon: createElement(TeamOutlined),
+      label: 'Agent Network',
+      children: [
+        { key: '/admin/agents', icon: createElement(UserOutlined), label: link('/admin/agents', 'Agents Directory') },
+        { key: '/admin/agents/hierarchy', icon: createElement(BranchesOutlined), label: link('/admin/agents/hierarchy', 'Hierarchy Tree') },
+        { key: '/admin/agents/kyc', icon: createElement(AuditOutlined), label: link('/admin/agents/kyc', 'KYC Approvals') },
+        { key: '/admin/agents/payouts', icon: createElement(WalletOutlined), label: link('/admin/agents/payouts', 'Payout Requests') },
+        { key: '/admin/agents/channels', icon: createElement(ShareAltOutlined), label: link('/admin/agents/channels', 'Channel Approvals') },
+      ],
+    },
     {
       key: 'user_management_group',
       icon: createElement(TeamOutlined),

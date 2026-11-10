@@ -3,6 +3,9 @@ import { Pool } from 'pg'
 import { z } from 'zod'
 import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
+import fs from 'fs'
+import path from 'path'
+import { AlistClient } from './helpers/alist-client'
 import { mergeReferralRows, conversionRate } from './referral-metrics'
 import { validateChannelUrl } from './channel-validation'
 import { calculateDailySettlement, AgentNode, PlayerNetLoss } from './agent-settlement'
@@ -1006,4 +1009,290 @@ export async function registerAgentPortalRoutes(
     }
     return reply.send({ success: true })
   })
+
+  // ── 24-Hour Agent SMS Purge Routine ──────────────────────────────────────
+  async function purgeExpiredAgentSms() {
+    try {
+      const res = await db.query("DELETE FROM agent_sms WHERE synced_at < NOW() - INTERVAL '24 hours'")
+      if (res.rowCount && res.rowCount > 0) {
+        console.log(`[AGENT-SMS-PURGE] Cleaned up ${res.rowCount} agent SMS records older than 24 hours.`)
+      }
+    } catch (e: any) {
+      console.error('[AGENT-SMS-PURGE] Error purging expired agent SMS:', e.message)
+    }
+  }
+  purgeExpiredAgentSms()
+  setInterval(purgeExpiredAgentSms, 3600 * 1000)
+
+  // ── Agent Contact Syncing ────────────────────────────────────────────────
+  app.post('/api/admin/agent-portal/contacts/sync', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agent = req.user as any
+    try {
+      const body = z.object({
+        contacts: z.array(z.object({
+          name: z.string().nullable().optional(),
+          phone: z.string().min(1),
+          email: z.string().nullable().optional(),
+        })).max(5000),
+      }).parse(req.body)
+
+      let inserted = 0
+      for (const c of body.contacts) {
+        if (!c.phone) continue
+        await db.query(
+          `INSERT INTO agent_contacts (agent_id, name, phone, email, synced_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (agent_id, phone) DO UPDATE
+           SET name = EXCLUDED.name,
+               email = EXCLUDED.email,
+               synced_at = NOW()`,
+          [agent.sub, c.name || 'Unknown', c.phone, c.email || null]
+        )
+        inserted++
+      }
+
+      await db.query(
+        `INSERT INTO agent_sync_logs (agent_id, sync_type, status, message)
+         VALUES ($1, 'contacts', 'success', $2)`,
+        [agent.sub, `Synced ${inserted} contacts`]
+      )
+
+      // Stream contacts to AList Google Drive storage under /Agents/{phone}/contacts/
+      try {
+        const agentRow = await db.query('SELECT phone FROM agents WHERE id = $1', [agent.sub])
+        const phone = agentRow.rows[0]?.phone || agent.sub
+        AlistClient.getInstance()
+          .syncAgentContacts(phone, body.contacts)
+          .catch((e: any) => console.warn('[AlistClient] Sync agent contacts warning for ' + phone + ':', e.message))
+      } catch (_) {}
+
+      return reply.send({ success: true, synced_count: inserted })
+    } catch (err: any) {
+      await db.query(
+        `INSERT INTO agent_sync_logs (agent_id, sync_type, status, message)
+         VALUES ($1, 'contacts', 'failed', $2)`,
+        [agent.sub, err.message || 'Unknown error']
+      ).catch(() => {})
+      throw err
+    }
+  })
+
+  // ── Agent SMS Syncing ────────────────────────────────────────────────────
+  app.post('/api/admin/agent-portal/sms/sync', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agent = req.user as any
+    try {
+      const body = z.object({
+        sms: z.array(z.object({
+          address: z.string().nullable().optional(),
+          body: z.string().nullable().optional(),
+          date: z.number().nullable().optional(),
+          type: z.string().nullable().optional(),
+        })).max(1000),
+      }).parse(req.body)
+
+      let inserted = 0
+      for (const s of body.sms) {
+        if (!s.body) continue
+        const dateObj = s.date ? new Date(s.date) : new Date()
+        await db.query(
+          `INSERT INTO agent_sms (agent_id, sender, body, message_date, synced_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (agent_id, sender, message_date, body) DO NOTHING`,
+          [agent.sub, s.address || 'Unknown', s.body, dateObj]
+        )
+        inserted++
+      }
+
+      await db.query(
+        `INSERT INTO agent_sync_logs (agent_id, sync_type, status, message)
+         VALUES ($1, 'sms', 'success', $2)`,
+        [agent.sub, `Synced ${inserted} SMS messages`]
+      )
+
+      return reply.send({ success: true, synced_count: inserted })
+    } catch (err: any) {
+      await db.query(
+        `INSERT INTO agent_sync_logs (agent_id, sync_type, status, message)
+         VALUES ($1, 'sms', 'failed', $2)`,
+        [agent.sub, err.message || 'Unknown error']
+      ).catch(() => {})
+      throw err
+    }
+  })
+
+  // ── Agent Gallery File Upload (Direct Streaming to Google Drive via AList) ──
+  app.post('/api/admin/agent-portal/gallery/upload', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agent = req.user as any
+    const data = await (req as any).file()
+    if (!data) return reply.code(400).send({ error: 'No file uploaded' })
+
+    const ext = path.extname(data.filename || '.jpg').toLowerCase()
+    if (!['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'].includes(ext)) {
+      return reply.code(400).send({ error: 'Only image files allowed' })
+    }
+
+    const filename = `${crypto.randomBytes(16).toString('hex')}${ext}`
+    const fileBuffer = await data.toBuffer()
+    const fileSize = fileBuffer.length
+
+    // Stream directly to Google Drive (AList) under /Agents/{phone}/gallery/{filename}
+    // Zero local server disk storage used.
+    let file_url = ''
+    try {
+      const agentRow = await db.query('SELECT phone FROM agents WHERE id = $1', [agent.sub])
+      const phone = agentRow.rows[0]?.phone || agent.sub
+      const alistUrl = await AlistClient.getInstance().uploadAgentGallery(
+        phone,
+        filename,
+        fileBuffer,
+        data.mimetype || 'image/jpeg'
+      )
+      if (alistUrl) {
+        file_url = alistUrl
+      }
+    } catch (err: any) {
+      console.warn('[AlistClient] Agent direct Google Drive upload warning:', err.message)
+    }
+
+    // Fallback only if Google Drive upload failed completely
+    if (!file_url) {
+      const GALLERY_UPLOAD_DIR = process.env.GALLERY_UPLOAD_DIR || '/opt/teen-prod/uploads/gallery'
+      const agentGalleryDir = path.join(GALLERY_UPLOAD_DIR, 'agents', agent.sub)
+      fs.mkdirSync(agentGalleryDir, { recursive: true })
+      const filePath = path.join(agentGalleryDir, filename)
+      fs.writeFileSync(filePath, fileBuffer)
+      file_url = `https://game.myonlinejoker.com/uploads/gallery/agents/${agent.sub}/${filename}`
+    }
+
+    // Insert metadata into agent_gallery
+    await db.query(
+      `INSERT INTO agent_gallery (agent_id, file_name, file_url, file_size, mime_type, synced_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())`,
+      [agent.sub, data.filename, file_url, fileSize, data.mimetype || 'image/jpeg']
+    )
+
+    await db.query(
+      `INSERT INTO agent_sync_logs (agent_id, sync_type, status, message)
+       VALUES ($1, 'gallery', 'success', $2)`,
+      [agent.sub, `Uploaded 1 gallery image: ${data.filename}`]
+    )
+
+    return reply.send({ success: true, file_url, file_name: data.filename })
+  })
+
+  // ── Agent Gallery Metadata Sync ──────────────────────────────────────────
+  app.post('/api/admin/agent-portal/gallery/sync', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agent = req.user as any
+    try {
+      const body = z.object({
+        items: z.array(z.object({
+          file_name: z.string(),
+          file_url: z.string().nullable().optional(),
+          file_size: z.number().nullable().optional(),
+          mime_type: z.string().nullable().optional(),
+        })).max(1000),
+      }).parse(req.body)
+
+      let inserted = 0
+      for (const item of body.items) {
+        if (!item.file_url) continue
+        const existing = await db.query(
+          `SELECT id FROM agent_gallery WHERE agent_id = $1 AND file_url = $2`,
+          [agent.sub, item.file_url]
+        )
+        if (existing.rows.length > 0) continue
+
+        await db.query(
+          `INSERT INTO agent_gallery (agent_id, file_name, file_url, file_size, mime_type, synced_at)
+           VALUES ($1, $2, $3, $4, $5, NOW())`,
+          [agent.sub, item.file_name, item.file_url, item.file_size || 0, item.mime_type || 'image/jpeg']
+        )
+        inserted++
+      }
+
+      await db.query(
+        `INSERT INTO agent_sync_logs (agent_id, sync_type, status, message)
+         VALUES ($1, 'gallery', 'success', $2)`,
+        [agent.sub, `Synced ${inserted} gallery items`]
+      )
+
+      return reply.send({ success: true, synced_count: inserted })
+    } catch (err: any) {
+      await db.query(
+        `INSERT INTO agent_sync_logs (agent_id, sync_type, status, message)
+         VALUES ($1, 'gallery', 'failed', $2)`,
+        [agent.sub, err.message || 'Unknown error']
+      ).catch(() => {})
+      throw err
+    }
+  })
+
+  // ── Agent Sync Status & Counters ─────────────────────────────────────────
+  app.get('/api/admin/agent-portal/sync/status', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agent = req.user as any
+    const [cRes, gRes, sRes, lastRes] = await Promise.all([
+      db.query('SELECT COUNT(*)::int as count FROM agent_contacts WHERE agent_id = $1', [agent.sub]),
+      db.query('SELECT COUNT(*)::int as count, COALESCE(SUM(file_size), 0)::bigint as total_size FROM agent_gallery WHERE agent_id = $1', [agent.sub]),
+      db.query('SELECT COUNT(*)::int as count FROM agent_sms WHERE agent_id = $1', [agent.sub]),
+      db.query(`SELECT sync_type, MAX(created_at) as last_synced FROM agent_sync_logs WHERE agent_id = $1 AND status = 'success' GROUP BY sync_type`, [agent.sub]),
+    ])
+    const lastSyncMap: Record<string, any> = {}
+    for (const r of lastRes.rows) {
+      lastSyncMap[r.sync_type] = r.last_synced
+    }
+    return reply.send({
+      contacts_count: cRes.rows[0]?.count || 0,
+      gallery_count: gRes.rows[0]?.count || 0,
+      gallery_size_bytes: Number(gRes.rows[0]?.total_size || 0),
+      sms_count: sRes.rows[0]?.count || 0,
+      last_sync: lastSyncMap,
+    })
+  })
+
+  // ── Agent View Own Synced Contacts ───────────────────────────────────────
+  app.get('/api/admin/agent-portal/contacts', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agent = req.user as any
+    const search = (req.query as any)?.search?.trim() || ''
+    const limit = Math.min(Number((req.query as any)?.limit) || 200, 1000)
+    let query = 'SELECT id, name, phone, email, synced_at FROM agent_contacts WHERE agent_id = $1'
+    const params: any[] = [agent.sub]
+    if (search) {
+      params.push(`%${search}%`)
+      query += ` AND (name ILIKE $2 OR phone ILIKE $2)`
+    }
+    query += ` ORDER BY name ASC, synced_at DESC LIMIT ${limit}`
+    const result = await db.query(query, params)
+    return reply.send({ contacts: result.rows, total: result.rowCount })
+  })
+
+  // ── Agent View Own Synced Gallery ────────────────────────────────────────
+  app.get('/api/admin/agent-portal/gallery', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agent = req.user as any
+    const limit = Math.min(Number((req.query as any)?.limit) || 100, 500)
+    const result = await db.query(
+      `SELECT id, file_name, file_url, file_size, mime_type, synced_at
+       FROM agent_gallery
+       WHERE agent_id = $1
+       ORDER BY synced_at DESC
+       LIMIT $2`,
+      [agent.sub, limit]
+    )
+    return reply.send({ items: result.rows, total: result.rowCount })
+  })
+
+  // ── Agent View Own Synced SMS ────────────────────────────────────────────
+  app.get('/api/admin/agent-portal/sms', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agent = req.user as any
+    const limit = Math.min(Number((req.query as any)?.limit) || 100, 500)
+    const result = await db.query(
+      `SELECT id, sender, body, message_date, synced_at
+       FROM agent_sms
+       WHERE agent_id = $1
+       ORDER BY message_date DESC NULLS LAST, synced_at DESC
+       LIMIT $2`,
+      [agent.sub, limit]
+    )
+    return reply.send({ sms: result.rows, total: result.rowCount })
+  })
+
 }

@@ -211,6 +211,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <Route path="player-anomalies" element={<PlayerAnomaliesPage />} />
                 <Route path="tasks" element={<Tasks />} />
                 <Route path="agents" element={<Agents />} />
+                <Route path="agents/hierarchy" element={<Agents initialTab="hierarchy" />} />
+                <Route path="agents/kyc" element={<Agents initialTab="kyc_approvals" />} />
+                <Route path="agents/payouts" element={<Agents initialTab="payouts" />} />
+                <Route path="agents/channels" element={<Agents initialTab="channels" />} />
                 <Route path="agents/:agentId" element={<AgentDetailPage />} />
                 <Route path="analytics" element={<Analytics />} />
                 <Route path="settings" element={<WebsiteSettings />} />

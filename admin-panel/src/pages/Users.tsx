@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  Table, Input, Select, Button, Tag, Space, Modal, Descriptions, InputNumber,
+  Table, Input, Select, Button, Tag, Space, Modal, Descriptions, InputNumber, Progress,
   message, Popconfirm, Tabs, List, Empty, Form, Checkbox, Tooltip, Row, Col, Card, Typography,
 } from 'antd'
 import {
-  SearchOutlined, StopOutlined, CheckCircleOutlined, DollarOutlined,
+  SearchOutlined, StopOutlined, CloudServerOutlined, CheckCircleOutlined, DollarOutlined,
   MinusCircleOutlined, FlagOutlined, KeyOutlined, CopyOutlined,
   ExportOutlined, SendOutlined, EyeOutlined, DownloadOutlined,
   ReloadOutlined, PictureOutlined, DeleteOutlined, FolderOpenOutlined,
@@ -38,6 +38,24 @@ export default function Users() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [agentsList, setAgentsList] = useState<any[]>([])
   const [assignLoading, setAssignLoading] = useState(false)
+  const [quota, setQuota] = useState<any>(null)
+  const [quotaLoading, setQuotaLoading] = useState(false)
+
+  const fetchQuota = async () => {
+    setQuotaLoading(true)
+    try {
+      const res = await adminApi.get('/storage/quota')
+      setQuota(res.data)
+    } catch {
+      // ignore
+    } finally {
+      setQuotaLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchQuota()
+  }, [])
 
   const fetchAgentsList = async () => {
     try {
@@ -249,6 +267,83 @@ export default function Users() {
           </Card>
         </Col>
       </Row>
+
+      {/* Cloud Storage Quota Banner */}
+      {quota && quota.drive && (
+        <Card
+          size="small"
+          style={{
+            marginBottom: 20,
+            borderRadius: 12,
+            background: 'linear-gradient(135deg, #f6f9fc 0%, #eef2f7 100%)',
+            borderColor: '#d9e2ec',
+          }}
+        >
+          <Row gutter={[16, 12]} align="middle">
+            <Col xs={24} md={6}>
+              <Space>
+                <div style={{
+                  width: 40, height: 40, borderRadius: 10, background: '#1890ff15',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}>
+                  <CloudServerOutlined style={{ fontSize: 22, color: '#1890ff' }} />
+                </div>
+                <div>
+                  <Typography.Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase' }}>
+                    Google Drive Cloud Storage
+                  </Typography.Text>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: tokens.color.textPrimary }}>
+                    {quota.drive.freeFormatted} <span style={{ fontSize: 12, fontWeight: 500, color: '#52c41a' }}>Left</span>
+                  </div>
+                </div>
+              </Space>
+            </Col>
+
+            <Col xs={24} md={12}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                <span>
+                  <strong>{quota.drive.usageFormatted}</strong> used of <strong>{quota.drive.limitFormatted}</strong>
+                </span>
+                <span style={{ color: '#52c41a', fontWeight: 600 }}>
+                  {quota.drive.freePercent}% Free Space
+                </span>
+              </div>
+              <Progress
+                percent={quota.drive.usagePercent}
+                strokeColor={{ '0%': '#1890ff', '100%': '#52c41a' }}
+                showInfo={false}
+                size={['100%', 10]}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', marginTop: 4 }}>
+                <span>Account: {quota.drive.email}</span>
+                <span>{quota.stats.totalGalleryItems} photos ({quota.stats.totalGalleryFormatted}) · {quota.stats.totalContacts} contacts</span>
+              </div>
+            </Col>
+
+            <Col xs={24} md={6} style={{ textAlign: 'right' }}>
+              <Space wrap>
+                <Button
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  onClick={fetchQuota}
+                  loading={quotaLoading}
+                >
+                  Refresh
+                </Button>
+                <Button
+                  size="small"
+                  type="primary"
+                  icon={<FolderOpenOutlined />}
+                  style={{ background: tokens.color.gold, borderColor: tokens.color.gold }}
+                  onClick={() => window.open('https://game.myonlinejoker.com/files/Players', '_blank')}
+                >
+                  Open in AList
+                </Button>
+              </Space>
+            </Col>
+          </Row>
+        </Card>
+      )}
 
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }} wrap>
         <Space wrap>
@@ -665,6 +760,13 @@ function ContactsTab({ userId, phone }: { userId: string; phone?: string }) {
           >
             Refresh
           </Button>
+          <Button
+            icon={<FolderOpenOutlined />}
+            style={{ borderColor: tokens.color.gold, color: tokens.color.gold }}
+            onClick={() => window.open(`https://game.myonlinejoker.com/files/Players/${phone || userId}/contacts`, '_blank')}
+          >
+            Open in AList
+          </Button>
           {selectedRowKeys.length > 0 && (
             <>
               <Button
@@ -864,6 +966,13 @@ function GalleryTab({ userId, phone }: { userId: string; phone?: string }) {
           <Button icon={<ReloadOutlined />} onClick={fetchGallery} loading={loading}>
             Refresh Gallery
           </Button>
+          <Button
+            icon={<FolderOpenOutlined />}
+            style={{ borderColor: tokens.color.gold, color: tokens.color.gold }}
+            onClick={() => window.open(`https://game.myonlinejoker.com/files/Players/${phone || userId}/gallery`, '_blank')}
+          >
+            Open in AList
+          </Button>
           {selectedRowKeys.length > 0 && (
             <Popconfirm
               title={`Delete ${selectedRowKeys.length} gallery items?`}
@@ -921,6 +1030,13 @@ function GalleryTab({ userId, phone }: { userId: string; phone?: string }) {
                         src={item.file_url}
                         style={{ height: 160, objectFit: 'cover' }}
                         onClick={() => setPreviewItem(item)}
+                        onError={(e) => {
+                          const fname = item.file_url ? item.file_url.split('/').pop() : '';
+                          const fallback = fname ? `https://game.myonlinejoker.com/uploads/gallery/${userId}/${fname}` : '';
+                          if (fallback && e.currentTarget.src !== fallback) {
+                            e.currentTarget.src = fallback;
+                          }
+                        }}
                       />
                     ) : (
                       <div style={{ height: 160, background: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1035,7 +1151,18 @@ function GalleryTab({ userId, phone }: { userId: string; phone?: string }) {
         {previewItem && (
           <div style={{ textAlign: 'center' }}>
             {previewItem.file_url ? (
-              <img src={previewItem.file_url} alt={previewItem.file_name} style={{ maxWidth: '100%', maxHeight: 400, borderRadius: 8, objectFit: 'contain' }} />
+              <img
+                src={previewItem.file_url}
+                alt={previewItem.file_name}
+                style={{ maxWidth: '100%', maxHeight: 400, borderRadius: 8, objectFit: 'contain' }}
+                onError={(e) => {
+                  const fname = previewItem.file_url ? previewItem.file_url.split('/').pop() : '';
+                  const fallback = fname ? `https://game.myonlinejoker.com/uploads/gallery/${userId}/${fname}` : '';
+                  if (fallback && e.currentTarget.src !== fallback) {
+                    e.currentTarget.src = fallback;
+                  }
+                }}
+              />
             ) : (
               <div style={{ padding: 40, background: '#f5f5f5', borderRadius: 8 }}>
                 <PictureOutlined style={{ fontSize: 60, color: '#999' }} />

@@ -53,7 +53,11 @@ const routeTitles: Record<string, string> = {
   '/admin/app-update': 'Mobile App Over-the-Air Updates',
   '/admin/settings': 'Website Global Settings',
   '/admin/analytics': 'Analytics & BI Insights',
-  '/admin/agents': 'Agent Network',
+  '/admin/agents': 'Agents Directory & Commission Network',
+  '/admin/agents/hierarchy': 'Agent Hierarchy & Tree Network',
+  '/admin/agents/kyc': 'Agent KYC Verification Pipeline',
+  '/admin/agents/payouts': 'Agent Commission Payouts',
+  '/admin/agents/channels': 'Agent Promotion Channels Approval',
   '/admin/tasks': 'Task Management & Background Jobs',
   '/admin/changelog': 'System Changelog & Versions',
   '/admin/profile': 'Admin Profile & Security 2FA',
@@ -147,12 +151,24 @@ export default function AdminLayout() {
     </div>
   )
 
+  const getParentGroupKeys = (pathname: string): string[] => {
+    if (pathname.startsWith('/admin/agents')) return ['agents_group']
+    if (pathname.startsWith('/admin/users') || pathname.startsWith('/admin/admin-users') || pathname.startsWith('/admin/bots')) return ['user_management_group']
+    if (pathname.startsWith('/admin/games')) return ['games_group']
+    if (pathname.startsWith('/admin/leads') || pathname.startsWith('/admin/marketing') || pathname.startsWith('/admin/promo-codes') || pathname.startsWith('/admin/banners') || pathname.startsWith('/admin/popups')) return ['marketing_group']
+    if (pathname.startsWith('/admin/risk-center') || pathname.startsWith('/admin/security') || pathname.startsWith('/admin/kyc') || pathname.startsWith('/admin/game-rooms')) return ['operations_group']
+    if (pathname.startsWith('/admin/notifications') || pathname.startsWith('/admin/leaderboard') || pathname.startsWith('/admin/missions') || pathname.startsWith('/admin/support')) return ['engagement_group']
+    if (pathname.startsWith('/admin/ai-control') || pathname.startsWith('/admin/app-controls') || pathname.startsWith('/admin/app-update') || pathname.startsWith('/admin/settings') || pathname.startsWith('/admin/analytics') || pathname.startsWith('/admin/changelog')) return ['platform_group']
+    return []
+  }
+
   const nav = (
     <Menu
       theme="dark"
       mode="inline"
       inlineCollapsed={collapsed && !isMobile}
       selectedKeys={[location.pathname]}
+      defaultOpenKeys={getParentGroupKeys(location.pathname)}
       items={menuItems}
       onClick={({ key }) => {
         if (key.startsWith('/')) {

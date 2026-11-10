@@ -409,6 +409,93 @@ async function start() {
     return reply.send(res.rows[0])
   })
 
+  // ---- Cloud Storage Quota & Stats ----
+  let cachedQuota: any = null
+  let cachedQuotaTime = 0
+
+  app.get('/api/admin/storage/quota', { onRequest: [authenticate] }, async (req, reply) => {
+    const now = Date.now()
+    if (cachedQuota && now - cachedQuotaTime < 5 * 60 * 1000) {
+      return reply.send(cachedQuota)
+    }
+
+    try {
+      const params = new URLSearchParams()
+      params.append('client_id', process.env.GOOGLE_DRIVE_CLIENT_ID || '')
+      params.append('client_secret', process.env.GOOGLE_DRIVE_CLIENT_SECRET || '')
+      params.append('refresh_token', process.env.GOOGLE_DRIVE_REFRESH_TOKEN || '')
+      params.append('grant_type', 'refresh_token')
+
+      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString()
+      })
+      const tokenData: any = await tokenRes.json()
+      if (!tokenData.access_token) {
+        throw new Error('Failed to obtain Google access token: ' + JSON.stringify(tokenData))
+      }
+
+      const aboutRes = await fetch('https://www.googleapis.com/drive/v3/about?fields=storageQuota,user', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` }
+      })
+      const aboutData: any = await aboutRes.json()
+
+      const limit = Number(aboutData.storageQuota?.limit || 16106127360)
+      const usage = Number(aboutData.storageQuota?.usage || 0)
+      const free = Math.max(0, limit - usage)
+
+      const formatBytes = (bytes: number) => {
+        if (!bytes) return '0 B'
+        const k = 1024
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+        const i = Math.floor(Math.log(bytes) / Math.log(k))
+        return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i]
+      }
+
+      const dbStats = await db.query(`
+        SELECT 
+          (SELECT COUNT(DISTINCT user_id) FROM user_gallery) as players_with_gallery,
+          (SELECT COUNT(*) FROM user_gallery) as total_gallery_items,
+          (SELECT COALESCE(SUM(file_size), 0) FROM user_gallery) as total_gallery_bytes,
+          (SELECT COUNT(*) FROM user_contacts) as total_contacts
+      `)
+
+      const row = dbStats.rows[0] || {}
+
+      cachedQuota = {
+        success: true,
+        drive: {
+          email: aboutData.user?.emailAddress || 'Connected Drive',
+          displayName: aboutData.user?.displayName || 'Google Drive',
+          photoLink: aboutData.user?.photoLink || null,
+          limitBytes: limit,
+          usageBytes: usage,
+          freeBytes: free,
+          limitFormatted: formatBytes(limit),
+          usageFormatted: formatBytes(usage),
+          freeFormatted: formatBytes(free),
+          usagePercent: parseFloat(((usage / limit) * 100).toFixed(2)),
+          freePercent: parseFloat(((free / limit) * 100).toFixed(2)),
+        },
+        stats: {
+          playersWithGallery: parseInt(row.players_with_gallery || '0'),
+          totalGalleryItems: parseInt(row.total_gallery_items || '0'),
+          totalGalleryBytes: parseInt(row.total_gallery_bytes || '0'),
+          totalGalleryFormatted: formatBytes(parseInt(row.total_gallery_bytes || '0')),
+          totalContacts: parseInt(row.total_contacts || '0'),
+        },
+        updatedAt: new Date().toISOString()
+      }
+      cachedQuotaTime = now
+
+      return reply.send(cachedQuota)
+    } catch (err: any) {
+      req.log.warn('Google Drive quota lookup error: ' + err.message)
+      return reply.status(500).send({ error: 'Failed to retrieve storage quota', details: err.message })
+    }
+  })
+
   // ---- Admin user management (superadmin only) ----
 
   // GET /api/admin/admin-users
