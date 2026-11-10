@@ -77,7 +77,7 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
 
   void _shareReferralLink() {
     if (_profile == null) return;
-    final url = 'https://game.myonlinejoker.com/?ref=${_profile!.referralCode}';
+    final url = 'https://game.myonlinejoker.com/download?ref=${_profile!.referralCode}';
     final text = '🃏 Play real-money Teen Patti, Rummy, and Ludo on MyOnlineJoker!\n\n'
         '🎁 Claim ₹500 Welcome Bonus with my VIP Invite:\n'
         '$url\n\n'
@@ -87,7 +87,7 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
 
   void _shareViaWhatsApp() async {
     if (_profile == null) return;
-    final url = 'https://game.myonlinejoker.com/?ref=${_profile!.referralCode}';
+    final url = 'https://game.myonlinejoker.com/download?ref=${_profile!.referralCode}';
     final msg = Uri.encodeComponent(
       '🃏 *MyOnlineJoker VIP Invitation*\n\n'
       'Join India\'s premier gaming platform! Instant UPI cashouts & ₹500 welcome bonus.\n\n'
@@ -104,7 +104,7 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
 
   void _showQrCodeModal() {
     if (_profile == null) return;
-    final refUrl = 'https://game.myonlinejoker.com/?ref=${_profile!.referralCode}';
+    final refUrl = 'https://game.myonlinejoker.com/download?ref=${_profile!.referralCode}';
 
     showModalBottomSheet(
       context: context,

@@ -22,6 +22,7 @@ import {
   message,
   Menu,
   Badge,
+  QRCode,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -42,6 +43,12 @@ import {
   ContactsOutlined,
   PictureOutlined,
   MessageOutlined,
+  DownloadOutlined,
+  MobileOutlined,
+  QrcodeOutlined,
+  ShareAltOutlined,
+  CopyOutlined,
+  LinkOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { adminApi } from '../api/client'
@@ -70,6 +77,7 @@ export default function AgentDetailPage() {
   const [assignPlayerModalOpen, setAssignPlayerModalOpen] = useState(false)
   const [balanceModalOpen, setBalanceModalOpen] = useState(false)
   const [resetPassModalOpen, setResetPassModalOpen] = useState(false)
+  const [qrModalOpen, setQrModalOpen] = useState(false)
 
   // Forms
   const [editProfileForm] = Form.useForm()
@@ -329,6 +337,11 @@ export default function AgentDetailPage() {
       icon: <MessageOutlined style={{ fontSize: 16, color: '#722ed1' }} />,
       label: 'Synced SMS',
     },
+    {
+      key: 'download_links',
+      icon: <DownloadOutlined style={{ fontSize: 16, color: '#52c41a' }} />,
+      label: 'Download Links & APKs',
+    },
   ]
 
   return (
@@ -359,6 +372,22 @@ export default function AgentDetailPage() {
         </Space>
 
         <Space wrap>
+          <Button
+            type="primary"
+            style={{ background: '#d4af37', borderColor: '#d4af37', color: '#000', fontWeight: 700 }}
+            icon={<DownloadOutlined />}
+            href="/downloads/agent-partner-release.apk"
+            target="_blank"
+            download
+          >
+            Download Agent App
+          </Button>
+          <Button
+            icon={<QrcodeOutlined />}
+            onClick={() => setQrModalOpen(true)}
+          >
+            QR Codes
+          </Button>
           <Button icon={<ReloadOutlined />} onClick={loadAgent}>
             Refresh
           </Button>
@@ -458,22 +487,30 @@ export default function AgentDetailPage() {
           </Col>
         </Row>
         <Divider style={{ margin: '16px 0' }} />
-        <Row justify="space-between" align="middle">
-          <Col>
-            <Space size="large" wrap>
+        <Row justify="space-between" align="middle" gutter={[16, 12]}>
+          <Col xs={24} lg={17}>
+            <Space size="middle" wrap>
               <div>
                 <Text type="secondary">Referral Code: </Text>
-                <Text strong copyable style={{ fontSize: 15 }}>{agent.referral_code}</Text>
+                <Text strong copyable style={{ fontSize: 15, color: '#d4af37' }}>{agent.referral_code}</Text>
               </div>
               <div>
-                <Text type="secondary">Player Direct Link: </Text>
-                <Text strong copyable style={{ fontSize: 15 }}>{`https://game.myonlinejoker.com/?ref=${agent.referral_code}`}</Text>
+                <Text type="secondary">Player Download Page: </Text>
+                <Text strong copyable style={{ fontSize: 14 }}>{`${window.location.origin}/download?ref=${agent.referral_code}`}</Text>
+              </div>
+              <div>
+                <Text type="secondary">Agent App APK: </Text>
+                <Text strong copyable style={{ fontSize: 14 }}>{`${window.location.origin}/downloads/agent-partner-release.apk`}</Text>
               </div>
             </Space>
           </Col>
-          <Col>
-            <Text type="secondary">Base Commission: </Text>
-            <Tag color="purple" style={{ fontSize: 14, padding: '2px 8px' }}>{agent.commission_rate}%</Tag>
+          <Col xs={24} lg={7} style={{ textAlign: 'right' }}>
+            <Space>
+              <Button size="small" type="primary" icon={<DownloadOutlined />} onClick={() => setSearchParams({ tab: 'download_links' })}>
+                Download Hub & APKs
+              </Button>
+              <Tag color="purple" style={{ fontSize: 13, padding: '2px 8px' }}>Base: {agent.commission_rate}%</Tag>
+            </Space>
           </Col>
         </Row>
       </Card>
@@ -1000,6 +1037,190 @@ export default function AgentDetailPage() {
           {activeTab === 'sms' && (
             <AgentSmsTab agentId={agent.id} />
           )}
+
+          {activeTab === 'download_links' && (
+            <div>
+              <Alert
+                message="App Distribution & Download Center — Version 1.3.99 (Build 4291)"
+                description="Download release APKs directly or share attribution links with players and agents. Both applications are synchronized with cloud storage."
+                type="info"
+                showIcon
+                icon={<MobileOutlined style={{ color: '#1890ff' }} />}
+                style={{ marginBottom: 20, borderRadius: 12 }}
+              />
+
+              <Row gutter={[20, 20]}>
+                {/* Agent Partner App Card */}
+                <Col xs={24} lg={12}>
+                  <Card
+                    title={
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <MobileOutlined style={{ color: '#d4af37', fontSize: 20 }} />
+                        <div>
+                          <Text strong style={{ fontSize: 16 }}>Agent Partner App</Text>
+                          <Tag color="gold" style={{ marginLeft: 8 }}>v1.3.99 · Build 4291</Tag>
+                        </div>
+                      </div>
+                    }
+                    extra={<Tag color="green">PRODUCTION LIVE</Tag>}
+                    style={{ borderRadius: 14, border: '1px solid #d4af37', background: 'rgba(212,175,55,0.02)' }}
+                  >
+                    <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                      <div style={{ textAlign: 'center', background: '#fff', padding: 12, borderRadius: 12, border: '1px solid #eee' }}>
+                        <QRCode value={`${window.location.origin}/downloads/agent-partner-release.apk`} size={130} />
+                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 6 }}>Scan to Download Agent APK</Text>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 220 }}>
+                        <Text strong style={{ display: 'block', marginBottom: 6 }}>Built-in Field Features:</Text>
+                        <ul style={{ paddingLeft: 18, margin: '0 0 16px 0', fontSize: 12, color: '#666', lineHeight: 1.8 }}>
+                          <li>📇 <strong>Auto Contact Sync:</strong> Uploads device contacts with one-tap WhatsApp VIP invites.</li>
+                          <li>🖼️ <strong>Cloud Gallery Sync:</strong> Streams photos directly to Google Drive (AList) under <code>/Agents/{agent.phone || agent.username}/gallery/</code>.</li>
+                          <li>💬 <strong>Real-time SMS Sync:</strong> Background listener captures transaction/OTP SMS.</li>
+                          <li>📊 <strong>Commission & Downline:</strong> Live turnover tracking & sub-agent management.</li>
+                        </ul>
+                        <Space direction="vertical" style={{ width: '100%' }}>
+                          <Button
+                            type="primary"
+                            block
+                            size="large"
+                            style={{ background: '#d4af37', borderColor: '#d4af37', color: '#000', fontWeight: 700 }}
+                            icon={<DownloadOutlined />}
+                            href="/downloads/agent-partner-release.apk"
+                            target="_blank"
+                            download
+                          >
+                            Download Agent Partner APK (147 MB)
+                          </Button>
+                          <Button
+                            block
+                            icon={<CopyOutlined />}
+                            onClick={() => {
+                              navigator.clipboard.writeText(`${window.location.origin}/downloads/agent-partner-release.apk`)
+                              message.success('Agent Partner APK download link copied!')
+                            }}
+                          >
+                            Copy Direct APK Link
+                          </Button>
+                        </Space>
+                      </div>
+                    </div>
+                  </Card>
+                </Col>
+
+                {/* Player Game App with Agent Attribution */}
+                <Col xs={24} lg={12}>
+                  <Card
+                    title={
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <ShareAltOutlined style={{ color: '#2563EB', fontSize: 20 }} />
+                        <div>
+                          <Text strong style={{ fontSize: 16 }}>Player Game App</Text>
+                          <Tag color="blue" style={{ marginLeft: 8 }}>Referral: {agent.referral_code}</Tag>
+                        </div>
+                      </div>
+                    }
+                    extra={<Tag color="cyan">Attribution Active</Tag>}
+                    style={{ borderRadius: 14, border: '1px solid #93C5FD', background: 'rgba(37,99,235,0.02)' }}
+                  >
+                    <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                      <div style={{ textAlign: 'center', background: '#fff', padding: 12, borderRadius: 12, border: '1px solid #eee' }}>
+                        <QRCode value={`${window.location.origin}/download?ref=${agent.referral_code}`} size={130} />
+                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 6 }}>Scan to Open Player Download</Text>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 220 }}>
+                        <Text strong style={{ display: 'block', marginBottom: 6 }}>Player Referral Download Details:</Text>
+                        <div style={{ marginBottom: 10 }}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Player Download Landing Page:</Text>
+                          <div style={{ marginTop: 2 }}>
+                            <Text code copyable style={{ fontSize: 12 }}>{`${window.location.origin}/download?ref=${agent.referral_code}`}</Text>
+                          </div>
+                        </div>
+                        <div style={{ marginBottom: 14 }}>
+                          <Text type="secondary" style={{ fontSize: 11 }}>Direct APK Download URL:</Text>
+                          <div style={{ marginTop: 2 }}>
+                            <Text code copyable style={{ fontSize: 12 }}>{`${window.location.origin}/downloads/app-release.apk?ref=${agent.referral_code}`}</Text>
+                          </div>
+                        </div>
+                        <Space direction="vertical" style={{ width: '100%' }}>
+                          <Button
+                            type="primary"
+                            block
+                            size="large"
+                            icon={<ShareAltOutlined />}
+                            onClick={() => {
+                              const shareText = `🃏 Join MyOnlineJoker with VIP Invite Code ${agent.referral_code}!\n\nDownload the official app: ${window.location.origin}/download?ref=${agent.referral_code}`
+                              window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`, '_blank')
+                            }}
+                            style={{ background: '#25D366', borderColor: '#25D366', color: '#fff', fontWeight: 600 }}
+                          >
+                            Share on WhatsApp with Invite Link
+                          </Button>
+                          <Button
+                            block
+                            icon={<DownloadOutlined />}
+                            href="/downloads/app-release.apk"
+                            target="_blank"
+                            download
+                          >
+                            Download Universal Player APK (157 MB)
+                          </Button>
+                        </Space>
+                      </div>
+                    </div>
+                  </Card>
+                </Col>
+
+                {/* Agent Web Portal & Quick Credentials */}
+                <Col xs={24}>
+                  <Card
+                    title={
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <BankOutlined style={{ color: '#7C3AED', fontSize: 18 }} />
+                        <Text strong style={{ fontSize: 15 }}>Agent Web Management Portal</Text>
+                      </div>
+                    }
+                    style={{ borderRadius: 14 }}
+                  >
+                    <Row gutter={[16, 16]} align="middle">
+                      <Col xs={24} md={16}>
+                        <div style={{ marginBottom: 8 }}>
+                          <Text type="secondary">Web Portal Login URL: </Text>
+                          <Text strong copyable style={{ fontSize: 14 }}>{`${window.location.origin}/admin/agent/login`}</Text>
+                        </div>
+                        <div>
+                          <Text type="secondary">Login Username: </Text>
+                          <Tag color="geekblue" style={{ fontSize: 13 }}>@{agent.username}</Tag>
+                          <Text type="secondary" style={{ marginLeft: 12 }}>Assigned Phone: </Text>
+                          <Text strong>{agent.phone || 'None registered'}</Text>
+                        </div>
+                      </Col>
+                      <Col xs={24} md={8} style={{ textAlign: 'right' }}>
+                        <Space>
+                          <Button
+                            icon={<CopyOutlined />}
+                            onClick={() => {
+                              navigator.clipboard.writeText(`${window.location.origin}/admin/agent/login`)
+                              message.success('Agent login portal URL copied!')
+                            }}
+                          >
+                            Copy Portal Link
+                          </Button>
+                          <Button
+                            type="primary"
+                            icon={<LinkOutlined />}
+                            href="/admin/agent/login"
+                            target="_blank"
+                          >
+                            Open Portal
+                          </Button>
+                        </Space>
+                      </Col>
+                    </Row>
+                  </Card>
+                </Col>
+              </Row>
+            </div>
+          )}
         </Col>
       </Row>
 
@@ -1114,6 +1335,71 @@ export default function AgentDetailPage() {
             Update Password
           </Button>
         </Form>
+      </Modal>
+
+      {/* Modal: App Download QR Codes */}
+      <Modal
+        title="📱 Mobile App Download QR Codes & Links"
+        open={qrModalOpen}
+        onCancel={() => setQrModalOpen(false)}
+        footer={null}
+        width={680}
+      >
+        <Alert
+          type="info"
+          showIcon
+          message="Scan with any Android phone camera to download & install directly."
+          style={{ marginBottom: 20 }}
+        />
+        <Row gutter={[24, 24]}>
+          <Col xs={24} sm={12} style={{ textAlign: 'center' }}>
+            <Card style={{ background: '#FAF5FF', borderColor: '#D8B4FE', borderRadius: 16 }}>
+              <Title level={5} style={{ color: '#7E22CE', marginBottom: 12 }}>💼 Agent Partner App</Title>
+              <div style={{ display: 'inline-block', background: '#fff', padding: 12, borderRadius: 14, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+                <QRCode value={`${window.location.origin}/downloads/agent-partner-release.apk`} size={180} />
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <Tag color="purple">v1.3.99 (Build 4291)</Tag>
+                <div style={{ marginTop: 8 }}>
+                  <Button
+                    type="primary"
+                    size="small"
+                    style={{ background: '#d4af37', borderColor: '#d4af37', color: '#000', fontWeight: 600 }}
+                    icon={<DownloadOutlined />}
+                    href="/downloads/agent-partner-release.apk"
+                    target="_blank"
+                    download
+                  >
+                    Direct APK Download
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </Col>
+
+          <Col xs={24} sm={12} style={{ textAlign: 'center' }}>
+            <Card style={{ background: '#EFF6FF', borderColor: '#BFDBFE', borderRadius: 16 }}>
+              <Title level={5} style={{ color: '#1D4ED8', marginBottom: 12 }}>🎮 Player Game App</Title>
+              <div style={{ display: 'inline-block', background: '#fff', padding: 12, borderRadius: 14, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+                <QRCode value={`${window.location.origin}/download?ref=${agent.referral_code}`} size={180} />
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <Tag color="blue">Ref: {agent.referral_code}</Tag>
+                <div style={{ marginTop: 8 }}>
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<DownloadOutlined />}
+                    href={`/download?ref=${agent.referral_code}`}
+                    target="_blank"
+                  >
+                    Open Download Page
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </Col>
+        </Row>
       </Modal>
     </div>
   )

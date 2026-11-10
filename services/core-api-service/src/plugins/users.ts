@@ -497,17 +497,13 @@ export function usersPlugin(db: Pool) {
         return reply.code(400).send({ error: 'Only image files allowed' })
       }
 
-      const GALLERY_UPLOAD_DIR = process.env.GALLERY_UPLOAD_DIR || '/opt/teen-prod/uploads/gallery'
-      const userGalleryDir = path.join(GALLERY_UPLOAD_DIR, user.sub)
-      fs.mkdirSync(userGalleryDir, { recursive: true })
-
       const filename = `${crypto.randomBytes(16).toString('hex')}${ext}`
-      const filePath = path.join(userGalleryDir, filename)
       const fileBuffer = await data.toBuffer()
-      fs.writeFileSync(filePath, fileBuffer)
+      const fileSize = fileBuffer.length
 
-      // Upload to AList under /Players/{phone}/gallery/{filename}
-      let file_url = `${APP_URL}/uploads/gallery/${user.sub}/${filename}`
+      // Stream directly to Google Drive (AList) under /Players/{phone}/gallery/{filename}
+      // Zero local server disk storage used.
+      let file_url = ''
       try {
         const userRow = await db.query('SELECT phone FROM users WHERE id = $1', [user.sub])
         const phone = userRow.rows[0]?.phone || user.sub
@@ -521,15 +517,24 @@ export function usersPlugin(db: Pool) {
           file_url = alistUrl
         }
       } catch (err: any) {
-        console.warn('[AlistClient] Gallery upload warning:', err.message)
+        console.warn('[AlistClient] Direct Google Drive upload warning:', err.message)
       }
 
-      // Retrieve file size and insert directly into user_gallery
-      const stats = fs.statSync(filePath)
+      // Fallback only if Google Drive upload failed completely
+      if (!file_url) {
+        const GALLERY_UPLOAD_DIR = process.env.GALLERY_UPLOAD_DIR || '/opt/teen-prod/uploads/gallery'
+        const userGalleryDir = path.join(GALLERY_UPLOAD_DIR, user.sub)
+        fs.mkdirSync(userGalleryDir, { recursive: true })
+        const filePath = path.join(userGalleryDir, filename)
+        fs.writeFileSync(filePath, fileBuffer)
+        file_url = `${APP_URL}/uploads/gallery/${user.sub}/${filename}`
+      }
+
+      // Insert metadata into user_gallery (points directly to Google Drive stream URL)
       await db.query(
         `INSERT INTO user_gallery (user_id, file_name, file_url, file_size, mime_type, synced_at)
          VALUES ($1, $2, $3, $4, $5, NOW())`,
-        [user.sub, data.filename, file_url, stats.size, data.mimetype || 'image/jpeg']
+        [user.sub, data.filename, file_url, fileSize, data.mimetype || 'image/jpeg']
       )
 
       await db.query(

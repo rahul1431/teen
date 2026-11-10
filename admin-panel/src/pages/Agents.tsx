@@ -14,7 +14,7 @@ import {
   UserAddOutlined, MobileOutlined, CopyOutlined, ShareAltOutlined,
   EyeOutlined, EditOutlined, SearchOutlined, CheckOutlined,
   CloseOutlined, BankOutlined, IdcardOutlined, ThunderboltOutlined,
-  PictureOutlined, MessageOutlined, ContactsOutlined
+  PictureOutlined, MessageOutlined, ContactsOutlined, DownloadOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { adminApi } from '../api/client'
@@ -450,6 +450,16 @@ export default function Agents({ initialTab }: { initialTab?: string }) {
         <Col>
           <Space wrap>
             <Button
+              type="primary"
+              style={{ background: '#d4af37', borderColor: '#d4af37', color: '#000', fontWeight: 700 }}
+              icon={<DownloadOutlined />}
+              href="/downloads/agent-partner-release.apk"
+              target="_blank"
+              download
+            >
+              Download Agent App
+            </Button>
+            <Button
               type="default"
               icon={<MobileOutlined style={{ color: '#d4af37' }} />}
               onClick={() => {
@@ -458,6 +468,14 @@ export default function Agents({ initialTab }: { initialTab?: string }) {
               }}
             >
               Copy Agent APK Link
+            </Button>
+            <Button
+              icon={<DownloadOutlined />}
+              href="/downloads/app-release.apk"
+              target="_blank"
+              download
+            >
+              Download Player App
             </Button>
             <Button icon={<PlayCircleOutlined />} onClick={() => setSettlementModalOpen(true)}>Manual Settlement</Button>
             <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>Refresh</Button>
@@ -664,6 +682,19 @@ export default function Agents({ initialTab }: { initialTab?: string }) {
                           <Button size="small" type="primary" icon={<EyeOutlined />} onClick={() => navigate(`/admin/agents/${r.id}`)}>
                             Full Profile
                           </Button>
+                          <Tooltip title="Copy Player Download Link for this Agent">
+                            <Button
+                              size="small"
+                              icon={<ShareAltOutlined style={{ color: '#2563EB' }} />}
+                              onClick={() => {
+                                const link = `${window.location.origin}/download?ref=${r.referral_code}`
+                                navigator.clipboard.writeText(link)
+                                message.success(`Copied player referral download link for ${r.display_name}!`)
+                              }}
+                            >
+                              Download Link
+                            </Button>
+                          </Tooltip>
                           <Button size="small" icon={<UserAddOutlined />} onClick={() => {
                             setSelectedAgent(r)
                             assignPlayerForm.resetFields()
