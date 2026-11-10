@@ -247,7 +247,6 @@ class AgentSyncService {
               final uploadRes = await dio.post(
                 '/gallery/upload',
                 data: formData,
-                options: Options(contentType: 'multipart/form-data'),
               );
               if (uploadRes.data != null && uploadRes.data['success'] == true) {
                 fileUrl = uploadRes.data['file_url'];

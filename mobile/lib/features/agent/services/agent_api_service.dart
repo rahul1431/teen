@@ -13,20 +13,21 @@ class AgentApiService {
   static const _tokenKey = 'agent_portal_jwt_token';
   static const _savedUsernameKey = 'agent_saved_username';
   static const _biometricEnabledKey = 'agent_biometric_enabled';
+  static String? _cachedToken;
 
   AgentApiService._internal() {
     _dio = Dio(BaseOptions(
       baseUrl: '${AppConfig.apiBaseUrl.trim()}/api/admin/agent-portal',
       connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 15),
-      headers: {'Content-Type': 'application/json'},
     ));
 
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
-        final token = await _storage.read(key: _tokenKey);
+        final token = await getToken();
         if (token != null && token.isNotEmpty) {
           options.headers['Authorization'] = 'Bearer $token';
+          options.headers['x-agent-token'] = token;
         }
         return handler.next(options);
       },
@@ -37,9 +38,21 @@ class AgentApiService {
   }
 
   // Token storage
-  Future<void> saveToken(String token) => _storage.write(key: _tokenKey, value: token);
-  Future<String?> getToken() => _storage.read(key: _tokenKey);
-  Future<void> clearToken() => _storage.delete(key: _tokenKey);
+  Future<void> saveToken(String token) async {
+    _cachedToken = token;
+    await _storage.write(key: _tokenKey, value: token);
+  }
+
+  Future<String?> getToken() async {
+    if (_cachedToken != null && _cachedToken!.isNotEmpty) return _cachedToken;
+    _cachedToken = await _storage.read(key: _tokenKey);
+    return _cachedToken;
+  }
+
+  Future<void> clearToken() async {
+    _cachedToken = null;
+    await _storage.delete(key: _tokenKey);
+  }
 
   // Biometric preferences
   Future<void> setBiometricEnabled(bool enabled) =>

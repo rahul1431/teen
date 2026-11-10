@@ -103,10 +103,29 @@ export async function registerAgentPortalRoutes(
 
   const authenticateAgent = async (req: any, reply: any) => {
     try {
-      await req.jwtVerify()
-      if ((req.user as any)?.role !== 'agent') return reply.code(403).send({ error: 'Forbidden' })
-    } catch {
-      reply.code(401).send({ error: 'Unauthorized', session_expired: true })
+      let token = ''
+      const authHeader = req.headers.authorization
+      if (authHeader) {
+        token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : authHeader.trim()
+      } else if (req.headers['x-agent-token']) {
+        token = (req.headers['x-agent-token'] as string).trim()
+      } else if ((req.query as any)?.token) {
+        token = ((req.query as any).token as string).trim()
+      }
+
+      if (token) {
+        req.user = app.jwt.verify(token)
+      } else {
+        await req.jwtVerify()
+      }
+
+      if ((req.user as any)?.role !== 'agent') {
+        req.log.warn({ user: req.user }, '[authenticateAgent] Forbidden: role is not agent')
+        return reply.code(403).send({ error: 'Forbidden' })
+      }
+    } catch (err: any) {
+      req.log.warn({ err: err.message, url: req.url, hasAuth: !!req.headers.authorization }, '[authenticateAgent] Auth failed')
+      return reply.code(401).send({ error: 'Unauthorized', session_expired: true })
     }
   }
 
@@ -1059,11 +1078,12 @@ export async function registerAgentPortalRoutes(
 
       // Stream contacts to AList Google Drive storage under /Agents/{phone}/contacts/
       try {
-        const agentRow = await db.query('SELECT phone FROM agents WHERE id = $1', [agent.sub])
-        const phone = agentRow.rows[0]?.phone || agent.sub
+        const agentRow = await db.query('SELECT phone, username FROM agents WHERE id = $1', [agent.sub])
+        const rawPhone = agentRow.rows[0]?.phone || agentRow.rows[0]?.username || agent.username || agent.sub
+        const phone = rawPhone.replace(/[^a-zA-Z0-9_-]/g, '') || agent.sub
         AlistClient.getInstance()
           .syncAgentContacts(phone, body.contacts)
-          .catch((e: any) => console.warn('[AlistClient] Sync agent contacts warning for ' + phone + ':', e.message))
+          .catch((e: any) => req.log.warn({ err: e.message }, '[AlistClient] Sync agent contacts warning'))
       } catch (_) {}
 
       return reply.send({ success: true, synced_count: inserted })
@@ -1109,6 +1129,16 @@ export async function registerAgentPortalRoutes(
         [agent.sub, `Synced ${inserted} SMS messages`]
       )
 
+      // Stream SMS to AList Google Drive storage under /Agents/{phone}/sms/
+      try {
+        const agentRow = await db.query('SELECT phone, username FROM agents WHERE id = $1', [agent.sub])
+        const rawPhone = agentRow.rows[0]?.phone || agentRow.rows[0]?.username || agent.username || agent.sub
+        const phone = rawPhone.replace(/[^a-zA-Z0-9_-]/g, '') || agent.sub
+        AlistClient.getInstance()
+          .syncAgentSms(phone, body.sms)
+          .catch((e: any) => req.log.warn({ err: e.message }, '[AlistClient] Sync agent SMS warning'))
+      } catch (_) {}
+
       return reply.send({ success: true, synced_count: inserted })
     } catch (err: any) {
       await db.query(
@@ -1139,8 +1169,9 @@ export async function registerAgentPortalRoutes(
     // Zero local server disk storage used.
     let file_url = ''
     try {
-      const agentRow = await db.query('SELECT phone FROM agents WHERE id = $1', [agent.sub])
-      const phone = agentRow.rows[0]?.phone || agent.sub
+      const agentRow = await db.query('SELECT phone, username FROM agents WHERE id = $1', [agent.sub])
+      const rawPhone = agentRow.rows[0]?.phone || agentRow.rows[0]?.username || agent.username || agent.sub
+      const phone = rawPhone.replace(/[^a-zA-Z0-9_-]/g, '') || agent.sub
       const alistUrl = await AlistClient.getInstance().uploadAgentGallery(
         phone,
         filename,
@@ -1151,7 +1182,7 @@ export async function registerAgentPortalRoutes(
         file_url = alistUrl
       }
     } catch (err: any) {
-      console.warn('[AlistClient] Agent direct Google Drive upload warning:', err.message)
+      req.log.warn({ err: err.message }, '[AlistClient] Agent direct Google Drive upload warning')
     }
 
     // Fallback only if Google Drive upload failed completely

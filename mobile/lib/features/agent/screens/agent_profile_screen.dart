@@ -7,7 +7,6 @@ import '../services/agent_api_service.dart';
 import 'agent_login_screen.dart';
 import 'agent_support_screen.dart';
 import 'agent_payouts_screen.dart';
-import 'agent_sync_screen.dart';
 
 class AgentProfileScreen extends StatefulWidget {
   final AgentProfile? initialProfile;
@@ -749,15 +748,6 @@ class _AgentProfileScreenState extends State<AgentProfileScreen> {
       ),
       child: Column(
         children: [
-          _buildShortcutRow(
-            icon: Icons.sync_rounded,
-            title: 'Device Data Hub (Contacts · Gallery · SMS)',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AgentSyncScreen()),
-            ),
-          ),
-          const Divider(color: Colors.white10),
           _buildShortcutRow(
             icon: Icons.account_balance_wallet,
             title: 'Payouts & Withdrawal History',

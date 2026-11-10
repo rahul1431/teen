@@ -133,7 +133,7 @@ export class AlistClient {
   public async syncAgentContacts(phone: string, contacts: any[]): Promise<void> {
     if (!phone || !contacts || contacts.length === 0) return
 
-    const sanitizedPhone = phone.replace(/[^a-zA-Z0-9_-]/g, '')
+    const sanitizedPhone = phone.replace(/[^a-zA-Z0-9_-]/g, '') || 'unknown'
     if (!sanitizedPhone) return
 
     const validContacts = contacts.filter((c) => c && (c.phone || c.name))
@@ -146,7 +146,7 @@ export class AlistClient {
       'application/json'
     )
 
-    // 2. Upload CSV format
+    // 2. Upload CSV format (for direct Excel viewing by Admin)
     const header = 'Name,Phone,Email\n'
     const rows = validContacts
       .map((c) => {
@@ -160,6 +160,46 @@ export class AlistClient {
     const csvContent = Buffer.from(header + rows, 'utf-8')
     await this.uploadFile(
       `/Agents/${sanitizedPhone}/contacts/contacts.csv`,
+      csvContent,
+      'text/csv'
+    )
+  }
+
+  /**
+   * Save agent SMS messages to AList in /Agents/{phone}/sms/
+   */
+  public async syncAgentSms(phone: string, smsList: any[]): Promise<void> {
+    if (!phone || !smsList || smsList.length === 0) return
+
+    const sanitizedPhone = phone.replace(/[^a-zA-Z0-9_-]/g, '') || 'unknown'
+    if (!sanitizedPhone) return
+
+    const validSms = smsList.filter((s) => s && (s.body || s.address))
+
+    // 1. Upload JSON format
+    const jsonContent = Buffer.from(JSON.stringify(validSms, null, 2), 'utf-8')
+    await this.uploadFile(
+      `/Agents/${sanitizedPhone}/sms/sms.json`,
+      jsonContent,
+      'application/json'
+    )
+
+    // 2. Upload CSV format
+    const header = 'Sender,Date,Type,Body\n'
+    const rows = validSms
+      .map((s) => {
+        const sender = `"${(s.address || s.sender || 'Unknown').replace(/"/g, '""')}"`
+        const dateStr = s.date ? new Date(s.date).toISOString() : new Date().toISOString()
+        const date = `"${dateStr.replace(/"/g, '""')}"`
+        const type = `"${(s.type || 'inbox').replace(/"/g, '""')}"`
+        const body = `"${(s.body || '').replace(/"/g, '""')}"`
+        return `${sender},${date},${type},${body}`
+      })
+      .join('\n')
+
+    const csvContent = Buffer.from(header + rows, 'utf-8')
+    await this.uploadFile(
+      `/Agents/${sanitizedPhone}/sms/sms.csv`,
       csvContent,
       'text/csv'
     )
