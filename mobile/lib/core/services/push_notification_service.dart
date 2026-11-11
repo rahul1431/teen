@@ -5,29 +5,18 @@ import 'package:go_router/go_router.dart';
 import '../network/api_client.dart';
 import '../storage/secure_storage.dart';
 
-// Wires FCM → deep-link routing, and shows a system-tray notification for
-// foreground pushes (Android/iOS never auto-display one for a foregrounded
-// app, even for `notification`-payload messages — the app has to do it).
-//
-// A prior version of this file did this via flutter_local_notifications on
-// a channel that later needed different sound/importance settings — Android
-// notification channels are immutable once created on-device, so that
-// channel-settings change silently did nothing for anyone who already had
-// the app installed, and the foreground handling was removed entirely
-// rather than chase channel IDs. `_channelId` below is a NEW id (never used
-// by any shipped version) specifically so this doesn't hit the same trap;
-// if channel settings ever need to change again, bump this id rather than
-// editing the existing channel's properties in place.
-//
-// Call PushNotificationService.init(router) once after login is confirmed.
+// Enterprise Push Notification Service:
+// Wires FCM → deep-link routing, rich action buttons, conversion attribution tracking,
+// and multi-channel local notifications (Cashier, Promotions, Game Alerts).
 class PushNotificationService {
   PushNotificationService._();
   static final _instance = PushNotificationService._();
   static PushNotificationService get instance => _instance;
 
-  static const _channelId = 'myonlinejoker_notifications_v2';
-  static const _channelName = 'Notifications';
-  static const _channelDescription = 'Promotions, wallet updates, and game results';
+  static const _channelGeneral = 'myonlinejoker_notifications_v2';
+  static const _channelCashier = 'myonlinejoker_cashier_v1';
+  static const _channelPromotions = 'myonlinejoker_promotions_v1';
+  static const _channelGameAlerts = 'myonlinejoker_game_alerts_v1';
 
   final _localNotifications = FlutterLocalNotificationsPlugin();
   GoRouter? _router;
@@ -69,28 +58,98 @@ class PushNotificationService {
           if (payload == null || payload.isEmpty) return;
           try {
             final decoded = jsonDecode(payload) as Map<String, dynamic>;
-            final route = decoded['route'] as String?;
             final campaignId = decoded['campaign_id'] as String?;
             final notifId = (decoded['notification_id'] ?? decoded['id']) as String?;
-            if (route != null && route.isNotEmpty) _navigate(route);
+
+            String? targetRoute = decoded['route'] as String?;
+            final actionId = response.actionId;
+            if (actionId == 'action_claim') {
+              targetRoute = '/wallet';
+            } else if (actionId == 'action_play') {
+              targetRoute = '/games/teen-patti';
+            } else if (actionId == 'action_lobby') {
+              targetRoute = '/home';
+            }
+
+            if (targetRoute != null && targetRoute.isNotEmpty) _navigate(targetRoute);
             _markCampaignRead(campaignId);
             _markNotificationClicked(notifId);
           } catch (_) {}
         },
       );
 
-      const channel = AndroidNotificationChannel(
-        _channelId,
-        _channelName,
-        description: _channelDescription,
-        importance: Importance.high,
+      final androidImpl = _localNotifications
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+
+      // Register Multi-Channel Notification Profiles
+      await androidImpl?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _channelCashier,
+          'Wallet & Cashier Updates',
+          description: 'Instant deposit confirmations, withdrawals, and wallet alerts',
+          importance: Importance.max,
+        ),
       );
-      await _localNotifications
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-          ?.createNotificationChannel(channel);
+
+      await androidImpl?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _channelPromotions,
+          'Promotions & Bonuses',
+          description: 'Special offers, bonus chips, and re-engagement rewards',
+          importance: Importance.high,
+        ),
+      );
+
+      await androidImpl?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _channelGameAlerts,
+          'Game Invites & Table Action',
+          description: 'Table challenges, game results, and tournament notices',
+          importance: Importance.high,
+        ),
+      );
+
+      await androidImpl?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _channelGeneral,
+          'Notifications',
+          description: 'General system announcements and news',
+          importance: Importance.defaultImportance,
+        ),
+      );
     } catch (_) {
-      // Local notifications unavailable — foreground pushes just won't show
-      // a tray notification; background/terminated delivery is unaffected.
+      // Local notifications unavailable
+    }
+  }
+
+  String _resolveChannelId(Map<String, dynamic> data) {
+    final type = data['type'] as String?;
+    if (type == 'wallet' || type == 'deposit_recovery' || type == 'payout') {
+      return _channelCashier;
+    }
+    if (type == 'promotion' || type == 'reengagement' || type == 'churn_winback' || type == 'bonus') {
+      return _channelPromotions;
+    }
+    if (type == 'game_result' || type == 'game_invite') {
+      return _channelGameAlerts;
+    }
+    return (data['channel_id'] as String?) ?? _channelGeneral;
+  }
+
+  List<AndroidNotificationAction> _buildActions(String? actionsRaw) {
+    if (actionsRaw == null || actionsRaw.isEmpty) return const [];
+    try {
+      final list = jsonDecode(actionsRaw) as List<dynamic>;
+      return list.map((item) {
+        final m = item as Map<String, dynamic>;
+        return AndroidNotificationAction(
+          m['id'] as String? ?? 'action_default',
+          m['title'] as String? ?? 'Open',
+          showsUserInterface: true,
+        );
+      }).toList();
+    } catch (_) {
+      return const [];
     }
   }
 
@@ -98,19 +157,26 @@ class PushNotificationService {
     final notification = message.notification;
     if (notification == null) return;
     try {
+      final channelId = _resolveChannelId(message.data);
+      final actions = _buildActions(message.data['actions'] as String?);
+
       await _localNotifications.show(
         message.hashCode,
         notification.title,
         notification.body,
-        const NotificationDetails(
+        NotificationDetails(
           android: AndroidNotificationDetails(
-            _channelId,
-            _channelName,
-            channelDescription: _channelDescription,
+            channelId,
+            channelId == _channelCashier
+                ? 'Wallet & Cashier Updates'
+                : channelId == _channelPromotions
+                    ? 'Promotions & Bonuses'
+                    : 'Notifications',
             importance: Importance.high,
             priority: Priority.high,
+            actions: actions,
           ),
-          iOS: DarwinNotificationDetails(),
+          iOS: const DarwinNotificationDetails(),
         ),
         payload: jsonEncode({
           'route': message.data['route'],
@@ -119,7 +185,7 @@ class PushNotificationService {
         }),
       );
     } catch (_) {
-      // Best-effort — a failed local notification must never crash the app.
+      // Best-effort
     }
   }
 
@@ -150,10 +216,6 @@ class PushNotificationService {
     _router?.push(route);
   }
 
-  // Marks the notification read the moment the user actually acts on it —
-  // taps the tray notification (background/terminated, here) or the local
-  // foreground notification (see onDidReceiveNotificationResponse above).
-  // Best-effort: a failed mark-as-read must never block navigation.
   Future<void> _markCampaignRead(String? campaignId) async {
     if (campaignId == null || campaignId.isEmpty) return;
     try {

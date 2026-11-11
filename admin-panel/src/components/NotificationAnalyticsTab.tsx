@@ -5,6 +5,7 @@ import {
   CheckCircleOutlined,
   AimOutlined,
   SendOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar,
@@ -21,6 +22,7 @@ interface Totals {
   ctr: number
   totalConversions: number
   cvr: number
+  totalFatigueProtected: number
   totalRevenue: number
 }
 
@@ -95,8 +97,8 @@ export function NotificationAnalyticsTab() {
   return (
     <Spin spinning={loading}>
       {/* KPI Top Cards */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
-        <Col xs={24} sm={12} md={6}>
+      <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
+        <Col xs={24} sm={12} lg={5}>
           <Card bordered={false} style={{ background: '#141414', border: '1px solid #262626' }}>
             <Statistic
               title={<span style={{ color: '#8c8c8c' }}>Attributed Revenue</span>}
@@ -111,7 +113,7 @@ export function NotificationAnalyticsTab() {
             </div>
           </Card>
         </Col>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={24} sm={12} lg={5}>
           <Card bordered={false} style={{ background: '#141414', border: '1px solid #262626' }}>
             <Statistic
               title={<span style={{ color: '#8c8c8c' }}>Converted Users</span>}
@@ -124,7 +126,7 @@ export function NotificationAnalyticsTab() {
             </div>
           </Card>
         </Col>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={24} sm={12} lg={5}>
           <Card bordered={false} style={{ background: '#141414', border: '1px solid #262626' }}>
             <Statistic
               title={<span style={{ color: '#8c8c8c' }}>Notification Clicks</span>}
@@ -137,16 +139,29 @@ export function NotificationAnalyticsTab() {
             </div>
           </Card>
         </Col>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={24} sm={12} lg={5}>
           <Card bordered={false} style={{ background: '#141414', border: '1px solid #262626' }}>
             <Statistic
-              title={<span style={{ color: '#8c8c8c' }}>Campaigns Dispatched</span>}
+              title={<span style={{ color: '#8c8c8c' }}>Fatigue Protected</span>}
+              value={totals?.totalFatigueProtected || 0}
+              prefix={<SafetyCertificateOutlined style={{ color: '#13c2c2', marginRight: 6 }} />}
+              valueStyle={{ color: '#13c2c2', fontWeight: 'bold' }}
+            />
+            <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+              Pushes throttled by 24h cap
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={4}>
+          <Card bordered={false} style={{ background: '#141414', border: '1px solid #262626' }}>
+            <Statistic
+              title={<span style={{ color: '#8c8c8c' }}>Campaigns Sent</span>}
               value={totals?.totalCampaigns || 0}
               prefix={<SendOutlined style={{ color: '#722ed1', marginRight: 6 }} />}
               valueStyle={{ color: '#e6e6e6', fontWeight: 'bold' }}
             />
             <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
-              {(totals?.totalRecipients || 0).toLocaleString()} total recipients reached
+              {(totals?.totalRecipients || 0).toLocaleString()} recipients
             </div>
           </Card>
         </Col>

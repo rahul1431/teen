@@ -1,6 +1,28 @@
 import { useEffect, useState } from 'react'
-import { Form, Input, Button, Select, Card, message, Radio, Tabs, Switch, DatePicker, Space, Tag, Tooltip } from 'antd'
-import { SendOutlined, SaveOutlined, ThunderboltOutlined, FieldTimeOutlined } from '@ant-design/icons'
+import {
+  Form,
+  Input,
+  Button,
+  Select,
+  Card,
+  message,
+  Radio,
+  Tabs,
+  Switch,
+  DatePicker,
+  Space,
+  Tag,
+  Tooltip,
+  InputNumber,
+} from 'antd'
+import {
+  SendOutlined,
+  SaveOutlined,
+  ThunderboltOutlined,
+  FieldTimeOutlined,
+  ControlOutlined,
+  AppstoreAddOutlined,
+} from '@ant-design/icons'
 import { adminApi } from '../api/client'
 import { NotificationHistoryTab } from '../components/NotificationHistoryTab'
 import { NotificationAnalyticsTab } from '../components/NotificationAnalyticsTab'
@@ -19,11 +41,32 @@ const ROUTE_OPTIONS = [
   { value: 'custom', label: 'Custom route…' },
 ]
 
+const ACTION_BUTTON_PRESETS = [
+  { value: 'none', label: 'None (Standard Notification)' },
+  {
+    value: 'claim_and_play',
+    label: 'Claim & Play ([ Claim Bonus 💰 ] + [ Play Now 🃏 ])',
+    actions: [
+      { id: 'action_claim', title: 'Claim Bonus 💰', route: '/wallet' },
+      { id: 'action_play', title: 'Play Now 🃏', route: '/games/teen-patti' },
+    ],
+  },
+  {
+    value: 'table_and_lobby',
+    label: 'Join Table & Lobby ([ Join Table 🎮 ] + [ View Lobby 🏆 ])',
+    actions: [
+      { id: 'action_play', title: 'Join Table 🎮', route: '/games/teen-patti' },
+      { id: 'action_lobby', title: 'View Lobby 🏆', route: '/home' },
+    ],
+  },
+]
+
 function SendTab() {
   const [loading, setLoading] = useState(false)
   const [form] = Form.useForm()
   const [target, setTarget] = useState<'all' | 'user'>('all')
   const [routeChoice, setRouteChoice] = useState<string | undefined>(undefined)
+  const [actionPreset, setActionPreset] = useState<string>('none')
   const [isScheduled, setIsScheduled] = useState(false)
   const [templates, setTemplates] = useState<any[]>([])
 
@@ -56,11 +99,16 @@ function SendTab() {
     try {
       const route = resolveRoute(values)
       const data = route ? { route } : undefined
+      
+      const chosenPreset = ACTION_BUTTON_PRESETS.find(p => p.value === actionPreset)
+      const actionButtons = chosenPreset && chosenPreset.value !== 'none' ? chosenPreset.actions : undefined
+
       const payload: any = {
         title: values.title,
         body: values.body,
         type: values.type || 'general',
         data,
+        action_buttons: actionButtons,
         image_url: values.image_url || undefined,
         scheduled_for: isScheduled && values.scheduled_for ? values.scheduled_for.toISOString() : undefined,
       }
@@ -69,11 +117,18 @@ function SendTab() {
         payload.segment_type = values.segment_type || 'all'
         payload.quiet_hours_enabled = values.quiet_hours_enabled ?? true
         payload.urgent = values.urgent ?? false
+        payload.frequency_cap = values.frequency_cap || 3
         const res = await adminApi.post('/notifications/broadcast', payload)
         if (res.data?.quiet_hours) {
           message.warning(res.data.message || 'Broadcast paused due to quiet hours')
         } else {
-          message.success(isScheduled ? 'Broadcast scheduled successfully!' : `Broadcast sent to ${res.data?.sent ?? 0} active users!`)
+          const sent = res.data?.sent ?? 0
+          const skipped = res.data?.skipped_fatigue ?? 0
+          if (skipped > 0) {
+            message.success(`Broadcast sent to ${sent} active users (${skipped} protected by daily fatigue cap)!`)
+          } else {
+            message.success(isScheduled ? 'Broadcast scheduled successfully!' : `Broadcast sent to ${sent} active users!`)
+          }
         }
       } else {
         payload.user_id = values.user_id
@@ -82,6 +137,7 @@ function SendTab() {
       }
       form.resetFields(['title', 'body', 'user_id', 'customRoute', 'image_url', 'scheduled_for'])
       setRouteChoice(undefined)
+      setActionPreset('none')
       setIsScheduled(false)
     } catch {
       message.error('Failed to dispatch notification')
@@ -136,8 +192,13 @@ function SendTab() {
   }
 
   return (
-    <Card title="Send Push Notification" style={{ maxWidth: 650 }}>
-      <Form form={form} layout="vertical" onFinish={onSend} initialValues={{ quiet_hours_enabled: true }}>
+    <Card title="Send Push Notification" style={{ maxWidth: 680 }}>
+      <Form
+        form={form}
+        layout="vertical"
+        onFinish={onSend}
+        initialValues={{ quiet_hours_enabled: true, frequency_cap: 3 }}
+      >
         <Form.Item label="Load Template">
           <Select
             allowClear
@@ -213,6 +274,15 @@ function SendTab() {
           <Input placeholder="e.g. https://domain.com/banner.png" />
         </Form.Item>
 
+        <Form.Item label="Interactive Action Buttons (Lock Screen)" help="Action buttons displayed directly in user's OS notification tray">
+          <Select
+            value={actionPreset}
+            onChange={setActionPreset}
+            options={ACTION_BUTTON_PRESETS}
+            suffixIcon={<AppstoreAddOutlined />}
+          />
+        </Form.Item>
+
         <Form.Item label="Deep Link (optional)" help="Where tapping the notification takes the user — leave blank to just open the app">
           <Select
             allowClear
@@ -249,11 +319,26 @@ function SendTab() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 10, borderTop: '1px dashed #262626' }}>
               <div>
                 <Space>
-                  <ThunderboltOutlined style={{ color: '#ff4d4f' }} />
-                  <span style={{ fontSize: 13, color: '#e6e6e6' }}>Mark as Urgent (Bypass Quiet Hours)</span>
+                  <ControlOutlined style={{ color: '#52c41a' }} />
+                  <span style={{ fontWeight: 600, color: '#e6e6e6' }}>Daily Anti-Fatigue Frequency Cap</span>
                 </Space>
                 <div style={{ fontSize: 11, color: '#8c8c8c' }}>
-                  Force immediate delivery even during night hours (critical service maintenance or emergency only).
+                  Max promotional pushes allowed per user in a 24h rolling period. Excess pushes skip noisy lock-screen tray.
+                </div>
+              </div>
+              <Form.Item name="frequency_cap" noStyle>
+                <InputNumber min={1} max={5} style={{ width: 70 }} />
+              </Form.Item>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 10, borderTop: '1px dashed #262626' }}>
+              <div>
+                <Space>
+                  <ThunderboltOutlined style={{ color: '#ff4d4f' }} />
+                  <span style={{ fontSize: 13, color: '#e6e6e6' }}>Mark as Urgent (Bypass Quiet Hours & Fatigue Cap)</span>
+                </Space>
+                <div style={{ fontSize: 11, color: '#8c8c8c' }}>
+                  Force immediate delivery (critical service maintenance or emergency only).
                 </div>
               </div>
               <Form.Item name="urgent" valuePropName="checked" noStyle initialValue={false}>

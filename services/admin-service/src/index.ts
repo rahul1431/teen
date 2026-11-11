@@ -2807,7 +2807,10 @@ async function start() {
     })
     const data = await res.json()
 
-    await db.query(`UPDATE notification_campaigns SET delivered_count = $1 WHERE id = $2`, [data.sent ?? 0, campaignId])
+    await db.query(
+      `UPDATE notification_campaigns SET delivered_count = $1, skipped_fatigue_count = $2 WHERE id = $3`,
+      [data.sent ?? 0, data.skipped_fatigue ?? 0, campaignId]
+    )
 
     return reply.send({ ...data, campaign_id: campaignId })
   })

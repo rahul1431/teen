@@ -308,13 +308,34 @@ export class ChurnScorer {
 
     if (sendNotification) {
       try {
+        const bonusAmount = resolvedCfg.high_bonus_amount || 50
+        const winbackTitle = sendBonus ? `₹${bonusAmount} Bonus Waiting For You! 🎁` : 'We Miss You at the Tables! 🃏'
+        const winbackBody = sendBonus
+          ? `Hey {{username}}! We added a ₹${bonusAmount} VIP welcome-back bonus to your account. Claim now and play!`
+          : 'Hey {{username}}! Your lucky seat is waiting. Jump back into Teen Patti & Ludo with exclusive tables.'
+        const winbackActions = sendBonus
+          ? [
+              { id: 'action_claim', title: `Claim ₹${bonusAmount} 💰`, route: '/wallet' },
+              { id: 'action_play', title: 'Play Teen Patti 🃏', route: '/games/teen-patti' },
+            ]
+          : [
+              { id: 'action_play', title: 'Play Now 🃏', route: '/games/teen-patti' },
+              { id: 'action_lobby', title: 'View Games 🎮', route: '/home' },
+            ]
+
         await axios.post(`${this.config.notificationServiceUrl}/internal/notifications/send`, {
           user_id: userId,
-          title: 'We miss you! 🎮',
-          body: sendBonus
-            ? 'A special bonus has been added to your wallet. Come back and play!'
-            : 'Come back and join the action! New games are waiting for you.',
+          title: winbackTitle,
+          body: winbackBody,
           type: 'reengagement',
+          action_url: sendBonus ? '/wallet' : '/games/teen-patti',
+          action_buttons: winbackActions,
+          data: {
+            route: sendBonus ? '/wallet' : '/games/teen-patti',
+            type: 'churn_winback',
+            bonus_amount: String(bonusAmount),
+            actions: JSON.stringify(winbackActions),
+          },
         }, { headers: { 'x-internal-key': process.env.INTERNAL_SERVICE_KEY || '' } })
         // I4: Persist notification success immediately, reflecting whether bonus also landed
         const newAction = bonusCredited ? 'bonus+notification' : 'notification'

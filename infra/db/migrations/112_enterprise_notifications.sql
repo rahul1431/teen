@@ -29,3 +29,4 @@ CREATE TABLE IF NOT EXISTS abandoned_cashier_events (
 
 CREATE INDEX IF NOT EXISTS idx_abandoned_cashier_user_pending 
 ON abandoned_cashier_events(user_id, notified, completed, created_at);
+
