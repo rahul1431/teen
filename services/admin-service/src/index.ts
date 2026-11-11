@@ -2786,30 +2786,46 @@ async function start() {
 
     if (isFuture) {
       const campaignRes = await db.query(
-        `INSERT INTO notification_campaigns (title, body, type, target_type, sent_by, total_recipients, scheduled_for, status, image_url, segment_type, quiet_hours_enabled)
-         VALUES ($1, $2, $3, 'all', $4, $5, $6, 'pending', $7, $8, $9) RETURNING id`,
-        [body.title, body.body, body.type || 'broadcast', me.sub, totalRecipients, scheduledFor, body.image_url || null, body.segment_type || 'all', quietHoursEnabled],
+        `INSERT INTO notification_campaigns (title, body, type, target_type, sent_by, total_recipients, scheduled_for, status, image_url, segment_type, quiet_hours_enabled, delivery_channels)
+         VALUES ($1, $2, $3, 'all', $4, $5, $6, 'pending', $7, $8, $9, $10) RETURNING id`,
+        [body.title, body.body, body.type || 'broadcast', me.sub, totalRecipients, scheduledFor, body.image_url || null, body.segment_type || 'all', quietHoursEnabled, body.delivery_channels || 'push'],
       )
       return reply.send({ success: true, campaign_id: campaignRes.rows[0].id, status: 'pending' })
     }
 
     const campaignRes = await db.query(
-      `INSERT INTO notification_campaigns (title, body, type, target_type, sent_by, total_recipients, status, image_url, segment_type, quiet_hours_enabled)
-       VALUES ($1, $2, $3, 'all', $4, $5, 'sent', $6, $7, $8) RETURNING id`,
-      [body.title, body.body, body.type || 'broadcast', me.sub, totalRecipients, body.image_url || null, body.segment_type || 'all', quietHoursEnabled],
+      `INSERT INTO notification_campaigns (title, body, type, target_type, sent_by, total_recipients, status, image_url, segment_type, quiet_hours_enabled, delivery_channels)
+       VALUES ($1, $2, $3, 'all', $4, $5, 'sent', $6, $7, $8, $9) RETURNING id`,
+      [body.title, body.body, body.type || 'broadcast', me.sub, totalRecipients, body.image_url || null, body.segment_type || 'all', quietHoursEnabled, body.delivery_channels || 'push'],
     )
     const campaignId = campaignRes.rows[0].id
 
     const res = await fetch(`${CORE_API_URL}/internal/notifications/broadcast`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': process.env.INTERNAL_SERVICE_KEY! },
-      body: JSON.stringify({ ...body, campaign_id: campaignId, quiet_hours_enabled: quietHoursEnabled }),
+      body: JSON.stringify({
+        ...body,
+        campaign_id: campaignId,
+        quiet_hours_enabled: quietHoursEnabled,
+        delivery_channels: body.delivery_channels || 'push',
+      }),
     })
     const data = await res.json()
 
     await db.query(
-      `UPDATE notification_campaigns SET delivered_count = $1, skipped_fatigue_count = $2 WHERE id = $3`,
-      [data.sent ?? 0, data.skipped_fatigue ?? 0, campaignId]
+      `UPDATE notification_campaigns 
+       SET delivered_count = $1, skipped_fatigue_count = $2, 
+           whatsapp_sent_count = $3, sms_sent_count = $4, 
+           fallback_triggered_count = $5 
+       WHERE id = $6`,
+      [
+        data.sent ?? 0,
+        data.skipped_fatigue ?? 0,
+        data.whatsapp_sent ?? 0,
+        data.sms_sent ?? 0,
+        ((data.whatsapp_sent ?? 0) + (data.sms_sent ?? 0)),
+        campaignId,
+      ]
     )
 
     return reply.send({ ...data, campaign_id: campaignId })

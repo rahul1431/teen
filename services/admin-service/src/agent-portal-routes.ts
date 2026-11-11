@@ -1049,32 +1049,80 @@ export async function registerAgentPortalRoutes(
     }
   })
 
-  // GET /api/admin/agent-portal/notifications — Real-time agent notification feed
+  // GET /api/admin/agent-portal/notifications — Real-time agent notification feed with category filtering
   app.get('/api/admin/agent-portal/notifications', { onRequest: [authenticateAgent] }, async (req, reply) => {
     const agentId = (req.user as any).sub
+    const { category, limit = 50, offset = 0, unread_only } = (req.query || {}) as any
+
+    let filter = 'WHERE agent_id = $1 AND deleted_at IS NULL'
+    const params: any[] = [agentId]
+
+    if (category && category !== 'all') {
+      filter += ` AND type = $${params.length + 1}`
+      params.push(category)
+    }
+
+    if (unread_only === 'true' || unread_only === true) {
+      filter += ' AND is_read = false'
+    }
+
+    params.push(Math.min(parseInt(String(limit), 10) || 50, 100))
+    params.push(Math.max(parseInt(String(offset), 10) || 0, 0))
+
     const [listRes, countRes] = await Promise.all([
       db.query(
-        `SELECT id, title, body, type, is_read, metadata, created_at
-         FROM agent_notifications WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 50`,
-        [agentId]
+        `SELECT id, title, body, type, is_read, metadata, image_url, action_url, action_buttons, delivery_channel, created_at
+         FROM agent_notifications 
+         ${filter} 
+         ORDER BY created_at DESC 
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params
       ),
-      db.query(`SELECT COUNT(*)::int as unread_count FROM agent_notifications WHERE agent_id = $1 AND is_read = false`, [agentId])
+      db.query(
+        `SELECT 
+           COUNT(*)::int as total,
+           COUNT(*) FILTER (WHERE type = 'commission')::int as commission,
+           COUNT(*) FILTER (WHERE type = 'payout')::int as payout,
+           COUNT(*) FILTER (WHERE type = 'transfer')::int as transfer,
+           COUNT(*) FILTER (WHERE type = 'system')::int as system
+         FROM agent_notifications 
+         WHERE agent_id = $1 AND is_read = false AND deleted_at IS NULL`,
+        [agentId]
+      )
     ])
+
+    const row = countRes.rows[0] || { total: 0, commission: 0, payout: 0, transfer: 0, system: 0 }
     return reply.send({
       notifications: listRes.rows,
-      unread_count: countRes.rows[0]?.unread_count || 0
+      unread_count: row.total,
+      by_category: {
+        all: row.total,
+        commission: row.commission,
+        payout: row.payout,
+        transfer: row.transfer,
+        system: row.system
+      }
     })
   })
 
   // POST /api/admin/agent-portal/notifications/mark-read
   app.post('/api/admin/agent-portal/notifications/mark-read', { onRequest: [authenticateAgent] }, async (req, reply) => {
     const agentId = (req.user as any).sub
-    const { id } = z.object({ id: z.string().optional() }).parse(req.body || {})
+    const { id, category } = z.object({ id: z.string().optional(), category: z.string().optional() }).parse(req.body || {})
     if (id) {
       await db.query(`UPDATE agent_notifications SET is_read = true WHERE id = $1 AND agent_id = $2`, [id, agentId])
+    } else if (category && category !== 'all') {
+      await db.query(`UPDATE agent_notifications SET is_read = true WHERE agent_id = $1 AND type = $2 AND is_read = false`, [agentId, category])
     } else {
-      await db.query(`UPDATE agent_notifications SET is_read = true WHERE agent_id = $1`, [agentId])
+      await db.query(`UPDATE agent_notifications SET is_read = true WHERE agent_id = $1 AND is_read = false`, [agentId])
     }
+    return reply.send({ success: true })
+  })
+
+  // DELETE /api/admin/agent-portal/notifications/clear
+  app.delete('/api/admin/agent-portal/notifications/clear', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+    await db.query('UPDATE agent_notifications SET deleted_at = NOW() WHERE agent_id = $1 AND deleted_at IS NULL', [agentId])
     return reply.send({ success: true })
   })
 

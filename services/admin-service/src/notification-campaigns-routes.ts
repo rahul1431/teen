@@ -18,6 +18,7 @@ export function registerNotificationCampaignRoutes(app: FastifyInstance, db: Poo
               c.delivered_count, c.created_at, c.scheduled_for, c.status, c.image_url, c.segment_type,
               c.clicked_count, c.converted_count, c.conversion_revenue, c.quiet_hours_enabled,
               c.skipped_fatigue_count, c.frequency_cap, c.action_buttons,
+              c.delivery_channels, c.whatsapp_sent_count, c.sms_sent_count, c.fallback_triggered_count,
               au.username AS sent_by_username,
               (SELECT COUNT(*)::int FROM notifications n WHERE n.campaign_id = c.id AND n.read = true) AS read_count
        FROM notification_campaigns c
@@ -39,6 +40,9 @@ export function registerNotificationCampaignRoutes(app: FastifyInstance, db: Poo
         conversion_rate: r.total_recipients > 0 ? (r.converted_count || 0) / r.total_recipients : 0,
         conversion_revenue: parseFloat(r.conversion_revenue || '0'),
         skipped_fatigue_count: r.skipped_fatigue_count || 0,
+        whatsapp_sent_count: r.whatsapp_sent_count || 0,
+        sms_sent_count: r.sms_sent_count || 0,
+        fallback_triggered_count: r.fallback_triggered_count || 0,
         read_rate: r.total_recipients > 0 ? r.read_count / r.total_recipients : 0,
       })),
       total: countRes.rows[0].c,
@@ -59,6 +63,9 @@ export function registerNotificationCampaignRoutes(app: FastifyInstance, db: Poo
               COALESCE(SUM(c.clicked_count), 0)::int AS total_clicks,
               COALESCE(SUM(c.converted_count), 0)::int AS total_conversions,
               COALESCE(SUM(c.skipped_fatigue_count), 0)::int AS total_fatigue_protected,
+              COALESCE(SUM(c.whatsapp_sent_count), 0)::int AS total_whatsapp,
+              COALESCE(SUM(c.sms_sent_count), 0)::int AS total_sms,
+              COALESCE(SUM(c.fallback_triggered_count), 0)::int AS total_fallbacks,
               COALESCE(SUM(c.conversion_revenue), 0)::float AS total_revenue
        FROM notification_campaigns c
        WHERE c.created_at >= NOW() - ($1 || ' days')::interval`,
@@ -113,6 +120,9 @@ export function registerNotificationCampaignRoutes(app: FastifyInstance, db: Poo
         totalConversions: totals.total_conversions || 0,
         cvr: parseFloat(cvr.toFixed(1)),
         totalFatigueProtected: totals.total_fatigue_protected || 0,
+        totalWhatsapp: totals.total_whatsapp || 0,
+        totalSms: totals.total_sms || 0,
+        totalFallbacks: totals.total_fallbacks || 0,
         totalRevenue: parseFloat(totals.total_revenue || 0),
       },
       trend: trendRes.rows.map((r: any) => ({

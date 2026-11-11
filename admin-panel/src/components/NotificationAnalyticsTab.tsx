@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Card, Empty, Spin, Row, Col, Statistic } from 'antd'
+import { Card, Empty, Spin, Row, Col, Statistic, Space, Tag } from 'antd'
 import {
   DollarCircleOutlined,
   CheckCircleOutlined,
@@ -23,6 +23,9 @@ interface Totals {
   totalConversions: number
   cvr: number
   totalFatigueProtected: number
+  totalWhatsapp?: number
+  totalSms?: number
+  totalFallbacks?: number
   totalRevenue: number
 }
 
@@ -166,6 +169,27 @@ export function NotificationAnalyticsTab() {
           </Card>
         </Col>
       </Row>
+
+      {/* Omnichannel Breakdown Pill Bar */}
+      <div style={{ background: '#1a1a1a', border: '1px solid #303030', borderRadius: 8, padding: '12px 18px', marginBottom: 20, display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontWeight: 600, color: '#e6e6e6' }}>Omnichannel Cascade Delivery:</span>
+        </div>
+        <Space size={16} wrap>
+          <Tag color="blue" style={{ padding: '4px 10px', fontSize: 12 }}>
+            📲 Push Delivered: <b>{totals?.totalDelivered || 0}</b>
+          </Tag>
+          <Tag color="green" style={{ padding: '4px 10px', fontSize: 12 }}>
+            💬 WhatsApp Fallback: <b>{totals?.totalWhatsapp || 0}</b>
+          </Tag>
+          <Tag color="orange" style={{ padding: '4px 10px', fontSize: 12 }}>
+            ✉️ SMS Fallback: <b>{totals?.totalSms || 0}</b>
+          </Tag>
+          <Tag color="cyan" style={{ padding: '4px 10px', fontSize: 12 }}>
+            ⚡ Total Fallbacks: <b>{totals?.totalFallbacks || 0}</b>
+          </Tag>
+        </Space>
+      </div>
 
       <Row gutter={[16, 16]}>
         <Col span={24}>

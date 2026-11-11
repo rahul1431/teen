@@ -205,22 +205,35 @@ class AgentApiService {
   }
 
   // 9. Notifications
-  Future<Map<String, dynamic>> getNotifications() async {
+  Future<Map<String, dynamic>> getNotifications({String? category}) async {
     try {
-      final res = await _dio.get('/notifications');
+      final res = await _dio.get('/notifications', queryParameters: {
+        if (category != null && category != 'all') 'category': category,
+      });
       final list = (res.data['notifications'] as List<dynamic>? ?? [])
           .map((n) => AgentNotificationItem.fromJson(n as Map<String, dynamic>))
           .toList();
       final unread = (res.data['unread_count'] as num?)?.toInt() ?? 0;
-      return {'notifications': list, 'unread_count': unread};
-    } on DioException catch (e) {
-      return {'notifications': <AgentNotificationItem>[], 'unread_count': 0};
+      final byCategory = (res.data['by_category'] as Map<String, dynamic>? ?? {})
+          .map((k, v) => MapEntry(k, (v as num?)?.toInt() ?? 0));
+      return {'notifications': list, 'unread_count': unread, 'by_category': byCategory};
+    } on DioException catch (_) {
+      return {'notifications': <AgentNotificationItem>[], 'unread_count': 0, 'by_category': <String, int>{}};
     }
   }
 
-  Future<void> markNotificationsRead({String? id}) async {
+  Future<void> markNotificationsRead({String? id, String? category}) async {
     try {
-      await _dio.post('/notifications/mark-read', data: {if (id != null) 'id': id});
+      await _dio.post('/notifications/mark-read', data: {
+        if (id != null) 'id': id,
+        if (category != null && category != 'all') 'category': category,
+      });
+    } catch (_) {}
+  }
+
+  Future<void> clearNotifications() async {
+    try {
+      await _dio.delete('/notifications/clear');
     } catch (_) {}
   }
 

@@ -110,6 +110,7 @@ function SendTab() {
         data,
         action_buttons: actionButtons,
         image_url: values.image_url || undefined,
+        delivery_channels: values.delivery_channels || 'push',
         scheduled_for: isScheduled && values.scheduled_for ? values.scheduled_for.toISOString() : undefined,
       }
 
@@ -272,6 +273,14 @@ function SendTab() {
 
         <Form.Item name="image_url" label="Rich Push Image URL (optional)">
           <Input placeholder="e.g. https://domain.com/banner.png" />
+        </Form.Item>
+
+        <Form.Item name="delivery_channels" label="Delivery Channel Strategy" initialValue="push">
+          <Select>
+            <Select.Option value="push">📱 Mobile Push Only (Default FCM)</Select.Option>
+            <Select.Option value="push_and_inapp">📥 Push + In-App Notification Center</Select.Option>
+            <Select.Option value="omnichannel_cascade">⚡ Omnichannel Cascade (Push → WhatsApp / SMS Fallback)</Select.Option>
+          </Select>
         </Form.Item>
 
         <Form.Item label="Interactive Action Buttons (Lock Screen)" help="Action buttons displayed directly in user's OS notification tray">
