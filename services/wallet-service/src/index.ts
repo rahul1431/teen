@@ -107,6 +107,48 @@ async function tryTriggerReferralReward(userId: string, db: Pool, walletSvc: any
   }
 }
 
+/**
+ * Enterprise Conversion & Attribution Engine:
+ * 1. Completes any pending abandoned cashier intent.
+ * 2. Attributes deposit revenue to campaigns clicked within the 4-hour attribution window.
+ */
+async function trackDepositAttributionAndCompletion(userId: string, amount: number, db: Pool): Promise<void> {
+  try {
+    // 1. Mark pending abandoned cashier events as completed
+    await db.query(
+      `UPDATE abandoned_cashier_events 
+       SET completed = true, updated_at = NOW() 
+       WHERE user_id = $1 AND completed = false`,
+      [userId]
+    )
+
+    // 2. Attribution: Check if user clicked a campaign notification within the last 4 hours
+    const clickedNotif = await db.query(
+      `SELECT campaign_id FROM notifications
+       WHERE user_id = $1
+         AND clicked = true
+         AND campaign_id IS NOT NULL
+         AND clicked_at >= NOW() - INTERVAL '4 hours'
+       ORDER BY clicked_at DESC
+       LIMIT 1`,
+      [userId]
+    )
+
+    if (clickedNotif.rows.length && clickedNotif.rows[0].campaign_id) {
+      const campaignId = clickedNotif.rows[0].campaign_id
+      await db.query(
+        `UPDATE notification_campaigns
+         SET converted_count = COALESCE(converted_count, 0) + 1,
+             conversion_revenue = COALESCE(conversion_revenue, 0) + $1
+         WHERE id = $2`,
+        [amount, campaignId]
+      )
+    }
+  } catch (err: any) {
+    console.warn('[deposit-attribution] Error tracking deposit attribution:', err.message)
+  }
+}
+
 const app = Fastify({
   logger: { level: process.env.NODE_ENV === 'production' ? 'warn' : 'info' },
   trustProxy: true,
@@ -235,11 +277,31 @@ async function start() {
     // Trigger referral reward for the depositing user (idempotent — no-ops if already rewarded)
     await tryTriggerReferralReward(body.user_id, db, walletSvc)
 
+    // Attribute deposit & complete any pending cashier intents
+    await trackDepositAttributionAndCompletion(body.user_id, body.amount, db)
+
     const balance = await walletSvc.getBalance(body.user_id)
     return reply.send({ success: true, balance })
   })
 
   // ---- Manual deposit (UPI / bank / QR) — user-facing ----
+
+  // POST /wallet/deposit/intent — logs user starting deposit checkout for abandoned cashier recovery
+  app.post('/wallet/deposit/intent', { onRequest: [authenticate] }, async (req, reply) => {
+    const user = req.user as any
+    const body = z.object({
+      amount: z.number().positive(),
+      promo_code: z.string().max(50).optional().nullable(),
+    }).parse(req.body)
+
+    const res = await db.query(
+      `INSERT INTO abandoned_cashier_events (user_id, amount, promo_code)
+       VALUES ($1, $2, $3)
+       RETURNING id, created_at`,
+      [user.sub, body.amount, body.promo_code || null]
+    )
+    return reply.send({ success: true, intent_id: res.rows[0].id })
+  })
 
   // GET /wallet/deposit/methods — active payment destinations the user can pay to
   app.get('/wallet/deposit/methods', { onRequest: [authenticate] }, async (_req, reply) => {
@@ -407,6 +469,12 @@ async function start() {
       await db.query(`UPDATE promo_code_usages SET deposit_id = $1 WHERE promo_id = $2 AND user_id = $3`,
         [ins.rows[0].id, promoRow.id, user.sub]).catch(() => { })
     }
+
+    // Mark any pending cashier intent as completed so reminder push won't fire
+    await db.query(
+      `UPDATE abandoned_cashier_events SET completed = true, updated_at = NOW() WHERE user_id = $1 AND completed = false`,
+      [user.sub]
+    ).catch(() => {})
 
     return reply.send({
       success: true,
@@ -753,6 +821,7 @@ async function start() {
         await client.query('COMMIT')
 
         await tryTriggerReferralReward(user.sub, db, walletSvc)
+        await trackDepositAttributionAndCompletion(user.sub, parseFloat(order.amount), db)
 
         return reply.send({
           success: true,
@@ -820,6 +889,7 @@ async function start() {
         await client.query('COMMIT')
 
         await tryTriggerReferralReward(user.sub, db, walletSvc)
+        await trackDepositAttributionAndCompletion(user.sub, parseFloat(order.amount), db)
 
         const coreApiUrl = process.env.CORE_API_SERVICE_URL || 'http://127.0.0.1:3001'
         const key = process.env.INTERNAL_SERVICE_KEY || ''
@@ -1006,6 +1076,7 @@ async function start() {
 
         // Trigger referral rewards & push notification
         await tryTriggerReferralReward(matchedOrder.user_id, db, walletSvc)
+        await trackDepositAttributionAndCompletion(matchedOrder.user_id, parseFloat(matchedOrder.amount), db)
 
         const coreApiUrl = process.env.CORE_API_SERVICE_URL || 'http://127.0.0.1:3001'
         const key = process.env.INTERNAL_SERVICE_KEY || ''
@@ -1148,6 +1219,7 @@ async function start() {
       await client.query('COMMIT')
 
       await tryTriggerReferralReward(targetUserId, db, walletSvc)
+      await trackDepositAttributionAndCompletion(targetUserId, parseFloat(order.amount), db)
 
       return reply.send({ success: true, message: `Credited ₹${order.amount} to user successfully!` })
     } catch (err) {

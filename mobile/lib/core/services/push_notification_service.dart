@@ -71,8 +71,10 @@ class PushNotificationService {
             final decoded = jsonDecode(payload) as Map<String, dynamic>;
             final route = decoded['route'] as String?;
             final campaignId = decoded['campaign_id'] as String?;
+            final notifId = (decoded['notification_id'] ?? decoded['id']) as String?;
             if (route != null && route.isNotEmpty) _navigate(route);
             _markCampaignRead(campaignId);
+            _markNotificationClicked(notifId);
           } catch (_) {}
         },
       );
@@ -113,6 +115,7 @@ class PushNotificationService {
         payload: jsonEncode({
           'route': message.data['route'],
           'campaign_id': message.data['campaign_id'],
+          'notification_id': message.data['notification_id'] ?? message.data['id'],
         }),
       );
     } catch (_) {
@@ -137,8 +140,10 @@ class PushNotificationService {
 
   void _routeMessage(RemoteMessage message) {
     final route = message.data['route'] as String?;
+    final notifId = (message.data['notification_id'] ?? message.data['id']) as String?;
     if (route != null && route.isNotEmpty) _navigate(route);
     _markCampaignRead(message.data['campaign_id'] as String?);
+    _markNotificationClicked(notifId);
   }
 
   void _navigate(String route) {
@@ -153,6 +158,13 @@ class PushNotificationService {
     if (campaignId == null || campaignId.isEmpty) return;
     try {
       await ApiClient().dio.put('/api/notifications/read-by-campaign/$campaignId');
+    } catch (_) {}
+  }
+
+  Future<void> _markNotificationClicked(String? notificationId) async {
+    if (notificationId == null || notificationId.isEmpty) return;
+    try {
+      await ApiClient().dio.put('/api/notifications/click/$notificationId');
     } catch (_) {}
   }
 }

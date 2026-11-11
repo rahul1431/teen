@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Card, Empty, Spin, Row, Col } from 'antd'
+import { Card, Empty, Spin, Row, Col, Statistic } from 'antd'
+import {
+  DollarCircleOutlined,
+  CheckCircleOutlined,
+  AimOutlined,
+  SendOutlined,
+} from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -7,16 +13,31 @@ import {
 import dayjs from 'dayjs'
 import { adminApi } from '../api/client'
 
+interface Totals {
+  totalCampaigns: number
+  totalRecipients: number
+  totalDelivered: number
+  totalClicks: number
+  ctr: number
+  totalConversions: number
+  cvr: number
+  totalRevenue: number
+}
+
 interface TrendPoint {
   date: string
   campaignsSent: number
   avgReadRate: number
+  avgClickRate: number
+  dailyRevenue: number
 }
 
 interface TypeBreakdown {
   type: string
   campaignsSent: number
   avgReadRate: number
+  avgClickRate: number
+  totalRevenue: number
 }
 
 interface ReadByHour {
@@ -25,6 +46,7 @@ interface ReadByHour {
 }
 
 export function NotificationAnalyticsTab() {
+  const [totals, setTotals] = useState<Totals | null>(null)
   const [trend, setTrend] = useState<TrendPoint[]>([])
   const [byType, setByType] = useState<TypeBreakdown[]>([])
   const [readsByHour, setReadsByHour] = useState<ReadByHour[]>([])
@@ -41,10 +63,12 @@ export function NotificationAnalyticsTab() {
         adminApi.get('/notifications/analytics', { params: { days: 30 } }),
         adminApi.get('/notifications/read-time-analytics', { params: { days: 30 } }),
       ])
+      setTotals(analyticsRes.data.totals || null)
       setTrend(analyticsRes.data.trend || [])
       setByType(analyticsRes.data.byType || [])
       setReadsByHour(readTimeRes.data.readsByHour || [])
     } catch {
+      setTotals(null)
       setTrend([])
       setByType([])
       setReadsByHour([])
@@ -56,49 +80,116 @@ export function NotificationAnalyticsTab() {
   const trendFormatted = trend.map((p) => ({
     ...p,
     date: dayjs(p.date).format('MMM DD'),
-    avgReadRatePct: p.avgReadRate * 100,
+    avgReadRatePct: (p.avgReadRate || 0) * 100,
+    avgClickRatePct: (p.avgClickRate || 0) * 100,
+    dailyRevenue: p.dailyRevenue || 0,
   }))
-  const byTypeFormatted = byType.map((t) => ({ ...t, avgReadRatePct: t.avgReadRate * 100 }))
+  const byTypeFormatted = byType.map((t) => ({
+    ...t,
+    avgReadRatePct: (t.avgReadRate || 0) * 100,
+    avgClickRatePct: (t.avgClickRate || 0) * 100,
+  }))
   const readsByHourFormatted = readsByHour.map((h) => ({ ...h, label: `${h.hour}:00` }))
   const hasReadActivity = readsByHour.some((h) => h.reads > 0)
 
   return (
     <Spin spinning={loading}>
+      {/* KPI Top Cards */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
+        <Col xs={24} sm={12} md={6}>
+          <Card bordered={false} style={{ background: '#141414', border: '1px solid #262626' }}>
+            <Statistic
+              title={<span style={{ color: '#8c8c8c' }}>Attributed Revenue</span>}
+              value={totals?.totalRevenue || 0}
+              precision={2}
+              prefix={<DollarCircleOutlined style={{ color: '#52c41a', marginRight: 6 }} />}
+              suffix="₹"
+              valueStyle={{ color: '#52c41a', fontWeight: 'bold' }}
+            />
+            <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+              Deposits within 4h of push click
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={6}>
+          <Card bordered={false} style={{ background: '#141414', border: '1px solid #262626' }}>
+            <Statistic
+              title={<span style={{ color: '#8c8c8c' }}>Converted Users</span>}
+              value={totals?.totalConversions || 0}
+              prefix={<CheckCircleOutlined style={{ color: '#1890ff', marginRight: 6 }} />}
+              valueStyle={{ color: '#e6e6e6', fontWeight: 'bold' }}
+            />
+            <div style={{ fontSize: 11, color: '#1890ff', marginTop: 4 }}>
+              {totals?.cvr || 0}% Conversion Rate (CVR)
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={6}>
+          <Card bordered={false} style={{ background: '#141414', border: '1px solid #262626' }}>
+            <Statistic
+              title={<span style={{ color: '#8c8c8c' }}>Notification Clicks</span>}
+              value={totals?.totalClicks || 0}
+              prefix={<AimOutlined style={{ color: '#faad14', marginRight: 6 }} />}
+              valueStyle={{ color: '#faad14', fontWeight: 'bold' }}
+            />
+            <div style={{ fontSize: 11, color: '#faad14', marginTop: 4 }}>
+              {totals?.ctr || 0}% Click-Through Rate (CTR)
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={6}>
+          <Card bordered={false} style={{ background: '#141414', border: '1px solid #262626' }}>
+            <Statistic
+              title={<span style={{ color: '#8c8c8c' }}>Campaigns Dispatched</span>}
+              value={totals?.totalCampaigns || 0}
+              prefix={<SendOutlined style={{ color: '#722ed1', marginRight: 6 }} />}
+              valueStyle={{ color: '#e6e6e6', fontWeight: 'bold' }}
+            />
+            <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+              {(totals?.totalRecipients || 0).toLocaleString()} total recipients reached
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
       <Row gutter={[16, 16]}>
         <Col span={24}>
-          <Card title="Sends & Read Rate (last 30 days)" bordered={false}>
+          <Card title="Performance & Attribution Trends (last 30 days)" bordered={false}>
             {trendFormatted.length > 0 ? (
               <ResponsiveContainer width="100%" height={320}>
                 <LineChart data={trendFormatted}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                  <YAxis yAxisId="left" tick={{ fontSize: 12 }} label={{ value: 'Campaigns Sent', angle: -90, position: 'insideLeft' }} />
-                  <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{ fontSize: 12 }} label={{ value: 'Read Rate (%)', angle: 90, position: 'insideRight' }} />
-                  <Tooltip formatter={(value: any, name: string) => (name === 'Avg Read Rate' ? `${Number(value).toFixed(1)}%` : value)} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 12 }} label={{ value: 'Revenue (₹)', angle: -90, position: 'insideLeft' }} />
+                  <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{ fontSize: 12 }} label={{ value: 'Rate (%)', angle: 90, position: 'insideRight' }} />
+                  <Tooltip formatter={(value: any, name: string) => (name.includes('Rate') ? `${Number(value).toFixed(1)}%` : name.includes('Revenue') ? `₹${Number(value).toFixed(2)}` : value)} />
                   <Legend />
-                  <Line yAxisId="left" type="monotone" dataKey="campaignsSent" name="Campaigns Sent" stroke="#1677ff" strokeWidth={2} isAnimationActive={false} />
-                  <Line yAxisId="right" type="monotone" dataKey="avgReadRatePct" name="Avg Read Rate" stroke="#00c853" strokeWidth={2} isAnimationActive={false} />
+                  <Line yAxisId="left" type="monotone" dataKey="dailyRevenue" name="Attributed Revenue" stroke="#52c41a" strokeWidth={2.5} isAnimationActive={false} />
+                  <Line yAxisId="right" type="monotone" dataKey="avgReadRatePct" name="Read Rate (%)" stroke="#1890ff" strokeWidth={2} isAnimationActive={false} />
+                  <Line yAxisId="right" type="monotone" dataKey="avgClickRatePct" name="Click Rate CTR (%)" stroke="#faad14" strokeWidth={2} isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             ) : (
-              !loading && <Empty description="No notifications sent yet" />
+              !loading && <Empty description="No notification campaigns sent yet" />
             )}
           </Card>
         </Col>
         <Col span={24}>
-          <Card title="Read Rate by Type (last 30 days)" bordered={false}>
+          <Card title="Read Rate & Click Rate by Type (last 30 days)" bordered={false}>
             {byTypeFormatted.length > 0 ? (
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={byTypeFormatted}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="type" tick={{ fontSize: 12 }} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} label={{ value: 'Avg Read Rate (%)', angle: -90, position: 'insideLeft' }} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} label={{ value: 'Percentage (%)', angle: -90, position: 'insideLeft' }} />
                   <Tooltip formatter={(value: any) => `${Number(value).toFixed(1)}%`} />
-                  <Bar dataKey="avgReadRatePct" name="Avg Read Rate" fill="#d4af37" />
+                  <Legend />
+                  <Bar dataKey="avgReadRatePct" name="Avg Read Rate (%)" fill="#1890ff" />
+                  <Bar dataKey="avgClickRatePct" name="Avg Click Rate CTR (%)" fill="#faad14" />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              !loading && <Empty description="No notifications sent yet" />
+              !loading && <Empty description="No notification campaigns sent yet" />
             )}
           </Card>
         </Col>
@@ -106,7 +197,7 @@ export function NotificationAnalyticsTab() {
           <Card
             title="When Users Open Notifications (last 30 days, IST)"
             bordered={false}
-            extra={<span style={{ fontSize: 12, color: '#8b949e' }}>Use this to pick send times</span>}
+            extra={<span style={{ fontSize: 12, color: '#8b949e' }}>Optimized send timing</span>}
           >
             {hasReadActivity ? (
               <ResponsiveContainer width="100%" height={280}>

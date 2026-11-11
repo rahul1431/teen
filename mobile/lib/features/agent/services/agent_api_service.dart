@@ -64,6 +64,13 @@ class AgentApiService {
       _storage.write(key: _savedUsernameKey, value: username);
   Future<String?> getSavedUsername() => _storage.read(key: _savedUsernameKey);
 
+  // Register FCM Token for Agent Push Notifications
+  Future<void> registerFcmToken(String fcmToken) async {
+    try {
+      await _dio.put('/fcm-token', data: {'fcm_token': fcmToken.trim()});
+    } catch (_) {}
+  }
+
   // 1. Auth: Login
   Future<Map<String, dynamic>> login(String username, String password) async {
     try {

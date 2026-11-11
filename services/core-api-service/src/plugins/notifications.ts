@@ -43,9 +43,117 @@ async function sendPushNotification(fcmToken: string, title: string, body: strin
   await admin.messaging().send(payload)
 }
 
+/**
+ * Checks if current time is within Indian Standard Time (IST = UTC+5:30) Quiet Hours.
+ * Quiet hours: 10:00 PM (22:00) to 8:30 AM IST.
+ */
+function isIstQuietHours(): boolean {
+  const istDate = new Date(Date.now() + 5.5 * 60 * 60 * 1000)
+  const hours = istDate.getUTCHours()
+  const minutes = istDate.getUTCMinutes()
+  if (hours >= 22 || hours < 8) return true
+  if (hours === 8 && minutes < 30) return true
+  return false
+}
+
+/**
+ * Dynamic message personalization helper for templates
+ */
+function applyTemplate(template: string, user: { username?: string; balance?: number | string }): string {
+  if (!template) return ''
+  return template
+    .replace(/\{\{username\}\}/gi, user.username || 'Player')
+    .replace(/\{\{balance\}\}/gi, `₹${parseFloat(String(user.balance || 0)).toFixed(0)}`)
+}
+
+/**
+ * Automated Abandoned Cashier Recovery Worker
+ * Identifies users who opened the deposit sheet / intent 15-360 mins ago but didn't finish.
+ */
+let cashierWorkerRunning = false
+function startAbandonedCashierWorker(db: Pool) {
+  if (cashierWorkerRunning) return
+  cashierWorkerRunning = true
+
+  setInterval(async () => {
+    try {
+      // Don't send during quiet hours unless urgent
+      if (isIstQuietHours()) return
+
+      const pendingEvents = await db.query(
+        `SELECT e.id, e.user_id, e.amount, e.promo_code, e.created_at,
+                u.username, u.fcm_token
+         FROM abandoned_cashier_events e
+         JOIN users u ON u.id = e.user_id
+         WHERE e.completed = false
+           AND e.notified = false
+           AND e.created_at <= NOW() - INTERVAL '15 minutes'
+           AND e.created_at >= NOW() - INTERVAL '6 hours'
+         ORDER BY e.created_at ASC
+         LIMIT 25`
+      )
+
+      for (const event of pendingEvents.rows) {
+        // Verify if user actually completed any deposit since event creation
+        const hasDeposited = await db.query(
+          `SELECT 1 FROM deposits 
+           WHERE user_id = $1 AND status = 'completed' AND created_at >= $2 
+           LIMIT 1`,
+          [event.user_id, event.created_at]
+        )
+
+        if (hasDeposited.rows.length > 0) {
+          await db.query(
+            `UPDATE abandoned_cashier_events SET completed = true, updated_at = NOW() WHERE id = $1`,
+            [event.id]
+          )
+          continue
+        }
+
+        const amtStr = Math.round(Number(event.amount) || 0)
+        const title = `₹${amtStr} Deposit Pending ⏳`
+        const body = `Hey ${event.username || 'Player'}! Complete your deposit now & claim extra bonus chips instantly!`
+        const pushData = {
+          route: '/wallet',
+          type: 'deposit_recovery',
+          amount: String(amtStr),
+          intent_id: String(event.id),
+          action_url: '/wallet',
+        }
+
+        // 1. In-app notification
+        await db.query(
+          `INSERT INTO notifications (user_id, type, title, body, data, action_url)
+           VALUES ($1, 'wallet', $2, $3, $4, '/wallet')`,
+          [event.user_id, title, body, JSON.stringify(pushData)]
+        )
+
+        // 2. High-priority push notification
+        if (event.fcm_token) {
+          try {
+            await sendPushNotification(event.fcm_token, title, body, pushData)
+          } catch (err: any) {
+            console.warn('[abandoned-cashier] FCM send error:', err.message)
+          }
+        }
+
+        // 3. Mark event as notified
+        await db.query(
+          `UPDATE abandoned_cashier_events SET notified = true, updated_at = NOW() WHERE id = $1`,
+          [event.id]
+        )
+      }
+    } catch (err: any) {
+      console.error('[abandoned-cashier-worker] error:', err.message)
+    }
+  }, 3 * 60 * 1000) // Run every 3 minutes
+  console.log('[notifications] Abandoned Cashier Recovery worker initialized')
+}
+
 export function notificationsPlugin(db: Pool, redis?: Redis) {
   return async function (app: FastifyInstance) {
     initFirebase()
+    startAbandonedCashierWorker(db)
 
     // Listen for wallet updates from admin/system credits via Redis Pub/Sub
     if (redis) {
@@ -101,7 +209,14 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
 
     app.get('/notifications/me', { onRequest: [app.authenticate] }, async (req, reply) => {
       const user = req.user as any
-      const res = await db.query(`SELECT id, type, title, body, data, read, created_at, image_url FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, [user.sub])
+      const res = await db.query(
+        `SELECT id, type, title, body, data, read, clicked, created_at, image_url, action_url 
+         FROM notifications 
+         WHERE user_id = $1 
+         ORDER BY created_at DESC 
+         LIMIT 50`,
+        [user.sub]
+      )
       return reply.send(res.rows)
     })
 
@@ -130,6 +245,29 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
       return reply.send({ success: true })
     })
 
+    // Click tracking for notifications (Conversion & Attribution engine)
+    app.put('/notifications/click/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as any
+      const { id } = req.params as any
+      const notifRes = await db.query(
+        `UPDATE notifications 
+         SET clicked = true, clicked_at = NOW(), read = true, read_at = COALESCE(read_at, NOW()) 
+         WHERE id = $1 AND user_id = $2
+         RETURNING campaign_id, action_url`,
+        [id, user.sub]
+      )
+      if (notifRes.rows.length && notifRes.rows[0].campaign_id) {
+        const campaignId = notifRes.rows[0].campaign_id
+        await db.query(
+          `UPDATE notification_campaigns 
+           SET clicked_count = COALESCE(clicked_count, 0) + 1 
+           WHERE id = $1`,
+          [campaignId]
+        )
+      }
+      return reply.send({ success: true, action_url: notifRes.rows[0]?.action_url })
+    })
+
     // Marks the CALLING user's own notification(s) for a campaign as read
     app.put('/notifications/read-by-campaign/:campaignId', { onRequest: [app.authenticate] }, async (req, reply) => {
       const user = req.user as any
@@ -141,93 +279,154 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
       return reply.send({ success: true })
     })
 
+    // User push send (Internal)
     app.post('/internal/notifications/send', { onRequest: [internal] }, async (req, reply) => {
-      const { user_id, title, body, type = 'general', data, campaign_id, image_url } = req.body as any
+      const { user_id, title, body, type = 'general', data, campaign_id, image_url, action_url } = req.body as any
       const pushData = { ...(data || {}), ...(campaign_id ? { campaign_id: String(campaign_id) } : {}) }
-      await db.query(
-        'INSERT INTO notifications (user_id, type, title, body, data, campaign_id, image_url) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-        [user_id, type, title, body, JSON.stringify(pushData), campaign_id || null, image_url || null],
+      
+      const insertRes = await db.query(
+        `INSERT INTO notifications (user_id, type, title, body, data, campaign_id, image_url, action_url) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id`,
+        [user_id, type, title, body, JSON.stringify(pushData), campaign_id || null, image_url || null, action_url || pushData.route || null],
       )
+      
+      const notifId = insertRes.rows[0]?.id
+      if (notifId) {
+        pushData.notification_id = String(notifId)
+      }
+
       const userRes = await db.query('SELECT fcm_token FROM users WHERE id = $1', [user_id])
       let delivered = 0
       if (userRes.rows[0]?.fcm_token) {
         await sendPushNotification(userRes.rows[0].fcm_token, title, body, pushData, image_url)
         delivered = 1
       }
+      return reply.send({ success: true, delivered, notification_id: notifId })
+    })
+
+    // Agent push send (Internal)
+    app.post('/internal/notifications/send-agent', { onRequest: [internal] }, async (req, reply) => {
+      const { agent_id, title, body, data, image_url } = req.body as any
+      const agentRes = await db.query('SELECT fcm_token FROM agents WHERE id = $1', [agent_id])
+      let delivered = 0
+      if (agentRes.rows[0]?.fcm_token) {
+        await sendPushNotification(agentRes.rows[0].fcm_token, title, body, data, image_url)
+        delivered = 1
+      }
       return reply.send({ success: true, delivered })
     })
 
+    // Direct token push send (Internal)
+    app.post('/internal/notifications/send-direct', { onRequest: [internal] }, async (req, reply) => {
+      const { token, title, body, data, image_url } = req.body as any
+      if (!token) return reply.code(400).send({ error: 'Token is required' })
+      await sendPushNotification(token, title, body, data, image_url)
+      return reply.send({ success: true, delivered: 1 })
+    })
+
+    // Broadcast push send with Quiet Hours & Personalization (Internal)
     app.post('/internal/notifications/broadcast', { onRequest: [internal] }, async (req, reply) => {
-      const { title, body, type = 'broadcast', data, campaign_id, image_url, segment_type = 'all' } = req.body as any
+      const {
+        title,
+        body,
+        type = 'broadcast',
+        data,
+        campaign_id,
+        image_url,
+        segment_type = 'all',
+        quiet_hours_enabled = true,
+        urgent = false,
+      } = req.body as any
+
+      // Enforce Quiet Hours if active and not marked urgent
+      if (quiet_hours_enabled && !urgent && isIstQuietHours()) {
+        console.log('[notifications] Quiet hours active (10 PM - 8:30 AM IST). Non-urgent broadcast deferred.')
+        return reply.send({
+          success: false,
+          quiet_hours: true,
+          message: 'Broadcast deferred: Indian Quiet Hours active (10:00 PM - 8:30 AM IST). Protects user retention and notification fatigue.',
+          sent: 0,
+          total: 0,
+        })
+      }
+
       const pushData = { ...(data || {}), ...(campaign_id ? { campaign_id: String(campaign_id) } : {}) }
       
-      // Determine segment query
-      let userQuery = `SELECT id, fcm_token FROM users WHERE is_bot = false AND status = $1`
+      // Determine segment query including wallet balance for dynamic personalization
+      let userQuery = `
+        SELECT u.id, u.username, u.fcm_token,
+               COALESCE(w.deposit_balance + w.winning_balance + w.bonus_balance, 0)::numeric(12,2) AS balance
+        FROM users u
+        LEFT JOIN wallets w ON w.user_id = u.id
+        WHERE u.is_bot = false AND u.status = $1
+      `
       const userParams: any[] = ['active']
 
       if (segment_type === 'active_7d') {
-        userQuery += ` AND last_login_at >= NOW() - INTERVAL '7 days'`
+        userQuery += ` AND u.last_login_at >= NOW() - INTERVAL '7 days'`
       } else if (segment_type === 'inactive_7d') {
-        userQuery += ` AND (last_login_at IS NULL OR last_login_at < NOW() - INTERVAL '7 days')`
+        userQuery += ` AND (u.last_login_at IS NULL OR u.last_login_at < NOW() - INTERVAL '7 days')`
       } else if (segment_type === 'low_balance') {
-        userQuery = `
-          SELECT u.id, u.fcm_token 
-          FROM users u
-          JOIN wallets w ON w.user_id = u.id
-          WHERE u.is_bot = false AND u.status = $1
-            AND (w.deposit_balance + w.winning_balance + w.bonus_balance) < 100
-        `
+        userQuery += ` AND (w.deposit_balance + w.winning_balance + w.bonus_balance) < 100`
       }
 
       const usersRes = await db.query(userQuery, userParams)
       const users = usersRes.rows
       if (users.length === 0) return reply.send({ success: true, sent: 0, total: 0 })
 
-      // 1. Bulk insert DB notifications in batches of 1000
+      // 1. Bulk insert DB notifications with dynamic personalization in batches of 1000
       const dbBatchSize = 1000
       for (let i = 0; i < users.length; i += dbBatchSize) {
         const batch = users.slice(i, i + dbBatchSize)
         const values: any[] = []
-        let queryText = 'INSERT INTO notifications (user_id, type, title, body, data, campaign_id, image_url) VALUES '
+        let queryText = 'INSERT INTO notifications (user_id, type, title, body, data, campaign_id, image_url, action_url) VALUES '
         for (let j = 0; j < batch.length; j++) {
           const u = batch[j]
-          const offset = j * 7
-          queryText += `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`
+          const offset = j * 8
+          queryText += `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8})`
           if (j < batch.length - 1) queryText += ', '
-          values.push(u.id, type, title, body, JSON.stringify(pushData), campaign_id || null, image_url || null)
+          
+          const personalizedTitle = applyTemplate(title, u)
+          const personalizedBody = applyTemplate(body, u)
+          values.push(u.id, type, personalizedTitle, personalizedBody, JSON.stringify(pushData), campaign_id || null, image_url || null, pushData.route || null)
         }
         await db.query(queryText, values)
       }
 
       // 2. Batch send push notifications using sendEach in batches of 500
-      const tokens = users.map(u => u.fcm_token).filter(Boolean) as string[]
+      const usersWithTokens = users.filter(u => Boolean(u.fcm_token))
       let sent = 0
-      if (tokens.length > 0) {
+
+      if (usersWithTokens.length > 0) {
         if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-          console.log(`[PUSH DEV] Broadcasted to ${tokens.length} tokens: ${title}: ${body} | Image: ${image_url}`)
-          sent = tokens.length
+          console.log(`[PUSH DEV] Broadcasted to ${usersWithTokens.length} tokens: ${title}: ${body} | Image: ${image_url}`)
+          sent = usersWithTokens.length
         } else {
-          const fcmMessages = tokens.map(token => {
+          const fcmMessages = usersWithTokens.map(u => {
+            const personalizedTitle = applyTemplate(title, u)
+            const personalizedBody = applyTemplate(body, u)
             const msg: any = {
-              token,
-              notification: { title, body },
+              token: u.fcm_token,
+              notification: { title: personalizedTitle, body: personalizedBody },
               data: pushData,
               android: { priority: 'high' } as any,
-              apns: { payload: { aps: { sound: 'default' } } } as any
+              apns: { payload: { aps: { sound: 'default' } } } as any,
             }
             if (image_url) {
               msg.notification.imageUrl = image_url
             }
             return msg
           })
+
           const fcmBatchSize = 500
           for (let i = 0; i < fcmMessages.length; i += fcmBatchSize) {
             const batch = fcmMessages.slice(i, i + fcmBatchSize)
             try {
               const response = await admin.messaging().sendEach(batch)
               sent += response.successCount
-            } catch (err) {
-              console.error('[broadcast] FCM batch failed:', err)
+            } catch (err: any) {
+              console.error('[broadcast] FCM batch failed:', err.message || err)
             }
           }
         }

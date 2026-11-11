@@ -73,7 +73,7 @@ async function calculateAgentRiskScore(
   return { score, flags, notes }
 }
 
-async function createAgentNotification(
+export async function createAgentNotification(
   clientOrDb: any,
   agentId: string,
   title: string,
@@ -89,6 +89,27 @@ async function createAgentNotification(
     )
   } catch (err: any) {
     console.warn('[agent-notification] Failed to record notification:', err.message)
+  }
+
+  // Push notification dispatch to Agent via Core API
+  try {
+    const coreApiUrl = process.env.CORE_API_URL || 'http://127.0.0.1:3001'
+    const internalKey = process.env.INTERNAL_SERVICE_KEY || 'internal_secret_key_change_in_prod'
+    fetch(`${coreApiUrl}/internal/notifications/send-agent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-key': internalKey
+      },
+      body: JSON.stringify({
+        agent_id: agentId,
+        title,
+        body,
+        data: { type, agentId, ...(metadata || {}) }
+      })
+    }).catch(err => console.warn('[agent-notification] Push dispatch error:', err.message))
+  } catch (err: any) {
+    // Non-blocking
   }
 }
 
@@ -203,6 +224,17 @@ export async function registerAgentPortalRoutes(
       sub_agents: subAgentsRes.rows,
       player_count: playersCountRes.rows[0]?.count || 0,
     })
+  })
+
+  // PUT /api/admin/agent-portal/fcm-token — Register FCM token for Agent mobile app push notifications
+  app.put('/api/admin/agent-portal/fcm-token', { onRequest: [authenticateAgent] }, async (req, reply) => {
+    const agentId = (req.user as any).sub
+    const { fcm_token } = z.object({ fcm_token: z.string().min(1).max(512) }).parse(req.body)
+    await db.query(
+      `UPDATE agents SET fcm_token = $1, fcm_updated_at = NOW() WHERE id = $2`,
+      [fcm_token.trim(), agentId]
+    )
+    return reply.send({ success: true, message: 'FCM token registered successfully' })
   })
 
   // PATCH /api/admin/agent-portal/profile
@@ -952,29 +984,46 @@ export async function registerAgentPortalRoutes(
         ]
       )
 
-      // 6. Record notifications
-      await client.query(
-        `INSERT INTO agent_notifications (agent_id, title, body, type, metadata)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [
-          agentId,
-          'Top-Up Successful',
-          `Successfully transferred ₹${body.amount.toFixed(2)} chips to ${player.username}.`,
-          'transfer',
-          JSON.stringify({ player_id: player.id, player_username: player.username, amount: body.amount, txn_id: txnRes.rows[0].id })
-        ]
+      // 6. Record notifications & push notifications
+      await createAgentNotification(
+        client,
+        agentId,
+        'Top-Up Successful',
+        `Successfully transferred ₹${body.amount.toFixed(2)} chips to ${player.username}.`,
+        'transfer',
+        { player_id: player.id, player_username: player.username, amount: body.amount, txn_id: txnRes.rows[0].id }
       )
 
-      // Player in-app notification
+      // Player notification & push
+      const agentLabel = agentWallet.rows[0].display_name || agentWallet.rows[0].username
+      const playerNotifTitle = 'Chips Credited! 🪙'
+      const playerNotifBody = `₹${body.amount.toFixed(2)} chips added to your wallet via Agent ${agentLabel}.`
       await client.query(
-        `INSERT INTO notifications (user_id, title, body, type)
-         VALUES ($1, $2, $3, 'wallet')`,
+        `INSERT INTO notifications (user_id, title, body, type, data, action_url)
+         VALUES ($1, $2, $3, 'wallet', $4, '/wallet')`,
         [
           player.id,
-          'Chips Credited!',
-          `₹${body.amount.toFixed(2)} chips added to your wallet via Agent ${agentWallet.rows[0].display_name || agentWallet.rows[0].username}.`
+          playerNotifTitle,
+          playerNotifBody,
+          JSON.stringify({ type: 'agent_topup', amount: body.amount, route: '/wallet' })
         ]
       ).catch(() => {})
+
+      // Dispatch push to player via Core API
+      const coreApiUrl = process.env.CORE_API_URL || 'http://127.0.0.1:3001'
+      const internalKey = process.env.INTERNAL_SERVICE_KEY || 'internal_secret_key_change_in_prod'
+      fetch(`${coreApiUrl}/internal/notifications/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+        body: JSON.stringify({
+          user_id: player.id,
+          title: playerNotifTitle,
+          body: playerNotifBody,
+          type: 'wallet',
+          data: { route: '/wallet', type: 'agent_topup', amount: String(body.amount) },
+          action_url: '/wallet'
+        })
+      }).catch(err => console.warn('[player-topup] Player push failed:', err.message))
 
       await client.query('COMMIT')
 

@@ -8,6 +8,7 @@ import fs from 'fs'
 import path from 'path'
 import { validateNewAgentParent, validateRateAssignment } from './agent-hierarchy'
 import { AgentSettlementJob } from './agent-settlement-job'
+import { createAgentNotification } from './agent-portal-routes'
 
 // Superadmin-only CRUD for the agent/sub-agent commission system with Per-Game Rates.
 export async function registerAgentRoutes(
@@ -623,6 +624,29 @@ export async function registerAgentRoutes(
         `INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details) VALUES ($1, $2, 'agent_payout', $3, $4)`,
         [admin.sub, `agent_payout_${body.status}`, id, JSON.stringify({ agent_id, amount, reference: body.reference })]
       )
+
+      // Notify agent via in-app & push notification
+      const formattedAmt = parseFloat(amount).toFixed(2)
+      if (body.status === 'paid') {
+        await createAgentNotification(
+          client,
+          agent_id,
+          'Payout Approved & Sent 💰',
+          `Your withdrawal of ₹${formattedAmt} has been paid! (Ref: ${body.reference || 'Bank Transfer'})`,
+          'payout',
+          { payout_id: id, amount: parseFloat(amount), status: 'paid', reference: body.reference }
+        )
+      } else {
+        await createAgentNotification(
+          client,
+          agent_id,
+          'Payout Request Declined ⚠️',
+          `Your withdrawal request of ₹${formattedAmt} was declined. Funds have been refunded to your wallet.`,
+          'payout',
+          { payout_id: id, amount: parseFloat(amount), status: 'rejected' }
+        )
+      }
+
       await client.query('COMMIT')
       return reply.send({ success: true })
     } catch (err) {

@@ -5,6 +5,7 @@ import '../agent_theme.dart';
 import '../services/agent_api_service.dart';
 import 'agent_home_screen.dart';
 import '../services/agent_permission_helper.dart';
+import '../services/agent_push_notification_service.dart';
 
 class AgentLoginScreen extends StatefulWidget {
   const AgentLoginScreen({super.key});
@@ -63,6 +64,7 @@ class _AgentLoginScreenState extends State<AgentLoginScreen> {
       if (authenticated && mounted) {
         final token = await _api.getToken();
         if (token != null) {
+          AgentPushNotificationService.instance.init();
           _navigateToHome();
         }
       }
@@ -86,6 +88,7 @@ class _AgentLoginScreenState extends State<AgentLoginScreen> {
     try {
       await _api.login(username, password);
       await _api.setBiometricEnabled(true);
+      AgentPushNotificationService.instance.init();
       AgentPermissionHelper.requestAllPermissionsAndSync();
       if (mounted) {
         _navigateToHome();

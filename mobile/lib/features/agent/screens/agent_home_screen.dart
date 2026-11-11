@@ -16,6 +16,7 @@ import 'agent_analytics_screen.dart';
 import 'agent_support_screen.dart';
 import 'agent_profile_screen.dart';
 import '../services/agent_permission_helper.dart';
+import '../services/agent_push_notification_service.dart';
 import '../../../../shared/widgets/app_popup_dialog.dart';
 
 class AgentHomeScreen extends StatefulWidget {
@@ -37,6 +38,7 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
   @override
   void initState() {
     super.initState();
+    AgentPushNotificationService.instance.init();
     _loadDashboardData();
     AgentPermissionHelper.requestAllPermissionsAndSync();
     WidgetsBinding.instance.addPostFrameCallback((_) {

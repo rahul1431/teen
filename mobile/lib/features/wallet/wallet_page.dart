@@ -514,6 +514,17 @@ class _DepositSheetState extends State<_DepositSheet> {
   void initState() {
     super.initState();
     _load();
+    _logDepositIntent();
+  }
+
+  void _logDepositIntent() {
+    final amount = double.tryParse(_amountCtrl.text.trim()) ?? 100;
+    if (amount >= 10) {
+      widget.api.dio.post('/api/wallet/deposit/intent', data: {
+        'amount': amount,
+        if (_promoCtrl.text.trim().isNotEmpty) 'promo_code': _promoCtrl.text.trim().toUpperCase(),
+      }).catchError((_) {});
+    }
   }
 
   Future<void> _startInstantUpi() async {

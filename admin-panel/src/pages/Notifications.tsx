@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Form, Input, Button, Select, Card, message, Radio, Tabs, Switch, DatePicker, Space } from 'antd'
-import { SendOutlined, SaveOutlined } from '@ant-design/icons'
+import { Form, Input, Button, Select, Card, message, Radio, Tabs, Switch, DatePicker, Space, Tag, Tooltip } from 'antd'
+import { SendOutlined, SaveOutlined, ThunderboltOutlined, FieldTimeOutlined } from '@ant-design/icons'
 import { adminApi } from '../api/client'
 import { NotificationHistoryTab } from '../components/NotificationHistoryTab'
 import { NotificationAnalyticsTab } from '../components/NotificationAnalyticsTab'
@@ -12,7 +12,7 @@ const ROUTE_OPTIONS = [
   { value: '/games/matka', label: 'Satta Matka' },
   { value: '/games/lottery', label: 'Lottery' },
   { value: '/games/cricket', label: 'Cricket' },
-  { value: '/wallet', label: 'Wallet' },
+  { value: '/wallet', label: 'Wallet / Cashier' },
   { value: '/leaderboard', label: 'Leaderboard' },
   { value: '/missions', label: 'Missions' },
   { value: '/referral', label: 'Refer & Earn' },
@@ -46,6 +46,11 @@ function SendTab() {
     return routeChoice
   }
 
+  const insertTag = (tag: string) => {
+    const currentBody = form.getFieldValue('body') || ''
+    form.setFieldsValue({ body: `${currentBody} ${tag} `.trim() })
+  }
+
   const onSend = async (values: any) => {
     setLoading(true)
     try {
@@ -62,8 +67,14 @@ function SendTab() {
 
       if (target === 'all') {
         payload.segment_type = values.segment_type || 'all'
-        await adminApi.post('/notifications/broadcast', payload)
-        message.success(isScheduled ? 'Broadcast scheduled successfully!' : 'Broadcast sent to users!')
+        payload.quiet_hours_enabled = values.quiet_hours_enabled ?? true
+        payload.urgent = values.urgent ?? false
+        const res = await adminApi.post('/notifications/broadcast', payload)
+        if (res.data?.quiet_hours) {
+          message.warning(res.data.message || 'Broadcast paused due to quiet hours')
+        } else {
+          message.success(isScheduled ? 'Broadcast scheduled successfully!' : `Broadcast sent to ${res.data?.sent ?? 0} active users!`)
+        }
       } else {
         payload.user_id = values.user_id
         await adminApi.post('/notifications/send', payload)
@@ -125,8 +136,8 @@ function SendTab() {
   }
 
   return (
-    <Card title="Send Push Notification" style={{ maxWidth: 600 }}>
-      <Form form={form} layout="vertical" onFinish={onSend}>
+    <Card title="Send Push Notification" style={{ maxWidth: 650 }}>
+      <Form form={form} layout="vertical" onFinish={onSend} initialValues={{ quiet_hours_enabled: true }}>
         <Form.Item label="Load Template">
           <Select
             allowClear
@@ -173,8 +184,29 @@ function SendTab() {
           <Input placeholder="Notification title" />
         </Form.Item>
 
-        <Form.Item name="body" label="Message" rules={[{ required: true, max: 300 }]}>
-          <Input.TextArea rows={3} placeholder="Notification body" />
+        <Form.Item
+          name="body"
+          label={
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+              <span>Message</span>
+              <Space direction="horizontal" size={6}>
+                <span style={{ fontSize: 11, color: '#8c8c8c' }}>Dynamic tags:</span>
+                <Tooltip title="Replaced with recipient's username">
+                  <Tag color="gold" style={{ cursor: 'pointer', margin: 0 }} onClick={() => insertTag('{{username}}')}>
+                    + {'{{username}}'}
+                  </Tag>
+                </Tooltip>
+                <Tooltip title="Replaced with recipient's wallet balance">
+                  <Tag color="cyan" style={{ cursor: 'pointer', margin: 0 }} onClick={() => insertTag('{{balance}}')}>
+                    + {'{{balance}}'}
+                  </Tag>
+                </Tooltip>
+              </Space>
+            </div>
+          }
+          rules={[{ required: true, max: 300 }]}
+        >
+          <Input.TextArea rows={3} placeholder="Notification body (e.g. Hey {{username}}, your balance is {{balance}}! Play now)" />
         </Form.Item>
 
         <Form.Item name="image_url" label="Rich Push Image URL (optional)">
@@ -195,6 +227,40 @@ function SendTab() {
           <Form.Item name="customRoute" label="Custom Route" rules={[{ required: true }]}>
             <Input placeholder="e.g. /games/ludo/lobby" />
           </Form.Item>
+        )}
+
+        {target === 'all' && (
+          <div style={{ background: '#141414', border: '1px solid #303030', borderRadius: 8, padding: '12px 16px', marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <Space>
+                  <FieldTimeOutlined style={{ color: '#faad14' }} />
+                  <span style={{ fontWeight: 600, color: '#e6e6e6' }}>Quiet Hours Protection (IST)</span>
+                </Space>
+                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 4 }}>
+                  Pauses non-urgent broadcasts between 10:00 PM and 8:30 AM IST to prevent user fatigue & uninstalls.
+                </div>
+              </div>
+              <Form.Item name="quiet_hours_enabled" valuePropName="checked" noStyle>
+                <Switch />
+              </Form.Item>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 10, borderTop: '1px dashed #262626' }}>
+              <div>
+                <Space>
+                  <ThunderboltOutlined style={{ color: '#ff4d4f' }} />
+                  <span style={{ fontSize: 13, color: '#e6e6e6' }}>Mark as Urgent (Bypass Quiet Hours)</span>
+                </Space>
+                <div style={{ fontSize: 11, color: '#8c8c8c' }}>
+                  Force immediate delivery even during night hours (critical service maintenance or emergency only).
+                </div>
+              </div>
+              <Form.Item name="urgent" valuePropName="checked" noStyle initialValue={false}>
+                <Switch />
+              </Form.Item>
+            </div>
+          </div>
         )}
 
         <Form.Item label="Schedule for Later">
@@ -230,10 +296,9 @@ export default function Notifications() {
         items={[
           { key: 'send', label: 'Send', children: <SendTab /> },
           { key: 'history', label: 'History', children: <NotificationHistoryTab /> },
-          { key: 'analytics', label: 'Analytics', children: <NotificationAnalyticsTab /> },
+          { key: 'analytics', label: 'Analytics & Revenue Attribution', children: <NotificationAnalyticsTab /> },
         ]}
       />
     </div>
   )
 }
-
