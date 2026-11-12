@@ -2,24 +2,35 @@ import { FastifyInstance } from 'fastify'
 import { Pool } from 'pg'
 import Redis from 'ioredis'
 import * as admin from 'firebase-admin'
+import * as fs from 'fs'
+import * as path from 'path'
 
 let firebaseInitialized = false
 
 function initFirebase() {
-  if (firebaseInitialized || !process.env.FIREBASE_SERVICE_ACCOUNT_JSON) return
+  if (firebaseInitialized) return
   try {
-    let raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON.trim()
-    if ((raw.startsWith("'") && raw.endsWith("'")) || (raw.startsWith('"') && raw.endsWith('"'))) {
-      raw = raw.slice(1, -1)
+    let sa: any = null
+    const keyPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || path.resolve(__dirname, '../../firebase-service-account.json')
+    if (fs.existsSync(keyPath)) {
+      sa = JSON.parse(fs.readFileSync(keyPath, 'utf8'))
+    } else if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+      let raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON.trim()
+      if ((raw.startsWith("'") && raw.endsWith("'")) || (raw.startsWith('"') && raw.endsWith('"'))) {
+        raw = raw.slice(1, -1)
+      }
+      sa = typeof raw === 'string' ? JSON.parse(raw) : raw
+      if (typeof sa === 'string') sa = JSON.parse(sa)
     }
-    let sa = typeof raw === 'string' ? JSON.parse(raw) : raw
-    if (typeof sa === 'string') sa = JSON.parse(sa)
+
+    if (!sa) return
+
     if (sa.private_key) {
       sa.private_key = sa.private_key.replace(/\\n/g, '\n')
     }
     admin.initializeApp({ credential: admin.credential.cert(sa) })
     firebaseInitialized = true
-    console.log('[notifications] Firebase initialized successfully')
+    console.log('[notifications] Firebase initialized successfully with project:', sa.project_id)
   } catch (err: any) {
     console.error('[notifications] Failed to initialize Firebase:', err.message || err)
   }
@@ -38,6 +49,16 @@ function resolveNotificationChannel(type: string): string {
   return 'myonlinejoker_notifications_v2'
 }
 
+function sanitizePushData(data?: Record<string, any>): Record<string, string> {
+  if (!data) return {}
+  const sanitized: Record<string, string> = {}
+  for (const [k, v] of Object.entries(data)) {
+    if (v === undefined || v === null) continue
+    sanitized[k] = typeof v === 'string' ? v : JSON.stringify(v)
+  }
+  return sanitized
+}
+
 async function sendPushNotification(
   fcmToken: string,
   title: string,
@@ -46,15 +67,21 @@ async function sendPushNotification(
   imageUrl?: string,
   channelId?: string
 ) {
-  if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+  if (!firebaseInitialized) {
     console.log(`[PUSH DEV] To: ${fcmToken?.slice(0, 20)}... | ${title}: ${body} | Image: ${imageUrl}`)
     return
   }
   const resolvedChannel = channelId || 'myonlinejoker_notifications_v2'
+  const sanitizedData = sanitizePushData({
+    title,
+    body,
+    channel_id: resolvedChannel,
+    ...(data || {}),
+  })
   const payload: any = {
     token: fcmToken,
     notification: { title, body },
-    data,
+    data: sanitizedData,
     android: {
       priority: 'high',
       notification: {
@@ -538,7 +565,7 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
       // Resolve recipient details for dynamic personalization & fallback
       const userRes = await db.query(
         `SELECT u.username, u.fcm_token, u.phone,
-                COALESCE(w.deposit_balance + w.winning_balance + w.bonus_balance, 0)::numeric(12,2) AS balance
+                COALESCE(w.real_balance + w.bonus_balance, 0)::numeric(12,2) AS balance
          FROM users u
          LEFT JOIN wallets w ON w.user_id = u.id
          WHERE u.id = $1`,
@@ -704,7 +731,7 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
       // Determine segment query including phone and wallet balance for dynamic personalization
       let userQuery = `
         SELECT u.id, u.username, u.phone, u.fcm_token,
-               COALESCE(w.deposit_balance + w.winning_balance + w.bonus_balance, 0)::numeric(12,2) AS balance
+               COALESCE(w.real_balance + w.bonus_balance, 0)::numeric(12,2) AS balance
         FROM users u
         LEFT JOIN wallets w ON w.user_id = u.id
         WHERE u.is_bot = false AND u.status = $1
@@ -716,7 +743,7 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
       } else if (segment_type === 'inactive_7d') {
         userQuery += ` AND (u.last_login_at IS NULL OR u.last_login_at < NOW() - INTERVAL '7 days')`
       } else if (segment_type === 'low_balance') {
-        userQuery += ` AND (w.deposit_balance + w.winning_balance + w.bonus_balance) < 100`
+        userQuery += ` AND (w.real_balance + w.bonus_balance) < 100`
       }
 
       const usersRes = await db.query(userQuery, userParams)
@@ -771,17 +798,23 @@ export function notificationsPlugin(db: Pool, redis?: Redis) {
 
       // 3. Batch send push notifications using sendEach in batches of 500
       if (eligibleUsers.length > 0) {
-        if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+        if (!firebaseInitialized) {
           console.log(`[PUSH DEV] Broadcasted to ${eligibleUsers.length} tokens: ${title}: ${body} | Channel: ${channelId}`)
           sent = eligibleUsers.length
         } else {
           const fcmMessages = eligibleUsers.map(u => {
             const personalizedTitle = applyTemplate(title, u)
             const personalizedBody = applyTemplate(body, u)
+            const pPushData = sanitizePushData({
+              title: personalizedTitle,
+              body: personalizedBody,
+              channel_id: channelId,
+              ...pushData,
+            })
             const msg: any = {
               token: u.fcm_token,
               notification: { title: personalizedTitle, body: personalizedBody },
-              data: pushData,
+              data: pPushData,
               android: {
                 priority: 'high',
                 notification: {

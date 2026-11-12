@@ -73,11 +73,7 @@
             <meta-data android:name="flutter_deeplinking_enabled" android:value="true"/>
         </activity>
         <meta-data android:name="flutterEmbedding" android:value="2"/>
-        <service android:name="com.google.firebase.messaging.FirebaseMessagingService" android:exported="false">
-            <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT"/>
-            </intent-filter>
-        </service>
+        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="myonlinejoker_notifications_v2"/>
         <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@mipmap/ic_launcher"/>
         <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/notification_color"/>
         <meta-data android:name="io.flutter.embedding.android.EnableHardwareAcceleration" android:value="true"/>

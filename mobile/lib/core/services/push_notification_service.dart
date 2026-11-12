@@ -114,7 +114,7 @@ class PushNotificationService {
           _channelGeneral,
           'Notifications',
           description: 'General system announcements and news',
-          importance: Importance.defaultImportance,
+          importance: Importance.high,
         ),
       );
     } catch (_) {
@@ -171,7 +171,9 @@ class PushNotificationService {
                 ? 'Wallet & Cashier Updates'
                 : channelId == _channelPromotions
                     ? 'Promotions & Bonuses'
-                    : 'Notifications',
+                    : channelId == _channelGameAlerts
+                        ? 'Game Invites & Table Action'
+                        : 'Notifications',
             importance: Importance.high,
             priority: Priority.high,
             actions: actions,

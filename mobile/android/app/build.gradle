@@ -89,11 +89,8 @@ dependencies {
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"
 }
 
-// Apply Google Services only when google-services.json is present, so PR builds
-// without the secret still succeed.
-// Apply Google Services for Player App only (Agent App does not require Firebase)
-def isAgentBuild = project.hasProperty("agentApp") || (project.hasProperty("target") && project.property("target").toString().contains("agent"))
-if (file("google-services.json").exists() && !isAgentBuild) {
+// Apply Google Services when google-services.json is present
+if (file("google-services.json").exists()) {
     apply plugin: "com.google.gms.google-services"
 }
 

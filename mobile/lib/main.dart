@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'core/monitor/monitor_service.dart';
@@ -15,7 +16,42 @@ import 'app.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {}
+
+  // If message contains a notification payload, Android OS system tray renders it
+  // automatically via default_notification_channel_id.
+  // For data-only payloads delivered when app is terminated/backgrounded, display
+  // via FlutterLocalNotificationsPlugin to ensure guaranteed delivery:
+  try {
+    if (message.notification == null && message.data.isNotEmpty) {
+      final title = (message.data['title'] as String?) ?? 'MyOnlineJoker';
+      final body = (message.data['body'] as String?) ?? '';
+      if (title.isNotEmpty || body.isNotEmpty) {
+        final localNotifs = FlutterLocalNotificationsPlugin();
+        const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+        await localNotifs.initialize(const InitializationSettings(android: androidInit));
+
+        final channelId = (message.data['channel_id'] as String?) ?? 'myonlinejoker_notifications_v2';
+        await localNotifs.show(
+          message.hashCode,
+          title,
+          body,
+          NotificationDetails(
+            android: AndroidNotificationDetails(
+              channelId,
+              'Notifications',
+              importance: Importance.max,
+              priority: Priority.high,
+              playSound: true,
+              enableVibration: true,
+            ),
+          ),
+        );
+      }
+    }
+  } catch (_) {}
 }
 
 class _AppLifecycleMonitor extends WidgetsBindingObserver {

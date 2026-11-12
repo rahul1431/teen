@@ -80,3 +80,5 @@ services/game-engines/teen-patti/teen-patti-engine.exe
 .claude-flow/data/
 .claude-flow/logs/
 .claude-flow/sessions/
+*token*.txt
+*service-account*.json
