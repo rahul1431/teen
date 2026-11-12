@@ -119,6 +119,14 @@ jobs:
           fi
           echo "Verified: Player APK and Agent Partner APK are distinct builds."
 
+      - name: Verify APK Signatures (v1 & v2 schemes)
+        working-directory: mobile
+        run: |
+          echo "=== Verifying Player APK (app-release.apk) ==="
+          $ANDROID_HOME/build-tools/35.0.0/apksigner verify --verbose --print-certs build/app/outputs/flutter-apk/app-release.apk
+          echo "=== Verifying Agent APK (agent-partner-release.apk) ==="
+          $ANDROID_HOME/build-tools/35.0.0/apksigner verify --verbose --print-certs build/app/outputs/flutter-apk/agent-partner-release.apk
+
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:

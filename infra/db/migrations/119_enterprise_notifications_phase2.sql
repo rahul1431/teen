@@ -12,3 +12,4 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS priority VARCHAR(20) DEFAULT 
 -- 3. User Fatigue Controls & Retention Preferences
 ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_quiet_hours_enabled BOOLEAN DEFAULT true;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS max_daily_promo_push INTEGER DEFAULT 3;
+

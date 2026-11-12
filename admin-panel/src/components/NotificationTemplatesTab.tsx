@@ -209,3 +209,4 @@ export function NotificationTemplatesTab({ onSelectTemplate }: { onSelectTemplat
     </Card>
   )
 }
+

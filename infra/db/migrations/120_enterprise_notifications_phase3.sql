@@ -34,3 +34,4 @@ ALTER TABLE notification_campaigns
 ALTER TABLE abandoned_cashier_events
   ADD COLUMN IF NOT EXISTS whatsapp_fallback_sent BOOLEAN DEFAULT false,
   ADD COLUMN IF NOT EXISTS whatsapp_fallback_sent_at TIMESTAMPTZ DEFAULT NULL;
+
