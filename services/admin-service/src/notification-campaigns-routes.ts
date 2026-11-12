@@ -164,4 +164,88 @@ export function registerNotificationCampaignRoutes(app: FastifyInstance, db: Poo
 
     return reply.send({ readsByHour })
   })
+
+  // GET /api/admin/notifications/campaigns/:id — single campaign details
+  app.get('/api/admin/notifications/campaigns/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const res = await db.query(
+      `SELECT c.*, au.username as sent_by_username,
+              (SELECT COUNT(*)::int FROM notifications n WHERE n.campaign_id = c.id AND n.read = true) AS read_count
+       FROM notification_campaigns c
+       LEFT JOIN admin_users au ON au.id = c.sent_by
+       WHERE c.id = $1`,
+      [id]
+    )
+    if (res.rows.length === 0) return reply.code(404).send({ error: 'Campaign not found' })
+    const r = res.rows[0]
+    return reply.send({
+      ...r,
+      clicked_count: r.clicked_count || 0,
+      click_rate: r.total_recipients > 0 ? (r.clicked_count || 0) / r.total_recipients : 0,
+      converted_count: r.converted_count || 0,
+      conversion_rate: r.total_recipients > 0 ? (r.converted_count || 0) / r.total_recipients : 0,
+      conversion_revenue: parseFloat(r.conversion_revenue || '0'),
+      skipped_fatigue_count: r.skipped_fatigue_count || 0,
+      whatsapp_sent_count: r.whatsapp_sent_count || 0,
+      sms_sent_count: r.sms_sent_count || 0,
+      fallback_triggered_count: r.fallback_triggered_count || 0,
+      read_rate: r.total_recipients > 0 ? r.read_count / r.total_recipients : 0,
+    })
+  })
+
+  // DELETE /api/admin/notifications/campaigns/:id — cancel/delete campaign
+  app.delete('/api/admin/notifications/campaigns/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    await db.query(`DELETE FROM notification_campaigns WHERE id = $1`, [id])
+    return reply.send({ success: true })
+  })
+
+  // GET /api/admin/notifications/templates — list saved templates
+  app.get('/api/admin/notifications/templates', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const res = await db.query(`SELECT * FROM notification_templates ORDER BY created_at DESC`)
+    return reply.send(res.rows)
+  })
+
+  // POST /api/admin/notifications/templates — save new template
+  app.post('/api/admin/notifications/templates', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { name, title, body, type = 'general', route, image_url, action_buttons } = req.body as any
+    if (!name || !title || !body) {
+      return reply.code(400).send({ error: 'name, title, and body are required' })
+    }
+    const res = await db.query(
+      `INSERT INTO notification_templates (name, title, body, type, route, image_url, action_buttons)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [name, title, body, type, route || null, image_url || null, action_buttons ? JSON.stringify(action_buttons) : null]
+    )
+    return reply.send(res.rows[0])
+  })
+
+  // PUT /api/admin/notifications/templates/:id — update template
+  app.put('/api/admin/notifications/templates/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    const { name, title, body, type = 'general', route, image_url, action_buttons } = req.body as any
+    const res = await db.query(
+      `UPDATE notification_templates
+       SET name = COALESCE($1, name),
+           title = COALESCE($2, title),
+           body = COALESCE($3, body),
+           type = COALESCE($4, type),
+           route = $5,
+           image_url = $6,
+           action_buttons = $7
+       WHERE id = $8
+       RETURNING *`,
+      [name, title, body, type, route || null, image_url || null, action_buttons ? JSON.stringify(action_buttons) : null, id]
+    )
+    if (res.rows.length === 0) return reply.code(404).send({ error: 'Template not found' })
+    return reply.send(res.rows[0])
+  })
+
+  // DELETE /api/admin/notifications/templates/:id — delete template
+  app.delete('/api/admin/notifications/templates/:id', { onRequest: [authenticate, requireRole('support')] }, async (req, reply) => {
+    const { id } = req.params as any
+    await db.query(`DELETE FROM notification_templates WHERE id = $1`, [id])
+    return reply.send({ success: true })
+  })
 }

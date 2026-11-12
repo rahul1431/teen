@@ -26,6 +26,7 @@ import {
 import { adminApi } from '../api/client'
 import { NotificationHistoryTab } from '../components/NotificationHistoryTab'
 import { NotificationAnalyticsTab } from '../components/NotificationAnalyticsTab'
+import { NotificationTemplatesTab } from '../components/NotificationTemplatesTab'
 
 const ROUTE_OPTIONS = [
   { value: '/home', label: 'Home' },
@@ -61,7 +62,7 @@ const ACTION_BUTTON_PRESETS = [
   },
 ]
 
-function SendTab() {
+function SendTab({ draft, onClearDraft }: { draft?: any; onClearDraft?: () => void }) {
   const [loading, setLoading] = useState(false)
   const [form] = Form.useForm()
   const [target, setTarget] = useState<'all' | 'user'>('all')
@@ -70,16 +71,40 @@ function SendTab() {
   const [isScheduled, setIsScheduled] = useState(false)
   const [templates, setTemplates] = useState<any[]>([])
 
+  const watchedImageUrl = Form.useWatch('image_url', form)
+
   useEffect(() => {
     fetchTemplates()
   }, [])
+
+  useEffect(() => {
+    if (draft) {
+      form.setFieldsValue({
+        title: draft.title,
+        body: draft.body,
+        type: draft.type || 'general',
+        image_url: draft.image_url,
+        delivery_channels: draft.delivery_channels || 'push',
+      })
+      if (draft.route) {
+        const isStandard = ROUTE_OPTIONS.some(opt => opt.value === draft.route)
+        if (isStandard) {
+          setRouteChoice(draft.route)
+        } else {
+          setRouteChoice('custom')
+          form.setFieldsValue({ customRoute: draft.route })
+        }
+      }
+      if (onClearDraft) onClearDraft()
+    }
+  }, [draft])
 
   async function fetchTemplates() {
     try {
       const res = await adminApi.get('/notifications/templates')
       setTemplates(res.data)
     } catch {
-      message.error('Failed to load templates')
+      // Best-effort
     }
   }
 
@@ -125,11 +150,11 @@ function SendTab() {
         } else {
           const sent = res.data?.sent ?? 0
           const skipped = res.data?.skipped_fatigue ?? 0
-          if (skipped > 0) {
-            message.success(`Broadcast sent to ${sent} active users (${skipped} protected by daily fatigue cap)!`)
-          } else {
-            message.success(isScheduled ? 'Broadcast scheduled successfully!' : `Broadcast sent to ${sent} active users!`)
-          }
+          const wa = res.data?.whatsapp_sent ?? 0
+          let msg = `Broadcast delivered to ${sent} active users!`
+          if (wa > 0) msg += ` (${wa} cascaded via WhatsApp)`
+          if (skipped > 0) msg += ` [${skipped} protected by daily fatigue cap]`
+          message.success(isScheduled ? 'Broadcast scheduled successfully!' : msg)
         }
       } else {
         payload.user_id = values.user_id
@@ -193,36 +218,34 @@ function SendTab() {
   }
 
   return (
-    <Card title="Send Push Notification" style={{ maxWidth: 680 }}>
-      <Form
-        form={form}
-        layout="vertical"
-        onFinish={onSend}
-        initialValues={{ quiet_hours_enabled: true, frequency_cap: 3 }}
-      >
-        <Form.Item label="Load Template">
-          <Select
-            allowClear
-            placeholder="Select a preset template"
-            onChange={onTemplateSelect}
-            options={templates.map(t => ({ value: t.id, label: t.name }))}
-          />
-        </Form.Item>
-
-        <Form.Item label="Send To">
-          <Radio.Group value={target} onChange={e => setTarget(e.target.value)}>
-            <Radio.Button value="all">Users Segment</Radio.Button>
-            <Radio.Button value="user">Specific User</Radio.Button>
+    <Card title="Compose & Broadcast Notifications">
+      <Form form={form} layout="vertical" onFinish={onSend} initialValues={{ type: 'general', frequency_cap: 3, quiet_hours_enabled: true, delivery_channels: 'push' }}>
+        <Form.Item label="Target Audience">
+          <Radio.Group value={target} onChange={(e) => setTarget(e.target.value)}>
+            <Radio.Button value="all">Segment Broadcast</Radio.Button>
+            <Radio.Button value="user">Specific Player / User</Radio.Button>
           </Radio.Group>
         </Form.Item>
 
+        {templates.length > 0 && (
+          <Form.Item label="Quick Load Saved Template">
+            <Select placeholder="Select a pre-configured template" onChange={onTemplateSelect} allowClear>
+              {templates.map((tpl) => (
+                <Select.Option key={tpl.id} value={tpl.id}>
+                  {tpl.name} ({tpl.type})
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+        )}
+
         {target === 'all' && (
-          <Form.Item name="segment_type" label="Target Segment" initialValue="all">
+          <Form.Item name="segment_type" label="User Segment" initialValue="all">
             <Select>
               <Select.Option value="all">All Active Users</Select.Option>
-              <Select.Option value="active_7d">Active Last 7 Days</Select.Option>
-              <Select.Option value="inactive_7d">Inactive Last 7 Days (Re-engage)</Select.Option>
-              <Select.Option value="low_balance">Low Balance (&lt; ₹100)</Select.Option>
+              <Select.Option value="active_7d">Active in Last 7 Days (Retained Players)</Select.Option>
+              <Select.Option value="inactive_7d">Inactive &gt; 7 Days (Re-engagement / Win-back)</Select.Option>
+              <Select.Option value="low_balance">Low Balance &lt; ₹100 (Deposit Incentive)</Select.Option>
             </Select>
           </Form.Item>
         )}
@@ -274,6 +297,20 @@ function SendTab() {
         <Form.Item name="image_url" label="Rich Push Image URL (optional)">
           <Input placeholder="e.g. https://domain.com/banner.png" />
         </Form.Item>
+
+        {watchedImageUrl && (
+          <div style={{ marginBottom: 16, background: '#1f1f1f', padding: 12, borderRadius: 8, display: 'inline-block' }}>
+            <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 6 }}>Live Banner Preview:</div>
+            <img
+              src={watchedImageUrl}
+              alt="Banner preview"
+              style={{ maxHeight: 110, maxWidth: 260, borderRadius: 6, objectFit: 'cover' }}
+              onError={(e) => {
+                e.currentTarget.style.display = 'none'
+              }}
+            />
+          </div>
+        )}
 
         <Form.Item name="delivery_channels" label="Delivery Channel Strategy" initialValue="push">
           <Select>
@@ -384,12 +421,42 @@ function SendTab() {
 }
 
 export default function Notifications() {
+  const [activeTab, setActiveTab] = useState('send')
+  const [composerDraft, setComposerDraft] = useState<any>(null)
+
+  const handleUseTemplate = (tpl: any) => {
+    setComposerDraft({
+      title: tpl.title,
+      body: tpl.body,
+      type: tpl.type,
+      route: tpl.route,
+      image_url: tpl.image_url,
+    })
+    setActiveTab('send')
+    message.info(`Loaded template "${tpl.name}" into composer`)
+  }
+
+  const handleCloneCampaign = (c: any) => {
+    setComposerDraft({
+      title: c.title,
+      body: c.body,
+      type: c.type,
+      image_url: c.image_url,
+      delivery_channels: c.delivery_channels || 'push',
+    })
+    setActiveTab('send')
+    message.info(`Cloned campaign "${c.title}" into composer`)
+  }
+
   return (
     <div style={{ padding: 24 }}>
       <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
         items={[
-          { key: 'send', label: 'Send', children: <SendTab /> },
-          { key: 'history', label: 'History', children: <NotificationHistoryTab /> },
+          { key: 'send', label: 'Send & Compose', children: <SendTab draft={composerDraft} onClearDraft={() => setComposerDraft(null)} /> },
+          { key: 'templates', label: 'Templates & Presets', children: <NotificationTemplatesTab onSelectTemplate={handleUseTemplate} /> },
+          { key: 'history', label: 'History & Campaign Logs', children: <NotificationHistoryTab onCloneCampaign={handleCloneCampaign} /> },
           { key: 'analytics', label: 'Analytics & Revenue Attribution', children: <NotificationAnalyticsTab /> },
         ]}
       />
