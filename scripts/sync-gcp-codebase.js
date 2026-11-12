@@ -63,6 +63,7 @@ conn.on('ready', () => {
         cd /opt/teen-prod/services/bot-training/ludo && npm run build && \\
         cd /opt/teen-prod/services/bot-training/rummy && (npm install --production=false || true) && npm run build && \\
         cd /opt/teen-prod/services/company-ops-agent && (npm install --production=false || true) && npm run build && \\
+        cd /opt/teen-prod/services/monitoring-service && npm run build && \\
         cd /opt/teen-prod/services/game-engines/teen-patti && go build -o teen-patti-engine . && \\
         echo "=== Running Database Migration 111 (Row Level Security) ===" && \\
         cat /opt/teen-prod/infra/db/migrations/111_enable_row_level_security.sql | sudo docker exec -i teen_postgres psql -U teen -d teen_db && \\
@@ -78,6 +79,9 @@ conn.on('ready', () => {
         cat /opt/teen-prod/infra/db/migrations/115_behavioral_cloning.sql | sudo docker exec -i teen_postgres psql -U teen -d teen_db && \\
         echo "=== Running Database Migration 116 (Table Anti-Collusion) ===" && \\
         cat /opt/teen-prod/infra/db/migrations/116_table_anti_collusion.sql | sudo docker exec -i teen_postgres psql -U teen -d teen_db && \\
+        echo "=== Running Database Migration 119 & 120 (Enterprise Notifications) ===" && \\
+        (if [ -f /opt/teen-prod/infra/db/migrations/119_enterprise_notifications_phase2.sql ]; then cat /opt/teen-prod/infra/db/migrations/119_enterprise_notifications_phase2.sql | sudo docker exec -i teen_postgres psql -U teen -d teen_db; fi) && \\
+        (if [ -f /opt/teen-prod/infra/db/migrations/120_enterprise_notifications_phase3.sql ]; then cat /opt/teen-prod/infra/db/migrations/120_enterprise_notifications_phase3.sql | sudo docker exec -i teen_postgres psql -U teen -d teen_db; fi) && \\
         echo "=== Updating Nginx Security Snippets and Configs ===" && \\
         (sudo cp /opt/teen-prod/infra/nginx/proxy-headers.conf /etc/nginx/snippets/proxy-headers.conf 2>/dev/null || true) && \\
         (sudo cp /opt/teen-prod/infra/nginx/game-locations.conf /etc/nginx/snippets/game-locations.conf 2>/dev/null || true) && \\

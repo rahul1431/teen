@@ -43,7 +43,6 @@ import { registerTaskRoutes } from './task-routes'
 import { registerMissionRoutes } from './mission-routes'
 import { registerNotificationRoutes } from './notifications-routes'
 import { registerNotificationCampaignRoutes } from './notification-campaigns-routes'
-import { registerNotificationTemplateRoutes } from './notification-template-routes'
 import { NotificationScheduler } from './notification-scheduler'
 import { registerAgentRoutes } from './agent-routes'
 import { registerAgentPortalRoutes } from './agent-portal-routes'
@@ -305,7 +304,6 @@ async function start() {
   // Register Notification routes
   registerNotificationRoutes(app, db, authenticate)
   registerNotificationCampaignRoutes(app, db, authenticate, requireRole)
-  registerNotificationTemplateRoutes(app, db, authenticate, requireRole)
 
   // Start background notification scheduler
   const coreApiUrl = process.env.CORE_API_URL || 'http://127.0.0.1:3001'

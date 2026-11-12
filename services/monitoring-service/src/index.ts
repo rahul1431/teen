@@ -20,7 +20,7 @@ const pool = new Pool({
 });
 
 // Initialize Fastify
-const fastify = Fastify({ logger: logger as any });
+const fastify = Fastify({ loggerInstance: logger });
 
 // Event processor
 const processor = new EventProcessor(redis, pool, logger);
